@@ -18,7 +18,6 @@ class DenseCaptionDataset(DynamicPairDataset):
         template: Any,
         user_prompt: str,
         emit_norm: Literal["none", "norm100", "norm1000"],
-        group_key_prefix: str = "图片_",
         config: Optional[DynamicPairingConfig] = None,
         augmenter: Optional[Any] = None,
     ):
@@ -29,14 +28,12 @@ class DenseCaptionDataset(DynamicPairDataset):
             template: ms-swift template for encoding
             user_prompt: User prompt text
             emit_norm: Coordinate normalization for text output
-            group_key_prefix: Prefix for image group keys (default 图片_)
             config: Dynamic pairing configuration
             augmenter: Optional augmentation config
         """
         message_builder = JSONLinesBuilder(
             user_prompt=user_prompt,
             emit_norm=emit_norm,
-            group_key_prefix=group_key_prefix,
         )
 
         super().__init__(

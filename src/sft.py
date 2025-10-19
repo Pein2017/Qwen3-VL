@@ -11,13 +11,7 @@ from .datasets import DenseCaptionDataset
 from .datasets.augment import AugmentationConfig
 from .config import ConfigLoader
 
-# Ensure custom templates are registered before building SwiftSft/template
-try:
-    # side-effect: register_template for qwen3_vl_cnsep
-    import src.custom_templates.qwen3_cnsep  # noqa: F401
-except Exception:
-    # Non-fatal if the file is absent; users can opt-in
-    pass
+# Use the model's native chat_template (JSON/Jinja) shipped with the tokenizer
 
 def parse_args():
     """Parse minimal runtime arguments.
@@ -154,7 +148,6 @@ def main():
         template=sft.template,
         user_prompt=custom_config['user_prompt'],
         emit_norm=custom_config['emit_norm'],
-        group_key_prefix=custom_config.get('group_key_prefix', '图片_'),
         config=dp_config,
         augmenter=augmenter,
         sample_limit=train_sample_limit,
@@ -240,7 +233,6 @@ def main():
             template=sft.template,
             user_prompt=custom_config['user_prompt'],
             emit_norm=custom_config['emit_norm'],
-            group_key_prefix=custom_config.get('group_key_prefix', '图片_'),
             config=dp_config,
             augmenter=None,  # No augmentation for validation
             sample_limit=val_sample_limit,

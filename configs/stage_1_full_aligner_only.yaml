@@ -14,24 +14,21 @@ template:
   max_pixels: 401408  # up to 1024x1024
 
 tuner:
-  train_type: lora
-  lora_rank: 16  # Smaller for faster debugging
-  lora_alpha: 32
-  lora_dropout: 0.05
-  target_modules: [all-linear]
+  train_type: full
   freeze_llm: true
   freeze_vit: true
   freeze_aligner: false
 
 training:
-  output_dir: ./output/standard
-  run_name: standard
+  output_dir: ./output/stage_1_full_aligner_only
+  run_name: stage_1_full_aligner_only
+  add_version: true
   
   # Main schedule
   learning_rate: 1.0e-4
   vit_lr: 2.0e-5
   aligner_lr: 1.0e-4
-  num_train_epochs: 8
+  num_train_epochs: 12
   
   # Batching
   per_device_train_batch_size: 2
@@ -55,7 +52,7 @@ training:
   save_only_model: true
   
   # Verbose logging
-  logging_dir: ./tb/standard
+  logging_dir: ./tb/stage_1_full_aligner_only
   logging_steps: 50
   logging_first_step: false
   report_to: [tensorboard]

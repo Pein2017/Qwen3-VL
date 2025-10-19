@@ -264,7 +264,7 @@ outputs = model(
 **Configuration**:
 - `global_max_length`: Single knob for full conversation length (prompt + completion); overrides `model.max_model_len` and `template.max_length`
 - `emit_norm`: 控制文本输出的坐标空间（none/norm100/norm1000）
-- `group_key_prefix`: 图片分组键前缀（默认 `图片_`）
+（已移除）模板负责插入 图片_{i} 分隔，代码不再提供 `group_key_prefix` 配置项。
 - 顶层 `objects.ref/bbox/image_id` 保留为原始像素坐标，模板自动归一化为 norm1000
 - 不再有 section headers 或 `image_index` 字段
 - `prompts.scheme`: A (minimal/prior-free) or B (informative, adds ordering/taxonomy hints)
@@ -319,10 +319,10 @@ model:
   model: path/to/Qwen3-VL-4B-Instruct
 
 template:
-  template: qwen3_vl_cnsep       # custom template: 图片N/视频N separators
+  template: qwen3_vl             # use model's chat_template.json (图片_{i} auto-injected)
   max_length: 4096
   truncation_strategy: right
-  max_pixels: 640000             # e.g., 800x800
+  max_pixels: 401408             # e.g., up to 1024x1024
 
 training:
   num_train_epochs: 3
@@ -333,16 +333,57 @@ custom:
   train_jsonl: data/ds_v2_full/train.jsonl
   val_jsonl: data/ds_v2_full/val.jsonl
   emit_norm: norm1000               # none | norm100 | norm1000
-  group_key_prefix: "图片_"         # optional, default "图片_"
+  # 无需配置 group_key_prefix；模板自动插入 图片_{i}
 
 prompts:
   scheme: A | B   # A: 极简格式约束；B: 薄领域提示
   system: |
     你是图像密集标注助手。只返回原始 JSON-lines…（B 可额外包含对象类型与排序提示）
-    多图分段：{"section": "图片N"}
+    模板自动插入 图片_{i} 分隔，无需在文本中手动分段
   user: 描述所有对象
 ```
 
+### Two-stage training (recommended)
+
+- Stage 1 (Aligner-only LoRA): start from base model, freeze LLM+ViT → checkpoint A
+  ```yaml
+  tuner:
+    train_type: lora
+    target_modules: [all-linear]
+    freeze_llm: true
+    freeze_vit: true
+    freeze_aligner: false
+  ```
+- Stage 2 (LLM+Aligner LoRA): start from checkpoint A, freeze ViT → checkpoint B
+  ```yaml
+  model:
+    model: path/to/checkpoint-A
+  tuner:
+    train_type: lora
+    target_modules: [all-linear]
+    freeze_llm: false
+    freeze_vit: true
+    freeze_aligner: false
+  ```
+Deploy checkpoint B for inference with the base processor/template.
+
+### Mixed-mode: LoRA on LLM and Vision, full-tune Aligner
+
+To apply LoRA to the language model and vision tower while fully fine-tuning the aligner (no LoRA on the aligner), use:
+
+```yaml
+tuner:
+  train_type: lora
+  target_modules: [all-linear]
+  freeze_llm: false        # LoRA on LLM
+  freeze_vit: false        # LoRA on Vision
+  freeze_aligner: true     # do NOT inject LoRA into aligner
+  modules_to_save:
+    - model.visual.merger
+    - model.visual.deepstack_merger_list
+```
+
+Tip: keep `training.aligner_lr` (and optionally `training.vit_lr`) to control per-module learning rates via the multimodal optimizer.
 
 ## Troubleshooting
 

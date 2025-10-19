@@ -1,4 +1,3 @@
-import os
 from typing import List
 
 import torch
@@ -38,10 +37,12 @@ def show_input_debug(inputs):
 
 def main() -> None:
     # Configuration (edit these)
-    checkpoint_path = "output/standard/v0-20251019-073512/checkpoint-1098"
+
+    model_path = "output/debug/v0-20251019-130450/checkpoint-32"
     image_paths = [
         'demo/images/QC-20230106-0000211_16517.jpeg',
         'demo/images/QC-20230106-0000211_16519.jpeg',
+        # "demo/images/QC-202÷30106-0000211_16520.jpeg"
     ]
     prompt = "简要描述这（些）图片。请输出物体的具体坐标。"
     # prompt='Describe the image(s) briefly.'
@@ -50,18 +51,67 @@ def main() -> None:
         raise ValueError("Please set at least one path in image_paths.")
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    if device == "cuda":
+        try:
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.benchmark = True
+            torch.set_float32_matmul_precision("high")
+            print("Enabled TF32 and cuDNN benchmark for faster inference.")
+        except Exception:
+            pass
 
-    print(f"Loading processor from: {checkpoint_path}")
-    processor = AutoProcessor.from_pretrained(checkpoint_path)
+    print(f"Loading processor from: {model_path}")
+    processor = AutoProcessor.from_pretrained(model_path)
+    # Inspect template to ensure 图片_ injection is present
+    try:
+        template_str = getattr(getattr(processor, "tokenizer", None), "chat_template", None)
+        if isinstance(template_str, str):
+            print(f"Template loaded. Contains '图片_': {'图片_' in template_str}")
+        else:
+            print("Template string not available on processor.tokenizer; relying on apply_chat_template output.")
+    except Exception:
+        print("Template inspection failed; proceeding.")
 
-    print(f"Loading model from: {checkpoint_path}")
+    print(f"Loading model from: {model_path}")
     # Use the specific Qwen3-VL class (AutoModelForCausalLM doesn't map this config)
-    model = Qwen3VLForConditionalGeneration.from_pretrained(checkpoint_path, torch_dtype="auto")
+    model = Qwen3VLForConditionalGeneration.from_pretrained(
+        model_path,
+        torch_dtype=torch.bfloat16,
+        attn_implementation="flash_attention_2",
+    )
     model.to(device)
     model.eval()
+    # Report dtype support and current model param dtype
+    try:
+        bf16_ok = getattr(torch.cuda, 'is_bf16_supported', lambda: False)()
+        print(f"CUDA bf16 supported: {bf16_ok}")
+        print(f"Model param dtype: {next(model.parameters()).dtype}")
+    except Exception:
+        pass
+    # Ensure KV cache is enabled for faster decoding
+    try:
+        model.config.use_cache = True
+    except Exception:
+        pass
+    try:
+        model.generation_config.use_cache = True
+    except Exception:
+        pass
+    try:
+        attn_impl = getattr(model.config, "attn_implementation", getattr(model.config, "_attn_implementation", None))
+        use_cache_flag = getattr(getattr(model, "generation_config", None), "use_cache", None)
+        print(f"Attention impl: {attn_impl}; use_cache: {use_cache_flag}")
+    except Exception:
+        pass
 
     print("Loading images...")
     images = load_images(image_paths)
+    print(f"Loaded {len(images)} image(s):")
+    for idx, img in enumerate(images):
+        try:
+            print(f"  images[{idx}]: size={img.size}")
+        except Exception:
+            pass
 
     # Build chat-style messages with system prompt and user turn with images then text prompt
     message_content = [{"type": "image", "image": img} for img in images]
@@ -83,6 +133,14 @@ def main() -> None:
         tokenize=False,
         add_generation_prompt=True,
     )
+    # Preview the templated text and label counts
+    preview_len = 600
+    preview = text[:preview_len]
+    print("\n--- Chat text preview (first 600 chars) ---")
+    print(preview)
+    print("--- end preview ---\n")
+    label_count = text.count("图片_")
+    print(f"Occurrences of '图片_': {label_count}; has 图片_1: {'图片_1' in text}, 图片_2: {'图片_2' in text}")
 
     print("Preprocessing inputs...")
     inputs = processor(
@@ -100,11 +158,12 @@ def main() -> None:
             inputs[k] = v.to(device)
 
     print("Generating...")
-    with torch.no_grad():
+    with torch.inference_mode():
         generated_ids = model.generate(
             **inputs,
-            max_new_tokens=8000,
+            max_new_tokens=4096,
             do_sample=False,
+            use_cache=True,
         )
 
     # Trim input prefix to get only newly generated tokens

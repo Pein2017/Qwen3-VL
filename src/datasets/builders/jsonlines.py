@@ -19,13 +19,12 @@ class JSONLinesBuilder(BaseBuilder):
         *,
         user_prompt: str,
         emit_norm: Literal["none", "norm100", "norm1000"],
-        group_key_prefix: str = "图片_",
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
         self.user_prompt = user_prompt
         self.emit_norm = emit_norm
-        self.group_key_prefix = group_key_prefix
+        # Group key prefix is fixed by the chat template (图片_N)
 
     def build(self, record_a: Dict[str, Any], record_b: Dict[str, Any]) -> Dict[str, Any]:
         """Build grouped JSON messages from two records."""
@@ -45,12 +44,10 @@ class JSONLinesBuilder(BaseBuilder):
 
             image_slot += 1
 
-            # Insert a visible separator before each image block
-            user_contents.append({"type": "text", "text": f"{self.group_key_prefix}{image_slot}"})
             for image in images:
                 user_contents.append({"type": "image", "image": image})
 
-            label = f"{self.group_key_prefix}{image_slot}"
+            label = f"图片_{image_slot}"
             grouped[label] = self._build_group_entry(objects, record)
             self._update_objects_metadata(objects_out, objects, image_slot - 1)
 
@@ -71,7 +68,8 @@ class JSONLinesBuilder(BaseBuilder):
     def build_many(self, records: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Build grouped JSON messages from N records.
 
-        Inserts visible separators like "图片_1", "图片_2" between image token blocks in the user turn.
+        Note: Visible labels (e.g., 图片_N) are injected by the chat template.
+        This builder only appends image blocks followed by the user prompt.
         """
         grouped: Dict[str, Dict[str, Any]] = {}
         user_contents: List[Dict[str, Any]] = []
@@ -84,12 +82,10 @@ class JSONLinesBuilder(BaseBuilder):
             if not images and not objects:
                 continue
             image_slot += 1
-            # Separator before each image block
-            user_contents.append({"type": "text", "text": f"{self.group_key_prefix}{image_slot}"})
             for image in images:
                 user_contents.append({"type": "image", "image": image})
 
-            label = f"{self.group_key_prefix}{image_slot}"
+            label = f"图片_{image_slot}"
             grouped[label] = self._build_group_entry(objects, record)
             self._update_objects_metadata(objects_out, objects, image_slot - 1)
 

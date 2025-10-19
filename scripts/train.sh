@@ -11,7 +11,6 @@ set -euo pipefail
 
 CONDA_ENV="${CONDA_ENV:-ms}"
 CONFIG="${config:-configs/debug.yaml}"
-BASE_CONFIG="${BASE_CONFIG:-}"  # Optional base config for inheritance
 DEBUG="${DEBUG:-false}"
 
 # GPU configuration
@@ -31,9 +30,6 @@ else
   CMD="CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES} python -m src.sft --config ${CONFIG}"
 fi
 
-if [[ -n "${BASE_CONFIG}" ]]; then
-  CMD+=" --base_config ${BASE_CONFIG}"
-fi
 
 if [[ "${DEBUG}" == "true" ]]; then
   CMD+=" --debug"
@@ -47,9 +43,6 @@ echo "========================================================================"
 echo "  MS-Swift Training with YAML Configuration"
 echo "========================================================================"
 echo "[INFO] Config file: ${CONFIG}"
-if [[ -n "${BASE_CONFIG}" ]]; then
-  echo "[INFO] Base config: ${BASE_CONFIG}"
-fi
 echo "[INFO] GPUs: ${CUDA_VISIBLE_DEVICES} (num=${NUM_GPUS})"
 echo "[INFO] Conda env: ${CONDA_ENV}"
 echo "[INFO] Debug mode: ${DEBUG}"
