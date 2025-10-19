@@ -1,0 +1,86 @@
+# Production Configuration - Full-capacity training
+# Larger context, epoch-based eval/save, DeepSpeed enabled
+
+global_max_length: 10000
+
+model:
+  model: output/standard/v0-20251019-073512/checkpoint-1098
+  torch_dtype: bfloat16
+  attn_impl: flash_attention_2
+
+template:
+  template: qwen3_vl_cnsep
+  truncation_strategy: right
+  max_pixels: 401408  # up to 1024x1024
+
+tuner:
+  train_type: lora
+  lora_rank: 8  # Smaller for faster debugging
+  lora_alpha: 16
+  lora_dropout: 0.05
+  target_modules: [all-linear]
+  freeze_llm: false
+  freeze_vit: false
+  freeze_aligner: false
+
+training:
+  output_dir: ./output/standard
+  
+  # Main schedule
+  learning_rate: 1.0e-4
+  vit_lr: 2.0e-5
+  aligner_lr: 1.0e-4
+  num_train_epochs: 10
+  
+  # Batching
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 1
+  gradient_accumulation_steps: 4
+  
+  # Memory optimization
+  gradient_checkpointing: true
+  bf16: true
+  # Packing: concatenate samples to max_length to eliminate padding waste
+  # Note: incompatible with lazy_tokenize; requires support_padding_free=True (Qwen3-VL ✅)
+  packing: true  # Enable for variable-length samples
+  
+  # Eval & checkpointing
+    # Frequent evaluation and saving
+  eval_strategy: steps
+  eval_steps: 100  
+  save_strategy: steps
+  save_steps: 1000  
+  save_total_limit: 2
+  save_only_model: true
+  
+  # Verbose logging
+  logging_dir: ./tb/standard
+  logging_steps: 50
+  logging_first_step: false
+  report_to: [tensorboard]
+  
+  seed: 17
+
+data:
+  dataset: [placeholder]
+  dataset_num_proc: 8
+  dataloader_num_workers: 8
+  eval_dataset: [placeholder]
+
+deepspeed:
+  enabled: true
+  config: zero2
+
+
+custom:
+  train_jsonl: data/ds_v2_full/train.jsonl
+  val_jsonl: data/ds_v2_full/val.jsonl
+  emit_norm: norm1000
+  group_key_prefix: "图片_"
+  images_per_user_turn: 2
+  augment_prob: 0.0
+  dump_conversation_text: false
+
+prompts:
+  scheme: B
+

@@ -1,0 +1,146 @@
+"""Grouped JSON conversation builder"""
+import json
+from typing import Any, Dict, List, Literal
+
+from .base import BaseBuilder
+from ..geometry import normalize_points
+from ..utils import extract_object_points
+
+
+class JSONLinesBuilder(BaseBuilder):
+    """Builder for grouped JSON conversations.
+
+    Produces a single-round chat where the user embeds all images and the assistant
+    responds with one JSON object grouped by 图片_N keys.
+    """
+
+    def __init__(
+        self,
+        *,
+        user_prompt: str,
+        emit_norm: Literal["none", "norm100", "norm1000"],
+        group_key_prefix: str = "图片_",
+        **kwargs,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.user_prompt = user_prompt
+        self.emit_norm = emit_norm
+        self.group_key_prefix = group_key_prefix
+
+    def build(self, record_a: Dict[str, Any], record_b: Dict[str, Any]) -> Dict[str, Any]:
+        """Build grouped JSON messages from two records."""
+        records = [record_a, record_b]
+
+        grouped: Dict[str, Dict[str, Any]] = {}
+        user_contents: List[Dict[str, Any]] = []
+        objects_out: Dict[str, List[Any]] = {"ref": [], "bbox": [], "image_id": []}
+
+        image_slot = 0
+        for record in records:
+            images = record.get("images", []) or []
+            objects = record.get("objects", []) or []
+
+            if not images and not objects:
+                continue
+
+            image_slot += 1
+
+            # Insert a visible separator before each image block
+            user_contents.append({"type": "text", "text": f"{self.group_key_prefix}{image_slot}"})
+            for image in images:
+                user_contents.append({"type": "image", "image": image})
+
+            label = f"{self.group_key_prefix}{image_slot}"
+            grouped[label] = self._build_group_entry(objects, record)
+            self._update_objects_metadata(objects_out, objects, image_slot - 1)
+
+        user_contents.append({"type": "text", "text": self.user_prompt})
+
+        assistant_text = json.dumps(grouped, ensure_ascii=False)
+        messages = [
+            {"role": "user", "content": user_contents},
+            {"role": "assistant", "content": [{"type": "text", "text": assistant_text}]},
+        ]
+
+        merged = {"messages": messages}
+        if objects_out["bbox"]:
+            merged["objects"] = objects_out
+
+        return merged
+
+    def build_many(self, records: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Build grouped JSON messages from N records.
+
+        Inserts visible separators like "图片_1", "图片_2" between image token blocks in the user turn.
+        """
+        grouped: Dict[str, Dict[str, Any]] = {}
+        user_contents: List[Dict[str, Any]] = []
+        objects_out: Dict[str, List[Any]] = {"ref": [], "bbox": [], "image_id": []}
+
+        image_slot = 0
+        for record in records:
+            images = record.get("images", []) or []
+            objects = record.get("objects", []) or []
+            if not images and not objects:
+                continue
+            image_slot += 1
+            # Separator before each image block
+            user_contents.append({"type": "text", "text": f"{self.group_key_prefix}{image_slot}"})
+            for image in images:
+                user_contents.append({"type": "image", "image": image})
+
+            label = f"{self.group_key_prefix}{image_slot}"
+            grouped[label] = self._build_group_entry(objects, record)
+            self._update_objects_metadata(objects_out, objects, image_slot - 1)
+
+        user_contents.append({"type": "text", "text": self.user_prompt})
+
+        assistant_text = json.dumps(grouped, ensure_ascii=False)
+        messages = [
+            {"role": "user", "content": user_contents},
+            {"role": "assistant", "content": [{"type": "text", "text": assistant_text}]},
+        ]
+
+        merged = {"messages": messages}
+        if objects_out["bbox"]:
+            merged["objects"] = objects_out
+        return merged
+
+    def _build_group_entry(self, objects: List[Dict[str, Any]], record: Dict[str, Any]) -> Dict[str, Any]:
+        width = float(record.get("width") or 1)
+        height = float(record.get("height") or 1)
+
+        grouped_objects: Dict[str, Any] = {}
+        for idx, obj in enumerate(objects, start=1):
+            geom_type, points = extract_object_points(obj)
+            payload: Dict[str, Any] = {"desc": obj.get("desc", "")}
+            if geom_type and points:
+                payload[geom_type] = self._format_points(points, width, height)
+            grouped_objects[f"object_{idx}"] = payload
+        return grouped_objects
+
+    def _update_objects_metadata(
+        self,
+        objects_out: Dict[str, List[Any]],
+        objects: List[Dict[str, Any]],
+        image_id: int,
+    ) -> None:
+        for obj in objects:
+            geom_type, points = extract_object_points(obj)
+            if not geom_type or not points:
+                continue
+            objects_out["bbox"].append(points)
+            objects_out["image_id"].append(image_id)
+            desc = obj.get("desc")
+            if desc:
+                objects_out["ref"].append(desc.split("/")[0])
+
+    def _format_points(self, points: List[float], width: float, height: float) -> List[int | float]:
+        if self.emit_norm == "none":
+            return [float(v) for v in points]
+        normalized = normalize_points(points, width, height, self.emit_norm)
+        return [int(v) for v in normalized]
+
+
+__all__ = ["JSONLinesBuilder"]
+

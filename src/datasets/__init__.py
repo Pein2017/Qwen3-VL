@@ -1,0 +1,58 @@
+"""Datasets package for dense captioning with dynamic pairing.
+
+This package provides a modular, ms-swift-aligned architecture for training
+dense caption models with configurable builders, preprocessors, and augmentation.
+
+Submodules:
+- utils: shared utilities (load_jsonl, extract_geometry, etc.)
+- geometry: geometry ops (scaling, affine transformations)
+- augment: image + geometry augmentations
+- collators: data collation utilities
+- preprocessors: row-level transformations (ms-swift style)
+- builders: message builders for different output formats
+- dynamic_pair: dynamic pairing dataset with pluggable components
+- dense_caption: high-level dataset class for dense captioning
+
+Main exports:
+- DenseCaptionDataset: Primary dataset class
+- DynamicPairDataset: Base dataset with pairing logic
+- Builders: JSONLinesBuilder
+- Preprocessors: DenseCaptionPreprocessor, AugmentationPreprocessor
+"""
+
+from .dense_caption import DenseCaptionDataset
+from .dynamic_pair import DynamicPairDataset, DynamicPairingConfig
+from .utils import load_jsonl, extract_object_points, extract_geometry
+from .augment import AugmentationConfig
+from .builders import (
+    BaseBuilder,
+    JSONLinesBuilder,
+)
+from .preprocessors import (
+    BasePreprocessor,
+    DenseCaptionPreprocessor,
+    AugmentationPreprocessor,
+)
+
+__all__ = [
+    # Primary dataset
+    "DenseCaptionDataset",
+    # Base dataset
+    "DynamicPairDataset",
+    "DynamicPairingConfig",
+    # Utilities
+    "load_jsonl",
+    "extract_object_points",
+    "extract_geometry",
+    # Augmentation
+    "AugmentationConfig",
+    # Builders
+    "BaseBuilder",
+    "JSONLinesBuilder",
+    # Preprocessors
+    "BasePreprocessor",
+    "DenseCaptionPreprocessor",
+    "AugmentationPreprocessor",
+]
+
+

@@ -1,0 +1,170 @@
+import random
+import copy
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+
+from torch.utils.data import Dataset
+
+from .utils import load_jsonl
+
+
+def random_pair_selector(index: int, total_size: int, rng: random.Random) -> int:
+    if total_size <= 1:
+        return index
+    partner = index
+    if total_size == 2:
+        partner = 1 - index
+    else:
+        while partner == index:
+            partner = rng.randrange(0, total_size)
+    return partner
+
+
+def default_pair_message_builder(record_a: Dict[str, Any], record_b: Dict[str, Any]) -> Dict[str, Any]:
+    messages_a: List[Dict[str, Any]] = record_a.get("messages") or []
+    messages_b: List[Dict[str, Any]] = record_b.get("messages") or []
+
+    def extract_user_contents(messages: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+        for turn in messages:
+            if turn.get("role") == "user":
+                contents = turn.get("content") or []
+                text_chunks = [c.get("text") for c in contents if c.get("type") == "text" and c.get("text")]
+                user_text = "\n".join(text_chunks) if text_chunks else None
+                return contents, user_text
+        return [], None
+
+    contents_a, text_a = extract_user_contents(messages_a)
+    contents_b, text_b = extract_user_contents(messages_b)
+
+    images_a = [c for c in contents_a if c.get("type") == "image"]
+    images_b = [c for c in contents_b if c.get("type") == "image"]
+
+    merged_user_contents: List[Dict[str, Any]] = []
+    merged_user_contents.extend(images_a)
+    merged_user_contents.extend(images_b)
+
+    merged_text = None
+    if text_a and text_b:
+        merged_text = f"Image A context:\n{text_a}\n\nImage B context:\n{text_b}"
+    elif text_a or text_b:
+        merged_text = text_a or text_b
+    if merged_text:
+        merged_user_contents.append({"type": "text", "text": merged_text})
+
+    assistant_turns = [t for t in messages_a if t.get("role") == "assistant"]
+    assistant_text = None
+    if assistant_turns:
+        assistant_contents = assistant_turns[0].get("content") or []
+        for c in assistant_contents:
+            if c.get("type") == "text" and c.get("text"):
+                assistant_text = c.get("text")
+                break
+
+    merged_messages: List[Dict[str, Any]] = [
+        {"role": "user", "content": merged_user_contents},
+    ]
+    if assistant_text:
+        merged_messages.append({"role": "assistant", "content": [{"type": "text", "text": assistant_text}]})
+
+    return {"messages": merged_messages}
+
+
+@dataclass
+class DynamicPairingConfig:
+    seed: int = 2025
+    pre_tokenize: bool = False
+    # New: how many images/records per user turn (grouping size)
+    images_per_user_turn: int = 2
+
+
+class DynamicPairDataset(Dataset):
+    def __init__(
+        self,
+        base_records: Sequence[Dict[str, Any]],
+        template: Any,
+        pair_selector: Callable[[int, int, random.Random], int] = random_pair_selector,
+        pair_message_builder: Callable[[Dict[str, Any], Dict[str, Any]], Dict[str, Any]] = default_pair_message_builder,
+        config: Optional[DynamicPairingConfig] = None,
+        augmenter: Optional[Any] = None,
+        preprocessor: Optional[Any] = None,
+    ) -> None:
+        self.base_records: List[Dict[str, Any]] = list(base_records)
+        self.template = template
+        self.pair_selector = pair_selector
+        self.pair_message_builder = pair_message_builder
+        self.config = config or DynamicPairingConfig()
+        self.augmenter = augmenter  # Kept for backward compatibility
+        self.preprocessor = preprocessor
+        self._epoch: int = 0
+        self._rng = random.Random(self._seed_for_epoch(self._epoch))
+        
+        # If augmenter provided but no preprocessor, create augmentation preprocessor
+        if self.augmenter is not None and self.preprocessor is None:
+            from .preprocessors import AugmentationPreprocessor
+            self.preprocessor = AugmentationPreprocessor(augmenter=self.augmenter)
+
+    @staticmethod
+    def from_jsonl(jsonl_path: str, template: Any, **kwargs) -> "DynamicPairDataset":
+        records = load_jsonl(jsonl_path)
+        return DynamicPairDataset(records, template, **kwargs)
+
+    def _seed_for_epoch(self, epoch: int) -> int:
+        return (self.config.seed + epoch * 1315423911) & 0xFFFFFFFF
+
+    def set_epoch(self, epoch: int) -> None:
+        self._epoch = int(epoch)
+        self._rng = random.Random(self._seed_for_epoch(self._epoch))
+
+    def __len__(self) -> int:
+        # Number of grouped samples when grouping >1
+        g = max(1, int(self.config.images_per_user_turn))
+        if g <= 1:
+            return len(self.base_records)
+        return (len(self.base_records) + g - 1) // g
+
+    def __getitem__(self, index: int) -> Dict[str, Any]:
+        rng_local = random.Random(self._rng.random())
+        group_size = max(1, int(self.config.images_per_user_turn))
+
+        if group_size <= 1:
+            # Backward-compatible: pair with random partner
+            partner_index = self.pair_selector(index, len(self.base_records), rng_local)
+            records = [copy.deepcopy(self.base_records[index]), copy.deepcopy(self.base_records[partner_index])]
+        else:
+            # Sequential grouping into fixed-size chunks: [0..g-1], [g..2g-1], ...
+            start = index * group_size
+            records = []
+            for i in range(start, min(start + group_size, len(self.base_records))):
+                records.append(copy.deepcopy(self.base_records[i]))
+            if not records:
+                # Fallback to last record if index is out of range due to race
+                records = [copy.deepcopy(self.base_records[-1])]
+
+        # Apply preprocessing if available (e.g., augmentation)
+        if self.preprocessor is not None:
+            if hasattr(self.preprocessor, 'rng'):
+                self.preprocessor.rng = rng_local
+            records = [self.preprocessor(r) for r in records]
+
+        # Adapt to builder API: support list of records
+        pair_builder = self.pair_message_builder
+        if hasattr(pair_builder, 'build_many') and callable(getattr(pair_builder, 'build_many')):
+            merged = pair_builder.build_many(records)
+        else:
+            # Fallback: only two records supported
+            while len(records) < 2:
+                records.append(records[-1])
+            merged = pair_builder(records[0], records[1])
+
+        encoded = self.template.encode(merged, return_length=True)
+        return encoded
+
+
+__all__ = [
+    "DynamicPairDataset",
+    "DynamicPairingConfig",
+    "random_pair_selector",
+    "default_pair_message_builder",
+]
+
+
