@@ -2,7 +2,7 @@
 import os
 import yaml
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Set, List
 
 from swift.llm.argument import TrainArguments
 
@@ -29,6 +29,56 @@ class ConfigLoader:
         with open(config_path, 'r', encoding='utf-8') as f:
             config = yaml.safe_load(f)
         return config
+    
+    @staticmethod
+    def _normalize_to_list(value: Any) -> List[str]:
+        if value is None:
+            return []
+        if isinstance(value, (list, tuple)):
+            return [str(v) for v in value]
+        return [str(value)]
+
+    @staticmethod
+    def load_yaml_with_extends(config_path: str, _visited: Optional[Set[str]] = None) -> Dict[str, Any]:
+        """Load YAML and resolve inheritance via 'extends'/'inherit'.
+        
+        Supports a top-level key in the YAML:
+          - extends: str | list[str]     # relative to the current file
+          - inherit: str | list[str]     # alias of extends
+        
+        Bases are merged in order (earlier are lower precedence).
+        The current file has the highest precedence.
+        Cycles are detected and will raise a ValueError.
+        """
+        abs_path = str(Path(config_path).resolve())
+        visited: Set[str] = set(_visited or set())
+        if abs_path in visited:
+            raise ValueError(f"Cyclic config inheritance detected at: {abs_path}")
+        visited.add(abs_path)
+
+        current_dir = Path(abs_path).parent
+        config = ConfigLoader.load_yaml(abs_path) or {}
+
+        # Gather base paths from supported keys
+        extends_value = None
+        if isinstance(config, dict):
+            extends_value = config.pop('extends', None)
+            if extends_value is None:
+                extends_value = config.pop('inherit', None)
+
+        base_paths = ConfigLoader._normalize_to_list(extends_value)
+
+        # Merge all bases in order
+        merged_base: Dict[str, Any] = {}
+        for base_ref in base_paths:
+            base_path = Path(base_ref)
+            if not base_path.is_absolute():
+                base_path = (current_dir / base_path).resolve()
+            base_cfg = ConfigLoader.load_yaml_with_extends(str(base_path), visited)
+            merged_base = ConfigLoader.merge_configs(merged_base, base_cfg)
+
+        # Finally merge current file on top
+        return ConfigLoader.merge_configs(merged_base, config)
     
     @staticmethod
     def merge_configs(base: Dict, override: Dict) -> Dict:
@@ -164,12 +214,13 @@ class ConfigLoader:
             - train_args: ms-swift TrainArguments object
             - custom_config: Dict with custom dataset parameters
         """
-        # Load main config
-        config = ConfigLoader.load_yaml(config_path)
+        # Load main config (with recursive inheritance)
+        config = ConfigLoader.load_yaml_with_extends(config_path)
         
         # Optionally merge with base config
         if base_config_path:
-            base_config = ConfigLoader.load_yaml(base_config_path)
+            base_config = ConfigLoader.load_yaml_with_extends(base_config_path)
+            # CLI base_config is the lowest precedence
             config = ConfigLoader.merge_configs(base_config, config)
         
         # Resolve prompt key references to actual prompts

@@ -1,17 +1,6 @@
-# Production Configuration - Full-capacity training
-# Larger context, epoch-based eval/save, DeepSpeed enabled
+extends: base.yaml
 
-global_max_length: 10000
-
-model:
-  model: model_cache/models/Qwen/Qwen3-VL-4B-Instruct
-  torch_dtype: bfloat16
-  attn_impl: flash_attention_2
-
-template:
-  template: qwen3_vl
-  truncation_strategy: right
-  max_pixels: 401408  # up to 1024x1024
+# Stage 1: Full training on Aligner only (freeze LLM+ViT)
 
 tuner:
   train_type: full
@@ -24,43 +13,27 @@ training:
   run_name: stage_1_full_aligner_only
   add_version: true
   
-  # Main schedule
   learning_rate: 1.0e-4
   vit_lr: 2.0e-5
   aligner_lr: 1.0e-4
-  num_train_epochs: 12
+  num_train_epochs: 4
   
-  # Batching
-  per_device_train_batch_size: 2
-  per_device_eval_batch_size: 2
   gradient_accumulation_steps: 8
   
-  # Memory optimization
-  gradient_checkpointing: true
-  bf16: true
-  # Packing: concatenate samples to max_length to eliminate padding waste
-  # Note: incompatible with lazy_tokenize; requires support_padding_free=True (Qwen3-VL ✅)
-  packing: true  # Enable for variable-length samples
-  
   # Eval & checkpointing
-    # Frequent evaluation and saving
   eval_strategy: steps
-  eval_steps: 100  
+  eval_steps: 20
   save_strategy: steps
-  save_steps: 1000  
+  save_steps: 1000
   save_total_limit: 2
   save_only_model: true
   
   # Verbose logging
   logging_dir: ./tb/stage_1_full_aligner_only
-  logging_steps: 50
+  logging_steps: 10
   logging_first_step: false
-  report_to: [tensorboard]
-  
-  seed: 17
 
 data:
-  dataset: [placeholder]
   dataset_num_proc: 8
   dataloader_num_workers: 8
   eval_dataset: [placeholder]
@@ -72,11 +45,5 @@ deepspeed:
 custom:
   train_jsonl: data/ds_v2_full/train.jsonl
   val_jsonl: data/ds_v2_full/val.jsonl
-  emit_norm: norm1000
-  images_per_user_turn: 2
   augment_prob: 0.0
   dump_conversation_text: false
-
-prompts:
-  scheme: B
-

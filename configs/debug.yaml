@@ -1,86 +1,43 @@
-# Debug Configuration - Quick iteration for development
-# Minimal epochs, small batches, frequent logging
+extends: base.yaml
 
-global_max_length: 10000
-
-model:
-  model: model_cache/models/Qwen/Qwen3-VL-4B-Instruct
-  torch_dtype: bfloat16
-  attn_impl: flash_attention_2
-
-template:
-  template: qwen3_vl
-  truncation_strategy: right
-  max_pixels: 401408  # up to 1024x1024
-
-tuner:
-  train_type: lora
-  lora_rank: 16  # Match standard config
-  lora_alpha: 32
-  lora_dropout: 0.05
-  target_modules: [all-linear]
-  freeze_llm: true
-  freeze_vit: true
-  freeze_aligner: false
+# Debug Configuration - only overrides from base
 
 training:
   output_dir: ./output/debug
   add_version: true
   run_name: debug
   
-  # Quick iteration
   learning_rate: 1.0e-4
   vit_lr: 2.0e-5
   aligner_lr: 2.0e-4
-  num_train_epochs: 2  # Single epoch for debugging
+  num_train_epochs: 2
   
-  # Small batches
-  per_device_train_batch_size: 2
-  per_device_eval_batch_size: 2
-  gradient_accumulation_steps: 2  # Small for quick feedback
+  gradient_accumulation_steps: 2
   
-  # Memory optimization
-  gradient_checkpointing: true
-  bf16: true
-  packing: true  # Enable for variable-length samples
-  
-  # Frequent evaluation and saving
   eval_strategy: steps
-  eval_steps: 2  # Frequent eval
+  eval_steps: 2
   save_strategy: steps
-  save_steps: 50  # Frequent saves
+  save_steps: 50
   save_total_limit: 1
   save_only_model: true
   
-  # Verbose logging
   logging_dir: ./tb/debug
-  logging_steps: 5  # Log every 5 steps
+  logging_steps: 5
   logging_first_step: true
-  report_to: [tensorboard]
-  
-  seed: 17
 
 data:
-  dataset: [placeholder]
   dataset_num_proc: 1
-  dataloader_num_workers: 0  # 0 for debugging
+  dataloader_num_workers: 0
   # Ensure eval is not disabled by ms-swift arguments logic
   eval_dataset: [placeholder]
 
 deepspeed:
-  enabled: true  # Disable for single-GPU debugging
+  enabled: true  # keep enabled; can be disabled at runtime via base_config if needed
 
 custom:
   train_jsonl: data/ds_v2_full/train.jsonl
   val_jsonl: data/ds_v2_full/val.jsonl
-  emit_norm: norm1000
-  images_per_user_turn: 2
-  augment_prob: 0.0  # No augmentation for debugging
-  # Sample limits for quick smoke tests
+  augment_prob: 0.0
   train_sample_limit: 8
   val_sample_limit: 2
   dump_conversation_text: true
-
-prompts:
-  scheme: B
-
