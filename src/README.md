@@ -42,7 +42,7 @@ src/
 ### Configuration & Setup
 **Modules**: `config/loader.py`, `sft.py`
 
-1. **ConfigLoader** loads YAML, merges base/experiment configs, resolves prompts → `TrainArguments`
+1. **ConfigLoader** loads YAML, resolves `extends`/`inherit` chains, merges base/experiment configs, resolves prompts → `TrainArguments`
 2. **SwiftSft** initializes model, template, trainer with config
 3. **DenseCaptionDataset** constructs train/eval datasets with selected builder and augmentation
 
@@ -306,15 +306,22 @@ outputs = model(
 # Basic training
 python -m src.sft --config configs/qwen3vl_lora.yaml
 
-# With base config inheritance
+# With base config inheritance (two ways)
+# 1) Inline in YAML via `extends`
+python -m src.sft --config configs/standard.yaml
+
+# 2) CLI-provided base (lowest precedence)
 python -m src.sft --config configs/experiment.yaml --base_config configs/base.yaml
 
 # Debug mode
 python -m src.sft --config configs/debug.yaml --debug
 ```
 
-**YAML Structure** (explicit values required):
+**YAML Structure** (explicit values required; you can factor shared fields into `configs/base.yaml`):
 ```yaml
+# Inheritance (optional)
+extends: base.yaml            # or a list: ["base.yaml", "more.yaml"]
+
 model:
   model: path/to/Qwen3-VL-4B-Instruct
 
@@ -342,6 +349,13 @@ prompts:
     模板自动插入 图片_{i} 分隔，无需在文本中手动分段
   user: 描述所有对象
 ```
+
+### Config inheritance rules
+
+- Top-level keys: `extends` or `inherit` (alias). Accepts a string or list.
+- Paths are resolved relative to the current YAML file. Absolute paths also work.
+- Merge order: earlier bases have lower precedence; current file wins.
+- Cycles are detected and raise an error.
 
 ### Two-stage training (recommended)
 
