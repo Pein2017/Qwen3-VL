@@ -5,6 +5,8 @@ import torch
 from PIL import Image
 from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
 
+from src.config.prompts import SYSTEM_PROMPT_B
+
 
 def load_images(image_paths: List[str]) -> List[Image.Image]:
     images: List[Image.Image] = []
@@ -39,7 +41,7 @@ def main() -> None:
     checkpoint_path = "output/standard/v0-20251019-073512/checkpoint-1098"
     image_paths = [
         'demo/images/QC-20230106-0000211_16517.jpeg',
-        # 'demo/images/QC-20230106-0000211_16519.jpeg',
+        'demo/images/QC-20230106-0000211_16519.jpeg',
     ]
     prompt = "简要描述这（些）图片。请输出物体的具体坐标。"
     # prompt='Describe the image(s) briefly.'
@@ -61,14 +63,18 @@ def main() -> None:
     print("Loading images...")
     images = load_images(image_paths)
 
-    # Build chat-style messages with multiple images then user prompt
+    # Build chat-style messages with system prompt and user turn with images then text prompt
     message_content = [{"type": "image", "image": img} for img in images]
     message_content.append({"type": "text", "text": prompt})
     messages = [
         {
+            "role": "system",
+            "content": SYSTEM_PROMPT_B,
+        },
+        {
             "role": "user",
             "content": message_content,
-        }
+        },
     ]
 
     # Create text with multimodal template, then preprocess vision + text together
@@ -97,7 +103,7 @@ def main() -> None:
     with torch.no_grad():
         generated_ids = model.generate(
             **inputs,
-            max_new_tokens=2048,
+            max_new_tokens=8000,
             do_sample=False,
         )
 
