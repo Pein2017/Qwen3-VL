@@ -1,6 +1,8 @@
 # Production Configuration - Full-capacity training
 # Larger context, epoch-based eval/save, DeepSpeed enabled
 
+
+
 global_max_length: 10000
 
 model:
@@ -21,19 +23,19 @@ tuner:
 
 training:
   output_dir: ./output/stage_1_full_aligner_only
-  run_name: stage_1_full_aligner_only
+  run_name: effective_images_32
   add_version: true
   
   # Main schedule
   learning_rate: 1.0e-4
   vit_lr: 2.0e-5
   aligner_lr: 1.0e-4
-  num_train_epochs: 12
+  num_train_epochs: 6
   
   # Batching
   per_device_train_batch_size: 2
   per_device_eval_batch_size: 2
-  gradient_accumulation_steps: 8
+  gradient_accumulation_steps: 4
   
   # Memory optimization
   gradient_checkpointing: true
@@ -43,7 +45,6 @@ training:
   packing: true  # Enable for variable-length samples
   
   # Eval & checkpointing
-    # Frequent evaluation and saving
   eval_strategy: steps
   eval_steps: 100  
   save_strategy: steps

@@ -79,6 +79,49 @@ def main():
         args.config,
         args.base_config
     )
+    # Append run_name to output_dir and logging_dir to form final paths
+    try:
+        run_name = getattr(train_args, 'run_name', None)
+        training_args = getattr(train_args, 'training_args', None)
+
+        # Resolve and update output_dir
+        base_output_dir = getattr(train_args, 'output_dir', None)
+        if base_output_dir is None and training_args is not None:
+            base_output_dir = getattr(training_args, 'output_dir', None)
+        if run_name and base_output_dir:
+            base_output_dir_norm = os.path.normpath(base_output_dir)
+            if os.path.basename(base_output_dir_norm) != str(run_name):
+                final_output_dir = os.path.join(base_output_dir, str(run_name))
+                try:
+                    setattr(train_args, 'output_dir', final_output_dir)
+                except Exception:
+                    pass
+                if training_args is not None:
+                    try:
+                        setattr(training_args, 'output_dir', final_output_dir)
+                    except Exception:
+                        pass
+
+        # Resolve and update logging_dir (tensorboard dir)
+        base_logging_dir = getattr(train_args, 'logging_dir', None)
+        if base_logging_dir is None and training_args is not None:
+            base_logging_dir = getattr(training_args, 'logging_dir', None)
+        if run_name and base_logging_dir:
+            base_logging_dir_norm = os.path.normpath(base_logging_dir)
+            if os.path.basename(base_logging_dir_norm) != str(run_name):
+                final_logging_dir = os.path.join(base_logging_dir, str(run_name))
+                try:
+                    setattr(train_args, 'logging_dir', final_logging_dir)
+                except Exception:
+                    pass
+                if training_args is not None:
+                    try:
+                        setattr(training_args, 'logging_dir', final_logging_dir)
+                    except Exception:
+                        pass
+    except Exception:
+        # Non-fatal: fall back to directories as provided by YAML
+        pass
     
     # Debug mode: print full configuration
     if args.debug:
