@@ -1,0 +1,77 @@
+# Ignore everything by default
+*
+
+# But track these specific folders
+!src/
+!configs/
+!docs/
+!demo/
+!scripts/
+!openspec/
+
+# Track files in the tracked folders
+!src/**
+!configs/**
+!docs/**
+!demo/**
+!scripts/**
+!openspec/**
+!vis_tools/**
+!.cursorignore
+!.cursorindexingignore
+!AGENTS.md
+
+# Ignore common Python cache folders
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd
+**/.Python
+**/build/
+**/develop-eggs/
+**/dist/
+**/downloads/
+**/eggs/
+**/.eggs/
+**/lib/
+**/lib64/
+**/parts/
+**/sdist/
+**/var/
+**/wheels/
+**/*.egg-info/
+**/.installed.cfg
+**/*.egg
+
+# Ignore common IDE and system files
+**/.DS_Store
+**/.vscode/
+**/.idea/
+**/*.swp
+**/*.swo
+**/*~
+
+# Ignore common temporary files
+**/tmp/
+**/temp/
+**/*.log
+**/*.tmp
+
+# Ignore common build and output directories
+**/output/
+**/build/
+**/dist/
+**/target/
+**/node_modules/
+
+# Ignore common data and model files
+**/*.pkl
+**/*.pickle
+**/*.h5
+**/*.hdf5
+**/*.model
+**/*.ckpt
+**/*.pth
+**/*.pt
+**/*.bin
+**/*.safetensors
