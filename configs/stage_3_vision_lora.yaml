@@ -1,0 +1,87 @@
+extends: base.yaml
+
+# Stage 3: LoRA on Vision, freeze LLM; keep aligner full-tuned from stage 2
+
+model:
+  # Point to stage 2 best checkpoint - will load base model + LLM LoRA
+  model: output/stage_2_llm_lora/regularized/best
+
+# Use model's native chat template; max length unified via base.yaml or global_max_length
+
+template:
+  max_pixels: 401408
+
+prompts:
+  scheme: B
+
+tuner:
+  train_type: lora
+  use_swift_lora: true
+  freeze_llm: true      # ← Freeze LLM (keeps stage 2 LoRA weights frozen)
+  freeze_vit: false     # ← Add LoRA to Vision blocks
+  freeze_aligner: true  # ← Keep aligner frozen (already full-tuned in stage 2)
+  target_modules: [all-linear]
+  modules_to_save:
+    # Stage 3: Continue full-tuning aligner (optional - remove if you want to freeze it)
+    - model.visual.merger
+    - model.visual.deepstack_merger_list.0
+    - model.visual.deepstack_merger_list.1
+    - model.visual.deepstack_merger_list.2
+  lora_rank: 8
+  lora_alpha: 16
+  lora_dropout: 0.1
+  lora_bias: none
+
+training:
+  output_dir: ./output/stage_3_vision_lora/regularized
+  run_name: vision_lora_8_16-lr_2e-5-eff_batch-32
+  add_version: true
+  create_checkpoint_symlink: true
+  save_safetensors: true
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 1
+  packing: true
+
+  optimizer: multimodal
+  learning_rate: 2.0e-5   # Vision LoRA learning rate
+  vit_lr: 2.0e-5          # Same as learning_rate for vision
+  aligner_lr: 1.0e-5      # Aligner continues training (if in modules_to_save)
+  num_train_epochs: 2
+
+  gradient_accumulation_steps: 4
+
+  # Eval & checkpointing
+  eval_strategy: steps
+  save_strategy: best
+  eval_steps: 20
+  save_steps: 60
+  load_best_model_at_end: true
+  metric_for_best_model: eval_loss
+  greater_is_better: false
+  save_total_limit: 2
+
+  # Verbose logging
+  logging_dir: ./tb/10-20/vision_lora
+  logging_steps: 10
+  logging_first_step: true
+  
+  # DeepSpeed-compatible LoRA adapter export (same callback works for any LoRA config)
+  external_plugins:
+    - src/custom_plugins/deepspeed_adapter_export.py
+
+data:
+  dataset_num_proc: 8
+  dataloader_num_workers: 8
+  eval_dataset: [placeholder]
+
+deepspeed:
+  enabled: true
+  config: zero2
+
+custom:
+  train_jsonl: data/ds_v2_full/train.jsonl
+  val_jsonl: data/ds_v2_full/val.jsonl
+  augment_prob: 0.0
+  images_per_user_turn: 2
+  dump_conversation_text: false
+

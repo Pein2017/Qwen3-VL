@@ -6,7 +6,7 @@ Modular, YAML-driven pipeline for fine-tuning Qwen3-VL on dense captioning tasks
 - **Composable**: Pluggable preprocessors, builders, augmentation strategies
 - **Reproducible**: Epoch-based seeding for dynamic multi-image pairing
 - **Geometry-aware**: Affine transformations preserve spatial accuracy
-- **Format-flexible**: JSON-lines, readable, or simple output modes
+- **JSON-lines first**: Grouped JSON output with geometry preserved
 
 **Pipeline**: YAML Config → ConfigLoader → SwiftSft → DenseCaptionDataset → DynamicPairDataset → Training Loop
 
@@ -25,15 +25,16 @@ src/
 │   │   └── augmentation.py   # Geometry-aware augmentation
 │   ├── builders/           # Message format builders
 │   │   ├── base.py        # BaseBuilder interface
-│   │   ├── jsonlines.py   # Structured JSON-lines output
-│   │   └── readable.py    # Human-readable formats
+│   │   └── jsonlines.py   # Grouped JSON output
 │   ├── utils.py           # load_jsonl, extract_geometry
 │   ├── geometry.py        # Affine transforms, normalization
 │   ├── augment.py         # Image + geometry augmentation
 │   ├── dynamic_pair.py    # DynamicPairDataset (core engine)
-│   └── dense_caption.py   # DenseCaptionDataset (wrapper)
+│   ├── collators.py       # Data collators (padding-free, etc.)
+│   └── data_details.md    # JSONL schema specification
+├── utils/
+│   └── auto_detect_aligners.py  # Utility to list aligner modules
 ├── sft.py                  # Training entry point (YAML-driven)
-└── data_details.md         # JSONL schema specification
 ```
 
 
@@ -45,6 +46,54 @@ src/
 1. **ConfigLoader** loads YAML, resolves `extends`/`inherit` chains, merges base/experiment configs, resolves prompts → `TrainArguments`
 2. **SwiftSft** initializes model, template, trainer with config
 3. **DenseCaptionDataset** constructs train/eval datasets with selected builder and augmentation
+
+### LoRA Adapter Preparation (Critical!)
+**⚠️ REQUIRED for custom training scripts**
+
+When writing custom training scripts (outside of `SwiftSft`), you **must** call `sft.prepare_model()` before creating the `Trainer`:
+
+```python
+from swift.llm import SwiftSft, TrainArguments
+
+# Load config
+train_args = TrainArguments.from_config(...)
+
+# Initialize SFT pipeline
+sft = SwiftSft(train_args)
+
+# ⚠️ CRITICAL: Apply LoRA adapter before creating trainer
+# Without this call, the model will NOT be wrapped by SwiftModel/PeftModel
+# and full model weights will be saved instead of adapter weights!
+sft.model = sft.prepare_model(train_args, sft.model, template=sft.template, train_dataset=dataset)
+
+# Now create trainer
+trainer = Trainer(model=sft.model, ...)
+```
+
+**What `prepare_model()` does**:
+1. **Freezes modules** based on `freeze_llm`, `freeze_vit`, `freeze_aligner`
+2. **Applies LoRA adapters** to `target_modules` (e.g., `all-linear`)
+3. **Marks `modules_to_save`** for full fine-tuning (e.g., aligner MLP layers)
+4. **Wraps model** in `SwiftModel` or `PeftModel` (depending on backend)
+5. **Enables adapter saving** instead of full checkpoint
+
+**Without this call**:
+- ❌ Model remains unwrapped (raw `Qwen3VLModel`)
+- ❌ LoRA not applied; all parameters trainable (OOM risk)
+- ❌ Checkpoint saves ~9.6GB full weights instead of ~240MB adapter
+- ❌ `adapter_config.json` missing or empty `modules_to_save`
+
+**Verification**:
+```python
+# After prepare_model, check model type
+print(f"Model type: {type(sft.model).__name__}")
+# Expected: SwiftModel or PeftModel (not Qwen3VLModel)
+
+# Check if adapter config exists after training
+import json
+adapter_cfg = json.load(open("checkpoint/adapter_config.json"))
+print(adapter_cfg["modules_to_save"])  # Should list your aligner modules
+```
 
 ### Data Format
 JSONL records (see `data_details.md`):
@@ -60,7 +109,7 @@ JSONL records (see `data_details.md`):
 Index → Pair Selection (epoch-seeded RNG) 
      → Deep Copy (rec_a, rec_b)
      → Preprocessing (optional augmentation)
-     → Message Building (JSONLines/Readable/Simple)
+     → Message Building (JSONLines)
      → Template Encoding (tokenization, bbox norm1000)
      → Training Sample
 ```
@@ -109,34 +158,27 @@ record = {
     "messages": [
         {
             "role": "user",
-            "content": "describe all objects"
+            "content": [
+                {"type": "image", "image": "images/example1.jpeg"},
+                {"type": "text", "text": "describe all objects"}
+            ]
         },
         {
             "role": "assistant",
             "content": [
                 {
                     "type": "text",
-                    "text": (
-                        '{"section": "image_1"}\n'
-                        '{"type": "BBU设备", "geometry": {"quad": [10,100,200,110,190,300,5,290]}, '
-                        '"desc": "BBU设备/华为,显示完整,机柜空间充足需要安装/这个BBU设备按要求配备了挡风板"}\n'
-                        '{"type": "光纤", "geometry": {"line": [50,150,100,200,150,250]}, '
-                        '"desc": "光纤/有保护措施,弯曲半径合理/蛇形管"}\n'
-                        '{"type": "螺丝、光纤插头", "geometry": {"bbox_2d": [80,400,120,450]}, '
-                        '"desc": "螺丝、光纤插头/BBU安装螺丝,显示完整,符合要求"}\n'
-                        '{"summary": "BBU设备×1，光纤×1，螺丝、光纤插头×1"}'
-                    )
+                    "text": "{\"图片_1\": {\"object_1\": {\"quad\": [10,100,200,110,190,300,5,290], \"desc\": \"BBU设备/华为,显示完整,机柜空间充足需要安装/这个BBU设备按要求配备了挡风板\"}, \"object_2\": {\"line\": [50,150,100,200,150,250], \"desc\": \"光纤/有保护措施,弯曲半径合理/蛇形管\"}, \"object_3\": {\"bbox_2d\": [80,400,120,450], \"desc\": \"螺丝、光纤插头/BBU安装螺丝,显示完整,符合要求\"}}}"
                 }
             ]
         }
     ],
-    "images": ["images/example1.jpeg"],
     "objects": {
         "ref": ["BBU设备", "光纤", "螺丝、光纤插头"],
         "bbox": [
-            [10,100,200,110,190,300,5,290],   # quad exact points
-            [50,150,100,200,150,250],         # line exact points
-            [80,400,120,450]                   # bbox_2d
+            [10,100,200,110,190,300,5,290],
+            [50,150,100,200,150,250],
+            [80,400,120,450]
         ],
         "image_id": [0, 0, 0]
     }
@@ -304,14 +346,14 @@ outputs = model(
 
 ```bash
 # Basic training
-python -m src.sft --config configs/qwen3vl_lora.yaml
+python -m src.sft --config configs/stage_2_llm_lora.yaml
 
 # With base config inheritance (two ways)
 # 1) Inline in YAML via `extends`
 python -m src.sft --config configs/standard.yaml
 
 # 2) CLI-provided base (lowest precedence)
-python -m src.sft --config configs/experiment.yaml --base_config configs/base.yaml
+python -m src.sft --config configs/stage_2_llm_lora.yaml --base_config configs/base.yaml
 
 # Debug mode
 python -m src.sft --config configs/debug.yaml --debug
@@ -394,15 +436,126 @@ tuner:
   freeze_aligner: true     # do NOT inject LoRA into aligner
   modules_to_save:
     - model.visual.merger
-    - model.visual.deepstack_merger_list
+    - model.visual.deepstack_merger_list.0
+    - model.visual.deepstack_merger_list.1
+    - model.visual.deepstack_merger_list.2
 ```
 
 Tip: keep `training.aligner_lr` (and optionally `training.vit_lr`) to control per-module learning rates via the multimodal optimizer.
+
+### Inference and Adapter Management
+
+#### Option 1: Inference with Adapter (lightweight)
+Load the base model and adapter separately (~9.6GB base + 240MB adapter):
+
+```bash
+# Using ms-swift CLI
+CUDA_VISIBLE_DEVICES=0 swift infer \
+    --model path/to/base/Qwen3-VL \
+    --adapters output/stage_2_llm_lora/checkpoint-200 \
+    --stream true \
+    --max_new_tokens 2048
+```
+
+Or in Python:
+```python
+from swift.llm import InferArguments, inference
+
+infer_args = InferArguments.from_config({
+    "model": "path/to/base/Qwen3-VL",
+    "adapters": "output/stage_2_llm_lora/checkpoint-200",
+    "stream": True,
+})
+inference(infer_args)
+```
+
+#### Option 2: Merge Adapter into Model (end-to-end)
+Merge LoRA weights into base model for deployment or further full fine-tuning:
+
+```bash
+# Merge adapter into base model
+CUDA_VISIBLE_DEVICES=0 swift export \
+    --model path/to/base/Qwen3-VL \
+    --adapters output/stage_2_llm_lora/checkpoint-200 \
+    --merge_lora true \
+    --output_dir output/stage_2_merged/checkpoint-200 \
+    --save_safetensors true
+
+# Now use merged model directly (no adapter needed)
+CUDA_VISIBLE_DEVICES=0 swift infer \
+    --model output/stage_2_merged/checkpoint-200 \
+    --stream true
+```
+
+**What merging does** (mathematically):
+```python
+# LoRA decomposition during training
+y = (W_base + A·B) · x
+
+# After merging
+W_merged = W_base + (A @ B) * (lora_alpha / lora_rank)
+
+# Merged checkpoint contains only W_merged (no lora_A/lora_B keys)
+```
+
+**When to use each**:
+- **Adapter inference**: Best for experimentation; swap adapters quickly; saves disk space if multiple adapters share the same base
+- **Merged model**: Best for production deployment; slightly faster inference; required for continuing with full fine-tuning (e.g., stage 3 vision LoRA)
+
+#### Continuing Training with Merged Checkpoint
+
+**From adapter checkpoint (recommended for LoRA)**:
+```yaml
+model:
+  model: path/to/base/Qwen3-VL  # Original base model
+  
+tuner:
+  resume_from_checkpoint: output/stage_2_llm_lora/checkpoint-200  # Adapter checkpoint
+  train_type: lora
+  # ... same LoRA config
+```
+✅ Continues LoRA training with same adapter  
+✅ Efficient; only adapter weights updated
+
+**From merged checkpoint (for full fine-tuning or new LoRA target)**:
+```yaml
+model:
+  model: output/stage_2_merged/checkpoint-200  # Merged model (base + stage 2 adapter baked in)
+  
+tuner:
+  train_type: lora
+  freeze_llm: true      # Freeze the merged LLM weights
+  freeze_vit: false     # Apply NEW LoRA to vision
+  freeze_aligner: true
+  target_modules: [all-linear]
+```
+✅ Stage 2 LLM improvements are permanent (merged weights)  
+✅ Stage 3 applies NEW LoRA to different modules (e.g., vision)  
+⚠️ Cannot "un-merge" or separately update stage 2 LoRA
+
+## Utilities
+
+```bash
+# List aligner modules present in a model/checkpoint (helps set modules_to_save)
+python -m src.utils.auto_detect_aligners Qwen/Qwen3-VL-4B-Instruct
+python -m src.utils.auto_detect_aligners output/stage_1_full_aligner_only/best/checkpoint-200
+```
+
+## Dynamic grouping & augmentation (dataset)
+
+- images_per_user_turn: group N records/images into a single user turn (default 2)
+- augment_prob: probability to apply geometry-aware augmentation during training
+- dump_conversation_text: write one decoded conversation sample to disk for inspection
+
+These live under the `custom` section in YAML and are consumed by `src/sft.py` and `datasets/dynamic_pair.py`.
 
 ## Troubleshooting
 
 | Issue | Cause | Solution |
 |-------|-------|----------|
+| **Full model saved instead of LoRA adapter** | Missing `sft.prepare_model()` call | See "LoRA Adapter Preparation (Critical!)" section; must call before `Trainer()` |
+| **`adapter_config.json` missing or `modules_to_save` empty** | LoRA not applied to model | Verify model is wrapped: `isinstance(model, (SwiftModel, PeftModel))` after `prepare_model()` |
+| **`TypeError: modules_to_save cannot be applied to ModuleList`** | Invalid `modules_to_save` path | Specify individual elements: `model.visual.deepstack_merger_list.0`, `.1`, `.2` instead of the container |
 | **FileNotFoundError** | Image paths must be relative | Runner auto-sets `ROOT_IMAGE_DIR` to JSONL dir; verify paths exist |
 | **MaxLengthError/OOM** | Long JSON-lines or many objects | Prefer `global_max_length` (single knob) or lower `template.max_length`; `truncation_strategy=right` (auto) |
 | **Points misalignment** | Augmentation bug | `AugmentationPreprocessor` updates images+geometries atomically; print sample to verify |

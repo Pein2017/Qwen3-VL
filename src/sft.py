@@ -284,6 +284,11 @@ def main():
     
     # Sample printing disabled to avoid dumping labels/ids
     
+    # CRITICAL: Apply tuner (LoRA/adapters) before creating trainer
+    print("\n[INFO] Preparing model with tuner...")
+    sft.model = sft.prepare_model(train_args, sft.model, template=sft.template, train_dataset=dataset)
+    print(f"[INFO] Model after tuner: {type(sft.model).__name__}")
+    
     # Setup trainer
     print("\n[INFO] Setting up trainer...")
     data_collator = sft._get_data_collator()

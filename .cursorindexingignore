@@ -1,0 +1,68 @@
+# Exclude everything from indexing by default
+# NOTE: Do NOT use a bare `*` here - it blocks directory traversal!
+#       Instead, rely on explicit exclusions below.
+
+# Allow code and common config/doc files (these will be indexed)
+!**/*.py
+!**/*.md
+# !**/*.json
+!**/*.yaml
+!**/*.yml
+!**/*.toml
+!**/*.txt
+!**/*.pyi
+!**/*.sh
+!**/*.bash
+!**/Makefile
+!**/.gitignore
+
+# Block heavy assets and datasets (never index these file types)
+**/*.jsonl
+**/*.ndjson
+**/*.parquet
+**/*.jpeg
+**/*.jpg
+**/*.png
+**/*.webp
+**/*.gif
+**/*.bmp
+**/*.tiff
+**/*.svg
+**/*.mp3
+**/*.wav
+**/*.flac
+**/*.ogg
+**/*.mp4
+**/*.mov
+**/*.avi
+**/*.mkv
+**/*.webm
+**/*.pt
+**/*.pth
+**/*.safetensors
+**/*.ckpt
+**/*.bin
+**/*.h5
+**/*.onnx
+**/*.zip
+**/*.tar
+**/*.tar.gz
+**/*.7z
+**/*.gz
+**/*.bz2
+**/*.xz
+
+# Block heavy directories entirely
+model_cache/**
+outputs/**
+output-*/**
+output-post/**
+data/**
+infer_results/**
+tb/**
+logs/**
+tmp/**
+.venv/**
+.env/**
+__pycache__/**
+.cache/**
