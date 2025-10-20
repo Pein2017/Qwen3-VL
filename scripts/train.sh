@@ -43,7 +43,18 @@ if [[ ! -f "${CONFIG_PATH}" ]]; then
 fi
 
 if [[ "${NUM_GPUS}" -gt 1 ]]; then
-  CMD="CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES} torchrun --nproc_per_node=${NUM_GPUS} -m src.sft --config ${CONFIG_PATH}"
+  # Choose a random free MASTER_PORT if not provided
+  if [[ -z "${MASTER_PORT:-}" ]]; then
+    MASTER_PORT="$(python - <<'PY'
+import socket
+s = socket.socket()
+s.bind(('', 0))
+print(s.getsockname()[1])
+s.close()
+PY
+)"
+  fi
+  CMD="CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES} torchrun --nproc_per_node=${NUM_GPUS} --master_port=${MASTER_PORT} -m src.sft --config ${CONFIG_PATH}"
 else
   CMD="CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES} python -m src.sft --config ${CONFIG_PATH}"
 fi
@@ -62,6 +73,9 @@ echo "  MS-Swift Training with YAML Configuration"
 echo "========================================================================"
 echo "[INFO] Config file: ${CONFIG_PATH}"
 echo "[INFO] GPUs: ${CUDA_VISIBLE_DEVICES} (num=${NUM_GPUS})"
+if [[ "${NUM_GPUS}" -gt 1 ]]; then
+echo "[INFO] Master port: ${MASTER_PORT}"
+fi
 echo "[INFO] Conda env: ${CONDA_ENV}"
 echo "[INFO] Debug mode: ${DEBUG}"
 echo "========================================================================"

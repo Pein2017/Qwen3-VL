@@ -2,10 +2,33 @@ extends: base.yaml
 
 # Debug Configuration - only overrides from base
 
+model:
+  model: model_cache/models/Qwen/Qwen3-VL-4B-Instruct
+
+template:
+  max_pixels: 401408
+
+tuner:
+  train_type: lora
+  lora_rank: 16
+  lora_alpha: 32
+  lora_dropout: 0.05
+  target_modules: [all-linear]
+  freeze_llm: true
+  freeze_vit: true
+  freeze_aligner: false
+
+prompts:
+  scheme: B
+
 training:
   output_dir: ./output/debug
   add_version: true
   run_name: debug
+  
+  per_device_train_batch_size: 2
+  per_device_eval_batch_size: 2
+  packing: true
   
   learning_rate: 1.0e-4
   vit_lr: 2.0e-5
@@ -38,6 +61,7 @@ custom:
   train_jsonl: data/ds_v2_full/train.jsonl
   val_jsonl: data/ds_v2_full/val.jsonl
   augment_prob: 0.0
+  images_per_user_turn: 2
   train_sample_limit: 8
   val_sample_limit: 2
   dump_conversation_text: true

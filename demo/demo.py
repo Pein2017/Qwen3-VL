@@ -38,7 +38,7 @@ def show_input_debug(inputs):
 def main() -> None:
     # Configuration (edit these)
 
-    model_path = "output/debug/v0-20251019-130450/checkpoint-32"
+    model_path = "model_cache/models/Qwen/Qwen3-VL-4B-Instruct"
     image_paths = [
         'demo/images/QC-20230106-0000211_16517.jpeg',
         'demo/images/QC-20230106-0000211_16519.jpeg',
