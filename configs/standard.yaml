@@ -6,7 +6,7 @@ model:
   model: model_cache/models/Qwen/Qwen3-VL-4B-Instruct
 
 template:
-  max_pixels: 401408
+  max_pixels: 589824
 
 tuner:
   train_type: lora

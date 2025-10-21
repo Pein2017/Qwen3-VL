@@ -8,7 +8,7 @@ model:
 # Use model's native chat template; max length unified via base.yaml or global_max_length
 
 template:
-  max_pixels: 401408
+  max_pixels: 589824
 
 prompts:
   scheme: B

@@ -412,7 +412,7 @@ template:
   template: qwen3_vl             # use model's chat_template.json (图片_{i} auto-injected)
   max_length: 4096
   truncation_strategy: right
-  max_pixels: 401408             # e.g., up to 1024x1024
+  max_pixels: 589824             # e.g., up to 1024x1024
 
 training:
   num_train_epochs: 3

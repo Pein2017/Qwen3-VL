@@ -9,7 +9,7 @@ model:
 # Use model's native chat template; max length unified via base.yaml or global_max_length
 
 template:
-  max_pixels: 401408
+  max_pixels: 589824
 
 prompts:
   scheme: B
@@ -50,7 +50,7 @@ tuner:
 
 training:
   output_dir: ./output/stage_3_vision_llm_loRA
-  run_name: lora_8_32-eff_batch-16
+  run_name: lora_8_32-eff_batch-16-epoch30-small_lr
   add_version: true
   save_safetensors: true
   per_device_train_batch_size: 1
@@ -58,12 +58,12 @@ training:
   packing: true
 
   optimizer: multimodal
-  learning_rate: 8.0e-4   # Vision LoRA learning rate
-  vit_lr: 8.0e-4          # Same as learning_rate for vision
-  aligner_lr: 1.0e-5      # Aligner continues training (if in modules_to_save)
-  num_train_epochs: 10
+  learning_rate: 4.0e-5   # Vision LoRA learning rate
+  vit_lr: 2.0e-5          # Same as learning_rate for vision
+  aligner_lr: 5.0e-5      # Aligner continues training (if in modules_to_save)
+  num_train_epochs: 30
 
-  gradient_accumulation_steps: 2
+  gradient_accumulation_steps: 1
 
   # Eval & checkpointing
   eval_strategy: steps
@@ -92,7 +92,7 @@ deepspeed:
 custom:
   train_jsonl: data/bbu_full_768/train.jsonl
   val_jsonl: data/bbu_full_768/val.jsonl
-  images_per_user_turn: 2
+  images_per_user_turn: 4
   dump_conversation_text: false
   # Augmentation pipeline (training only). Eval remains unchanged.
   augmentation:
