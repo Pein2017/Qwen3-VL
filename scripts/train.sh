@@ -21,21 +21,26 @@ DEBUG="${DEBUG:-false}"
 # GPU configuration
 CUDA_VISIBLE_DEVICES="${gpus:-0}"
 
-# Derive number of GPUs
-IFS=',' read -r -a gpu_array <<< "${CUDA_VISIBLE_DEVICES}"
+# Derive number of GPUs (ignore empty/whitespace tokens)
+IFS=',' read -r -a _raw_gpu_array <<< "${CUDA_VISIBLE_DEVICES}"
+gpu_array=()
+for _dev in "${_raw_gpu_array[@]}"; do
+  [[ -n "${_dev// }" ]] && gpu_array+=("${_dev}")
+done
 NUM_GPUS="${#gpu_array[@]}"
 
 # ============================================================================
 # Build Command
 # ============================================================================
 
-## Resolve CONFIG_RAW to a full path under repo configs/ with .yaml extension if needed
-if [[ "${CONFIG_RAW}" != *.yaml ]]; then
-  CONFIG_REL="configs/${CONFIG_RAW}.yaml"
+## Resolve CONFIG_RAW to absolute path or repo-relative
+if [[ "${CONFIG_RAW}" = /* ]]; then
+  CONFIG_PATH="${CONFIG_RAW}"
+elif [[ "${CONFIG_RAW}" == *.yaml ]]; then
+  CONFIG_PATH="${REPO_DIR}/${CONFIG_RAW}"
 else
-  CONFIG_REL="${CONFIG_RAW}"
+  CONFIG_PATH="${REPO_DIR}/configs/${CONFIG_RAW}.yaml"
 fi
-CONFIG_PATH="${REPO_DIR}/${CONFIG_REL}"
 
 if [[ ! -f "${CONFIG_PATH}" ]]; then
   echo "[ERROR] Config file not found: ${CONFIG_PATH}" >&2
@@ -43,17 +48,7 @@ if [[ ! -f "${CONFIG_PATH}" ]]; then
 fi
 
 if [[ "${NUM_GPUS}" -gt 1 ]]; then
-  # Choose a random free MASTER_PORT if not provided
-  if [[ -z "${MASTER_PORT:-}" ]]; then
-    MASTER_PORT="$(python - <<'PY'
-import socket
-s = socket.socket()
-s.bind(('', 0))
-print(s.getsockname()[1])
-s.close()
-PY
-)"
-  fi
+  MASTER_PORT="${MASTER_PORT:-29500}"
   CMD="CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES} torchrun --nproc_per_node=${NUM_GPUS} --master_port=${MASTER_PORT} -m src.sft --config ${CONFIG_PATH}"
 else
   CMD="CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES} python -m src.sft --config ${CONFIG_PATH}"

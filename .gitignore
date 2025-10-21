@@ -8,6 +8,7 @@
 !demo/
 !scripts/
 !openspec/
+!vis_tools/
 
 # Track files in the tracked folders
 !src/**

@@ -112,6 +112,9 @@ class JSONLinesBuilder(BaseBuilder):
             payload: Dict[str, Any] = {"desc": obj.get("desc", "")}
             if geom_type and points:
                 payload[geom_type] = self._format_points(points, width, height)
+                if geom_type == "line":
+                    # Number of point pairs in the line polyline
+                    payload["line_points"] = len(points) // 2
             grouped_objects[f"object_{idx}"] = payload
         return grouped_objects
 

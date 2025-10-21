@@ -19,29 +19,29 @@ tuner:
 
 training:
   output_dir: ./output/stage_1_full_aligner_only
-  run_name: eff_batch_64-lr_1e-4
+  run_name: eff_batch_64-lr_5e-4-epoch_10
   add_version: true
   per_device_train_batch_size: 2
   per_device_eval_batch_size: 2
   packing: true
   
-  learning_rate: 1.0e-4
+  learning_rate: 5.0e-4
   vit_lr: 2.0e-5
-  aligner_lr: 1.0e-4
-  num_train_epochs: 6
+  aligner_lr: 5.0e-4
+  num_train_epochs: 10
   
-  gradient_accumulation_steps: 4
+  gradient_accumulation_steps: 8
   
   # Eval & checkpointing
   eval_strategy: steps
   eval_steps: 20
-  save_strategy: steps
+  save_strategy: best
   save_steps: 40
   save_total_limit: 2
   save_only_model: true
   
   # Verbose logging
-  logging_dir: ./tb/10-20
+  logging_dir: ./tb/10-21
   logging_steps: 10
   logging_first_step: false
 
@@ -51,7 +51,7 @@ data:
   eval_dataset: [placeholder]
 
 deepspeed:
-  enabled: true
+  enabled: false
   config: zero2
 
 custom:

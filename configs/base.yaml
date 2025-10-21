@@ -19,6 +19,7 @@ training:
   seed: 17
   warmup_ratio: 0.05
   max_grad_norm: 0.5
+  weight_decay: 0.1 
 
 data:
   dataset: [placeholder]

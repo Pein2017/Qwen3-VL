@@ -498,6 +498,26 @@ W_merged = W_base + (A @ B) * (lora_alpha / lora_rank)
 # Merged checkpoint contains only W_merged (no lora_A/lora_B keys)
 ```
 
+#### LoRA merge: principle & workflow (ms‑swift)
+
+- **Principle**: Fold each LoRA low‑rank delta into its host weight and remove adapter hooks, leaving a clean base‑only checkpoint (see formula above).
+- **Workflow (under the hood)**:
+  1. CLI: `swift export --merge_lora true --model <base> --adapters <adapter> --output_dir <out>`
+  2. Route: `SwiftExport.run()` detects `merge_lora=true` → calls `merge_lora(args)`.
+  3. Merge:
+     - Disables `quant_method` (merges on original weights) and sets `device_map`.
+     - Loads base + adapter via `prepare_model_template(args)` (wraps as `SwiftModel`/`PeftModel`).
+     - Safeguards tied embeddings when wrapped by adapter modules.
+     - Executes `Swift.merge_and_unload(model)`:
+       - If PEFT: `PeftModel.merge_and_unload()` folds LoRA into base.
+       - If Swift‑LoRA: calls `LoRA.unpatch_lora(...)` which merges and detaches adapter modules.
+  4. Save: `save_checkpoint(..., safe_serialization, max_shard_size)` writes the merged model (and processor) to `output_dir`.
+  5. Cleanup: Args updated to point to the merged dir; `adapters` cleared; use the merged model directly for inference/further training.
+- **Notes**:
+  - Merge is irreversible at the weight level; keep the adapter checkpoint if you may need it later.
+  - Merge happens on non‑quantized weights; quantize after merging if needed.
+  - Merged checkpoints are slightly faster at inference and avoid adapter management.
+
 **When to use each**:
 - **Adapter inference**: Best for experimentation; swap adapters quickly; saves disk space if multiple adapters share the same base
 - **Merged model**: Best for production deployment; slightly faster inference; required for continuing with full fine-tuning (e.g., stage 3 vision LoRA)
