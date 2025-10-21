@@ -170,11 +170,18 @@ def main():
         _override_processor_flags(getattr(proc, 'video_processor', None))
         print("[INFO] Processor overrides applied: do_resize=False, do_rescale=False, do_normalize=False")
 
-    # Configure augmentation (legacy augment_prob no longer supported)
+    # Configure augmentation via YAML builder (applies only to training)
     augmenter = None
-    augment_prob = custom_config.get('augment_prob', 0.0)
-    if augment_prob and float(augment_prob) > 0.0:
-        raise ValueError("custom.augment_prob is no longer supported. Provide a Compose pipeline via code or YAML-driven pipeline builder.")
+    aug_cfg = custom_config.get('augmentation')
+    if isinstance(aug_cfg, dict) and aug_cfg.get('enabled', True):
+        try:
+            from .datasets.augmentation.builder import build_compose_from_config
+            # Ensure ops are registered by importing ops module
+            from .datasets.augmentation import ops as _register_ops  # noqa: F401
+            augmenter = build_compose_from_config(aug_cfg)
+            print("[INFO] Augmentation pipeline built from YAML (training only)")
+        except Exception as e:
+            raise ValueError(f"Failed to build augmentation pipeline from YAML: {e}")
     
     # Sample limits for quick smoke tests
     shared_sample_limit = custom_config.get('sample_limit')

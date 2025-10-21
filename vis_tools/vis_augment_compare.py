@@ -29,6 +29,7 @@ from src.datasets.augmentation.ops import (
     Posterize,
     Sharpness,
     AlbumentationsColor,
+    PadToMultiple,
 )
 from src.datasets.augment import apply_augmentations
 from vis_tools.vis_helper import draw_objects, generate_colors, create_legend
@@ -61,6 +62,8 @@ class VisConfig:
     sharpness_p: float = 0.0
     albumentations_p: float = 0.0
     albumentations_preset: str = "strong"
+    # enforce size multiple like training YAML
+    pad_multiple: int = 32
 
 
 def _geom_to_objects(geoms: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -107,13 +110,14 @@ def _build_random_pipeline(rng: Random, cfg: VisConfig):
         ops.append(Scale(s, s, 1.0))
         labels.append(f"scale={s:.3f}")
     if rng.random() < cfg.color_p:
-        ops.append(ColorJitter(brightness=(0.6, 1.4), contrast=(0.6, 1.4), saturation=(0.5, 1.6), prob=1.0))
+        # Match YAML medium defaults: 0.8-1.2 ranges
+        ops.append(ColorJitter(brightness=(0.8, 1.2), contrast=(0.8, 1.2), saturation=(0.8, 1.2), prob=1.0))
         labels.append("cj")
     if rng.random() < cfg.gamma_p:
-        ops.append(Gamma(gamma=(0.6, 1.6), prob=1.0))
+        ops.append(Gamma(gamma=(0.8, 1.3), prob=1.0))
         labels.append("gamma")
     if rng.random() < cfg.hsv_p:
-        ops.append(HueSaturationValue(hue_delta_deg=(-25, 25), sat=(0.6, 1.6), val=(0.6, 1.6), prob=1.0))
+        ops.append(HueSaturationValue(hue_delta_deg=(-15, 15), sat=(0.8, 1.3), val=(0.8, 1.3), prob=1.0))
         labels.append("hsv")
     if rng.random() < cfg.clahe_p:
         ops.append(CLAHE(clip_limit=3.0, tile_grid_size=(8, 8), prob=1.0))
@@ -138,8 +142,12 @@ def _build_random_pipeline(rng: Random, cfg: VisConfig):
         labels.append(f"alb-{cfg.albumentations_preset}")
     if not ops:
         # ensure at least one op to visualize
-        ops.append(ColorJitter(brightness=(0.6, 1.4), contrast=(0.6, 1.4), saturation=(0.5, 1.6), prob=1.0))
+        ops.append(ColorJitter(brightness=(0.8, 1.2), contrast=(0.8, 1.2), saturation=(0.8, 1.2), prob=1.0))
         labels.append("cj")
+    # Always enforce pad-to-multiple to mirror training
+    if cfg.pad_multiple and cfg.pad_multiple > 0:
+        ops.append(PadToMultiple(cfg.pad_multiple))
+        labels.append(f"pad{cfg.pad_multiple}")
     return Compose(ops), "|".join(labels)
 
 
@@ -213,29 +221,31 @@ def visualize_samples(cfg: VisConfig) -> None:
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--jsonl', required=True)
-    parser.add_argument('--out', required=True)
+    # Defaults mirror configs/stage_3_vision_lora.yaml
+    parser.add_argument('--jsonl', default='data/bbu_full_768/train.jsonl')
+    parser.add_argument('--out', default='vis_out/augment_compare_default')
     parser.add_argument('--num', type=int, default=8)
     parser.add_argument('--variants', type=int, default=3)
     parser.add_argument('--seed', type=int, default=2025)
-    parser.add_argument('--rotate_p', type=float, default=0.7)
+    parser.add_argument('--rotate_p', type=float, default=0.3)
     parser.add_argument('--max_deg', type=float, default=8.0)
-    parser.add_argument('--scale_p', type=float, default=0.7)
+    parser.add_argument('--scale_p', type=float, default=0.35)
     parser.add_argument('--scale_lo', type=float, default=0.95)
     parser.add_argument('--scale_hi', type=float, default=1.05)
     parser.add_argument('--hflip_p', type=float, default=0.5)
     parser.add_argument('--vflip_p', type=float, default=0.1)
-    parser.add_argument('--color_p', type=float, default=0.8)
-    parser.add_argument('--gamma_p', type=float, default=0.0)
-    parser.add_argument('--hsv_p', type=float, default=0.0)
-    parser.add_argument('--clahe_p', type=float, default=0.0)
-    parser.add_argument('--auto_contrast_p', type=float, default=0.0)
-    parser.add_argument('--equalize_p', type=float, default=0.0)
+    parser.add_argument('--color_p', type=float, default=0.5)
+    parser.add_argument('--gamma_p', type=float, default=0.25)
+    parser.add_argument('--hsv_p', type=float, default=0.3)
+    parser.add_argument('--clahe_p', type=float, default=0.15)
+    parser.add_argument('--auto_contrast_p', type=float, default=0.1)
+    parser.add_argument('--equalize_p', type=float, default=0.05)
     parser.add_argument('--solarize_p', type=float, default=0.0)
     parser.add_argument('--posterize_p', type=float, default=0.0)
-    parser.add_argument('--sharpness_p', type=float, default=0.0)
+    parser.add_argument('--sharpness_p', type=float, default=0.25)
     parser.add_argument('--albumentations_p', type=float, default=0.0)
     parser.add_argument('--albumentations_preset', type=str, default='strong', choices=['strong', 'extreme'])
+    parser.add_argument('--pad_multiple', type=int, default=32)
     args = parser.parse_args()
     cfg = VisConfig(
         jsonl_path=args.jsonl,
@@ -261,6 +271,7 @@ if __name__ == '__main__':
         sharpness_p=args.sharpness_p,
         albumentations_p=args.albumentations_p,
         albumentations_preset=args.albumentations_preset,
+        pad_multiple=args.pad_multiple,
     )
     visualize_samples(cfg)
 

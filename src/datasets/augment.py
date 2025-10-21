@@ -62,10 +62,12 @@ def apply_augmentations(
         raise ValueError(f"pipeline.apply returned {len(out_imgs)} images, expected {len(pil_images)}")
     if len(geoms) != len(per_object_geoms):
         raise ValueError(f"pipeline.apply returned {len(geoms)} geometries, expected {len(per_object_geoms)}")
+    # Validate that all output images share the same size; allow size change (e.g., padding to multiples)
+    out_w, out_h = out_imgs[0].width, out_imgs[0].height
     for i, im in enumerate(out_imgs):
-        if im.width != base_w or im.height != base_h:
+        if im.width != out_w or im.height != out_h:
             raise ValueError(
-                f"augmentation pipeline must preserve image size; image[{i}] is {im.width}x{im.height}, expected {base_w}x{base_h}"
+                f"augmentation pipeline must produce images with identical size; image[0]={out_w}x{out_h}, image[{i}]={im.width}x{im.height}"
             )
     images_bytes = [{"bytes": _image_to_bytes(img)} for img in out_imgs]
     return images_bytes, geoms

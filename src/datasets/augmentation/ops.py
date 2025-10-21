@@ -35,6 +35,17 @@ def _to_bytes(img: Image.Image) -> Dict[str, bytes]:
     return {"bytes": buf.getvalue()}
 
 
+def _pad_to_multiple(img: Image.Image, *, mult: int = 32) -> Image.Image:
+    w, h = img.width, img.height
+    new_w = ((w + mult - 1) // mult) * mult
+    new_h = ((h + mult - 1) // mult) * mult
+    if new_w == w and new_h == h:
+        return img
+    canvas = Image.new("RGB", (new_w, new_h), (0, 0, 0))
+    canvas.paste(img, (0, 0))
+    return canvas
+
+
 def _bbox_from_points(points: List[float], width: int, height: int) -> List[int]:
     xs = points[0::2]
     ys = points[1::2]
@@ -49,6 +60,12 @@ def _bbox_from_points(points: List[float], width: int, height: int) -> List[int]
 class HFlip(ImageAugmenter):
     def __init__(self, prob: float = 0.5):
         self.prob = float(prob)
+        self.kind = "affine"
+
+    def affine(self, width: int, height: int, rng: Any):
+        if rng.random() >= self.prob:
+            return None
+        return hflip_matrix(width)
 
     def apply(self, images: List[Any], geoms: List[Dict[str, Any]], *, width: int, height: int, rng: Any):
         if rng.random() >= self.prob:
@@ -93,6 +110,12 @@ class HFlip(ImageAugmenter):
 class VFlip(ImageAugmenter):
     def __init__(self, prob: float = 0.1):
         self.prob = float(prob)
+        self.kind = "affine"
+
+    def affine(self, width: int, height: int, rng: Any):
+        if rng.random() >= self.prob:
+            return None
+        return vflip_matrix(height)
 
     def apply(self, images: List[Any], geoms: List[Dict[str, Any]], *, width: int, height: int, rng: Any):
         if rng.random() >= self.prob:
@@ -137,6 +160,14 @@ class Rotate(ImageAugmenter):
     def __init__(self, max_deg: float = 10.0, prob: float = 0.5):
         self.max_deg = float(max_deg)
         self.prob = float(prob)
+
+        self.kind = "affine"
+
+    def affine(self, width: int, height: int, rng: Any):
+        if self.max_deg <= 0 or rng.random() >= self.prob:
+            return None
+        deg = rng.uniform(-self.max_deg, self.max_deg)
+        return rotate_center(deg, width / 2.0, height / 2.0)
 
     def apply(self, images: List[Any], geoms: List[Dict[str, Any]], *, width: int, height: int, rng: Any):
         if self.max_deg <= 0 or rng.random() >= self.prob:
@@ -184,6 +215,14 @@ class Scale(ImageAugmenter):
         self.hi = float(hi)
         self.prob = float(prob)
 
+        self.kind = "affine"
+
+    def affine(self, width: int, height: int, rng: Any):
+        if rng.random() >= self.prob:
+            return None
+        s = rng.uniform(self.lo, self.hi)
+        return scale_center(s, s, width / 2.0, height / 2.0)
+
     def apply(self, images: List[Any], geoms: List[Dict[str, Any]], *, width: int, height: int, rng: Any):
         if rng.random() >= self.prob:
             return images, geoms
@@ -230,6 +269,7 @@ class ColorJitter(ImageAugmenter):
         self.contrast = tuple(map(float, contrast))
         self.saturation = tuple(map(float, saturation))
         self.prob = float(prob)
+        self.kind = "color"
 
     def apply(self, images: List[Any], geoms: List[Dict[str, Any]], *, width: int, height: int, rng: Any):
         if rng.random() >= self.prob:
@@ -247,12 +287,93 @@ class ColorJitter(ImageAugmenter):
         return out_imgs, geoms
 
 
+@register("pad_to_multiple")
+class PadToMultiple(ImageAugmenter):
+    def __init__(self, multiple: int = 32):
+        if multiple <= 0:
+            raise ValueError(f"multiple must be > 0, got {multiple}")
+        self.multiple = int(multiple)
+        self.kind = "barrier"
+
+    def apply(self, images: List[Any], geoms: List[Dict[str, Any]], *, width: int, height: int, rng: Any):
+        out_imgs: List[Any] = []
+        for img in images:
+            im = _pil(img)
+            out_imgs.append(_pad_to_multiple(im, mult=self.multiple))
+        # Geometry remains the same in pixel coordinates; padding appends zeros to the right/bottom
+        return out_imgs, geoms
+
+
+@register("resize_by_scale")
+class ResizeByScale(ImageAugmenter):
+    def __init__(self, lo: float = 0.8, hi: float = 1.2, scales: List[float] | None = None, align_multiple: int | None = 32, prob: float = 1.0):
+        self.lo = float(lo)
+        self.hi = float(hi)
+        self.scales = [float(s) for s in (scales or [])]
+        self.align_multiple = int(align_multiple) if align_multiple else None
+        self.prob = float(prob)
+        self.kind = "barrier"
+
+    def apply(self, images: List[Any], geoms: List[Dict[str, Any]], *, width: int, height: int, rng: Any):
+        if rng.random() >= self.prob:
+            return images, geoms
+        # choose scale
+        if self.scales:
+            s = self.scales[int(rng.randrange(0, len(self.scales)))]
+        else:
+            s = rng.uniform(self.lo, self.hi)
+        new_w = max(1, int(round(width * s)))
+        new_h = max(1, int(round(height * s)))
+        if self.align_multiple and self.align_multiple > 1:
+            m = self.align_multiple
+            new_w = ((new_w + m - 1) // m) * m
+            new_h = ((new_h + m - 1) // m) * m
+        sx = new_w / float(width)
+        sy = new_h / float(height)
+
+        out_imgs: List[Any] = []
+        for img in images:
+            im = _pil(img)
+            out_imgs.append(im.resize((new_w, new_h), resample=Image.BICUBIC))
+
+        # scale geometries in pixel space
+        out_geoms: List[Dict[str, Any]] = []
+        for g in geoms:
+            if "bbox_2d" in g:
+                x1, y1, x2, y2 = g["bbox_2d"]
+                bb = [x1 * sx, y1 * sy, x2 * sx, y2 * sy]
+                bb = clamp_points(bb, new_w, new_h)
+                out_geoms.append({"bbox_2d": bb})
+            elif "quad" in g:
+                pts = g["quad"]
+                scaled = []
+                for i in range(0, len(pts), 2):
+                    scaled.append(pts[i] * sx)
+                    scaled.append(pts[i + 1] * sy)
+                scaled = clamp_points(scaled, new_w, new_h)
+                out_geoms.append({"quad": scaled})
+            elif "line" in g:
+                pts = g["line"]
+                scaled = []
+                for i in range(0, len(pts), 2):
+                    scaled.append(pts[i] * sx)
+                    scaled.append(pts[i + 1] * sy)
+                scaled = clamp_points(scaled, new_w, new_h)
+                scaled = dedupe_consecutive_points(scaled)
+                out_geoms.append({"line": scaled if len(scaled) >= 4 else g["line"]})
+            else:
+                out_geoms.append(g)
+
+        return out_imgs, out_geoms
+
+
 @register("gamma")
 class Gamma(ImageAugmenter):
     def __init__(self, gamma=(0.7, 1.4), gain: float = 1.0, prob: float = 1.0):
         self.gamma = (float(gamma[0]), float(gamma[1]))
         self.gain = float(gain)
         self.prob = float(prob)
+        self.kind = "color"
 
     def apply(self, images: List[Any], geoms: List[Dict[str, Any]], *, width: int, height: int, rng: Any):
         if rng.random() >= self.prob:
@@ -274,6 +395,7 @@ class HueSaturationValue(ImageAugmenter):
         self.sat = (float(sat[0]), float(sat[1]))
         self.val = (float(val[0]), float(val[1]))
         self.prob = float(prob)
+        self.kind = "color"
 
     def apply(self, images: List[Any], geoms: List[Dict[str, Any]], *, width: int, height: int, rng: Any):
         if rng.random() >= self.prob:
@@ -306,6 +428,7 @@ class CLAHE(ImageAugmenter):
         self.clip_limit = float(clip_limit)
         self.tile_grid_size = (int(tile_grid_size[0]), int(tile_grid_size[1]))
         self.prob = float(prob)
+        self.kind = "color"
 
     def apply(self, images: List[Any], geoms: List[Dict[str, Any]], *, width: int, height: int, rng: Any):
         if rng.random() >= self.prob:
@@ -335,6 +458,7 @@ class AutoContrast(ImageAugmenter):
     def __init__(self, cutoff: int = 0, prob: float = 0.5):
         self.cutoff = int(cutoff)
         self.prob = float(prob)
+        self.kind = "color"
 
     def apply(self, images: List[Any], geoms: List[Dict[str, Any]], *, width: int, height: int, rng: Any):
         if rng.random() >= self.prob:
@@ -350,6 +474,7 @@ class AutoContrast(ImageAugmenter):
 class Equalize(ImageAugmenter):
     def __init__(self, prob: float = 0.5):
         self.prob = float(prob)
+        self.kind = "color"
 
     def apply(self, images: List[Any], geoms: List[Dict[str, Any]], *, width: int, height: int, rng: Any):
         if rng.random() >= self.prob:
@@ -366,6 +491,7 @@ class Solarize(ImageAugmenter):
     def __init__(self, threshold: int = 128, prob: float = 0.3):
         self.threshold = int(threshold)
         self.prob = float(prob)
+        self.kind = "color"
 
     def apply(self, images: List[Any], geoms: List[Dict[str, Any]], *, width: int, height: int, rng: Any):
         if rng.random() >= self.prob:
@@ -382,6 +508,7 @@ class Posterize(ImageAugmenter):
     def __init__(self, bits: int = 4, prob: float = 0.3):
         self.bits = int(bits)
         self.prob = float(prob)
+        self.kind = "color"
 
     def apply(self, images: List[Any], geoms: List[Dict[str, Any]], *, width: int, height: int, rng: Any):
         if rng.random() >= self.prob:
@@ -398,6 +525,7 @@ class Sharpness(ImageAugmenter):
     def __init__(self, factor=(0.5, 1.8), prob: float = 0.4):
         self.factor = (float(factor[0]), float(factor[1]))
         self.prob = float(prob)
+        self.kind = "color"
 
     def apply(self, images: List[Any], geoms: List[Dict[str, Any]], *, width: int, height: int, rng: Any):
         if rng.random() >= self.prob:
@@ -415,6 +543,7 @@ class AlbumentationsColor(ImageAugmenter):
     def __init__(self, preset: str = "strong", prob: float = 1.0):
         self.preset = str(preset)
         self.prob = float(prob)
+        self.kind = "color"
 
     def _build_pipeline(self):
         try:
@@ -509,6 +638,7 @@ __all__ = [
     "Posterize",
     "Sharpness",
     "AlbumentationsColor",
+    "PadToMultiple",
 ]
 
 
