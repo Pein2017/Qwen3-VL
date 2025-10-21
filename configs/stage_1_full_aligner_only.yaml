@@ -19,7 +19,7 @@ tuner:
 
 training:
   output_dir: ./output/stage_1_full_aligner_only
-  run_name: eff_batch_64-lr_5e-4-epoch_10
+  run_name: eff_batch_16-lr_5e-4-epoch_10-line_points
   add_version: true
   per_device_train_batch_size: 2
   per_device_eval_batch_size: 2
@@ -30,7 +30,7 @@ training:
   aligner_lr: 5.0e-4
   num_train_epochs: 10
   
-  gradient_accumulation_steps: 8
+  gradient_accumulation_steps: 2
   
   # Eval & checkpointing
   eval_strategy: steps

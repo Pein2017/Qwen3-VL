@@ -8,7 +8,6 @@ from swift.llm.train.sft import SwiftSft
 from swift.trainers import TrainerFactory
 
 from .datasets import DenseCaptionDataset
-from .datasets.augment import AugmentationConfig
 from .config import ConfigLoader
 
 # Use the model's native chat_template (JSON/Jinja) shipped with the tokenizer
@@ -152,12 +151,30 @@ def main():
     if train_args.train_type == 'lora':
         print(f"[INFO] LoRA rank: {train_args.lora_rank}, alpha: {train_args.lora_alpha}")
     
-    # Configure augmentation if requested
+    # Force HF processor preprocessing flags off (no YAML needed)
+    proc = getattr(sft, 'template', None)
+    proc = getattr(proc, 'processor', None)
+    def _override_processor_flags(p):
+        if p is None:
+            return
+        # Disable resizing, rescaling and normalization at the processor level
+        if hasattr(p, 'do_resize'):
+            p.do_resize = False
+        if hasattr(p, 'do_rescale'):
+            p.do_rescale = False
+        if hasattr(p, 'do_normalize'):
+            p.do_normalize = False
+
+    if proc is not None:
+        _override_processor_flags(getattr(proc, 'image_processor', None))
+        _override_processor_flags(getattr(proc, 'video_processor', None))
+        print("[INFO] Processor overrides applied: do_resize=False, do_rescale=False, do_normalize=False")
+
+    # Configure augmentation (legacy augment_prob no longer supported)
     augmenter = None
     augment_prob = custom_config.get('augment_prob', 0.0)
-    if augment_prob > 0:
-        augmenter = AugmentationConfig(prob=augment_prob)
-        print(f"[INFO] Augmentation enabled: prob={augment_prob}")
+    if augment_prob and float(augment_prob) > 0.0:
+        raise ValueError("custom.augment_prob is no longer supported. Provide a Compose pipeline via code or YAML-driven pipeline builder.")
     
     # Sample limits for quick smoke tests
     shared_sample_limit = custom_config.get('sample_limit')

@@ -39,11 +39,7 @@ class AugmentationPreprocessor(BasePreprocessor):
         if self.augmenter is None:
             return row
         
-        try:
-            row = self._augment_record(row)
-        except Exception:
-            # If augmentation fails, return original record
-            pass
+        row = self._augment_record(row)
         
         return row
     
@@ -57,6 +53,14 @@ class AugmentationPreprocessor(BasePreprocessor):
             Augmented record
         """
         from ..augment import apply_augmentations
+        # Only plugin registry path is supported
+        try:
+            from ..augmentation.base import Compose
+            from ..augmentation import ops as _builtin_ops  # ensure registration side-effects
+            from ..augmentation.registry import get as _get
+        except Exception:
+            Compose = None  # type: ignore
+            _get = None  # type: ignore
         
         images = rec.get("images") or []
         objs = rec.get("objects") or []
@@ -68,9 +72,13 @@ class AugmentationPreprocessor(BasePreprocessor):
             if g:
                 per_obj_geoms.append(g)
         
-        # Apply augmentations
-        images_bytes, _objects_dummy, per_obj_geoms_new = apply_augmentations(
-            images, {}, per_obj_geoms, cfg=self.augmenter, rng=self.rng
+        # Apply augmentations using unified pipeline API only
+        if Compose is None or not isinstance(self.augmenter, Compose):
+            raise TypeError("AugmentationPreprocessor requires 'augmenter' to be a Compose pipeline.")
+
+        pipeline = self.augmenter
+        images_bytes, per_obj_geoms_new = apply_augmentations(
+            images, per_obj_geoms, pipeline, rng=self.rng
         )
         
         # Update geometries in objects

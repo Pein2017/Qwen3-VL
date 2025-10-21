@@ -34,7 +34,7 @@ tuner:
 
 training:
   output_dir: ./output/stage_2_llm_lora
-  run_name: lora_8_32-lr_5e-4-eff_batch-32
+  run_name: lora_8_32-lr_5e-4-eff_batch-32-
   add_version: true
   save_safetensors: true
   per_device_train_batch_size: 2
@@ -48,7 +48,7 @@ training:
   aligner_lr: 5.0e-4
   num_train_epochs: 20
 
-  gradient_accumulation_steps: 2
+  gradient_accumulation_steps: 4
 
   # Eval & checkpointing
   eval_strategy: steps          # or epoch (ms-swift uses eval_strategy, not evaluation_strategy)

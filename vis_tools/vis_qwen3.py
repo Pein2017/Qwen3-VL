@@ -22,7 +22,7 @@ from typing import Any, Dict, List
 import torch
 from PIL import Image
 import matplotlib.pyplot as plt
-import matplotlib.patches as patches
+from vis_tools.vis_helper import draw_objects, generate_colors, create_legend, canonicalize_quad
 from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
 
 
@@ -31,13 +31,13 @@ from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
 # ==============================
 
 # Required paths
-CKPT_PATH = "output/stage_1_full_aligner_only/v0-20251021-002857/eff_batch_32-lr_5e-4-epoch_10/checkpoint-540"  # HF dir or merged checkpoint
+CKPT_PATH = "output/stage_1_full_aligner_only/v3-20251021-022419/eff_batch_16-lr_5e-4-epoch_10/checkpoint-1100"  # HF dir or merged checkpoint
 JSONL_PATH = "data/ds_v2_full/val.jsonl"
 
 # Runtime settings
 LIMIT = 10
-DEVICE = "cuda:1"
-SAVE_DIR = "vis_out/stage_1_longer_epoch"
+DEVICE = "cuda:7"
+SAVE_DIR = "vis_out/stage_1_longer_epoch_line_points_5e-4"
 MAX_NEW_TOKENS = 2048
 TEMPERATURE = 0.05
 TOP_P = 0.8
@@ -236,6 +236,19 @@ def parse_prediction(text: str) -> List[Dict[str, Any]]:
             if not isinstance(pts, (list, tuple)) or len(pts) % 2 != 0:
                 # Skip objects with incomplete coordinates (e.g., truncated tail)
                 continue
+            # If the model provided line_points, enforce expected count for line objects
+            if gtype == "line":
+                lp = val.get("line_points")
+                if isinstance(lp, int):
+                    if lp < 2:
+                        # Require at least two points to form a segment
+                        continue
+                    expected = 2 * lp
+                    if len(pts) > expected:
+                        pts = list(pts)[:expected]
+                    elif len(pts) < expected:
+                        # Incomplete line; drop it to avoid plotting garbage
+                        continue
             try:
                 pts = [int(round(float(x))) for x in pts]
             except Exception:
@@ -396,37 +409,7 @@ def _create_legend(fig, color_map: Dict[str, str], counts: Dict[str, List[int]])
 
 
 def _canonicalize_quad(points8: List[int | float]) -> List[int]:
-    """Reorder 4 points (x1,y1,...,x4,y4) to a canonical clockwise order starting at top-left.
-
-    Mirrors the logic in vis_generation.py (_canonical_quad_ordering):
-    - Classify corners by quadrant relative to centroid with tie-breakers
-    - If corners are not distinct, fallback by sorting rows then columns
-    """
-    if not isinstance(points8, (list, tuple)) or len(points8) != 8:
-        return [int(round(v)) for v in (points8 or [])]
-    pts = [(float(points8[i]), float(points8[i + 1])) for i in range(0, 8, 2)]
-    cx = sum(p[0] for p in pts) / 4.0
-    cy = sum(p[1] for p in pts) / 4.0
-
-    def classify_corner(p: tuple[float, float]) -> tuple[int, float]:
-        x, y = p
-        if x <= cx and y <= cy:
-            return (0, -(x + y))  # top-left: minimize x+y
-        elif x >= cx and y <= cy:
-            return (1, x - y)  # top-right: maximize x-y
-        elif x >= cx and y >= cy:
-            return (2, x + y)  # bottom-right: maximize x+y
-        else:  # x <= cx and y >= cy
-            return (3, -x + y)  # bottom-left: maximize -x+y
-
-    sorted_pts = sorted(pts, key=classify_corner)
-    # Ensure we actually have 4 distinct corners; otherwise fallback row-wise
-    if len({classify_corner(p)[0] for p in sorted_pts}) != 4:
-        sorted_by_y = sorted(pts, key=lambda p: p[1])
-        top = sorted(sorted_by_y[:2], key=lambda p: p[0])
-        bottom = sorted(sorted_by_y[2:], key=lambda p: p[0])
-        sorted_pts = [top[0], top[1], bottom[1], bottom[0]]
-    return [int(round(v)) for xy in sorted_pts for v in xy]
+    return canonicalize_quad(points8)
 
 
 def _draw_objects(ax, img: Image.Image, objects: List[Dict[str, Any]], color_map: Dict[str, str], scaled: bool) -> None:
@@ -562,22 +545,16 @@ def main() -> None:
             pred_objs = rec.get("pred", [])
 
             fig, (ax_l, ax_r) = plt.subplots(1, 2, figsize=(12, 6))
-            _draw_objects(
-                ax_l,
-                img,
-                [
-                    {
-                        "type": o["type"],
-                        "points": [int(round(p)) for p in o["points"]],
-                        "desc": o.get("desc", ""),
-                    }
-                    for o in gt_objs
-                ],
-                COL_GT,
-                scaled=True,
-            )
+            draw_objects(ax_l, img, [
+                {
+                    "type": o["type"],
+                    "points": [int(round(p)) for p in o["points"]],
+                    "desc": o.get("desc", ""),
+                }
+                for o in gt_objs
+            ], {"": "#00FF00"}, scaled=True)
             ax_l.set_title("GT")
-            _draw_objects(ax_r, img, pred_objs, COL_PRED, scaled=False)
+            draw_objects(ax_r, img, pred_objs, {"": "#FF3333"}, scaled=False)
             ax_r.set_title("Prediction" + ("" if pred_objs else " (parse failed)"))
             out_path = Path(SAVE_DIR) / f"vis_{count:05d}.jpg"
             fig.tight_layout()
@@ -653,28 +630,22 @@ def main() -> None:
         # Plot 1×2
         fig, (ax_l, ax_r) = plt.subplots(1, 2, figsize=(14, 7))
         # GT is already in pixels
-        _draw_objects(
-            ax_l,
-            img,
-            [
-                {
-                    "type": o["type"],
-                    "points": [int(round(p)) for p in o["points"]],
-                    "desc": o.get("desc", ""),
-                }
-                for o in gt
-            ],
-            color_map,
-            scaled=True,
-        )
+        draw_objects(ax_l, img, [
+            {
+                "type": o["type"],
+                "points": [int(round(p)) for p in o["points"]],
+                "desc": o.get("desc", ""),
+            }
+            for o in gt
+        ], color_map, scaled=True)
         ax_l.set_title("GT")
 
-        _draw_objects(ax_r, img, pred_objs, color_map, scaled=False)
+        draw_objects(ax_r, img, pred_objs, color_map, scaled=False)
         ax_r.set_title("Prediction" + ("" if pred_objs else " (parse failed)"))
 
         out_path = Path(SAVE_DIR) / f"vis_{count:05d}.jpg"
         fig.tight_layout()
-        _create_legend(fig, color_map, counts)
+        create_legend(fig, color_map, counts)
         fig.savefig(out_path, dpi=120)
         plt.close(fig)
 

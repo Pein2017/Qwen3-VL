@@ -48,7 +48,10 @@ if [[ ! -f "${CONFIG_PATH}" ]]; then
 fi
 
 if [[ "${NUM_GPUS}" -gt 1 ]]; then
-  MASTER_PORT="${MASTER_PORT:-29500}"
+  # Generate random port in range [10000, 65535] if not already set
+  if [[ -z "${MASTER_PORT:-}" ]]; then
+    MASTER_PORT=$((10000 + RANDOM % 55536))
+  fi
   CMD="CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES} torchrun --nproc_per_node=${NUM_GPUS} --master_port=${MASTER_PORT} -m src.sft --config ${CONFIG_PATH}"
 else
   CMD="CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES} python -m src.sft --config ${CONFIG_PATH}"

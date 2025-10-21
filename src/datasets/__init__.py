@@ -23,7 +23,9 @@ Main exports:
 from .dense_caption import DenseCaptionDataset
 from .dynamic_pair import DynamicPairDataset, DynamicPairingConfig
 from .utils import load_jsonl, extract_object_points, extract_geometry
-from .augment import AugmentationConfig
+# AugmentationConfig removed with v1 API; use Compose pipelines directly
+from .augmentation.base import Compose
+from .augmentation.registry import register, get, available
 from .builders import (
     BaseBuilder,
     JSONLinesBuilder,
@@ -45,7 +47,10 @@ __all__ = [
     "extract_object_points",
     "extract_geometry",
     # Augmentation
-    "AugmentationConfig",
+    "Compose",
+    "register",
+    "get",
+    "available",
     # Builders
     "BaseBuilder",
     "JSONLinesBuilder",

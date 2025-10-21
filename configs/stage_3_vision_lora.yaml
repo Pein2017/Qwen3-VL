@@ -4,7 +4,7 @@ extends: base.yaml
 
 model:
   # Point to stage 2 best checkpoint - will load base model + LLM LoRA
-  model: output/stage_2_llm_lora/regularized/best
+  model: output/stage_1_full_aligner_only/v3-20251021-022419/eff_batch_16-lr_5e-4-epoch_10/checkpoint-1100
 
 # Use model's native chat template; max length unified via base.yaml or global_max_length
 
@@ -44,46 +44,41 @@ tuner:
     - model.visual.deepstack_merger_list.1
     - model.visual.deepstack_merger_list.2
   lora_rank: 8
-  lora_alpha: 16
+  lora_alpha: 32
   lora_dropout: 0.1
   lora_bias: none
 
 training:
-  output_dir: ./output/stage_3_vision_lora/regularized
-  run_name: vision_lora_8_16-lr_2e-5-eff_batch-32
+  output_dir: ./output/stage_3_vision_llm_loRA
+  run_name: lora_8_32-eff_batch-32
   add_version: true
-  create_checkpoint_symlink: true
   save_safetensors: true
   per_device_train_batch_size: 1
-  per_device_eval_batch_size: 1
+  per_device_eval_batch_size: 2
   packing: true
 
   optimizer: multimodal
-  learning_rate: 2.0e-5   # Vision LoRA learning rate
-  vit_lr: 2.0e-5          # Same as learning_rate for vision
+  learning_rate: 8.0e-4   # Vision LoRA learning rate
+  vit_lr: 8.0e-4          # Same as learning_rate for vision
   aligner_lr: 1.0e-5      # Aligner continues training (if in modules_to_save)
-  num_train_epochs: 2
+  num_train_epochs: 10
 
-  gradient_accumulation_steps: 4
+  gradient_accumulation_steps: 2
 
   # Eval & checkpointing
   eval_strategy: steps
   save_strategy: best
   eval_steps: 20
-  save_steps: 60
+  save_steps: 40
   load_best_model_at_end: true
   metric_for_best_model: eval_loss
   greater_is_better: false
   save_total_limit: 2
 
   # Verbose logging
-  logging_dir: ./tb/10-20/vision_lora
+  logging_dir: ./tb/10-21/vision_lora
   logging_steps: 10
   logging_first_step: true
-  
-  # DeepSpeed-compatible LoRA adapter export (same callback works for any LoRA config)
-  external_plugins:
-    - src/custom_plugins/deepspeed_adapter_export.py
 
 data:
   dataset_num_proc: 8
@@ -98,6 +93,6 @@ custom:
   train_jsonl: data/ds_v2_full/train.jsonl
   val_jsonl: data/ds_v2_full/val.jsonl
   augment_prob: 0.0
-  images_per_user_turn: 2
+  images_per_user_turn: 4
   dump_conversation_text: false
 

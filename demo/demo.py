@@ -42,7 +42,7 @@ def main() -> None:
     image_paths = [
         'demo/images/QC-20230106-0000211_16517.jpeg',
         'demo/images/QC-20230106-0000211_16519.jpeg',
-        # "demo/images/QC-202÷30106-0000211_16520.jpeg"
+        "demo/images/QC-202÷30106-0000211_16520.jpeg",
     ]
     prompt = "简要描述这（些）图片。请输出物体的具体坐标。"
     # prompt='Describe the image(s) briefly.'

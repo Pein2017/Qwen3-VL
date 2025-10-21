@@ -10,6 +10,35 @@ Modular, YAML-driven pipeline for fine-tuning Qwen3-VL on dense captioning tasks
 
 **Pipeline**: YAML Config → ConfigLoader → SwiftSft → DenseCaptionDataset → DynamicPairDataset → Training Loop
 
+## Table of Contents
+- [Overview](#overview)
+- [Architecture at a Glance](#architecture-at-a-glance)
+- [Directory Structure](#directory-structure)
+- [Core Workflow](#core-workflow)
+  - [Runner specifics (sft.py)](#runner-specifics-sftpy)
+  - [Required custom.* keys](#required-custom-keys)
+- [Data Contract (JSONL)](#data-contract-jsonl)
+  - [Per-Sample Pipeline](#per-sample-pipeline)
+  - [Geometry Handling](#geometry-handling)
+  - [Message Formats](#message-formats)
+- [Configuration (YAML)](#yaml-structure)
+  - [Config inheritance rules](#config-inheritance-rules)
+  - [Two-stage training (recommended)](#two-stage-training-recommended)
+  - [Mixed-mode: LoRA on LLM and Vision, full-tune Aligner](#mixed-mode-lora-on-llm-and-vision-full-tune-aligner)
+- [Inference and Adapter Management](#inference-and-adapter-management)
+- [Utilities](#utilities)
+- [Dynamic grouping & augmentation (dataset)](#dynamic-grouping--augmentation-dataset)
+- [Health checks (fail-fast)](#health-checks-fail-fast)
+- [Troubleshooting](#troubleshooting)
+- [Quick Start](#quick-start)
+
+## Architecture at a Glance
+
+- YAML config is the single source of truth → `ConfigLoader` merges/validates and instantiates ms-swift `TrainArguments`.
+- `SwiftSft` initializes model and template (uses the model's native chat_template); adapters applied via `sft.prepare_model(...)`.
+- `DenseCaptionDataset` wraps `DynamicPairDataset` with `JSONLinesBuilder` and optional `AugmentationPreprocessor`.
+- Template encodes messages, adds vision tokens, and normalizes coordinates (top-level objects → norm1000) during encoding.
+- Trainer from ms-swift runs training; checkpoints save adapters (LoRA) or merged weights depending on workflow.
 
 ## Directory Structure
 
@@ -46,6 +75,18 @@ src/
 1. **ConfigLoader** loads YAML, resolves `extends`/`inherit` chains, merges base/experiment configs, resolves prompts → `TrainArguments`
 2. **SwiftSft** initializes model, template, trainer with config
 3. **DenseCaptionDataset** constructs train/eval datasets with selected builder and augmentation
+
+### Runner specifics (sft.py)
+- Pure YAML-driven: CLI only accepts `--config`, optional `--base_config`, and `--debug`.
+- Inherits and merges configs via `extends`/`inherit`; last wins, cycles fail fast.
+- Auto-sets `ROOT_IMAGE_DIR` to the directory of `custom.train_jsonl` when not provided.
+- Applies tuner/adapters with `sft.prepare_model(...)` before trainer creation.
+- Supports optional sample limiting: `custom.sample_limit`, `custom.train_sample_limit`, `custom.val_sample_limit`.
+
+### Required custom.* keys
+- **custom.user_prompt**: string used by `JSONLinesBuilder` for the user turn.
+- **custom.emit_norm**: one of `none|norm100|norm1000`; affects text geometry only.
+  - Top-level `objects.bbox` remains in pixel space and is normalized by the template at encode time.
 
 ### LoRA Adapter Preparation (Critical!)
 **⚠️ REQUIRED for custom training scripts**
@@ -95,7 +136,7 @@ adapter_cfg = json.load(open("checkpoint/adapter_config.json"))
 print(adapter_cfg["modules_to_save"])  # Should list your aligner modules
 ```
 
-### Data Format
+## Data Contract (JSONL)
 JSONL records (see `data_details.md`):
 - `images`: List[str] — paths resolved via `ROOT_IMAGE_DIR`
 - `objects`: List — each has one geometry (`bbox_2d`/`quad`/`line`) + `desc`
@@ -568,6 +609,13 @@ python -m src.utils.auto_detect_aligners output/stage_1_full_aligner_only/best/c
 - dump_conversation_text: write one decoded conversation sample to disk for inspection
 
 These live under the `custom` section in YAML and are consumed by `src/sft.py` and `datasets/dynamic_pair.py`.
+
+## Health checks (fail-fast)
+- **Chat template & images**: User turn image count must match placeholders; mismatches error.
+- **Vision tokens**: `image_grid_thw` aligns with `pixel_values` and placeholder expansion.
+- **Assistant spans**: End-of-turn included; non-target tokens labeled −100; image tokens masked.
+- **Geometry**: Top-level `objects.bbox` are normalized to norm1000 during encoding; emit_norm only affects assistant text.
+- **Config**: Missing required `custom.*` keys or cyclic `extends` raise errors; invalid DeepSpeed flags fail early.
 
 ## Troubleshooting
 

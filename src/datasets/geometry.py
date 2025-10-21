@@ -101,4 +101,55 @@ def apply_affine(points: Sequence[float], M: List[List[float]]) -> List[float]:
     return out
 
 
+def invert_affine(M: List[List[float]]) -> List[List[float]]:
+    """Invert an affine 3x3 matrix with bottom row [0,0,1].
+
+    For M = [[a,b,c],[d,e,f],[0,0,1]], returns M_inv such that M_inv @ M = I.
+    """
+    a, b, c = M[0]
+    d, e, f = M[1]
+    det = a * e - b * d
+    if det == 0:
+        # Singular; return identity as safe fallback
+        return [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+    inv_a = e / det
+    inv_b = -b / det
+    inv_d = -d / det
+    inv_e = a / det
+    inv_c = -(inv_a * c + inv_b * f)
+    inv_f = -(inv_d * c + inv_e * f)
+    return [[inv_a, inv_b, inv_c], [inv_d, inv_e, inv_f], [0.0, 0.0, 1.0]]
+
+
+def scale_center(sx: float, sy: float, cx: float, cy: float) -> List[List[float]]:
+    """Scale about a center point (cx, cy)."""
+    T1 = translate(-cx, -cy)
+    S = scale_matrix(sx, sy)
+    T2 = translate(cx, cy)
+    return compose_affine(T2, compose_affine(S, T1))
+
+
+def clamp_points(points: Sequence[float], width: float, height: float) -> List[int]:
+    out: List[int] = []
+    for i, v in enumerate(points):
+        if i % 2 == 0:
+            out.append(max(0, min(int(width) - 1, int(round(float(v))))))
+        else:
+            out.append(max(0, min(int(height) - 1, int(round(float(v))))))
+    return out
+
+
+def dedupe_consecutive_points(points: Sequence[int]) -> List[int]:
+    if not points:
+        return []
+    out: List[int] = []
+    prev: Tuple[int, int] | None = None
+    for x, y in _pair_points(points):
+        pt = (int(round(x)), int(round(y)))
+        if prev is None or pt != prev:
+            out.extend([pt[0], pt[1]])
+            prev = pt
+    return out
+
+
 
