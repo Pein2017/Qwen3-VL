@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import os
 import random
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -39,7 +40,19 @@ def apply_augmentations(
 
     pil_images: List[Image.Image] = []
     for p in images:
-        im = Image.open(p) if isinstance(p, str) else p
+        if isinstance(p, str):
+            path = p
+            if not os.path.isabs(path):
+                base = os.environ.get('ROOT_IMAGE_DIR')
+                if not base:
+                    raise FileNotFoundError(
+                        f"Relative image path '{p}' cannot be resolved: ROOT_IMAGE_DIR is not set. "
+                        f"Set ROOT_IMAGE_DIR to the directory of your JSONL (auto-set by sft.py) or use absolute paths."
+                    )
+                path = os.path.join(base, path)
+            im = Image.open(path)
+        else:
+            im = p
         if not isinstance(im, Image.Image):
             raise TypeError("images must be file paths or PIL.Image instances")
         if im.mode != "RGB":

@@ -75,8 +75,8 @@ deepspeed:
   config: zero2
 
 custom:
-  train_jsonl: data/ds_v2_full/train.jsonl
-  val_jsonl: data/ds_v2_full/val.jsonl
+  train_jsonl: data/bbu_full_768/train.jsonl
+  val_jsonl: data/bbu_full_768/val.jsonl
   augment_prob: 0.0
   images_per_user_turn: 2
   dump_conversation_text: false

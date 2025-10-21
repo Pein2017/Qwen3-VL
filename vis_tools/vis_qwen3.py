@@ -32,7 +32,7 @@ from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
 
 # Required paths
 CKPT_PATH = "output/stage_1_full_aligner_only/v3-20251021-022419/eff_batch_16-lr_5e-4-epoch_10/checkpoint-1100"  # HF dir or merged checkpoint
-JSONL_PATH = "data/ds_v2_full/val.jsonl"
+JSONL_PATH = "data/bbu_full_768/val.jsonl"
 
 # Runtime settings
 LIMIT = 10

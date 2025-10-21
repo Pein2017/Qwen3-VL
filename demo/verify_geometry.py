@@ -38,7 +38,7 @@ def scale_norm1000(points, width, height):
 
 
 def main():
-    jsonl_path = "/data/Pein/code/data/ds_v2_full/val.jsonl"
+    jsonl_path = "/data/Pein/code/data/bbu_full_768/val.jsonl"
     assert Path(jsonl_path).exists(), f"Missing JSONL: {jsonl_path}"
 
     rec_a, rec_b = load_first_two_records(jsonl_path)

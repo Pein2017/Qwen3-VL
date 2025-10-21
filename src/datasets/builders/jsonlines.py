@@ -1,5 +1,7 @@
 """Grouped JSON conversation builder"""
 import json
+import os
+import base64
 from typing import Any, Dict, List, Literal
 
 from .base import BaseBuilder
@@ -45,7 +47,7 @@ class JSONLinesBuilder(BaseBuilder):
             image_slot += 1
 
             for image in images:
-                user_contents.append({"type": "image", "image": image})
+                user_contents.append({"type": "image", "url": self._to_url(image)})
 
             label = f"图片_{image_slot}"
             grouped[label] = self._build_group_entry(objects, record)
@@ -83,7 +85,7 @@ class JSONLinesBuilder(BaseBuilder):
                 continue
             image_slot += 1
             for image in images:
-                user_contents.append({"type": "image", "image": image})
+                user_contents.append({"type": "image", "url": self._to_url(image)})
 
             label = f"图片_{image_slot}"
             grouped[label] = self._build_group_entry(objects, record)
@@ -139,6 +141,28 @@ class JSONLinesBuilder(BaseBuilder):
             return [float(v) for v in points]
         normalized = normalize_points(points, width, height, self.emit_norm)
         return [int(v) for v in normalized]
+
+    def _to_url(self, image: Any) -> str:
+        """Canonicalize an image entry to a URL string for the template.
+
+        - If dict with bytes: produce a data URL (PNG)
+        - If relative path: prefix with ROOT_IMAGE_DIR when available
+        - If absolute path: pass through
+        """
+        if isinstance(image, dict) and 'bytes' in image:
+            b = image['bytes']
+            if not isinstance(b, (bytes, bytearray)):
+                raise TypeError("image bytes must be bytes-like")
+            b64 = base64.b64encode(b).decode('ascii')
+            return f"data:image/png;base64,{b64}"
+        if isinstance(image, str):
+            if not os.path.isabs(image):
+                root = os.environ.get('ROOT_IMAGE_DIR')
+                if root:
+                    return os.path.join(root, image)
+            return image
+        # Fallback: stringify
+        return str(image)
 
 
 __all__ = ["JSONLinesBuilder"]

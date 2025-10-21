@@ -129,7 +129,7 @@ All values in data are canonical (defined in the taxonomy). Below are their mean
 
 ## On-Disk JSONL (v2_full)
 
-- Location: `data/ds_v2_full/train.jsonl`, `data/ds_v2_full/val.jsonl`
+- Location: `data/bbu_full_768/train.jsonl`, `data/bbu_full_768/val.jsonl`
 - Top-level fields (per line/record):
   - `images`: List[str] — usually one processed image path.
   - `objects`: List[Object] — each object has exactly one geometry field and a `desc` string.

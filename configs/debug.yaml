@@ -58,8 +58,8 @@ deepspeed:
   enabled: true  # keep enabled; can be disabled at runtime via base_config if needed
 
 custom:
-  train_jsonl: data/ds_v2_full/train.jsonl
-  val_jsonl: data/ds_v2_full/val.jsonl
+  train_jsonl: data/bbu_full_768/train.jsonl
+  val_jsonl: data/bbu_full_768/val.jsonl
   augment_prob: 0.0
   images_per_user_turn: 2
   train_sample_limit: 8

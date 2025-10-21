@@ -420,8 +420,8 @@ training:
   learning_rate: 1e-4
 
 custom:
-  train_jsonl: data/ds_v2_full/train.jsonl
-  val_jsonl: data/ds_v2_full/val.jsonl
+  train_jsonl: data/bbu_full_768/train.jsonl
+  val_jsonl: data/bbu_full_768/val.jsonl
   emit_norm: norm1000               # none | norm100 | norm1000
   # 无需配置 group_key_prefix；模板自动插入 图片_{i}
 

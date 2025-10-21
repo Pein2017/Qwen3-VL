@@ -50,7 +50,7 @@ tuner:
 
 training:
   output_dir: ./output/stage_3_vision_llm_loRA
-  run_name: lora_8_32-eff_batch-32
+  run_name: lora_8_32-eff_batch-16
   add_version: true
   save_safetensors: true
   per_device_train_batch_size: 1
@@ -76,7 +76,7 @@ training:
   save_total_limit: 2
 
   # Verbose logging
-  logging_dir: ./tb/10-21/vision_lora
+  logging_dir: ./tb/10-21/vision_lora_augment
   logging_steps: 10
   logging_first_step: true
 
@@ -90,9 +90,9 @@ deepspeed:
   config: zero2
 
 custom:
-  train_jsonl: data/ds_v2_full/train.jsonl
-  val_jsonl: data/ds_v2_full/val.jsonl
-  images_per_user_turn: 4
+  train_jsonl: data/bbu_full_768/train.jsonl
+  val_jsonl: data/bbu_full_768/val.jsonl
+  images_per_user_turn: 2
   dump_conversation_text: false
   # Augmentation pipeline (training only). Eval remains unchanged.
   augmentation:
@@ -104,12 +104,12 @@ custom:
       - name: vflip
         params: { prob: 0.1 }
       - name: rotate
-        params: { max_deg: 8.0, prob: 0.3 }
+        params: { max_deg: 20.0, prob: 0.3 }
       - name: scale
-        params: { lo: 0.95, hi: 1.05, prob: 0.35 }
+        params: { lo: 0.8, hi: 1.2, prob: 0.35 }
       # Multi-scale training: resize canvas by a random scale and align to multiples
       - name: resize_by_scale
-        params: { lo: 0.85, hi: 1.20, align_multiple: 32, prob: 0.7 }
+        params: { lo: 0.6, hi: 1.50, align_multiple: 32, prob: 0.7 }
       # Color ops (medium strength default)
       - name: color_jitter
         params: { brightness: [0.8, 1.2], contrast: [0.8, 1.2], saturation: [0.8, 1.2], prob: 0.5 }
