@@ -1,0 +1,384 @@
+{
+  "metadata": {
+    "version": "3.0",
+    "description": "Comprehensive hierarchical attribute taxonomy for V2 data",
+    "supported_geometries": [
+      "bbox_2d",
+      "quad",
+      "line"
+    ],
+    "language": "chinese",
+    "extraction_source": "V2 contentZh and content field analysis"
+  },
+  "object_types": {
+    "connect_point": {
+      "chinese_label": "螺丝、光纤插头",
+      "aliases": [
+        "连接点",
+        "螺丝",
+        "光纤插头"
+      ],
+      "geometry_types": [
+        "bbox_2d"
+      ],
+      "content_key": "connect_point"
+    },
+    "bbu": {
+      "chinese_label": "BBU设备",
+      "aliases": [
+        "基带处理单元",
+        "BBU"
+      ],
+      "geometry_types": [
+        "bbox_2d",
+        "quad"
+      ],
+      "content_key": "bbu"
+    },
+    "bbu_shield": {
+      "chinese_label": "挡风板",
+      "aliases": [
+        "防护板",
+        "BBU挡风板"
+      ],
+      "geometry_types": [
+        "bbox_2d",
+        "quad"
+      ],
+      "content_key": "bbu_shield"
+    },
+    "fiber": {
+      "chinese_label": "光纤",
+      "aliases": [
+        "光缆",
+        "光纤线"
+      ],
+      "geometry_types": [
+        "line"
+      ],
+      "content_key": "fiber"
+    },
+    "wire": {
+      "chinese_label": "电线",
+      "aliases": [
+        "线缆",
+        "电缆"
+      ],
+      "geometry_types": [
+        "line"
+      ],
+      "content_key": "wire"
+    },
+    "label": {
+      "chinese_label": "标签",
+      "aliases": [
+        "标签贴纸",
+        "文字标签"
+      ],
+      "geometry_types": [
+        "bbox_2d",
+        "quad"
+      ],
+      "content_key": "label"
+    }
+  },
+  "attribute_groups": {
+    "identity": {
+      "description": "Basic object identification and categorization",
+      "attributes": {
+        "object_type": {
+          "chinese_questions": [
+            "标签"
+          ],
+          "content_mapping": "label",
+          "applies_to": "all",
+          "information_type": "classification"
+        }
+      }
+    },
+    "physical_properties": {
+      "description": "Physical characteristics and observable properties",
+      "attributes": {
+        "visibility_completeness": {
+          "chinese_questions": [
+            "螺丝/插头是否显示完整",
+            "这个BBU设备是否显示完整",
+            "这个挡风板是否显示完整"
+          ],
+          "content_mapping": {
+            "connect_point": "connect_point_situation",
+            "bbu": "bbu_stituation",
+            "bbu_shield": "bbu_shield_situation"
+          },
+          "values": {
+            "显示完整": [
+              "connect_point_situation_complete",
+              "bbu_stituation_complete",
+              "bbu_shield_situation_complete"
+            ],
+            "只显示部分": [
+              "connect_point_situation_part",
+              "bbu_stituation_part",
+              "bbu_shield_situation_part"
+            ]
+          },
+          "applies_to": [
+            "connect_point",
+            "bbu",
+            "bbu_shield"
+          ],
+          "information_type": "assessment"
+        },
+        "brand_identification": {
+          "chinese_questions": [
+            "这个BBU设备是什么品牌",
+            "这个挡风板是什么牌子"
+          ],
+          "content_mapping": {
+            "bbu": "bbu_brand",
+            "bbu_shield": "bbu_shield_brand"
+          },
+          "values": {
+            "华为": "huawei",
+            "中兴": "zhongxing",
+            "爱立信": "ericsson"
+          },
+          "applies_to": [
+            "bbu",
+            "bbu_shield"
+          ],
+          "information_type": "property"
+        }
+      }
+    },
+    "component_classification": {
+      "description": "Specific component type identification",
+      "attributes": {
+        "connection_point_type": {
+          "chinese_questions": [
+            "这个螺丝/插头是什么种类"
+          ],
+          "content_mapping": "connect_point_type",
+          "values": {
+            "BBU安装螺丝": "install_screw",
+            "BBU端光纤插头": "fiber_bbu",
+            "ODF端光纤插头": "odf_bbu",
+            "地排处接地螺丝": "ground_screw",
+            "机柜处接地螺丝": "cabinet_screw"
+          },
+          "applies_to": [
+            "connect_point"
+          ],
+          "information_type": "classification"
+        }
+      }
+    },
+    "functional_assessment": {
+      "description": "Compliance, requirements, and functional evaluation",
+      "attributes": {
+        "compliance_check": {
+          "chinese_questions": [
+            "这个螺丝/插头连接是否符合要求"
+          ],
+          "content_mapping": "connect_point_check",
+          "values": {
+            "符合要求": [
+              "connect_point_check_true"
+            ],
+            "不符合要求": [
+              "connect_point_check_false"
+            ]
+          },
+          "applies_to": [
+            "connect_point"
+          ],
+          "information_type": "assessment"
+        },
+        "wind_baffle_requirements": {
+          "chinese_questions": [
+            "这个BBU设备是否需要安装挡风板，结合图片中机柜空间状态判断"
+          ],
+          "content_mapping": "bbu_equipment",
+          "values": {
+            "无需安装": "bbu_equipment_false",
+            "机柜空间充足，需要安装，这个BBU设备按要求配备了挡风板": "bbu_equipment_true/bbu_equipment_true_true",
+            "机柜空间充足，需要安装，这个BBU设备未按要求配备了挡风板": "bbu_equipment_true/bbu_equipment_true_false"
+          },
+          "applies_to": [
+            "bbu"
+          ],
+          "information_type": "assessment"
+        },
+        "installation_direction": {
+          "chinese_questions": [
+            "这个挡风板安装方向是否正确"
+          ],
+          "content_mapping": "bbu_shield_direction",
+          "values": {
+            "安装方向正确": "bbu_shield_direction_true",
+            "安装方向错误": "bbu_shield_direction_false"
+          },
+          "applies_to": [
+            "bbu_shield"
+          ],
+          "information_type": "assessment"
+        }
+      }
+    },
+    "environmental_context": {
+      "description": "Environmental conditions and context assessment",
+      "attributes": {
+        "obstruction_status": {
+          "chinese_questions": [
+            "这条光纤是否被遮挡",
+            "这条电线是否被遮挡",
+            "这个挡风板是否被杂物遮挡"
+          ],
+          "content_mapping": {
+            "fiber": "fiber_block",
+            "wire": "wire_block",
+            "bbu_shield": "bbu_shield_block"
+          },
+          "values": {
+            "有遮挡": [
+              "fiber_block_true",
+              "wire_block_true",
+              "bbu_shield_block_true"
+            ],
+            "无遮挡": [
+              "fiber_block_false",
+              "wire_block_false",
+              "bbu_shield_block_false"
+            ],
+            "挡风板有遮挡": [
+              "bbu_shield_block_true"
+            ],
+            "挡风板无遮挡": [
+              "bbu_shield_block_false"
+            ]
+          },
+          "applies_to": [
+            "fiber",
+            "wire",
+            "bbu_shield"
+          ],
+          "information_type": "condition"
+        },
+        "organization_status": {
+          "chinese_questions": [
+            "这条电线是否捆扎整齐"
+          ],
+          "content_mapping": "wire_bind",
+          "values": {
+            "捆扎整齐": "wire_bind_true",
+            "捆扎不整齐": "wire_bind_false"
+          },
+          "applies_to": [
+            "wire"
+          ],
+          "information_type": "condition"
+        }
+      }
+    },
+    "technical_specifications": {
+      "description": "Technical properties and engineering specifications",
+      "attributes": {
+        "bend_radius_assessment": {
+          "chinese_questions": [
+            "这条光纤弯曲半径是否合理"
+          ],
+          "content_mapping": "fiber_radius",
+          "values": {
+            "弯曲半径合理": "fiber_radius_true",
+            "弯曲半径不合理": "fiber_radius_false"
+          },
+          "applies_to": [
+            "fiber"
+          ],
+          "information_type": "technical"
+        },
+        "protection_measures": {
+          "chinese_questions": [
+            "这条光纤是否采用保护措施"
+          ],
+          "content_mapping": "fiber_protection",
+          "values": {
+            "无保护措施": "fiber_protection_false",
+            "有保护措施，保护措施为，蛇形管": "fiber_protection_true/fiber_protection_plastic",
+            "有保护措施，保护措施为，铠装": "fiber_protection_true/fiber_protection_metal",
+            "有保护措施，保护措施为，同时有蛇形管和铠装": "fiber_protection_true/fiber_protection_both",
+            "有保护措施，保护措施为": "fiber_protection_true/fiber_protection_plastic"
+          },
+          "applies_to": [
+            "fiber"
+          ],
+          "information_type": "technical"
+        }
+      }
+    },
+    "textual_content": {
+      "description": "OCR content and textual information",
+      "attributes": {
+        "label_text_content": {
+          "chinese_questions": [
+            "能否阅读标签上的文字内容",
+            "请输入标签上的文字内容"
+          ],
+          "content_mapping": "label_text",
+          "values": "free_text",
+          "applies_to": [
+            "label"
+          ],
+          "information_type": "ocr"
+        }
+      }
+    },
+    "special_circumstances": {
+      "description": "Special cases, exceptions, and additional context",
+      "attributes": {
+        "additional_info": {
+          "chinese_questions": [
+            "如果有特殊情况，请具体描述"
+          ],
+          "content_mapping": "ex_info",
+          "values": "free_text",
+          "applies_to": "all",
+          "information_type": "context"
+        }
+      }
+    }
+  },
+  "description_templates": {
+    "slash_separated": {
+      "format": "{object_type}/{properties}/{assessments}",
+      "example": "BBU设备/华为，显示完整/机柜空间充足，需要安装，这个BBU设备按要求配备了挡风板"
+    },
+    "natural_language": {
+      "format": "这是一个{properties}的{object_type}，{assessments}",
+      "example": "这是一个华为品牌显示完整的BBU设备，机柜空间充足需要安装且按要求配备了挡风板"
+    }
+  },
+  "geometry_format_mapping": {
+    "bbox_2d": {
+      "description": "Standard rectangular bounding box",
+      "format": "[x1, y1, x2, y2]",
+      "source_types": [
+        "ExtentPolygon"
+      ]
+    },
+    "quad": {
+      "description": "Four-point polygon annotation",
+      "format": "[x1, y1, x2, y2, x3, y3, x4, y4]",
+      "source_types": [
+        "Quad"
+      ]
+    },
+    "line": {
+      "description": "Multi-point line annotation",
+      "format": "[x1, y1, x2, y2, ..., xn, yn]",
+      "source_types": [
+        "LineString"
+      ]
+    }
+  }
+}
