@@ -7,8 +7,6 @@ model:
 
 # Use model's native chat template; max length unified via base.yaml or global_max_length
 
-template:
-  max_pixels: 589824
 
 prompts:
   scheme: B
@@ -75,8 +73,6 @@ deepspeed:
   config: zero2
 
 custom:
-  train_jsonl: data/bbu_full_768/train.jsonl
-  val_jsonl: data/bbu_full_768/val.jsonl
   augment_prob: 0.0
   images_per_user_turn: 2
   dump_conversation_text: false

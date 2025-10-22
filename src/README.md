@@ -344,6 +344,35 @@ outputs = model(
 
 **User turn**: 所有图片放在 `content` 列表中，末尾附上一段文字指令。
 
+**⚠️ CRITICAL: ms-swift Image Format Convention**
+
+ms-swift uses a **strict key-value convention** for multimodal content where the **value key must match the type key**:
+
+```python
+# ✅ CORRECT (ms-swift convention)
+{"type": "image", "image": "<path/url/PIL.Image>"}
+{"type": "audio", "audio": "<path>"}
+{"type": "video", "video": "<path>"}
+
+# ❌ WRONG (OpenAI-style; will silently fail)
+{"type": "image", "url": "<path>"}         # ← image key missing!
+{"type": "image", "image_url": "<path>"}   # ← wrong key name
+```
+
+**Why this matters:**
+- ms-swift extracts media via `item.get(item['type'])` (e.g., `item.get('image')`)
+- If you use `"url"` instead of `"image"`, extraction returns `None`
+- Template will **not load images** → no `pixel_values`/`image_grid_thw` in tensors
+- Vision encoder + aligner **never execute** → **zero gradients** for vision components
+- Training appears to run but vision modules don't learn anything
+
+**Where to check:**
+- Message builders (`src/datasets/builders/*.py`): Ensure `{"type": "image", "image": path}`
+- Custom preprocessing: Verify content dict keys match the type
+- Debug: Print `sample.keys()` after encoding; must include `pixel_values` and `image_grid_thw`
+
+**Reference:** See `/data/ms-swift/swift/llm/template/template_inputs.py:241` for extraction logic.
+
 **Configuration**:
 - `global_max_length`: Single knob for full conversation length (prompt + completion); overrides `model.max_model_len` and `template.max_length`
 - `emit_norm`: 控制文本输出的坐标空间（none/norm100/norm1000）
@@ -621,6 +650,8 @@ These live under the `custom` section in YAML and are consumed by `src/sft.py` a
 
 | Issue | Cause | Solution |
 |-------|-------|----------|
+| **Zero gradient norm (grad_norm=0) for vision/aligner in full training** | **Wrong image key in message content**: using `"url"` instead of `"image"` | ms-swift expects `{"type": "image", "image": path}` not `{"type": "image", "url": path}`. Fix in message builder (e.g., `jsonlines.py` lines 50, 88). See "Message Formats" section for details. |
+| **Missing `pixel_values`/`image_grid_thw` in encoded samples** | Same as above: image key mismatch | Template can't extract images → no vision tensors → aligner never used. Verify builder uses `"image"` key; debug with `print(sample.keys())` after `dataset[0]` |
 | **Full model saved instead of LoRA adapter** | Missing `sft.prepare_model()` call | See "LoRA Adapter Preparation (Critical!)" section; must call before `Trainer()` |
 | **`adapter_config.json` missing or `modules_to_save` empty** | LoRA not applied to model | Verify model is wrapped: `isinstance(model, (SwiftModel, PeftModel))` after `prepare_model()` |
 | **`TypeError: modules_to_save cannot be applied to ModuleList`** | Invalid `modules_to_save` path | Specify individual elements: `model.visual.deepstack_merger_list.0`, `.1`, `.2` instead of the container |

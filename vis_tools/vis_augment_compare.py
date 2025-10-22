@@ -30,6 +30,7 @@ from src.datasets.augmentation.ops import (
     Sharpness,
     AlbumentationsColor,
     PadToMultiple,
+    ResizeByScale,
 )
 from src.datasets.augment import apply_augmentations
 from vis_tools.vis_helper import draw_objects, generate_colors, create_legend
@@ -37,32 +38,46 @@ from vis_tools.vis_helper import draw_objects, generate_colors, create_legend
 
 @dataclass
 class VisConfig:
+    """Configuration for augmentation visualization.
+    
+    Edit the instantiation in __main__ to test different augmentation settings.
+    High probabilities help verify coordinate transforms are correct, especially for resize operations.
+    """
     jsonl_path: str
     out_dir: str
     num_samples: int = 8
     variants: int = 3  # number of random augmented variants per sample
     seed: int = 2025
-    # randomization knobs
-    rotate_p: float = 0.7
-    max_deg: float = 8.0
-    scale_p: float = 0.7
-    scale_lo: float = 0.95
-    scale_hi: float = 1.05
-    hflip_p: float = 0.5
-    vflip_p: float = 0.1
-    color_p: float = 0.8
-    # additional color ops
-    gamma_p: float = 0.0
-    hsv_p: float = 0.0
-    clahe_p: float = 0.0
-    auto_contrast_p: float = 0.0
-    equalize_p: float = 0.0
+    
+    # Geometric augmentations
+    rotate_p: float = 0.9
+    max_deg: float = 20.0
+    scale_p: float = 0.9
+    scale_lo: float = 0.8
+    scale_hi: float = 1.2
+    hflip_p: float = 0.9
+    vflip_p: float = 0.3
+    
+    # Resolution resizing (critical for multi-scale training - tests coordinate scaling)
+    resize_by_scale_p: float = 0.9
+    resize_lo: float = 0.6
+    resize_hi: float = 1.5
+    resize_align_multiple: int = 32
+    
+    # Color augmentations
+    color_p: float = 0.9
+    gamma_p: float = 0.8
+    hsv_p: float = 0.8
+    clahe_p: float = 0.5
+    auto_contrast_p: float = 0.3
+    equalize_p: float = 0.2
     solarize_p: float = 0.0
     posterize_p: float = 0.0
-    sharpness_p: float = 0.0
+    sharpness_p: float = 0.7
     albumentations_p: float = 0.0
     albumentations_preset: str = "strong"
-    # enforce size multiple like training YAML
+    
+    # Padding (always applied last to match training)
     pad_multiple: int = 32
 
 
@@ -140,6 +155,10 @@ def _build_random_pipeline(rng: Random, cfg: VisConfig):
     if rng.random() < cfg.albumentations_p:
         ops.append(AlbumentationsColor(preset=cfg.albumentations_preset, prob=1.0))
         labels.append(f"alb-{cfg.albumentations_preset}")
+    # Resolution resizing (barrier op - flushes affine and changes image size)
+    if rng.random() < cfg.resize_by_scale_p:
+        ops.append(ResizeByScale(lo=cfg.resize_lo, hi=cfg.resize_hi, align_multiple=cfg.resize_align_multiple, prob=1.0))
+        labels.append(f"resize({cfg.resize_lo:.2f}-{cfg.resize_hi:.2f})")
     if not ops:
         # ensure at least one op to visualize
         ops.append(ColorJitter(brightness=(0.8, 1.2), contrast=(0.8, 1.2), saturation=(0.8, 1.2), prob=1.0))
@@ -219,60 +238,58 @@ def visualize_samples(cfg: VisConfig) -> None:
 
 
 if __name__ == '__main__':
-    import argparse
-    parser = argparse.ArgumentParser()
-    # Defaults mirror configs/stage_3_vision_lora.yaml
-    parser.add_argument('--jsonl', default='data/bbu_full_768/train.jsonl')
-    parser.add_argument('--out', default='vis_out/augment_compare_default')
-    parser.add_argument('--num', type=int, default=8)
-    parser.add_argument('--variants', type=int, default=3)
-    parser.add_argument('--seed', type=int, default=2025)
-    parser.add_argument('--rotate_p', type=float, default=0.3)
-    parser.add_argument('--max_deg', type=float, default=8.0)
-    parser.add_argument('--scale_p', type=float, default=0.35)
-    parser.add_argument('--scale_lo', type=float, default=0.95)
-    parser.add_argument('--scale_hi', type=float, default=1.05)
-    parser.add_argument('--hflip_p', type=float, default=0.5)
-    parser.add_argument('--vflip_p', type=float, default=0.1)
-    parser.add_argument('--color_p', type=float, default=0.5)
-    parser.add_argument('--gamma_p', type=float, default=0.25)
-    parser.add_argument('--hsv_p', type=float, default=0.3)
-    parser.add_argument('--clahe_p', type=float, default=0.15)
-    parser.add_argument('--auto_contrast_p', type=float, default=0.1)
-    parser.add_argument('--equalize_p', type=float, default=0.05)
-    parser.add_argument('--solarize_p', type=float, default=0.0)
-    parser.add_argument('--posterize_p', type=float, default=0.0)
-    parser.add_argument('--sharpness_p', type=float, default=0.25)
-    parser.add_argument('--albumentations_p', type=float, default=0.0)
-    parser.add_argument('--albumentations_preset', type=str, default='strong', choices=['strong', 'extreme'])
-    parser.add_argument('--pad_multiple', type=int, default=32)
-    args = parser.parse_args()
+    # ========================================================================
+    # CONFIGURATION - Edit here to test different augmentation settings
+    # ========================================================================
+    # High probabilities help verify coordinate transforms work correctly,
+    # especially for ResizeByScale which changes image dimensions.
+    # 
+    # To match your training config, copy values from:
+    # configs/stage_3_vision_lora.yaml -> custom.augmentation.ops
+    
     cfg = VisConfig(
-        jsonl_path=args.jsonl,
-        out_dir=args.out,
-        num_samples=args.num,
-        variants=args.variants,
-        seed=args.seed,
-        rotate_p=args.rotate_p,
-        max_deg=args.max_deg,
-        scale_p=args.scale_p,
-        scale_lo=args.scale_lo,
-        scale_hi=args.scale_hi,
-        hflip_p=args.hflip_p,
-        vflip_p=args.vflip_p,
-        color_p=args.color_p,
-        gamma_p=args.gamma_p,
-        hsv_p=args.hsv_p,
-        clahe_p=args.clahe_p,
-        auto_contrast_p=args.auto_contrast_p,
-        equalize_p=args.equalize_p,
-        solarize_p=args.solarize_p,
-        posterize_p=args.posterize_p,
-        sharpness_p=args.sharpness_p,
-        albumentations_p=args.albumentations_p,
-        albumentations_preset=args.albumentations_preset,
-        pad_multiple=args.pad_multiple,
+        # Data paths
+        jsonl_path='data/bbu_full_768/train.jsonl',
+        out_dir='vis_out/augment_compare_high_prob',
+        num_samples=8,
+        variants=3,
+        seed=2025,
     )
+    # Note: All augmentation probabilities and parameters are set in the
+    # VisConfig dataclass defaults above. You can override them here if needed.
+    
+    print("[CONFIG] Augmentation Visualization")
+    print("=" * 70)
+    print(f"  Input:     {cfg.jsonl_path}")
+    print(f"  Output:    {cfg.out_dir}")
+    print(f"  Samples:   {cfg.num_samples} images × {cfg.variants} variants each")
+    print(f"  Seed:      {cfg.seed}")
+    print()
+    print("  Geometric Augmentations:")
+    print(f"    HFlip:   p={cfg.hflip_p:.2f}")
+    print(f"    VFlip:   p={cfg.vflip_p:.2f}")
+    print(f"    Rotate:  p={cfg.rotate_p:.2f}, max_deg=±{cfg.max_deg:.1f}°")
+    print(f"    Scale:   p={cfg.scale_p:.2f}, range=[{cfg.scale_lo:.2f}, {cfg.scale_hi:.2f}]")
+    print()
+    print("  Resolution Resize (CRITICAL for coordinate validation):")
+    print(f"    Resize:  p={cfg.resize_by_scale_p:.2f}, range=[{cfg.resize_lo:.2f}×, {cfg.resize_hi:.2f}×]")
+    print(f"             align_multiple={cfg.resize_align_multiple}")
+    print()
+    print("  Color Augmentations:")
+    print(f"    ColorJitter:  p={cfg.color_p:.2f}")
+    print(f"    Gamma:        p={cfg.gamma_p:.2f}")
+    print(f"    HSV:          p={cfg.hsv_p:.2f}")
+    print(f"    CLAHE:        p={cfg.clahe_p:.2f}")
+    print(f"    AutoContrast: p={cfg.auto_contrast_p:.2f}")
+    print(f"    Equalize:     p={cfg.equalize_p:.2f}")
+    print(f"    Sharpness:    p={cfg.sharpness_p:.2f}")
+    if cfg.albumentations_p > 0:
+        print(f"    Albumentations: p={cfg.albumentations_p:.2f} (preset={cfg.albumentations_preset})")
+    print()
+    print(f"  Pad to multiple: {cfg.pad_multiple}")
+    print("=" * 70)
+    print()
+    
     visualize_samples(cfg)
 
 

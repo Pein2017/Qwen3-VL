@@ -47,7 +47,7 @@ class JSONLinesBuilder(BaseBuilder):
             image_slot += 1
 
             for image in images:
-                user_contents.append({"type": "image", "url": self._to_url(image)})
+                user_contents.append({"type": "image", "image": self._to_url(image)})
 
             label = f"图片_{image_slot}"
             grouped[label] = self._build_group_entry(objects, record)
@@ -85,7 +85,7 @@ class JSONLinesBuilder(BaseBuilder):
                 continue
             image_slot += 1
             for image in images:
-                user_contents.append({"type": "image", "url": self._to_url(image)})
+                user_contents.append({"type": "image", "image": self._to_url(image)})
 
             label = f"图片_{image_slot}"
             grouped[label] = self._build_group_entry(objects, record)

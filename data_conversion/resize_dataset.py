@@ -30,8 +30,8 @@ except Exception:  # pragma: no cover
 
 # Defaults per request
 DEFAULT_FACTOR = 32
-DEFAULT_MAX_BLOCKS = 512
-DEFAULT_MIN_BLOCKS = 4
+DEFAULT_MAX_PIXEL_BLOCKS = 768
+DEFAULT_MIN_PIXEL_BLOCKS = 4
 MAX_RATIO = 200  # keep parity with vision_process.smart_resize
 
 
@@ -40,18 +40,18 @@ class ResizeConfig:
     input_dir: Path
     output_dir: Path
     factor: int
-    max_blocks: int
-    min_blocks: int
+    max_pixel_blocks: int
+    min_pixel_blocks: int
     jpeg_quality: int
     fail_on_size_mismatch: bool
 
     @property
     def max_pixels(self) -> int:
-        return int(self.max_blocks * self.factor * self.factor)
+        return int(self.max_pixel_blocks * self.factor * self.factor)
 
     @property
     def min_pixels(self) -> int:
-        return int(self.min_blocks * self.factor * self.factor)
+        return int(self.min_pixel_blocks * self.factor * self.factor)
 
 
 def parse_args(argv: Iterable[str]) -> ResizeConfig:
@@ -62,8 +62,8 @@ def parse_args(argv: Iterable[str]) -> ResizeConfig:
     parser.add_argument("--input_dir", type=str, required=True)
     parser.add_argument("--output_dir", type=str, required=True)
     parser.add_argument("--factor", type=int, default=DEFAULT_FACTOR)
-    parser.add_argument("--max_blocks", type=int, default=DEFAULT_MAX_BLOCKS)
-    parser.add_argument("--min_blocks", type=int, default=DEFAULT_MIN_BLOCKS)
+    parser.add_argument("--max_pixel_blocks", type=int, default=DEFAULT_MAX_PIXEL_BLOCKS)
+    parser.add_argument("--min_pixel_blocks", type=int, default=DEFAULT_MIN_PIXEL_BLOCKS)
     parser.add_argument("--jpeg_quality", type=int, default=95)
     parser.add_argument(
         "--fail_on_size_mismatch", action="store_true", default=True,
@@ -90,8 +90,8 @@ def parse_args(argv: Iterable[str]) -> ResizeConfig:
         input_dir=input_dir,
         output_dir=output_dir,
         factor=int(args.factor),
-        max_blocks=int(args.max_blocks),
-        min_blocks=int(args.min_blocks),
+        max_pixel_blocks=int(args.max_pixel_blocks),
+        min_pixel_blocks=int(args.min_pixel_blocks),
         jpeg_quality=int(args.jpeg_quality),
         fail_on_size_mismatch=bool(args.fail_on_size_mismatch),
     )
@@ -390,8 +390,8 @@ def main(argv: Iterable[str]) -> int:
             "dims_cache": dims_cache,
             "geom_images": list(geom_cache.keys()),
             "factor": cfg.factor,
-            "max_blocks": cfg.max_blocks,
-            "min_blocks": cfg.min_blocks,
+            "max_blocks": cfg.max_pixel_blocks,
+            "min_blocks": cfg.min_pixel_blocks,
         }
         cache_path.write_text(json.dumps(to_save, ensure_ascii=False, indent=2), encoding="utf-8")
     else:

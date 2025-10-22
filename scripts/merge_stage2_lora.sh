@@ -3,10 +3,10 @@
 
 CUDA_VISIBLE_DEVICES=0 \
 swift export \
-    --model output/stage_1_full_aligner_only/best/eff_batch_32-lr_1e-4/checkpoint-200 \
-    --adapters output/stage_2_llm_lora/v1-20251020-121949/lora_8_32-lr_5e-4-eff_batch-32/checkpoint-40 \
+    --model output/stage_1_full_aligner_only/v3-20251021-022419/eff_batch_16-lr_5e-4-epoch_10/checkpoint-1100 \
+    --adapters output/stage_3_vision_llm_loRA/v1-20251021-094218/lora_8_32-eff_batch-16/checkpoint-1240 \
     --merge_lora true \
-    --output_dir output/stage_2_merged/lora_8_32-lr_5e-4-eff_batch-32 \
+    --output_dir output/stage_3_merged/lora_8_32-eff_batch-16 \
     --safe_serialization true \
     --max_shard_size 5GB
 

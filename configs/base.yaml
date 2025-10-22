@@ -1,6 +1,6 @@
 # Base Configuration - Shared defaults for Qwen3-VL SFT
 
-global_max_length: 10000
+global_max_length: 20000
 
 model:
   torch_dtype: bfloat16
@@ -9,7 +9,6 @@ model:
 template:
   template: qwen3_vl
   truncation_strategy: right
-
 
 training:
   # defaults, can be overridden per-environment
@@ -29,6 +28,9 @@ deepspeed:
 
 custom:
   emit_norm: norm1000
+  train_jsonl: data/bbu_full_768/train.jsonl
+  val_jsonl: data/bbu_full_768/val.jsonl
 
-
+template:
+  max_pixels: 1572864999  # an extremely large value so that never `do_resize`
 
