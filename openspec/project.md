@@ -80,7 +80,7 @@ Always call `sft.prepare_model(train_args, model, template, train_dataset)` befo
 - Sections: `model`, `template`, `tuner`, `training`, `data`, `prompts`, `custom`, `deepspeed`
 - Inheritance: `extends` or `inherit` (string or list); earlier bases are lower precedence; cycles error
 - Global length: `global_max_length` sets both `model.max_model_len` and `template.max_length`
-- Prompts: `prompts.scheme: A|B`; resolves to `template.system`; `custom.user_prompt` consumed by dataset
+- Prompts: `prompts.scheme: B|B`; resolves to `template.system`; `custom.user_prompt` consumed by dataset
 - Custom keys (consumed by `src/sft.py` and datasets):
   - `train_jsonl`, `val_jsonl`
   - `images_per_user_turn` (default 2)

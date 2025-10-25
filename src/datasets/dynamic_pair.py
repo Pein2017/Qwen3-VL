@@ -2,6 +2,7 @@ import random
 import copy
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from torch.utils.data import get_worker_info
 
 from torch.utils.data import Dataset
 
@@ -97,6 +98,9 @@ class DynamicPairDataset(Dataset):
         self.preprocessor = preprocessor
         self._epoch: int = 0
         self._rng = random.Random(self._seed_for_epoch(self._epoch))
+        # Build an index permutation for this epoch to enable per-epoch shuffling
+        self._index_perm: List[int] = list(range(len(self.base_records)))
+        self._rebuild_perm_for_epoch()
         
         # If augmenter provided but no preprocessor, create augmentation preprocessor
         if self.augmenter is not None and self.preprocessor is None:
@@ -109,11 +113,26 @@ class DynamicPairDataset(Dataset):
         return DynamicPairDataset(records, template, **kwargs)
 
     def _seed_for_epoch(self, epoch: int) -> int:
-        return (self.config.seed + epoch * 1315423911) & 0xFFFFFFFF
+        """Derive a 32-bit seed from base seed and epoch (rank-agnostic).
+
+        Keep the same across ranks so that external samplers can shard consistently.
+        """
+        base = int(getattr(self.config, 'seed', 2025)) & 0xFFFFFFFF
+        # Mix with an odd constant (golden ratio) for decorrelation across epochs
+        mixed = (base ^ ((epoch + 1) * 0x9E3779B1)) & 0xFFFFFFFF
+        return mixed
+
+    def _rebuild_perm_for_epoch(self) -> None:
+        """Shuffle index permutation deterministically for the current epoch."""
+        # Start from identity then shuffle with epoch-seeded RNG
+        self._index_perm = list(range(len(self.base_records)))
+        if len(self._index_perm) > 1:
+            self._rng.shuffle(self._index_perm)
 
     def set_epoch(self, epoch: int) -> None:
         self._epoch = int(epoch)
         self._rng = random.Random(self._seed_for_epoch(self._epoch))
+        self._rebuild_perm_for_epoch()
 
     def __len__(self) -> int:
         # Number of grouped samples when grouping >1
@@ -123,19 +142,29 @@ class DynamicPairDataset(Dataset):
         return (len(self.base_records) + g - 1) // g
 
     def __getitem__(self, index: int) -> Dict[str, Any]:
-        rng_local = random.Random(self._rng.random())
+        # Build a stable, per-sample RNG that depends on epoch/index and worker id
+        seed_local = self._rng.randrange(0, 2**32 - 1)
+        seed_local ^= (int(index) * 0x85EBCA6B) & 0xFFFFFFFF
+        wi = get_worker_info()
+        if wi is not None:
+            seed_local ^= ((wi.id + 1) * 0xC2B2AE35) & 0xFFFFFFFF
+        rng_local = random.Random(seed_local & 0xFFFFFFFF)
         group_size = max(1, int(self.config.images_per_user_turn))
 
         if group_size <= 1:
-            # Backward-compatible: pair with random partner
-            partner_index = self.pair_selector(index, len(self.base_records), rng_local)
-            records = [copy.deepcopy(self.base_records[index]), copy.deepcopy(self.base_records[partner_index])]
+            # Single-record turn: pick current record from permuted order
+            base_idx = self._index_perm[index % len(self._index_perm)]
+            # Pair with a random partner in base index space
+            partner_base_idx = self.pair_selector(base_idx, len(self.base_records), rng_local)
+            records = [copy.deepcopy(self.base_records[base_idx]), copy.deepcopy(self.base_records[partner_base_idx])]
         else:
             # Sequential grouping into fixed-size chunks: [0..g-1], [g..2g-1], ...
             start = index * group_size
             records = []
-            for i in range(start, min(start + group_size, len(self.base_records))):
-                records.append(copy.deepcopy(self.base_records[i]))
+            end = min(start + group_size, len(self.base_records))
+            for i in range(start, end):
+                perm_i = self._index_perm[i]
+                records.append(copy.deepcopy(self.base_records[perm_i]))
             if not records:
                 # Fallback to last record if index is out of range due to race
                 records = [copy.deepcopy(self.base_records[-1])]

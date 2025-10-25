@@ -102,6 +102,21 @@ class AugmentationPreprocessor(BasePreprocessor):
                     obj.pop("quad", None)
         
         rec["images"] = images_bytes
+
+        # Update record width/height to reflect any resize/pad ops in augmentation
+        try:
+            if images_bytes:
+                import io
+                from PIL import Image  # type: ignore
+                b0 = images_bytes[0].get("bytes")
+                if isinstance(b0, (bytes, bytearray)):
+                    with Image.open(io.BytesIO(b0)) as im0:
+                        im0 = im0.convert("RGB")
+                        rec["width"] = int(im0.width)
+                        rec["height"] = int(im0.height)
+        except Exception:
+            # Non-fatal: leave original width/height
+            pass
         return rec
 
 

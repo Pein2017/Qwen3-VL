@@ -6,7 +6,9 @@ from typing import Any, Dict, Optional, Set, List
 
 from swift.llm.argument import TrainArguments
 
-from .prompts import SYSTEM_PROMPT_A, SYSTEM_PROMPT_B, USER_PROMPT
+from .prompts import (
+    SYSTEM_PROMPT_A, SYSTEM_PROMPT_B, SYSTEM_PROMPT_SUMMARY, USER_PROMPT
+)
 
 
 class ConfigLoader:
@@ -103,6 +105,11 @@ class ConfigLoader:
     def resolve_prompts(config: Dict) -> Dict:
         """Resolve prompts to simple strings from config or fallbacks.
         
+        Supports dynamic per-group prompt selection:
+        - Scheme A/B: dense mode (grouped JSON with geometry)
+        - Scheme SUMMARY: summary mode (one-line summaries per image)
+        - With summary_ratio: randomly select mode per pairing group
+        
         Args:
             config: Configuration dictionary
             
@@ -113,7 +120,31 @@ class ConfigLoader:
 
         # Prefer external files via YAML if provided; otherwise fall back to module defaults
         scheme = prompts_config.get('scheme', 'A').upper()
-        default_system = SYSTEM_PROMPT_A if scheme == 'A' else SYSTEM_PROMPT_B
+        
+        # Determine default system prompt from scheme (only A/B allowed)
+        if scheme == 'B':
+            default_system = SYSTEM_PROMPT_B
+            output_variant = 'dense'
+        elif scheme == 'A':
+            default_system = SYSTEM_PROMPT_A
+            output_variant = 'dense'
+        else:
+            raise ValueError(
+                f"Invalid scheme: {scheme}. Only 'A' or 'B' are supported. "
+                f"Use custom.summary_ratio in [0,1] to control summary/dense behavior; "
+                f"set 1.0 to force summary prompt automatically."
+            )
+
+        # Simplification: allow summary_ratio==1.0 to auto-select summary prompt
+        try:
+            sr = float(config.get('custom', {}).get('summary_ratio', 0.0))
+        except Exception:
+            sr = 0.0
+        if sr >= 1.0:
+            # Force summary prompt even if scheme is B/A, so users can keep a single scheme
+            default_system = SYSTEM_PROMPT_SUMMARY
+            output_variant = 'summary'
+        
         system_prompt = prompts_config.get('system', default_system)
         user_prompt = prompts_config.get('user', USER_PROMPT)
 
@@ -129,6 +160,7 @@ class ConfigLoader:
         if 'custom' not in config:
             config['custom'] = {}
         config['custom']['user_prompt'] = user_prompt
+        config['custom']['output_variant'] = output_variant
         
         if 'template' not in config:
             config['template'] = {}

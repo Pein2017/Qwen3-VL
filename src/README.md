@@ -25,6 +25,7 @@ Modular, YAML-driven pipeline for fine-tuning Qwen3-VL on dense captioning tasks
   - [Config inheritance rules](#config-inheritance-rules)
   - [Two-stage training (recommended)](#two-stage-training-recommended)
   - [Mixed-mode: LoRA on LLM and Vision, full-tune Aligner](#mixed-mode-lora-on-llm-and-vision-full-tune-aligner)
+  - [Dynamic Per-Group Prompt Selection](#dynamic-per-group-prompt-selection-optional)
 - [Inference and Adapter Management](#inference-and-adapter-management)
 - [Utilities](#utilities)
 - [Dynamic grouping & augmentation (dataset)](#dynamic-grouping--augmentation-dataset)
@@ -141,7 +142,7 @@ JSONL records (see `data_details.md`):
 - `images`: List[str] — paths resolved via `ROOT_IMAGE_DIR`
 - `objects`: List — each has one geometry (`bbox_2d`/`quad`/`line`) + `desc`
 - `width`, `height`: image dimensions
-- `summary`: optional per-image summary
+- `summary`: **standardized all-slash format** (required for summary modes, optional otherwise)
 
 ### Per-Sample Pipeline
 **Executed in `DynamicPairDataset.__getitem__(index)`**
@@ -163,145 +164,14 @@ Index → Pair Selection (epoch-seeded RNG)
    - Creates top-level `objects` with exact point arrays for template normalization
 4. **Template Encoding**: ms-swift adds `<image>` tokens, normalizes bbox to norm1000, tokenizes
 
-### Complete Data Transformation Flow
+### Processing Stages (concise)
 
-From raw JSONL to model tensors:
-
-```python
-# ═══════════════════════════════════════════════════════════════
-# STAGE 1: Raw JSONL Records (Your Dataset)
-# ═══════════════════════════════════════════════════════════════
-record = {
-    "images": ["images/example1.jpeg"],
-    "objects": [
-        {"quad": [10, 100, 200, 110, 190, 300, 5, 290], 
-         "desc": "BBU设备/华为,显示完整,机柜空间充足需要安装/这个BBU设备按要求配备了挡风板"},
-        {"line": [50, 150, 100, 200, 150, 250], 
-         "desc": "光纤/有保护措施,弯曲半径合理/蛇形管"},
-        {"bbox_2d": [80, 400, 120, 450], 
-         "desc": "螺丝、光纤插头/BBU安装螺丝,显示完整,符合要求"}
-    ],
-    "width": 420,
-    "height": 896,
-    "summary": "BBU设备×1，光纤×1，螺丝、光纤插头×1"
-}
-
-# ═══════════════════════════════════════════════════════════════
-# STAGE 2: After Pairing (DynamicPairDataset)
-# ═══════════════════════════════════════════════════════════════
-# Pairs record_a with record_b (may be same for single-image training)
-# After optional augmentation (geometries transformed, types preserved)
-
-# ═══════════════════════════════════════════════════════════════
-# STAGE 3: After Message Building (JSONLinesBuilder)
-# ═══════════════════════════════════════════════════════════════
-{
-    "messages": [
-        {
-            "role": "user",
-            "content": [
-                {"type": "image", "image": "images/example1.jpeg"},
-                {"type": "text", "text": "describe all objects"}
-            ]
-        },
-        {
-            "role": "assistant",
-            "content": [
-                {
-                    "type": "text",
-                    "text": "{\"图片_1\": {\"object_1\": {\"quad\": [10,100,200,110,190,300,5,290], \"desc\": \"BBU设备/华为,显示完整,机柜空间充足需要安装/这个BBU设备按要求配备了挡风板\"}, \"object_2\": {\"line\": [50,150,100,200,150,250], \"desc\": \"光纤/有保护措施,弯曲半径合理/蛇形管\"}, \"object_3\": {\"bbox_2d\": [80,400,120,450], \"desc\": \"螺丝、光纤插头/BBU安装螺丝,显示完整,符合要求\"}}}"
-                }
-            ]
-        }
-    ],
-    "objects": {
-        "ref": ["BBU设备", "光纤", "螺丝、光纤插头"],
-        "bbox": [
-            [10,100,200,110,190,300,5,290],
-            [50,150,100,200,150,250],
-            [80,400,120,450]
-        ],
-        "image_id": [0, 0, 0]
-    }
-}
-
-# ═══════════════════════════════════════════════════════════════
-# STAGE 4: After Template Preprocessing (base.py)
-# ═══════════════════════════════════════════════════════════════
-# Template records original width/height, loads images
-# objects.width = [420], objects.height = [896]
-
-# ═══════════════════════════════════════════════════════════════
-# STAGE 5: Processor Call (Qwen3VLProcessor)
-# ═══════════════════════════════════════════════════════════════
-# No runtime smart-resize during training (do_resize=False)
-
-# Text with image tokens:
-text = "<|image_pad|>describe all objects"
-
-# After processor calculates grid and replaces tokens:
-text_with_tokens = (
-    "<|vision_start|><|image_pad|><|image_pad|>...<|image_pad|><|vision_end|>"  # N tokens
-    "describe all objects"
-)
-
-# ═══════════════════════════════════════════════════════════════
-# STAGE 6: Points Normalization (template.normalize_bbox)
-# ═══════════════════════════════════════════════════════════════
-# Converts pixel coords to norm1000 based on ORIGINAL dimensions
-for pts in objects['bbox']:
-    for i, (x, y) in enumerate(zip(pts[::2], pts[1::2])):
-        pts[2*i]   = round(x / 420 * 1000)
-        pts[2*i+1] = round(y / 896 * 1000)
-
-# objects.bbox now in [0, 1000] space
-
-# ═══════════════════════════════════════════════════════════════
-# STAGE 7: Tokenization (tokenizer)
-# ═══════════════════════════════════════════════════════════════
-# Text → token IDs
-input_ids = [151644, 151649, ...]  # <|image_pad|> tokens + text tokens
-
-# Assistant text → labels
-labels = [-100, -100, ..., 49360, 784, ...]  # -100 for input, token IDs for target
-
-# ═══════════════════════════════════════════════════════════════
-# STAGE 8: Final Batch (DataLoader)
-# ═══════════════════════════════════════════════════════════════
-{
-    "input_ids": torch.tensor([[151644, 151649, ...]]),        # [batch, seq_len]
-    "attention_mask": torch.tensor([[1, 1, 1, ...]]),          # [batch, seq_len]
-    "labels": torch.tensor([[-100, -100, ..., 49360, ...]]),   # [batch, seq_len]
-    "pixel_values": torch.tensor([[[[...]]],                   # [batch, channels, temporal, H, W]
-    "image_grid_thw": torch.tensor([[1, 34, 16]]),            # [num_images, 3] (t, h, w grids)
-    "objects": {
-        "ref": ["BBU设备", "光纤", "螺丝、光纤插头"],
-        "bbox": [
-            [24,112,476,123,452,335,12,323],   # quad → norm1000 (example)
-            [119,167,238,223,357,279],         # line → norm1000
-            [190,446,286,502]                   # bbox_2d → norm1000
-        ],
-        "image_id": [0, 0, 0]
-    }
-}
-
-# ═══════════════════════════════════════════════════════════════
-# STAGE 9: Model Forward Pass
-# ═══════════════════════════════════════════════════════════════
-outputs = model(
-    input_ids=input_ids,
-    attention_mask=attention_mask,
-    pixel_values=pixel_values,
-    image_grid_thw=image_grid_thw,
-    labels=labels  # For training loss
-)
-
-# Model internally:
-# 1. Vision encoder processes pixel_values using image_grid_thw
-# 2. Embeds grounding boxes from objects.bbox (norm1000 space)
-# 3. Language model attends to vision tokens + text tokens
-# 4. Computes cross-entropy loss between logits and labels
-```
+1) JSONL record loaded (images, objects, width/height, optional summary)
+2) Grouping/pairing by `DynamicPairDataset` (epoch-seeded RNG; optional augmentation via preprocessor)
+3) Per-group mode select (dense or summary) in `DenseCaptionDataset` → instantiate `JSONLinesBuilder(mode=...)`
+4) Builder assembles one-turn chat: user embeds all images + prompt; assistant returns grouped JSON
+5) Template encodes: inserts vision tokens, normalizes top-level `objects.bbox` to norm1000, tokenizes text
+6) DataLoader yields tensors: `input_ids`, `attention_mask`, `labels`, `pixel_values`, `image_grid_thw`, `objects`
 
 **Key Transformations**:
 - **Geometry**: Exact `quad`/`line`/`bbox_2d` point arrays are preserved and used for grounding.
@@ -412,22 +282,12 @@ ms-swift uses a **strict key-value convention** for multimodal content where the
 | **DenseCaptionDataset** | High-level wrapper | Selects builder, configures augmentation |
 
 
-## Quick Start
+## Quick start
 
 ```bash
-# Basic training
-python -m src.sft --config configs/stage_2_llm_lora.yaml
-
-# With base config inheritance (two ways)
-# 1) Inline in YAML via `extends`
-python -m src.sft --config configs/standard.yaml
-
-# 2) CLI-provided base (lowest precedence)
-python -m src.sft --config configs/stage_2_llm_lora.yaml --base_config configs/base.yaml
-
-# Debug mode
-python -m src.sft --config configs/debug.yaml --debug
+python -m src.sft --config /abs/path/to/your_config.yaml
 ```
+For config structure and inheritance, see the YAML examples below and `docs/MS_SWIFT_TRAINING_GUIDE.md`.
 
 **YAML Structure** (explicit values required; you can factor shared fields into `configs/base.yaml`):
 ```yaml
@@ -455,7 +315,7 @@ custom:
   # 无需配置 group_key_prefix；模板自动插入 图片_{i}
 
 prompts:
-  scheme: A | B   # A: 极简格式约束；B: 薄领域提示
+  scheme: B | B   # A: 极简格式约束；B: 薄领域提示
   system: |
     你是图像密集标注助手。只返回原始 JSON-lines…（B 可额外包含对象类型与排序提示）
     模板自动插入 图片_{i} 分隔，无需在文本中手动分段
@@ -513,115 +373,49 @@ tuner:
 
 Tip: keep `training.aligner_lr` (and optionally `training.vit_lr`) to control per-module learning rates via the multimodal optimizer.
 
-### Inference and Adapter Management
+### Dynamic Per-Group Prompt Selection (Optional)
 
-#### Option 1: Inference with Adapter (lightweight)
-Load the base model and adapter separately (~9.6GB base + 240MB adapter):
+**New feature**: Train with multiple output formats simultaneously by selecting prompts per pairing group.
 
-```bash
-# Using ms-swift CLI
-CUDA_VISIBLE_DEVICES=0 swift infer \
-    --model path/to/base/Qwen3-VL \
-    --adapters output/stage_2_llm_lora/checkpoint-200 \
-    --stream true \
-    --max_new_tokens 2048
-```
+**Supported modes**:
+- **Dense-only (default, unchanged)**: `prompts.scheme: A` or `B` → grouped JSON with geometry + description
+- **Summary-only**: `prompts.scheme: summary` → grouped JSON with one-line summaries only
+- **Mixed (dynamic)**: `prompts.scheme: B` + `custom.summary_ratio: 0.5` → randomly alternate per group
 
-Or in Python:
-```python
-from swift.llm import InferArguments, inference
+**Key insight**: All samples in one pairing group see the same system prompt and produce the same output format (all dense or all summary), ensuring coherent JSON shapes.
 
-infer_args = InferArguments.from_config({
-    "model": "path/to/base/Qwen3-VL",
-    "adapters": "output/stage_2_llm_lora/checkpoint-200",
-    "stream": True,
-})
-inference(infer_args)
-```
+**Backward compatibility**: All existing configs (e.g., `stage_3_vision_lora.yaml`) work unchanged. Simply omit `summary_ratio` to stay in dense-only mode.
 
-#### Option 2: Merge Adapter into Model (end-to-end)
-Merge LoRA weights into base model for deployment or further full fine-tuning:
-
-```bash
-# Merge adapter into base model
-CUDA_VISIBLE_DEVICES=0 swift export \
-    --model path/to/base/Qwen3-VL \
-    --adapters output/stage_2_llm_lora/checkpoint-200 \
-    --merge_lora true \
-    --output_dir output/stage_2_merged/checkpoint-200 \
-    --save_safetensors true
-
-# Now use merged model directly (no adapter needed)
-CUDA_VISIBLE_DEVICES=0 swift infer \
-    --model output/stage_2_merged/checkpoint-200 \
-    --stream true
-```
-
-**What merging does** (mathematically):
-```python
-# LoRA decomposition during training
-y = (W_base + A·B) · x
-
-# After merging
-W_merged = W_base + (A @ B) * (lora_alpha / lora_rank)
-
-# Merged checkpoint contains only W_merged (no lora_A/lora_B keys)
-```
-
-#### LoRA merge: principle & workflow (ms‑swift)
-
-- **Principle**: Fold each LoRA low‑rank delta into its host weight and remove adapter hooks, leaving a clean base‑only checkpoint (see formula above).
-- **Workflow (under the hood)**:
-  1. CLI: `swift export --merge_lora true --model <base> --adapters <adapter> --output_dir <out>`
-  2. Route: `SwiftExport.run()` detects `merge_lora=true` → calls `merge_lora(args)`.
-  3. Merge:
-     - Disables `quant_method` (merges on original weights) and sets `device_map`.
-     - Loads base + adapter via `prepare_model_template(args)` (wraps as `SwiftModel`/`PeftModel`).
-     - Safeguards tied embeddings when wrapped by adapter modules.
-     - Executes `Swift.merge_and_unload(model)`:
-       - If PEFT: `PeftModel.merge_and_unload()` folds LoRA into base.
-       - If Swift‑LoRA: calls `LoRA.unpatch_lora(...)` which merges and detaches adapter modules.
-  4. Save: `save_checkpoint(..., safe_serialization, max_shard_size)` writes the merged model (and processor) to `output_dir`.
-  5. Cleanup: Args updated to point to the merged dir; `adapters` cleared; use the merged model directly for inference/further training.
-- **Notes**:
-  - Merge is irreversible at the weight level; keep the adapter checkpoint if you may need it later.
-  - Merge happens on non‑quantized weights; quantize after merging if needed.
-  - Merged checkpoints are slightly faster at inference and avoid adapter management.
-
-**When to use each**:
-- **Adapter inference**: Best for experimentation; swap adapters quickly; saves disk space if multiple adapters share the same base
-- **Merged model**: Best for production deployment; slightly faster inference; required for continuing with full fine-tuning (e.g., stage 3 vision LoRA)
-
-#### Continuing Training with Merged Checkpoint
-
-**From adapter checkpoint (recommended for LoRA)**:
+**Usage**:
 ```yaml
-model:
-  model: path/to/base/Qwen3-VL  # Original base model
-  
-tuner:
-  resume_from_checkpoint: output/stage_2_llm_lora/checkpoint-200  # Adapter checkpoint
-  train_type: lora
-  # ... same LoRA config
-```
-✅ Continues LoRA training with same adapter  
-✅ Efficient; only adapter weights updated
+# Dense-only (existing behavior, no changes)
+prompts:
+  scheme: B
 
-**From merged checkpoint (for full fine-tuning or new LoRA target)**:
-```yaml
-model:
-  model: output/stage_2_merged/checkpoint-200  # Merged model (base + stage 2 adapter baked in)
-  
-tuner:
-  train_type: lora
-  freeze_llm: true      # Freeze the merged LLM weights
-  freeze_vit: false     # Apply NEW LoRA to vision
-  freeze_aligner: true
-  target_modules: [all-linear]
+custom:
+  train_jsonl: data/bbu_full_768/train.jsonl
+  # No summary_ratio → always dense
 ```
-✅ Stage 2 LLM improvements are permanent (merged weights)  
-✅ Stage 3 applies NEW LoRA to different modules (e.g., vision)  
-⚠️ Cannot "un-merge" or separately update stage 2 LoRA
+
+```yaml
+# Mixed: 50% summary, 50% dense per group
+prompts:
+  scheme: B
+
+custom:
+  train_jsonl: data/bbu_full_768/train.jsonl
+  summary_ratio: 0.5  # Each group: 50% summary, 50% dense
+```
+
+For details, see `docs/DATA_FORMATS.md#dense-vs-summary-modes`.
+
+
+### Further reading
+
+- **Training workflows**: See `docs/TRAINING_GUIDE.md` for complete training guide
+- **Inference & deployment**: See `docs/INFERENCE_GUIDE.md` for inference and adapter merging
+- **Data preparation**: See `docs/DATA_FORMATS.md` for JSONL schemas and validation
+- **Advanced topics**: See `docs/REFERENCE.md` for performance tuning and troubleshooting
 
 ## Utilities
 

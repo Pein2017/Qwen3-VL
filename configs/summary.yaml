@@ -1,0 +1,127 @@
+# Example: Mixed Mode (Dynamic Per-Group Selection)
+# Output: Each pairing group randomly selects either dense or summary mode
+# - Dense groups: grouped JSON with geometry (bbox_2d, quad, line) + desc
+# - Summary groups: grouped JSON with one-line summaries per image
+# Example: Group 1 (dense): {"图片_1": {object dict}, "图片_2": {object dict}}
+#          Group 2 (summary): {"图片_3": "光纤 * 4, 标签 * 2", "图片_4": "BBU * 1"}
+
+extends: base.yaml
+
+prompts:
+  scheme: B  # Dense system prompt (summary prompt injected at dataset level)
+
+
+model:
+  # Point to stage 2 best checkpoint - will load base model + LLM LoRA
+  # model: output/10-22/stage_1/best/eff_batch_32-per_image_2-resumed_lr_1e-4/checkpoint-200
+  model: output/stage_3_merged/data_aug_on-epoch_50
+
+tuner:
+  train_type: lora
+  target_modules: [all-linear]
+  # LLM last-2 layers only; freeze vision tower
+  freeze_llm: false
+  freeze_vit: true
+  # Full-tune MLP aligner while using LoRA for LLM
+  freeze_aligner: false
+  use_swift_lora: false
+  # LoRA targets: LLM last-2 blocks only
+  target_regex: '^(?:model\.)?language_model\.layers\.(?:34|35)\.(?:self_attn\.(?:q_proj|k_proj|v_proj|o_proj)|mlp\.(?:gate_proj|up_proj|down_proj))$'
+  modules_to_save:
+    # Full-tune aligner (projector)
+    - model.visual.merger
+    - model.visual.deepstack_merger_list.0
+    - model.visual.deepstack_merger_list.1
+    - model.visual.deepstack_merger_list.2
+    # Optionally include LLM blocks if you want to persist full-tuned heads (not needed for pure LoRA on LLM)
+  lora_rank: 16
+  lora_alpha: 32
+  lora_dropout: 0.1
+  lora_bias: none
+
+training:
+  num_train_epochs: 10
+  per_device_train_batch_size: 4
+  per_device_eval_batch_size: 2
+  output_dir: output/summary/10-25/per_image_1
+  logging_dir: tb/summary/10-25/per_image_1
+  run_name: epoch_10-ratio_1.0-aug_off
+
+  # Trainer/runtime additions for parity with stage_3
+  packing: true
+  optimizer: multimodal
+  learning_rate: 1.0e-4
+  vit_lr: 8.0e-5
+  aligner_lr: 1.0e-4
+  gradient_accumulation_steps: 2
+  # Eval & checkpointing
+  eval_strategy: steps
+  save_strategy: best
+  eval_steps: 20
+  save_steps: 40
+  load_best_model_at_end: true
+  metric_for_best_model: eval_loss
+  greater_is_better: false
+  save_total_limit: 2
+  warmup_ratio: 0.1
+  weight_decay: 0.1
+  # Logging & metadata
+  add_version: true
+  save_safetensors: true
+  logging_steps: 10
+  logging_first_step: true
+  lr_scheduler_kwargs:
+    min_lr: 1.0e-6
+
+data:
+  dataset_num_proc: 8
+  dataloader_num_workers: 16
+  dataloader_pin_memory: true
+  eval_dataset: [placeholder]
+
+deepspeed:
+  enabled: true
+  config: zero2
+
+custom:
+  emit_norm: norm1000
+  images_per_user_turn: 1
+  
+  # Each pairing group has a probability summary_ratio of being in summary mode
+  summary_ratio: 1.0  # 60% summary groups, 40% dense groups (per group, not per sample)
+  dump_conversation_text: false
+  augmentation:
+    enabled: off
+    ops:
+      # Geometric ops
+      - name: hflip
+        params: { prob: 0.3 }
+      - name: vflip
+        params: { prob: 0.1 }
+      - name: rotate
+        params: { max_deg: 15.0, prob: 0.3 }
+      # ✅ Zoom-IN focused (better for small objects) - always zoom in, never out
+      - name: scale
+        params: { lo: 1.05, hi: 1.25, prob: 0.2 }
+      # ✅ Multi-scale training: prefer medium-large sizes (no aggressive shrinking)
+      - name: resize_by_scale
+        params: { lo: 0.85, hi: 1.1, align_multiple: 32, prob: 0.5 }
+      # Color ops (medium strength default)
+      - name: color_jitter
+        params: { brightness: [0.85, 1.15], contrast: [0.85, 1.15], saturation: [0.85, 1.15], prob: 0.3 }
+      - name: gamma
+        params: { gamma: [0.9, 1.1], prob: 0.2 }
+      - name: hsv
+        params: { hue_delta_deg: [-10, 10], sat: [0.9, 1.1], val: [0.9, 1.1], prob: 0.2 }
+      - name: clahe
+        params: { clip_limit: 3.0, tile_grid_size: [8, 8], prob: 0.1 }
+      - name: auto_contrast
+        params: { cutoff: 0, prob: 0.05 }
+      - name: equalize
+        params: { prob: 0.05 }
+      - name: sharpness
+        params: { factor: [0.85, 1.2], prob: 0.2 }
+      # Enforce size multiple for Qwen3-VL vision grid (pad only; keeps pixel coords)
+      - name: pad_to_multiple
+        params: { multiple: 32 }
+

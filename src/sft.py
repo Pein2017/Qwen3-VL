@@ -151,24 +151,8 @@ def main():
     if train_args.train_type == 'lora':
         print(f"[INFO] LoRA rank: {train_args.lora_rank}, alpha: {train_args.lora_alpha}")
     
-    # Force HF processor preprocessing flags off (no YAML needed)
-    proc = getattr(sft, 'template', None)
-    proc = getattr(proc, 'processor', None)
-    def _override_processor_flags(p):
-        if p is None:
-            return
-        # Disable resizing, rescaling and normalization at the processor level
-        if hasattr(p, 'do_resize'):
-            p.do_resize = False
-        if hasattr(p, 'do_rescale'):
-            p.do_rescale = False
-        if hasattr(p, 'do_normalize'):
-            p.do_normalize = False
-
-    if proc is not None:
-        _override_processor_flags(getattr(proc, 'image_processor', None))
-        _override_processor_flags(getattr(proc, 'video_processor', None))
-        print("[INFO] Processor overrides applied: do_resize=False, do_rescale=False, do_normalize=False")
+    # NOTE: Do NOT override processor normalization/rescale.
+    # Qwen3-VL expects its native image preprocessing. We already pass do_resize=False at encode time.
 
     # Configure augmentation via YAML builder (applies only to training)
     augmenter = None
@@ -210,6 +194,31 @@ def main():
         seed=42,
     )
 
+    # Extract mode control parameters
+    summary_ratio = custom_config.get('summary_ratio')
+    
+    # Prepare system prompts for dynamic mode selection
+    # The system prompt is set on the template by ConfigLoader.resolve_prompts
+    system_prompt_dense = getattr(sft.template, 'system', None)
+    system_prompt_summary = custom_config.get('system_prompt_summary')
+    
+    # Log configuration
+    if summary_ratio is not None and summary_ratio > 0:
+        print(f"[INFO] Dynamic mode selection enabled: summary_ratio={summary_ratio}")
+        if system_prompt_summary is None:
+            # Try to load from prompts module
+            try:
+                from .config.prompts import SYSTEM_PROMPT_SUMMARY
+                system_prompt_summary = SYSTEM_PROMPT_SUMMARY
+                print(f"[INFO] Loaded default SYSTEM_PROMPT_SUMMARY")
+            except ImportError:
+                raise ValueError(
+                    "summary_ratio > 0 but system_prompt_summary not found. "
+                    "Please set custom.system_prompt_summary in YAML or ensure SYSTEM_PROMPT_SUMMARY is defined."
+                )
+    else:
+        print(f"[INFO] Dense mode only (summary_ratio not set or 0)")
+
     dataset = DenseCaptionDataset.from_jsonl(
         train_jsonl,
         template=sft.template,
@@ -218,8 +227,51 @@ def main():
         config=dp_config,
         augmenter=augmenter,
         sample_limit=train_sample_limit,
+        summary_ratio=summary_ratio,
+        system_prompt_dense=system_prompt_dense,
+        system_prompt_summary=system_prompt_summary,
     )
     print(f"[INFO] Training dataset size: {len(dataset)}")
+
+    # Optional: multimodal health check (only in --debug mode)
+    if args.debug:
+        try:
+            sample = dataset[0]
+            img_grid = sample.get('image_grid_thw')
+            pv = sample.get('pixel_values')
+            input_ids = sample.get('input_ids')
+            print("[DEBUG] HealthCheck: keys=", list(sample.keys()))
+            if img_grid is None or pv is None:
+                raise ValueError(
+                    "Encoded sample missing image_grid_thw/pixel_values. Check image paths and template preprocessing.")
+            # Print basic shapes
+            try:
+                grid_shape = tuple(getattr(img_grid, 'shape', []))
+            except Exception:
+                grid_shape = None
+            try:
+                pv_shape = tuple(getattr(pv, 'shape', []))
+            except Exception:
+                pv_shape = None
+            print(f"[DEBUG] image_grid_thw shape: {grid_shape}; pixel_values shape: {pv_shape}")
+
+            # Token count sanity vs grid tokens
+            image_token_id = getattr(dataset.template, 'image_token_id', None)
+            merge = getattr(getattr(dataset.template, 'processor', None), 'image_processor', None)
+            merge_size = getattr(merge, 'merge_size', 1)
+            expected = None
+            if hasattr(img_grid, 'prod'):
+                try:
+                    expected = int(img_grid.prod(dim=-1).sum().item() // (merge_size ** 2))
+                except Exception:
+                    expected = None
+            if isinstance(image_token_id, int) and isinstance(input_ids, list) and expected is not None:
+                actual = sum(1 for t in input_ids if t == image_token_id)
+                print(f"[DEBUG] image tokens: expected≈{expected}, actual={actual}")
+                if actual == 0 or abs(actual - expected) > max(8, expected // 10):
+                    print("[WARNING] Image token mismatch. Investigate chat_template and image processing.")
+        except Exception as e:
+            print(f"[WARNING] HealthCheck failed: {e}")
 
     # Optional: dump conversation text-only (no tokens, no images) and full tokens
     dump_conv = bool(custom_config.get('dump_conversation_text', False) or args.debug)
@@ -303,6 +355,9 @@ def main():
             config=dp_config,
             augmenter=None,  # No augmentation for validation
             sample_limit=val_sample_limit,
+            summary_ratio=summary_ratio,
+            system_prompt_dense=system_prompt_dense,
+            system_prompt_summary=system_prompt_summary,
         )
         print(f"[INFO] Validation dataset size: {len(eval_dataset)}")
     

@@ -1,5 +1,7 @@
 ### Qwen3-VL (dense) and Qwen3-VL-MoE: From inputs to the first generated token
 
+Status: Archived — Superseded by docs/README.md
+
 This guide has two parts:
 - Chat-style walkthrough: a readable narrative from inputs to the first token.
 - Stack-tracing path: a precise, line-referenced reading order through the source.

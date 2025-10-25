@@ -1,6 +1,7 @@
 """Prompt templates for training - Scheme A/B and user prompt.
 
 Updated to grouped-JSON format with 类型/属性/[条件属性]/[备注] 层级。
+Supports dynamic per-group prompt selection for mixed dense/summary training.
 """
 
 
@@ -33,16 +34,42 @@ SYSTEM_PROMPT_B = (
 )
 
 
+"""Scheme SUMMARY: per-image summary variant - one-line text per image"""
+SYSTEM_PROMPT_SUMMARY = (
+    "你是图像摘要助手。只返回一个合法 JSON 对象，不要任何解释或额外文本。对于一些无关的图片，请返回“无关图片”\n\n"
+    "输出要求：\n"
+    '1) 顶层按图片分组：{"图片_1": "...", "图片_2": "..."}；按出现顺序从 1 开始。\n'
+    "2) 每个图片对应的值是一行摘要（纯文本字符串），简洁总结图片中检测到的所有对象。\n"
+    '3) 摘要必须包含相同对象的计数，格式为"对象描述×N"（使用全角乘号×），用全角逗号（，）分隔不同对象。\n'
+    "4) 摘要格式：仅包含中文描述和计数，使用半角斜杠'/'分隔属性层级。\n"
+    "5) 仅返回 JSON；不得包含示例或解释。\n\n"
+    "【严格禁止】\n"
+    "- 禁止任何坐标数字（整数数组）\n"
+    "- 禁止几何字段名（bbox_2d、quad、line）\n"
+    "- 禁止方括号[]包裹的数字列表\n"
+    "- 禁止任何特殊标记或尖括号<>\n"
+    "- 仅输出纯文本摘要，不得包含任何结构化几何信息"
+    "- 对于一些无关的图片，请返回“无关图片”"
+)
+
+
 USER_PROMPT = (
-    "基于所给图片，检测并列出所有对象：按图片分组、按“自上到下再从左到右”排序，"
+    '基于所给图片，检测并列出所有对象：按图片分组、按"自上到下再从左到右"排序，'
     "坐标使用 norm1000 整数网格，严格按规范返回 JSON。"
 )
 
+USER_PROMPT_SUMMARY = (
+    "基于所给图片，为每张图片生成一行中文摘要。"
+    "按图片顺序（图片_1、图片_2...）分组，严格按规范返回 JSON。"
+    "仅输出对象类型、属性和计数，不要坐标或几何信息。"
+)
 
 
 __all__ = [
     'SYSTEM_PROMPT_A',
     'SYSTEM_PROMPT_B',
+    'SYSTEM_PROMPT_SUMMARY',
     'USER_PROMPT',
+    'USER_PROMPT_SUMMARY',
 ]
 

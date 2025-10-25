@@ -13,10 +13,11 @@ template:
 training:
   # defaults, can be overridden per-environment
   gradient_checkpointing: true
+  lr_scheduler_type: cosine_warmup_with_min_lr
   bf16: true
   report_to: [tensorboard]
   seed: 17
-  warmup_ratio: 0.05
+  warmup_ratio: 0.1
   max_grad_norm: 0.5
   weight_decay: 0.1 
 

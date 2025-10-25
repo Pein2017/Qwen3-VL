@@ -1,5 +1,7 @@
 # MS-Swift Training Guide for Qwen3-VL
 
+Status: Archived — Superseded by docs/TRAINING_GUIDE.md
+
 ## Complete Reference of Training Techniques & Hyperparameters
 
 Based on comprehensive analysis of ms-swift library (`/data/Pein/ms-swift/`).

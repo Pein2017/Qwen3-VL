@@ -14,6 +14,12 @@ class JSONLinesBuilder(BaseBuilder):
 
     Produces a single-round chat where the user embeds all images and the assistant
     responds with one JSON object grouped by 图片_N keys.
+    
+    Supports two output modes:
+    - dense: grouped JSON with geometry + desc (default)
+    - summary: grouped JSON with per-image summary strings (loaded from dataset)
+    
+    Mode selection is determined per pairing group (at dataset level via system_prompt_summary).
     """
 
     def __init__(
@@ -21,12 +27,36 @@ class JSONLinesBuilder(BaseBuilder):
         *,
         user_prompt: str,
         emit_norm: Literal["none", "norm100", "norm1000"],
+        mode: Literal["dense", "summary"] = "dense",
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
         self.user_prompt = user_prompt
         self.emit_norm = emit_norm
+        self.mode = mode
         # Group key prefix is fixed by the chat template (图片_N)
+
+    def _get_summary_text(self, record: Dict[str, Any], record_index: int) -> str:
+        """Extract and validate summary from record.
+        
+        Args:
+            record: The data record
+            record_index: Index of the record (for error reporting)
+            
+        Returns:
+            The summary string
+            
+        Raises:
+            ValueError: if summary is missing or invalid
+        """
+        summary = record.get('summary')
+        if not isinstance(summary, str) or not summary.strip():
+            raise ValueError(
+                f"Missing or invalid 'summary' for record index {record_index}; "
+                f"expected non-empty string. Please ensure all records in JSONL have a 'summary' field "
+                f"when using summary mode."
+            )
+        return summary
 
     def build(self, record_a: Dict[str, Any], record_b: Dict[str, Any]) -> Dict[str, Any]:
         """Build grouped JSON messages from two records."""
@@ -37,6 +67,7 @@ class JSONLinesBuilder(BaseBuilder):
         objects_out: Dict[str, List[Any]] = {"ref": [], "bbox": [], "image_id": []}
 
         image_slot = 0
+        record_index = 0
         for record in records:
             images = record.get("images", []) or []
             objects = record.get("objects", []) or []
@@ -50,8 +81,17 @@ class JSONLinesBuilder(BaseBuilder):
                 user_contents.append({"type": "image", "image": self._to_url(image)})
 
             label = f"图片_{image_slot}"
-            grouped[label] = self._build_group_entry(objects, record)
-            self._update_objects_metadata(objects_out, objects, image_slot - 1)
+            
+            # Branch on mode: all records in this group use the same mode
+            if self.mode == "summary":
+                # Summary mode: load and validate summary from record
+                grouped[label] = self._get_summary_text(record, record_index)
+            else:
+                # Dense mode: build full grouped entry with geometry
+                grouped[label] = self._build_group_entry(objects, record)
+                self._update_objects_metadata(objects_out, objects, image_slot - 1)
+            
+            record_index += 1
 
         user_contents.append({"type": "text", "text": self.user_prompt})
 
@@ -78,6 +118,7 @@ class JSONLinesBuilder(BaseBuilder):
         objects_out: Dict[str, List[Any]] = {"ref": [], "bbox": [], "image_id": []}
 
         image_slot = 0
+        record_index = 0
         for record in records:
             images = record.get("images", []) or []
             objects = record.get("objects", []) or []
@@ -88,8 +129,17 @@ class JSONLinesBuilder(BaseBuilder):
                 user_contents.append({"type": "image", "image": self._to_url(image)})
 
             label = f"图片_{image_slot}"
-            grouped[label] = self._build_group_entry(objects, record)
-            self._update_objects_metadata(objects_out, objects, image_slot - 1)
+            
+            # Branch on mode: all records in this group use the same mode
+            if self.mode == "summary":
+                # Summary mode: load and validate summary from record
+                grouped[label] = self._get_summary_text(record, record_index)
+            else:
+                # Dense mode: build full grouped entry with geometry
+                grouped[label] = self._build_group_entry(objects, record)
+                self._update_objects_metadata(objects_out, objects, image_slot - 1)
+            
+            record_index += 1
 
         user_contents.append({"type": "text", "text": self.user_prompt})
 
@@ -113,10 +163,12 @@ class JSONLinesBuilder(BaseBuilder):
             geom_type, points = extract_object_points(obj)
             payload: Dict[str, Any] = {"desc": obj.get("desc", "")}
             if geom_type and points:
-                payload[geom_type] = self._format_points(points, width, height)
+                # For line objects, emit line_points before line for better causality
                 if geom_type == "line":
-                    # Number of point pairs in the line polyline
                     payload["line_points"] = len(points) // 2
+                    payload[geom_type] = self._format_points(points, width, height)
+                else:
+                    payload[geom_type] = self._format_points(points, width, height)
             grouped_objects[f"object_{idx}"] = payload
         return grouped_objects
 

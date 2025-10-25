@@ -31,16 +31,17 @@ from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
 # ==============================
 
 # Required paths
-CKPT_PATH = "output/stage_1_full_aligner_only/v3-20251021-022419/eff_batch_16-lr_5e-4-epoch_10/checkpoint-1100"  # HF dir or merged checkpoint
+CKPT_PATH = "output/stage_3_merged/data_aug_off"  # HF dir or merged checkpoint
 JSONL_PATH = "data/bbu_full_768/val.jsonl"
 
 # Runtime settings
 LIMIT = 10
-DEVICE = "cuda:7"
-SAVE_DIR = "vis_out/stage_1_longer_epoch_line_points_5e-4"
-MAX_NEW_TOKENS = 2048
+DEVICE = "cuda:0"
+SAVE_DIR = "vis_out/data_aug_off"
+MAX_NEW_TOKENS = 4096
 TEMPERATURE = 0.05
 TOP_P = 0.8
+REPETITION_PENALTY = 1.05
 
 
 # Optional: override training user prompt (None uses training default)
@@ -117,7 +118,7 @@ except Exception:
     pass
 
 processor = AutoProcessor.from_pretrained(CKPT_PATH, trust_remote_code=True)
-
+processor.image_processor.do_resize = False
 
 # ======================
 # Inference helpers
@@ -148,6 +149,7 @@ def run_infer_one(pil_img: Image.Image, prompt: str) -> tuple[str, str]:
             do_sample=(TEMPERATURE > 0),
             temperature=TEMPERATURE,
             top_p=TOP_P,
+            repetition_penalty=REPETITION_PENALTY,
             use_cache=True,
         )
     # Strip prompt tokens from the front
