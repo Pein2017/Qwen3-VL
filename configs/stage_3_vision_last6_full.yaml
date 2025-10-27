@@ -1,11 +1,10 @@
 extends: base.yaml
 
-# Stage 3: LoRA on Vision, freeze LLM; keep aligner full-tuned from stage 2
+# Stage 3: Full-tune LAST-6 Vision blocks (modules_to_save), LoRA on LLM last-2; aligner full-tuned
 
 model:
   # Point to stage 2 best checkpoint - will load base model + LLM LoRA
-  # model: output/10-22/stage_1/best/eff_batch_32-per_image_2-resumed_lr_1e-4/checkpoint-200
-  model: output/stage_3_merged/data_aug_on-epoch_50
+  model: output/stage_2_merged-10-25
 
 prompts:
   scheme: B
@@ -13,14 +12,12 @@ prompts:
 tuner:
   train_type: lora
   use_swift_lora: false
-  freeze_llm: false     # ← Enable LoRA on LLM last-K layers (see target_regex below)
-  freeze_vit: false     # ← Add LoRA to Vision blocks
+  freeze_llm: false     # ← Enable LoRA on LLM last-2 (see target_regex below)
+  freeze_vit: true      # ← Do NOT add LoRA to Vision; full-tune via modules_to_save
   freeze_aligner: true  # ← Keep aligner frozen (already full-tuned in stage 2)
   target_modules: [all-linear]
-  # ACTIVE CONFIG: LLM last-2 layers + Vision last-4 blocks (4B)
-  #  - LLM last-2 layers: 34|35
-  #  - Vision last-4 blocks: 20|21|22|23
-  target_regex: '^(?:model\.)?(?:language_model\.layers\.(?:34|35)\.(?:self_attn\.(?:q_proj|k_proj|v_proj|o_proj)|mlp\.(?:gate_proj|up_proj|down_proj))|visual\.blocks\.(?:18|19|20|21|22|23)\.(?:attn\.(?:qkv|proj)|mlp\.(?:linear_fc1|linear_fc2)))$'
+  # LLM last-2 layers only (no Vision LoRA)
+  target_regex: '^(?:model\.)?language_model\.layers\.(?:34|35)\.(?:self_attn\.(?:q_proj|k_proj|v_proj|o_proj)|mlp\.(?:gate_proj|up_proj|down_proj))$'
   
   # --- Alternative Configurations (choose ONE and replace target_regex above) ---
   # 4B: LLM last-4 + Vision last-4 (original default):
@@ -41,27 +38,34 @@ tuner:
     - model.visual.deepstack_merger_list.0
     - model.visual.deepstack_merger_list.1
     - model.visual.deepstack_merger_list.2
+    # Full-tune LAST-6 vision blocks (indices 18-23)
+    - model.visual.blocks.18
+    - model.visual.blocks.19
+    - model.visual.blocks.20
+    - model.visual.blocks.21
+    - model.visual.blocks.22
+    - model.visual.blocks.23
   lora_rank: 16
   lora_alpha: 32
   lora_dropout: 0.1
   lora_bias: none
 
 training:
-  output_dir: ./output/10-24/stage_3_from_merged
-  run_name: stage_3-epoch_100-eff_batch_16-longer_warmup-larger_wd-more_aug
+  output_dir: ./output/10-26/stage_3
+  run_name: last6_full-epoch_50-eff_batch_16
   add_version: true
   save_safetensors: true
   per_device_train_batch_size: 2
   per_device_eval_batch_size: 2
   packing: true
-  weight_decay: 0.2
+  weight_decay: 0.1
   warmup_ratio: 0.2
 
   optimizer: multimodal
   learning_rate: 1.0e-4   # Vision LoRA learning rate
-  vit_lr: 8.0e-5          # Same as learning_rate for vision
+  vit_lr: 6.0e-5          # Moderate LR for full-tuning LAST-6 vision blocks
   aligner_lr: 1.0e-4      # Aligner continues training (if in modules_to_save)
-  num_train_epochs: 100
+  num_train_epochs: 50
 
   lr_scheduler_kwargs:
     min_lr: 1.0e-6
@@ -79,7 +83,7 @@ training:
   save_total_limit: 2
 
   # Verbose logging
-  logging_dir: ./tb/10-24
+  logging_dir: ./tb/10-26
   logging_steps: 10
   logging_first_step: true
 

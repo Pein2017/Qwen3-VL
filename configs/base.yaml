@@ -9,6 +9,9 @@ model:
 template:
   template: qwen3_vl
   truncation_strategy: right
+  
+prompts:
+  scheme: B
 
 training:
   # defaults, can be overridden per-environment
@@ -20,12 +23,39 @@ training:
   warmup_ratio: 0.1
   max_grad_norm: 0.5
   weight_decay: 0.1 
+  
+  # Common trainer/runtime defaults
+  add_version: true
+  save_safetensors: true
+  packing: true
+  
+  # Eval & checkpointing defaults
+  eval_strategy: steps
+  eval_steps: 20
+  save_strategy: best
+  save_steps: 40
+  save_total_limit: 2
+  metric_for_best_model: eval_loss
+  greater_is_better: false
+  save_delay_steps: 100  # Prevent checkpoint saves during first 100 steps (warmup protection)
+  
+  # Logging
+  logging_steps: 10
+  logging_first_step: true
+  
+  # Scheduler extras
+  lr_scheduler_kwargs:
+    min_lr: 1.0e-6
 
 data:
   dataset: [placeholder]
+  dataset_num_proc: 8
+  dataloader_num_workers: 8
+  eval_dataset: [placeholder]
 
 deepspeed:
   enabled: true
+  config: zero2
 
 custom:
   emit_norm: norm1000

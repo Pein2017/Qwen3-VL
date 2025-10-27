@@ -1,6 +1,7 @@
 """SFT runner - pure YAML config-driven, no CLI arguments for hyperparameters"""
 import argparse
 import copy
+import logging
 import os
 import re
 
@@ -9,8 +10,11 @@ from swift.trainers import TrainerFactory
 
 from .datasets import DenseCaptionDataset
 from .config import ConfigLoader
+from .utils import get_logger, enable_verbose_logging, set_log_level
 
 # Use the model's native chat_template (JSON/Jinja) shipped with the tokenizer
+
+logger = get_logger(__name__)
 
 def parse_args():
     """Parse minimal runtime arguments.
@@ -57,6 +61,13 @@ Examples:
         help='Enable debug logging and print full config'
     )
     
+    # Runtime: verbose mode (all ranks log)
+    parser.add_argument(
+        '--verbose',
+        action='store_true',
+        help='Enable logging from all ranks in distributed training'
+    )
+    
     return parser.parse_args()
 
 
@@ -64,16 +75,23 @@ def main():
     """Main training entry point - pure config-driven."""
     args = parse_args()
     
-    print("=" * 70)
-    print("  MS-Swift Training with YAML Configuration")
-    print("=" * 70)
-    print(f"[INFO] Config file: {args.config}")
+    # Configure logging based on runtime flags
+    if args.verbose:
+        enable_verbose_logging()
+    
+    if args.debug:
+        set_log_level(logging.DEBUG)
+    
+    logger.info("=" * 70)
+    logger.info("  MS-Swift Training with YAML Configuration")
+    logger.info("=" * 70)
+    logger.info(f"Config file: {args.config}")
     if args.base_config:
-        print(f"[INFO] Base config: {args.base_config}")
-    print("=" * 70)
+        logger.info(f"Base config: {args.base_config}")
+    logger.info("=" * 70)
     
     # Load configuration from YAML
-    print(f"\n[INFO] Loading configuration...")
+    logger.info("Loading configuration...")
     train_args, custom_config = ConfigLoader.load_training_config(
         args.config,
         args.base_config
@@ -124,14 +142,14 @@ def main():
     
     # Debug mode: print full configuration
     if args.debug:
-        print("\n[DEBUG] TrainArguments:")
+        logger.debug("TrainArguments:")
         for key, value in vars(train_args).items():
             if not key.startswith('_'):
-                print(f"  {key}: {value}")
-        print("\n[DEBUG] Custom dataset config:")
+                logger.debug(f"  {key}: {value}")
+        logger.debug("Custom dataset config:")
         for key, value in custom_config.items():
-            print(f"  {key}: {value}")
-        print("\n" + "=" * 70 + "\n")
+            logger.debug(f"  {key}: {value}")
+        logger.debug("=" * 70)
     
     # Auto-configure ROOT_IMAGE_DIR from JSONL directory
     train_jsonl = custom_config.get('train_jsonl') or custom_config.get('jsonl')
@@ -141,15 +159,15 @@ def main():
     if os.environ.get("ROOT_IMAGE_DIR") in (None, ""):
         root_dir = os.path.abspath(os.path.dirname(train_jsonl))
         os.environ["ROOT_IMAGE_DIR"] = root_dir
-        print(f"[INFO] Set ROOT_IMAGE_DIR={root_dir}")
+        logger.info(f"Set ROOT_IMAGE_DIR={root_dir}")
     
     # Initialize SwiftSft with TrainArguments object directly
-    print("[INFO] Initializing ms-swift SFT...")
+    logger.info("Initializing ms-swift SFT...")
     sft = SwiftSft(train_args)
-    print(f"[INFO] Model: {train_args.model}")
-    print(f"[INFO] Training type: {train_args.train_type}")
+    logger.info(f"Model: {train_args.model}")
+    logger.info(f"Training type: {train_args.train_type}")
     if train_args.train_type == 'lora':
-        print(f"[INFO] LoRA rank: {train_args.lora_rank}, alpha: {train_args.lora_alpha}")
+        logger.info(f"LoRA rank: {train_args.lora_rank}, alpha: {train_args.lora_alpha}")
     
     # NOTE: Do NOT override processor normalization/rescale.
     # Qwen3-VL expects its native image preprocessing. We already pass do_resize=False at encode time.
@@ -163,7 +181,7 @@ def main():
             # Ensure ops are registered by importing ops module
             from .datasets.augmentation import ops as _register_ops  # noqa: F401
             augmenter = build_compose_from_config(aug_cfg)
-            print("[INFO] Augmentation pipeline built from YAML (training only)")
+            logger.info("Augmentation pipeline built from YAML (training only)")
         except Exception as e:
             raise ValueError(f"Failed to build augmentation pipeline from YAML: {e}")
     
@@ -172,12 +190,12 @@ def main():
     train_sample_limit = custom_config.get('train_sample_limit', shared_sample_limit)
     val_sample_limit = custom_config.get('val_sample_limit', shared_sample_limit)
     if train_sample_limit:
-        print(f"[INFO] Train sample limit: {train_sample_limit}")
+        logger.info(f"Train sample limit: {train_sample_limit}")
     if val_sample_limit:
-        print(f"[INFO] Val sample limit: {val_sample_limit}")
+        logger.info(f"Val sample limit: {val_sample_limit}")
     
     # Build training dataset
-    print(f"\n[INFO] Loading training dataset: {train_jsonl}")
+    logger.info(f"Loading training dataset: {train_jsonl}")
     # Require minimal explicit keys; others have sane defaults
     required_keys = [
         'user_prompt', 'emit_norm'
@@ -204,20 +222,20 @@ def main():
     
     # Log configuration
     if summary_ratio is not None and summary_ratio > 0:
-        print(f"[INFO] Dynamic mode selection enabled: summary_ratio={summary_ratio}")
+        logger.info(f"Dynamic mode selection enabled: summary_ratio={summary_ratio}")
         if system_prompt_summary is None:
             # Try to load from prompts module
             try:
                 from .config.prompts import SYSTEM_PROMPT_SUMMARY
                 system_prompt_summary = SYSTEM_PROMPT_SUMMARY
-                print(f"[INFO] Loaded default SYSTEM_PROMPT_SUMMARY")
+                logger.info("Loaded default SYSTEM_PROMPT_SUMMARY")
             except ImportError:
                 raise ValueError(
                     "summary_ratio > 0 but system_prompt_summary not found. "
                     "Please set custom.system_prompt_summary in YAML or ensure SYSTEM_PROMPT_SUMMARY is defined."
                 )
     else:
-        print(f"[INFO] Dense mode only (summary_ratio not set or 0)")
+        logger.info("Dense mode only (summary_ratio not set or 0)")
 
     dataset = DenseCaptionDataset.from_jsonl(
         train_jsonl,
@@ -231,7 +249,7 @@ def main():
         system_prompt_dense=system_prompt_dense,
         system_prompt_summary=system_prompt_summary,
     )
-    print(f"[INFO] Training dataset size: {len(dataset)}")
+    logger.info(f"Training dataset size: {len(dataset)}")
 
     # Optional: multimodal health check (only in --debug mode)
     if args.debug:
@@ -240,7 +258,7 @@ def main():
             img_grid = sample.get('image_grid_thw')
             pv = sample.get('pixel_values')
             input_ids = sample.get('input_ids')
-            print("[DEBUG] HealthCheck: keys=", list(sample.keys()))
+            logger.debug(f"HealthCheck: keys={list(sample.keys())}")
             if img_grid is None or pv is None:
                 raise ValueError(
                     "Encoded sample missing image_grid_thw/pixel_values. Check image paths and template preprocessing.")
@@ -253,7 +271,7 @@ def main():
                 pv_shape = tuple(getattr(pv, 'shape', []))
             except Exception:
                 pv_shape = None
-            print(f"[DEBUG] image_grid_thw shape: {grid_shape}; pixel_values shape: {pv_shape}")
+            logger.debug(f"image_grid_thw shape: {grid_shape}; pixel_values shape: {pv_shape}")
 
             # Token count sanity vs grid tokens
             image_token_id = getattr(dataset.template, 'image_token_id', None)
@@ -267,11 +285,11 @@ def main():
                     expected = None
             if isinstance(image_token_id, int) and isinstance(input_ids, list) and expected is not None:
                 actual = sum(1 for t in input_ids if t == image_token_id)
-                print(f"[DEBUG] image tokens: expected≈{expected}, actual={actual}")
+                logger.debug(f"image tokens: expected≈{expected}, actual={actual}")
                 if actual == 0 or abs(actual - expected) > max(8, expected // 10):
-                    print("[WARNING] Image token mismatch. Investigate chat_template and image processing.")
+                    logger.warning("Image token mismatch. Investigate chat_template and image processing.")
         except Exception as e:
-            print(f"[WARNING] HealthCheck failed: {e}")
+            logger.warning(f"HealthCheck failed: {e}")
 
     # Optional: dump conversation text-only (no tokens, no images) and full tokens
     dump_conv = bool(custom_config.get('dump_conversation_text', False) or args.debug)
@@ -317,11 +335,11 @@ def main():
                             assistant_gt = item.get('text')
                             break
             except Exception as inner_e:
-                print(f"[WARNING] Failed to extract assistant GT: {inner_e}")
+                logger.warning(f"Failed to extract assistant GT: {inner_e}")
 
-            print("\n[DEBUG] Conversation (raw):\n" + raw_text + "\n")
+            logger.debug("Conversation (raw):\n" + raw_text)
             if assistant_gt:
-                print("[DEBUG] Assistant GT:\n" + assistant_gt + "\n")
+                logger.debug("Assistant GT:\n" + assistant_gt)
 
             dump_path = custom_config.get('dump_conversation_path') or 'conversation_text.txt'
             if not os.path.isabs(dump_path):
@@ -338,15 +356,15 @@ def main():
                     f.write(assistant_gt)
                     if not assistant_gt.endswith('\n'):
                         f.write('\n')
-            print(f"[INFO] Conversation text saved to: {dump_path}")
+            logger.info(f"Conversation text saved to: {dump_path}")
         except Exception as e:
-            print(f"[WARNING] Failed to dump conversation text: {e}")
+            logger.warning(f"Failed to dump conversation text: {e}")
     
     # Build validation dataset if provided
     eval_dataset = None
     val_jsonl = custom_config.get('val_jsonl')
     if val_jsonl:
-        print(f"[INFO] Loading validation dataset: {val_jsonl}")
+        logger.info(f"Loading validation dataset: {val_jsonl}")
         eval_dataset = DenseCaptionDataset.from_jsonl(
             val_jsonl,
             template=sft.template,
@@ -359,19 +377,27 @@ def main():
             system_prompt_dense=system_prompt_dense,
             system_prompt_summary=system_prompt_summary,
         )
-        print(f"[INFO] Validation dataset size: {len(eval_dataset)}")
+        logger.info(f"Validation dataset size: {len(eval_dataset)}")
     
     # Sample printing disabled to avoid dumping labels/ids
     
     # CRITICAL: Apply tuner (LoRA/adapters) before creating trainer
-    print("\n[INFO] Preparing model with tuner...")
+    logger.info("Preparing model with tuner...")
     sft.model = sft.prepare_model(train_args, sft.model, template=sft.template, train_dataset=dataset)
-    print(f"[INFO] Model after tuner: {type(sft.model).__name__}")
+    logger.info(f"Model after tuner: {type(sft.model).__name__}")
     
     # Setup trainer
-    print("\n[INFO] Setting up trainer...")
+    logger.info("Setting up trainer...")
     data_collator = sft._get_data_collator()
     trainer_cls = TrainerFactory.get_trainer_cls(train_args)
+    
+    # Add SaveDelayCallback if save_delay_steps is configured
+    callbacks = sft.callbacks.copy() if sft.callbacks else []
+    save_delay_steps = getattr(train_args, 'save_delay_steps', None)
+    if save_delay_steps is not None and save_delay_steps > 0:
+        from .callbacks import SaveDelayCallback
+        callbacks.append(SaveDelayCallback(save_delay_steps=save_delay_steps))
+        logger.info(f"SaveDelayCallback enabled: no checkpoints until step {save_delay_steps}")
     
     trainer = trainer_cls(
         model=sft.model,
@@ -379,18 +405,18 @@ def main():
         data_collator=data_collator,
         train_dataset=dataset,
         eval_dataset=eval_dataset,
-        callbacks=sft.callbacks,
+        callbacks=callbacks,
         template=sft.template,
     )
     
     # Start training
-    print("\n" + "=" * 70)
-    print("  Starting Training")
-    print("=" * 70)
-    print(f"  Output directory: {train_args.output_dir}")
-    print(f"  Epochs: {train_args.num_train_epochs}")
-    print(f"  Effective batch size: {train_args.per_device_train_batch_size * train_args.gradient_accumulation_steps}")
-    print("=" * 70 + "\n")
+    logger.info("=" * 70)
+    logger.info("  Starting Training")
+    logger.info("=" * 70)
+    logger.info(f"  Output directory: {train_args.output_dir}")
+    logger.info(f"  Epochs: {train_args.num_train_epochs}")
+    logger.info(f"  Effective batch size: {train_args.per_device_train_batch_size * train_args.gradient_accumulation_steps}")
+    logger.info("=" * 70)
     
     sft.train(trainer)
 

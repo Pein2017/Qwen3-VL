@@ -6,14 +6,15 @@ set -euo pipefail
 # Example: mission=BBU安装方式检查（正装） gpu=1 bash scripts/stage_a_infer.sh
 
 # Fixed configuration
-CHECKPOINT="output/summary_merged/10-25-per_image_1"
+CHECKPOINT="output/summary_merged/10-25-aug_on-full_last2_llm"
 INPUT_DIR="group_data/bbu_scene_2.0_order"
 OUTPUT_DIR="output_post/stage_a"
 
 # Environment variable overrides (lowercase)
 MISSION="${mission:-挡风板安装检查}"
 gpu_id="${gpu:-0}"
-no_mission_flag="${no_mission:-false}"
+no_mission_flag="${no_mission:-true}"
+verify_flag="${verify_inputs:-true}"
 if [[ "$gpu_id" == "cpu" ]]; then
   DEVICE="cpu"
 else
@@ -48,6 +49,11 @@ EXTRA_FLAGS=""
 case "${no_mission_flag,,}" in
   1|true|yes)
     EXTRA_FLAGS+=" --no_mission_focus"
+    ;;
+esac
+case "${verify_flag,,}" in
+  1|true|yes)
+    EXTRA_FLAGS+=" --verify_inputs"
     ;;
 esac
 

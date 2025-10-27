@@ -1,17 +1,20 @@
 #!/bin/bash
 # Merge LoRA adapter into base model for end2end inference
+base_model=output/10-25/stage_1_from_base/v2-20251025-140114/eff_batch_64-per_image_2-from_base/checkpoint-200
+adapters=output/10-25/stage_2_llm_lora/v0-20251025-153140/lora_8_16-5e-4-eff_batch_32-last_4/checkpoint-260
+output_dir=output/stage_2_merged-10-25
 
 CUDA_VISIBLE_DEVICES=0 \
 swift export \
-    --model output/stage_3_merged/data_aug_on-epoch_50 \
-    --adapters output/summary/10-25/per_image_1/v0-20251025-084845/epoch_10-ratio_1.0-per_image_1/checkpoint-300 \
+    --model $base_model \
+    --adapters $adapters \
     --merge_lora true \
-    --output_dir output/summary_merged/10-25-per_image_1 \
+    --output_dir $output_dir \
     --safe_serialization true \
     --max_shard_size 5GB
 
-echo "Merged model saved to: output/stage_2_merged/checkpoint-2"
+echo "Merged model saved to: $output_dir"
 echo ""
 echo "Test inference with:"
-echo "CUDA_VISIBLE_DEVICES=0 swift infer --model output/stage_2_merged/checkpoint-2 --stream true"
+echo "CUDA_VISIBLE_DEVICES=0 swift infer --model $output_dir --stream true"
 

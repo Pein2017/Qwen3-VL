@@ -423,6 +423,15 @@ For details, see `docs/DATA_FORMATS.md#dense-vs-summary-modes`.
 # List aligner modules present in a model/checkpoint (helps set modules_to_save)
 python -m src.utils.auto_detect_aligners Qwen/Qwen3-VL-4B-Instruct
 python -m src.utils.auto_detect_aligners output/stage_1_full_aligner_only/best/checkpoint-200
+
+# Merge LoRA adapter into base for deployment (recommended)
+CUDA_VISIBLE_DEVICES=0 conda run -n ms swift export \
+  --model /abs/path/to/base/Qwen3-VL \
+  --adapters /abs/path/to/output/stage_2/checkpoint-XXX \
+  --merge_lora true \
+  --output_dir /abs/path/to/output/merged/checkpoint-XXX \
+  --safe_serialization true \
+  --max_shard_size 5GB
 ```
 
 ## Dynamic grouping & augmentation (dataset)

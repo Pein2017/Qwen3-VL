@@ -123,6 +123,11 @@ Examples:
         action="store_true",
         help="Disable mission-specific focus in the user prompt to match training prompts.",
     )
+    parser.add_argument(
+        "--verify_inputs",
+        action="store_true",
+        help="Verify that images are loaded and encoded (logs checksums/sizes and grid/token counts)",
+    )
     
     # Logging
     parser.add_argument(
@@ -187,6 +192,7 @@ def main() -> None:
             batch_size=args.batch_size,
             max_pixels=args.max_pixels,
             include_mission_focus=(not args.no_mission_focus),
+            verify_inputs=args.verify_inputs,
         )
     except Exception as e:
         logger.error(f"Inference failed: {e}", exc_info=True)

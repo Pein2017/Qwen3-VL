@@ -38,27 +38,22 @@ def show_input_debug(inputs):
 def main() -> None:
     # Configuration (edit these)
 
-    model_path = "model_cache/models/Qwen/Qwen3-VL-4B-Instruct"
+    # model_path = "output/summary_merged/10-25-aug_on-full_last2_llm"
+    model_path="output/stage_2_llm_lora/10-25"
     image_paths = [
         'demo/images/QC-20230106-0000211_16517.jpeg',
-        'demo/images/QC-20230106-0000211_16519.jpeg',
-        "demo/images/QC-202÷30106-0000211_16520.jpeg",
+        "demo/images/test_demo.jpg"
     ]
-    prompt = "简要描述这（些）图片。请输出物体的具体坐标。"
+    prompt = "请介绍一下这两张图片"
+    max_new_tokens=512
     # prompt='Describe the image(s) briefly.'
 
-    if not image_paths:
-        raise ValueError("Please set at least one path in image_paths.")
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    if device == "cuda":
-        try:
-            torch.backends.cuda.matmul.allow_tf32 = True
-            torch.backends.cudnn.benchmark = True
-            torch.set_float32_matmul_precision("high")
-            print("Enabled TF32 and cuDNN benchmark for faster inference.")
-        except Exception:
-            pass
+    device = "cuda:1"
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.benchmark = True
+    torch.set_float32_matmul_precision("high")
+    print("Enabled TF32 and cuDNN benchmark for faster inference.")
 
     print(f"Loading processor from: {model_path}")
     processor = AutoProcessor.from_pretrained(model_path)
@@ -117,10 +112,10 @@ def main() -> None:
     message_content = [{"type": "image", "image": img} for img in images]
     message_content.append({"type": "text", "text": prompt})
     messages = [
-        {
-            "role": "system",
-            "content": SYSTEM_PROMPT_B,
-        },
+        # {
+        #     "role": "system",
+        #     "content": SYSTEM_PROMPT_B,
+        # },
         {
             "role": "user",
             "content": message_content,
@@ -143,11 +138,10 @@ def main() -> None:
     print(f"Occurrences of '图片_': {label_count}; has 图片_1: {'图片_1' in text}, 图片_2: {'图片_2' in text}")
 
     print("Preprocessing inputs...")
-    inputs = processor(
-        images=images,
-        text=text,
-        return_tensors="pt",
-    )
+    if images:
+        inputs = processor(images=images, text=text, return_tensors="pt")
+    else:
+        inputs = processor(text=text, return_tensors="pt")
 
     # Optional: debug shapes
     show_input_debug(inputs)
@@ -161,8 +155,9 @@ def main() -> None:
     with torch.inference_mode():
         generated_ids = model.generate(
             **inputs,
-            max_new_tokens=4096,
-            do_sample=False,
+            max_new_tokens=max_new_tokens,
+            do_sample=True,
+            temperature=0.3,
             use_cache=True,
         )
 

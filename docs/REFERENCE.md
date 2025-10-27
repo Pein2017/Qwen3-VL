@@ -1,10 +1,8 @@
 # Reference
 
-Status: Active — Internal Engineering
+Status: Optional — Advanced topics and FAQ. Prefer the concise guides first.
 
-Quick reference for advanced topics and troubleshooting.
-
-## Learning Rate Scheduler
+## Learning Rate Scheduler (FAQ)
 
 ### Cosine with Min LR
 
@@ -21,7 +19,7 @@ training:
 
 **Why min_lr matters:** Standard cosine decay goes to zero at end of training, which can cause instability. Setting `min_lr` provides a floor for continued gradual improvement.
 
-## DeepSpeed Configuration
+## DeepSpeed Configuration (FAQ)
 
 ### ZeRO Stage 2 (Recommended)
 
@@ -47,7 +45,7 @@ deepspeed:
 
 Memory savings: ~70% vs single GPU (but slower due to communication overhead)
 
-## Augmentation Pipeline
+## Augmentation Pipeline (FAQ)
 
 Geometry-aware augmentation that updates both images and coordinates atomically:
 
@@ -71,7 +69,7 @@ custom:
 
 All geometric transforms automatically update bbox/quad/line coordinates to maintain spatial accuracy.
 
-## Architecture Notes
+## Architecture Notes (FAQ)
 
 ### Qwen3-VL Components
 
@@ -89,7 +87,7 @@ Image → Vision Encoder → Aligner → <|image_pad|> tokens → LLM
 
 Each image expands to variable number of vision tokens based on resolution and `image_grid_thw`.
 
-## Chat Template Mechanics
+## Chat Template Mechanics (FAQ)
 
 ### Image Placeholder Insertion
 
@@ -229,7 +227,7 @@ if pixel_values is not None:
 
 See also: Training Guide → LoRA Adapter Preparation, and Data Formats → Coordinate Normalization.
 
-## Performance Tips
+## Performance Tips (FAQ)
 
 ### Memory Optimization
 
@@ -273,7 +271,7 @@ See also: Training Guide → LoRA Adapter Preparation, and Data Formats → Coor
      bf16: true
    ```
 
-## Common Issues
+## Common Issues (FAQ)
 
 ### Issue: "Expected all tensors to be on the same device"
 
@@ -300,6 +298,55 @@ data:
 1. Lower LR: `learning_rate: 5.0e-5`
 2. Increase effective batch size via gradient accumulation
 3. Add warmup: `warmup_ratio: 0.1`
+
+## Aligner tuning playbook (from archive)
+
+Recommended minimal settings to train the aligner effectively while keeping the rest stable.
+
+```yaml
+tuner:
+  train_type: lora
+  freeze_llm: true
+  freeze_vit: true
+  freeze_aligner: true      # aligner trained via modules_to_save
+  target_regex: '^$'        # no LoRA targets
+  modules_to_save:
+    - model.visual.merger
+    - model.visual.deepstack_merger_list.0
+    - model.visual.deepstack_merger_list.1
+    - model.visual.deepstack_merger_list.2
+training:
+  optimizer: multimodal
+  aligner_lr: 1.0e-4
+  weight_decay: 0.1
+  warmup_ratio: 0.3
+```
+
+Alternatives (when full-param aligner overfits or needs better dynamics):
+- DoRA: `tuner.use_dora: true` (weight‑decomposed LoRA)
+- AdaLoRA: adaptive rank to reveal bottlenecks in aligner
+- BOFT: orthogonal fine‑tuning; preserves geometry space
+- FourierFT: frequency‑domain adaptation for spatial patterns
+
+Augmentation guidance for grounding tasks:
+- Conservative geometric (small rotate/scale); aggressive appearance (color/gamma/CLAHE)
+- Keep `pad_to_multiple` to stabilize image grid and token counts
+
+Monitoring: track bbox/quad/line metrics separately; reduce geometric ops if quad/line drifts.
+
+## Stage‑A implementation notes (from archive)
+
+- Hybrid batching gives ~4–5× throughput vs sequential
+- Strict validation: non‑empty summaries; 图片_{1..N} coverage; deterministic ordering
+- Native chat_template via HF; no custom wrapper required
+- Flat JSONL per mission enables easy downstream GRPO loading
+
+## Dense/Summary mixed mode design (from archive)
+
+- Mode is chosen per pairing group (not per sample) to keep JSON shapes coherent
+- Summary mode requires valid `summary` on all records
+- Selection is deterministic per epoch (seeded RNG)
+- Dataset temporarily injects the appropriate system prompt per group during encoding
 
 ## Additional Resources
 

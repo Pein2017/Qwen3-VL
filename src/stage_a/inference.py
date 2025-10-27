@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import datetime
 import json
-import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,8 +19,9 @@ from PIL import Image
 from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
 
 from .prompts import SUMMARY_SYSTEM_PROMPT, build_user_prompt
+from ..utils import get_logger
 
-logger = logging.getLogger("stage_a.inference")
+logger = get_logger(__name__)
 
 # Supported image extensions
 SUPPORTED_EXT = {".jpg", ".jpeg", ".png"}
@@ -274,6 +274,7 @@ def infer_one_image(
     image: Image.Image,
     user_text: str,
     gen_config: Dict[str, Any],
+    verify: bool = False,
 ) -> Tuple[str, str]:
     """Run inference on a single image.
     
@@ -308,7 +309,32 @@ def infer_one_image(
     )
     
     # Encode
-    inputs = processor(images=[image], text=[text], return_tensors="pt")
+    # Respect max_pixels by passing images_kwargs explicitly (Qwen2VLImageProcessorFast)
+    _img_kwargs = {}
+    try:
+        mp = getattr(getattr(processor, "image_processor", None), "max_pixels", None)
+        if mp is not None:
+            _img_kwargs["max_pixels"] = int(mp)
+    except Exception:
+        pass
+    inputs = processor(images=[image], text=[text], return_tensors="pt", images_kwargs=_img_kwargs)
+    if verify:
+        try:
+            import hashlib
+            buf = image.tobytes()
+            sha = hashlib.sha256(buf).hexdigest()[:16]
+            grid = inputs.get("image_grid_thw")
+            merge = getattr(getattr(processor, "image_processor", None), "merge_size", 2)
+            expected_tokens = int((grid[0].prod() // (merge * merge)).item()) if grid is not None else -1
+            image_token_id = getattr(processor, "image_token_id", None) or getattr(processor.tokenizer, "image_token_id", None)
+            text_token_count = int((inputs["input_ids"][0] == image_token_id).sum().item()) if image_token_id is not None else -1
+            logger.info(
+                "[verify] size=%sx%s sha256=%s grid_thw=%s expected_image_tokens=%s text_image_tokens=%s",
+                image.width, image.height, sha, tuple(grid[0].tolist()) if grid is not None else None,
+                expected_tokens, text_token_count,
+            )
+        except Exception:
+            logger.warning("[verify] logging failed", exc_info=False)
     inputs = {
         k: v.to(model.device) if hasattr(v, "to") else v
         for k, v in inputs.items()
@@ -391,6 +417,7 @@ def infer_batch(
     images: List[Image.Image],
     user_text: str,
     gen_config: Dict[str, Any],
+    verify: bool = False,
 ) -> List[Tuple[str, str]]:
     """Run batched inference on multiple images.
     
@@ -429,7 +456,28 @@ def infer_batch(
     ]
     
     # Batch encode with padding
-    inputs = processor(images=images, text=texts, return_tensors="pt", padding=True)
+    _img_kwargs = {}
+    try:
+        mp = getattr(getattr(processor, "image_processor", None), "max_pixels", None)
+        if mp is not None:
+            _img_kwargs["max_pixels"] = int(mp)
+    except Exception:
+        pass
+    inputs = processor(images=images, text=texts, return_tensors="pt", padding=True, images_kwargs=_img_kwargs)
+    if verify and len(images) > 0:
+        try:
+            import hashlib
+            grid = inputs.get("image_grid_thw")
+            merge = getattr(getattr(processor, "image_processor", None), "merge_size", 2)
+            exp = int((grid[0].prod() // (merge * merge)).item()) if grid is not None else -1
+            image_token_id = getattr(processor, "image_token_id", None) or getattr(processor.tokenizer, "image_token_id", None)
+            txt = int((inputs["input_ids"][0] == image_token_id).sum().item()) if image_token_id is not None else -1
+            sha0 = hashlib.sha256(images[0].tobytes()).hexdigest()[:16]
+            logger.info("[verify-batch] first.size=%sx%s sha256=%s grid_thw=%s expected_tokens=%s text_tokens=%s",
+                        images[0].width, images[0].height, sha0,
+                        tuple(grid[0].tolist()) if grid is not None else None, exp, txt)
+        except Exception:
+            logger.warning("[verify-batch] logging failed", exc_info=False)
     inputs = {
         k: v.to(model.device) if hasattr(v, "to") else v
         for k, v in inputs.items()
@@ -524,6 +572,7 @@ def process_group(
     gen_config: Dict[str, Any],
     batch_size: int = 8,
     include_mission_focus: bool = True,
+    verify: bool = False,
 ) -> Dict[str, Any]:
     """Process a single group with batched inference.
     
@@ -564,12 +613,12 @@ def process_group(
         
         if batch_size == 1:
             # Sequential fallback
-            raw, clean = infer_one_image(model, processor, chunk[0], user_text, gen_config)
+            raw, clean = infer_one_image(model, processor, chunk[0], user_text, gen_config, verify=verify)
             raw_texts.append(raw)
             clean_texts.append(clean)
         else:
             # Batched inference
-            chunk_outputs = infer_batch(model, processor, chunk, user_text, gen_config)
+            chunk_outputs = infer_batch(model, processor, chunk, user_text, gen_config, verify=verify)
             for raw, clean in chunk_outputs:
                 raw_texts.append(raw)
                 clean_texts.append(clean)
@@ -620,6 +669,7 @@ def run_stage_a_inference(
     batch_size: int = 8,
     max_pixels: int = 786432,
     include_mission_focus: bool = True,
+    verify_inputs: bool = False,
 ) -> None:
     """Run Stage-A inference on mission-based directory.
     
@@ -698,6 +748,7 @@ def run_stage_a_inference(
                     gen_config=gen_params,
                     batch_size=batch_size,
                     include_mission_focus=include_mission_focus,
+                    verify=verify_inputs,
                 )
                 
                 # Write immediately after processing each group
