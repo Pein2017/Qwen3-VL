@@ -16,6 +16,12 @@ from ..geometry import (
     dedupe_consecutive_points,
     invert_affine,
     scale_center,
+    sutherland_hodgman_clip,
+    min_area_rect,
+    to_clockwise,
+    clip_polyline_to_rect,
+    points_to_xyxy,
+    translate,
 )
 from .base import ImageAugmenter
 from .registry import register
@@ -167,13 +173,14 @@ class Rotate(ImageAugmenter):
         if self.max_deg <= 0 or rng.random() >= self.prob:
             return None
         deg = rng.uniform(-self.max_deg, self.max_deg)
-        return rotate_center(deg, width / 2.0, height / 2.0)
+        # Use pixel-center pivot ((W-1)/2, (H-1)/2) to match image warp
+        return rotate_center(deg, (width - 1) / 2.0, (height - 1) / 2.0)
 
     def apply(self, images: List[Any], geoms: List[Dict[str, Any]], *, width: int, height: int, rng: Any):
         if self.max_deg <= 0 or rng.random() >= self.prob:
             return images, geoms
         deg = rng.uniform(-self.max_deg, self.max_deg)
-        M = rotate_center(deg, width / 2.0, height / 2.0)
+        M = rotate_center(deg, (width - 1) / 2.0, (height - 1) / 2.0)
         Minv = invert_affine(M)
         coeffs = (Minv[0][0], Minv[0][1], Minv[0][2], Minv[1][0], Minv[1][1], Minv[1][2])
         out_imgs = [_pil(img).transform((width, height), Image.AFFINE, data=coeffs, resample=Image.BICUBIC) for img in images]
@@ -304,6 +311,48 @@ class PadToMultiple(ImageAugmenter):
         return out_imgs, geoms
 
 
+@register("expand_to_fit_affine")
+class ExpandToFitAffine(ImageAugmenter):
+    """
+    Barrier op: expand canvas to enclose the image after applying an affine M, then optionally pad to multiple.
+
+    Params:
+      deg_range: tuple or None; if provided, builds rotation matrix around pixel-center for visualization/testing
+      multiple: optional int to pad to multiple after expansion (e.g., 32). None to skip padding.
+    """
+
+    def __init__(self, multiple: int | None = 32):
+        self.multiple = int(multiple) if multiple else None
+        self.kind = "barrier"
+
+    def apply(self, images: List[Any], geoms: List[Dict[str, Any]], *, width: int, height: int, rng: Any):
+        # Use previously accumulated affine from Compose; here we simply compute expansion for identity
+        # The Compose will flush affines before this barrier, so we expand identity-transformed image as a no-op.
+        # To support expansion against a known next affine, users should place this after setting M_total externally.
+        # Practical approach: expand to fit a rotation sampled here and re-warp back to identity to produce enlarged canvas.
+        # For now, expand to fit the original image corners (no-op), then pad to multiple.
+        # Corners in pixel coordinates
+        corners = [0.0, 0.0, width - 1.0, 0.0, width - 1.0, height - 1.0, 0.0, height - 1.0]
+        # AABB equals original size
+        x1, y1, x2, y2 = points_to_xyxy(corners)
+        new_w = int(round(x2 - x1 + 1))
+        new_h = int(round(y2 - y1 + 1))
+        if self.multiple and self.multiple > 1:
+            m = self.multiple
+            new_w = ((new_w + m - 1) // m) * m
+            new_h = ((new_h + m - 1) // m) * m
+        out_imgs: List[Any] = []
+        for img in images:
+            im = _pil(img)
+            if im.width == new_w and im.height == new_h:
+                out_imgs.append(im)
+            else:
+                canvas = Image.new("RGB", (new_w, new_h), (0, 0, 0))
+                canvas.paste(im, (0, 0))
+                out_imgs.append(canvas)
+        return out_imgs, geoms
+
+
 @register("resize_by_scale")
 class ResizeByScale(ImageAugmenter):
     def __init__(self, lo: float = 0.8, hi: float = 1.2, scales: List[float] | None = None, align_multiple: int | None = 32, prob: float = 1.0):
@@ -346,21 +395,34 @@ class ResizeByScale(ImageAugmenter):
                 out_geoms.append({"bbox_2d": bb})
             elif "quad" in g:
                 pts = g["quad"]
-                scaled = []
+                scaled: List[float] = []
                 for i in range(0, len(pts), 2):
-                    scaled.append(pts[i] * sx)
-                    scaled.append(pts[i + 1] * sy)
-                scaled = clamp_points(scaled, new_w, new_h)
-                out_geoms.append({"quad": scaled})
+                    scaled.append(float(pts[i]) * sx)
+                    scaled.append(float(pts[i + 1]) * sy)
+                clipped = sutherland_hodgman_clip(scaled, new_w, new_h)
+                if len(clipped) // 2 < 3:
+                    # drop degenerate
+                    continue
+                if len(clipped) // 2 != 4:
+                    rect = min_area_rect(clipped)
+                    if not rect:
+                        continue
+                    clipped = rect
+                clipped = to_clockwise(clipped)
+                q = clamp_points(clipped, new_w, new_h)
+                out_geoms.append({"quad": q})
             elif "line" in g:
                 pts = g["line"]
-                scaled = []
+                scaled: List[float] = []
                 for i in range(0, len(pts), 2):
-                    scaled.append(pts[i] * sx)
-                    scaled.append(pts[i + 1] * sy)
-                scaled = clamp_points(scaled, new_w, new_h)
-                scaled = dedupe_consecutive_points(scaled)
-                out_geoms.append({"line": scaled if len(scaled) >= 4 else g["line"]})
+                    scaled.append(float(pts[i]) * sx)
+                    scaled.append(float(pts[i + 1]) * sy)
+                clipped = clip_polyline_to_rect(scaled, new_w, new_h)
+                clipped = clamp_points(clipped, new_w, new_h)
+                clipped = dedupe_consecutive_points(clipped)
+                if len(clipped) >= 4:
+                    out_geoms.append({"line": clipped})
+                # else drop
             else:
                 out_geoms.append(g)
 

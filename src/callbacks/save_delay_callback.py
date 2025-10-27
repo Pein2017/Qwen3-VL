@@ -80,9 +80,11 @@ class SaveDelayCallback(TrainerCallback):
                     if self.save_delay_steps is not None 
                     else f"{self.save_delay_epochs} epochs"
                 )
+                # Format epoch safely; state.epoch can be None
+                _epoch = state.epoch if state.epoch is not None else 0.0
                 logger.info(
                     f"SaveDelayCallback: Blocking checkpoint saves until {delay_info} "
-                    f"(current: step={state.global_step}, epoch={state.epoch:.2f if state.epoch else 0})"
+                    f"(current: step={state.global_step}, epoch={_epoch:.2f})"
                 )
                 self._logged_delay = True
             

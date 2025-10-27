@@ -193,14 +193,25 @@ class ConfigLoader:
         """
         # Collect all arguments from different sections
         args_dict = {}
-        
+        # Capture custom, non-ms-swift keys we still want to surface on TrainArguments
+        extracted_custom_keys: Dict[str, Any] = {}
+
         # Merge sections in order (later can override earlier)
         sections = ['model', 'quantization', 'data', 'template', 'tuner', 'training']
-        
+
         for section in sections:
             if section in config:
                 section_data = config[section]
                 if isinstance(section_data, dict):
+                    # Extract non-standard keys that ms-swift TrainArguments does not accept
+                    # and should not be passed into its constructor
+                    if section == 'training':
+                        # Work on a shallow copy to avoid mutating original config
+                        section_data = section_data.copy()
+                        for _key in ('save_delay_steps', 'save_delay_epochs'):
+                            if _key in section_data:
+                                extracted_custom_keys[_key] = section_data.pop(_key)
+
                     # Flatten nested config into single dict for TrainArguments
                     args_dict.update(section_data)
         
@@ -213,6 +224,15 @@ class ConfigLoader:
         # Create TrainArguments with all merged parameters
         # ms-swift's TrainArguments will fill in defaults for missing fields
         train_args = TrainArguments(**args_dict)
+
+        # Re-attach extracted custom keys as attributes on TrainArguments so the
+        # runner can access them without breaking ms-swift constructor
+        for _key, _value in extracted_custom_keys.items():
+            try:
+                setattr(train_args, _key, _value)
+            except Exception:
+                # Non-fatal: continue without attaching if TrainArguments forbids new attrs
+                pass
         
         return train_args
     

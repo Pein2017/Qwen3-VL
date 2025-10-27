@@ -12,8 +12,10 @@ import matplotlib.pyplot as plt
 
 import sys
 sys.path.append('/data/Qwen3-VL')
+import yaml
 from src.datasets.utils import load_jsonl
 from src.datasets.augmentation.base import Compose
+from src.datasets.augmentation.builder import build_compose_from_config
 from src.datasets.augmentation.ops import (
     HFlip,
     Rotate,
@@ -48,6 +50,8 @@ class VisConfig:
     num_samples: int = 8
     variants: int = 3  # number of random augmented variants per sample
     seed: int = 2025
+    # Path to the training YAML to mirror augmentation exactly
+    config_yaml: str = '/data/Qwen3-VL/configs/stage_3_vision_all_lora.yaml'
     
     # Geometric augmentations
     rotate_p: float = 0.9
@@ -104,6 +108,22 @@ def _load_pil(img_entry: Any, *, jsonl_path: str) -> Image.Image:
             path = img_entry
         return Image.open(path).convert('RGB')
     return img_entry
+
+
+def _build_pipeline_from_yaml(cfg: VisConfig) -> tuple[Compose, str]:
+    if not cfg.config_yaml or not os.path.isfile(cfg.config_yaml):
+        raise FileNotFoundError(f"config_yaml not found: {cfg.config_yaml}")
+    with open(cfg.config_yaml, 'r', encoding='utf-8') as f:
+        conf = yaml.safe_load(f)
+    custom = (conf or {}).get('custom') or {}
+    aug = custom.get('augmentation') or {}
+    if not aug or not aug.get('enabled', False):
+        return Compose([]), 'yaml:no-augmentation'
+    compose = build_compose_from_config(aug)
+    # Build readable label from op names in order
+    ops = aug.get('ops') or []
+    label = 'yaml:' + ','.join([str(op.get('name')) for op in ops if isinstance(op, dict) and op.get('name')])
+    return compose, label
 
 
 def _build_random_pipeline(rng: Random, cfg: VisConfig):
@@ -176,6 +196,14 @@ def visualize_samples(cfg: VisConfig) -> None:
 
     base_rng = Random(cfg.seed)
 
+    # Prefer exact training augmentation from YAML
+    use_yaml = True
+    try:
+        yaml_pipeline, yaml_label = _build_pipeline_from_yaml(cfg)
+    except Exception as e:
+        print(f"[WARN] Failed to load training YAML augmentation: {e}. Falling back to random config.")
+        use_yaml = False
+
     for idx, rec in enumerate(records):
         images = rec.get('images') or []
         objs = rec.get('objects') or []
@@ -208,9 +236,20 @@ def visualize_samples(cfg: VisConfig) -> None:
         for j in range(int(cfg.variants)):
             # per-variant rng derived from base
             rng = Random(base_rng.random())
-            pipe, title = _build_random_pipeline(rng, cfg)
-            imgs_bytes, geoms_new = apply_augmentations(pil_images, per_obj_geoms, pipe, rng=rng)
-            variants_imgs.append(_load_pil(imgs_bytes[0], jsonl_path=cfg.jsonl_path))
+            if use_yaml:
+                pipe, title = yaml_pipeline, yaml_label
+            else:
+                pipe, title = _build_random_pipeline(rng, cfg)
+            # Apply pipeline directly to allow objects to be dropped (degenerate after clipping)
+            out_imgs, geoms_new = pipe.apply(
+                pil_images,
+                per_obj_geoms,
+                width=im0.width,
+                height=im0.height,
+                rng=rng,
+            )
+            # Use returned PIL image directly
+            variants_imgs.append(_load_pil(out_imgs[0], jsonl_path=cfg.jsonl_path))
             variants_objs.append(_geom_to_objects(geoms_new))
             variant_titles.append(title)
 
@@ -248,12 +287,18 @@ if __name__ == '__main__':
     # configs/stage_3_vision_lora.yaml -> custom.augmentation.ops
     
     cfg = VisConfig(
-        # Data paths
         jsonl_path='data/bbu_full_768/train.jsonl',
-        out_dir='vis_out/augment_compare_high_prob',
+        out_dir='vis_out/augment_stage3_exact',
         num_samples=8,
         variants=3,
         seed=2025,
+        # Set this to the exact training YAML you used for Stage 3
+        # Examples:
+        #   '/data/Qwen3-VL/configs/stage_3_vision_all_lora.yaml'
+        #   '/data/Qwen3-VL/configs/stage_3_vision_last6_lora.yaml'
+        #   '/data/Qwen3-VL/configs/stage_3_vision_all_full.yaml'
+        #   '/data/Qwen3-VL/configs/stage_3_vision_last6_full.yaml'
+        config_yaml='/data/Qwen3-VL/configs/stage_3_vision_all_lora.yaml',
     )
     # Note: All augmentation probabilities and parameters are set in the
     # VisConfig dataclass defaults above. You can override them here if needed.
@@ -265,28 +310,8 @@ if __name__ == '__main__':
     print(f"  Samples:   {cfg.num_samples} images × {cfg.variants} variants each")
     print(f"  Seed:      {cfg.seed}")
     print()
-    print("  Geometric Augmentations:")
-    print(f"    HFlip:   p={cfg.hflip_p:.2f}")
-    print(f"    VFlip:   p={cfg.vflip_p:.2f}")
-    print(f"    Rotate:  p={cfg.rotate_p:.2f}, max_deg=±{cfg.max_deg:.1f}°")
-    print(f"    Scale:   p={cfg.scale_p:.2f}, range=[{cfg.scale_lo:.2f}, {cfg.scale_hi:.2f}]")
-    print()
-    print("  Resolution Resize (CRITICAL for coordinate validation):")
-    print(f"    Resize:  p={cfg.resize_by_scale_p:.2f}, range=[{cfg.resize_lo:.2f}×, {cfg.resize_hi:.2f}×]")
-    print(f"             align_multiple={cfg.resize_align_multiple}")
-    print()
-    print("  Color Augmentations:")
-    print(f"    ColorJitter:  p={cfg.color_p:.2f}")
-    print(f"    Gamma:        p={cfg.gamma_p:.2f}")
-    print(f"    HSV:          p={cfg.hsv_p:.2f}")
-    print(f"    CLAHE:        p={cfg.clahe_p:.2f}")
-    print(f"    AutoContrast: p={cfg.auto_contrast_p:.2f}")
-    print(f"    Equalize:     p={cfg.equalize_p:.2f}")
-    print(f"    Sharpness:    p={cfg.sharpness_p:.2f}")
-    if cfg.albumentations_p > 0:
-        print(f"    Albumentations: p={cfg.albumentations_p:.2f} (preset={cfg.albumentations_preset})")
-    print()
-    print(f"  Pad to multiple: {cfg.pad_multiple}")
+    print("  Using training YAML for augmentation:")
+    print(f"    {cfg.config_yaml}")
     print("=" * 70)
     print()
     

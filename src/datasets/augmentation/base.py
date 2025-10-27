@@ -10,6 +10,12 @@ from ..geometry import (
     compose_affine,
     dedupe_consecutive_points,
     invert_affine,
+    sutherland_hodgman_clip,
+    to_clockwise,
+    classify_affine_kind,
+    min_area_rect,
+    clip_polyline_to_rect,
+    transform_geometry,
 )
 
 
@@ -56,35 +62,11 @@ class Compose:
             ]
 
         def _apply_affine_to_geoms(gs: List[Dict[str, Any]], M) -> List[Dict[str, Any]]:
+            import logging
             new_geoms: List[Dict[str, Any]] = []
             for g in gs:
-                if "bbox_2d" in g:
-                    x1, y1, x2, y2 = g["bbox_2d"]
-                    pts = [x1, y1, x2, y1, x2, y2, x1, y2]
-                    t = apply_affine(pts, M)
-                    xs = t[0::2]; ys = t[1::2]
-                    bb = clamp_points([min(xs), min(ys), max(xs), max(ys)], width, height)
-                    if bb[0] == bb[2] or bb[1] == bb[3]:
-                        new_geoms.append({"bbox_2d": [x1, y1, x2, y2]})
-                    else:
-                        new_geoms.append({"bbox_2d": bb})
-                elif "quad" in g:
-                    t = apply_affine(g["quad"], M)
-                    q = clamp_points(t, width, height)
-                    if min(q[0::2]) == max(q[0::2]) and min(q[1::2]) == max(q[1::2]):
-                        new_geoms.append({"quad": g["quad"]})
-                    else:
-                        new_geoms.append({"quad": q})
-                elif "line" in g:
-                    t = apply_affine(g["line"], M)
-                    l = clamp_points(t, width, height)
-                    l = dedupe_consecutive_points(l)
-                    if len(l) < 4:
-                        new_geoms.append({"line": g["line"]})
-                    else:
-                        new_geoms.append({"line": l})
-                else:
-                    new_geoms.append(g)
+                out = transform_geometry(g, M, width=width, height=height)
+                new_geoms.append(out)
             return new_geoms
 
         M_total = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]

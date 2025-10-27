@@ -10,6 +10,7 @@
 !openspec/
 !vis_tools/
 !data_conversion/
+!tests/ 
 
 # Track files in the tracked folders
 !src/**
@@ -20,6 +21,7 @@
 !openspec/**
 !vis_tools/**
 !data_conversion/**
+!tests/**
 !.cursorignore
 !.cursorindexingignore
 !AGENTS.md
