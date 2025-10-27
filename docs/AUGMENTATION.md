@@ -23,6 +23,53 @@ The augmentation pipeline handles 3 geometry types (bbox, quad, polyline) with p
 - Centralized geometry transform logic (no duplication)
 - <1% performance overhead
 
+### ✅ **Smart Cropping with Label Filtering** 🆕 *(v1.1 - Oct 2025)*
+- Automatic object filtering based on visibility (min_coverage threshold)
+- Geometry truncation at crop boundaries (bbox/quad/line)
+- Completeness field updates: `显示完整` → `只显示部分` for partially visible objects
+- Skip conditions: preserves dense scenes (<4 objects) and line objects (cables/fibers)
+- Perfect visual-label alignment for dense detection captioning
+- See [Crop Quick Reference](CROP_QUICK_REFERENCE.md) and [Migration Guide](MIGRATION_SCALE_TO_CROP.md)
+
+## Recent Updates
+
+### October 2025: Smart Crop with Label Filtering (v1.1)
+**Status**: ✅ Deployed  
+**Change ID**: `2025-10-27-add-smart-crop-with-label-filter`
+
+**What Changed**:
+- Added `RandomCrop` operator with automatic label filtering and geometry truncation
+- Removed redundant operators: `CenterCrop` (use RandomCrop with fixed scale), `Equalize` (use AutoContrast)
+- Fixed quad rotation preservation (no unnecessary AABB conversion for quads inside canvas)
+- Enhanced visualization script with extreme testing mode for all augmentation operations
+
+**v1.1.1 Patch (Same Day)**: Refined quad truncation for rotate+crop scenarios
+- Added `simplify_polygon()` to remove redundant vertices from axis-aligned clipping
+- Added `choose_four_corners()` to select true quad corners before AABB fallback
+- Result: Rotated quads maintain rotation after crop, with accurate boundary intersections
+
+**Key Capabilities**:
+1. **Coverage-based filtering**: Objects <30% visible are dropped from GT
+2. **Geometry truncation**: Bbox/quad/line clipped to crop boundaries
+3. **Completeness tracking**: Automatic `显示完整` ↔ `只显示部分` updates based on coverage
+4. **Smart skip conditions**: Preserves dense scenes (<4 objects) and line objects
+
+**Configuration Example**:
+```yaml
+- name: random_crop
+  params:
+    scale: [0.7, 1.0]               # Crop 70-100% of image
+    min_coverage: 0.3               # Drop if <30% visible
+    completeness_threshold: 0.95    # Mark partial if <95% visible
+    min_objects: 4                  # Skip crop if <4 objects
+    skip_if_line: true              # Preserve cables/fibers
+    prob: 0.3                       # 30% of samples
+```
+
+**Impact**: Eliminates visual-label misalignment for dense captioning tasks. See [CROP_QUICK_REFERENCE.md](CROP_QUICK_REFERENCE.md) for full details.
+
+---
+
 ## Quick Start
 
 ### Basic Configuration
@@ -107,6 +154,65 @@ Clean samples help prevent overfitting to augmented patterns and maintain model 
 - Forces affine flush before and after
 - Can change canvas dimensions
 - Optional `pre_flush_hook()` to modify affines before warp
+
+### 4. Crop Operators with Label Filtering (`kind="barrier"`)
+**Examples**: `RandomCrop`, `CenterCrop`
+
+**New in v1.1**: Smart cropping with automatic label filtering and completeness tracking for dense captioning tasks.
+
+**How they work**:
+- Crop image to random or center region
+- **Filter objects** based on visibility (drop if <30% visible by default)
+- **Truncate geometries** of partially visible objects to crop boundary
+- **Update completeness field**: `"显示完整"` → `"只显示部分"` for objects <95% visible
+- **Skip crop** if <4 objects remain or line objects present (preserves cable/fiber integrity)
+- Translate retained geometries to crop-relative coordinates
+
+**Business Rules**:
+- `min_coverage` (default: 0.3): Drop objects with <30% area inside crop
+- `completeness_threshold` (default: 0.95): Mark "只显示部分" if <95% visible
+- `min_objects` (default: 4): Skip crop if <4 objects would remain (dense scenes requirement)
+- `skip_if_line` (default: true): Skip crop if any line object present (preserve cable/fiber paths)
+
+**Perfect Visual-Label Alignment**: Only describes objects that are actually visible in the cropped image.
+
+**Configuration Example**:
+```yaml
+# Random crop for scale variation and small object focus
+- name: random_crop
+  params:
+    scale: [0.7, 1.0]               # Crop 70-100% of image
+    aspect_ratio: [0.9, 1.1]        # Nearly square
+    min_coverage: 0.3               # Drop if <30% visible
+    completeness_threshold: 0.95    # Mark partial if <95% visible
+    min_objects: 4                  # Skip crop if <4 objects (dense scenes)
+    skip_if_line: true              # Skip if line objects present
+    prob: 0.3                       # 30% of samples
+
+# Center crop as replacement for scale zoom-in
+- name: center_crop
+  params:
+    scale: 0.75                     # Keep 75% (= 1.33x zoom)
+    min_coverage: 0.3               # Drop if <30% visible
+    completeness_threshold: 0.95    # Mark partial if <95% visible
+    min_objects: 4                  # Skip crop if <4 objects
+    skip_if_line: true              # Preserve cable/fiber paths
+    prob: 0.25
+```
+
+**When to Use**:
+- ✅ Dense captioning with object descriptions
+- ✅ Need to focus on small objects via zooming
+- ✅ Want perfect visual-label alignment (no hallucinated objects)
+- ✅ Have `显示完整`/`只显示部分` completeness fields in your data
+- ❌ Single-object detection (use `min_objects=1`)
+- ❌ Images with <4 objects total (crop will always skip)
+
+**Metadata Propagation**:
+Crop operators store metadata that the preprocessor uses to filter and update objects:
+- `last_kept_indices`: Indices of retained objects
+- `last_object_coverages`: Coverage ratio [0.0, 1.0] for each retained object
+- `allows_geometry_drops`: Flag to relax validation (geometry count can decrease)
 
 ## Canvas Expansion Deep Dive
 
@@ -327,6 +433,110 @@ Outputs to `vis_out/augment_stage3_exact/` showing original vs augmented with ov
 - pad_to_multiple       # Barrier (redundant)
 ```
 
+### Crop always skipping (high skip rate)
+**Cause**: Too few objects, line objects present, or min_objects threshold too high
+
+**Symptoms**:
+```
+[DEBUG] Crop would filter to 2 < 4 objects. Skipping crop.
+[DEBUG] Crop region contains line object. Skipping crop to preserve cable/fiber integrity.
+```
+
+**Fix**:
+1. **For datasets with few objects** (2-3 per image):
+   ```yaml
+   - name: random_crop
+     params:
+       min_objects: 2  # Lower threshold (default: 4)
+   ```
+
+2. **For datasets with line objects** (cables/fibers):
+   ```yaml
+   - name: random_crop
+     params:
+       skip_if_line: false  # Allow line truncation if needed
+       # WARNING: May lose cable routing information
+   ```
+
+3. **Check your data**: If average object count < min_objects, disable crop or lower threshold
+
+### Too many objects dropped by crop
+**Cause**: min_coverage threshold too high or crops too small
+
+**Symptoms**:
+```
+[DEBUG] Crop applied: 15 → 4 objects (region: [200, 150, 600, 450])
+```
+
+**Fix**:
+1. **Lower coverage threshold** (more lenient):
+   ```yaml
+   - name: random_crop
+     params:
+       min_coverage: 0.2  # Keep objects with >20% visible (default: 0.3)
+   ```
+
+2. **Use larger crops** (less aggressive):
+   ```yaml
+   - name: random_crop
+     params:
+       scale: [0.8, 1.0]  # Crop 80-100% (default: [0.6, 1.0])
+   ```
+
+3. **Monitor logs**: If consistently dropping >50% of objects, tune parameters
+
+### Completeness field not updating
+**Cause**: Field name mismatch or coverage above threshold
+
+**Check**:
+1. Verify your data uses exact field names: `"显示完整"` and `"只显示部分"`
+2. Coverage may be ≥95% (above completeness_threshold):
+   ```yaml
+   - name: random_crop
+     params:
+       completeness_threshold: 0.90  # Lower threshold (default: 0.95)
+   ```
+
+3. Ensure crop is actually applied (check for skip conditions)
+
+### Visual-label misalignment persists
+**Cause**: Using `scale` zoom-in instead of `center_crop`
+
+**Fix**: Replace scale with center_crop:
+```yaml
+# OLD (causes misalignment):
+# - name: scale
+#   params: { lo: 1.1, hi: 1.4, prob: 0.25 }
+
+# NEW (perfect alignment):
+- name: center_crop
+  params:
+    scale: 0.75  # 1.33x zoom (1 / 0.75 = 1.33)
+    min_coverage: 0.3
+    completeness_threshold: 0.95
+    min_objects: 4
+    skip_if_line: true
+    prob: 0.25
+```
+
+### Crop with rotation produces unexpected results
+**Cause**: Crop applied BEFORE rotation (wrong order)
+
+**Fix**: Always apply crop AFTER affine transforms:
+```yaml
+# CORRECT order:
+- name: rotate
+  params: { max_deg: 25.0, prob: 0.4 }
+- name: expand_to_fit_affine  # Flush affines
+  params: { multiple: 32 }
+- name: random_crop           # Then crop
+  params: { scale: [0.7, 1.0], prob: 0.3 }
+
+# WRONG order (crop before rotation):
+# - name: random_crop
+# - name: rotate  # Will re-crop rotated content!
+```
+
 ## Implementation Reference
 
 ### Key Files
@@ -372,4 +582,132 @@ The augmentation system provides:
 - ✅ **Visibility**: Rank-aware logging with actionable warnings
 
 Properly configured, it enables aggressive geometric augmentation without sacrificing annotation quality or training stability.
+
+---
+
+## Appendix A: Crop Quick Reference
+
+### Basic Usage
+
+Replace `scale` zoom-in with smart cropping:
+
+```yaml
+# ❌ OLD (broken for dense captioning)
+- name: scale
+  params: { lo: 1.1, hi: 1.4, prob: 0.25 }
+
+# ✅ NEW (perfect alignment, use RandomCrop with fixed scale for center-crop behavior)
+- name: random_crop
+  params:
+    scale: [0.75, 0.75]          # Fixed 75% = 1.33x zoom
+    aspect_ratio: [1.0, 1.0]     # Fixed aspect
+    min_coverage: 0.3
+    completeness_threshold: 0.95
+    min_objects: 4
+    skip_if_line: true
+    prob: 0.25
+```
+
+### Parameter Cheat Sheet
+
+| Parameter | Default | What It Does | Tune If... |
+|-----------|---------|--------------|------------|
+| **scale** | `[0.6, 1.0]` | Crop size (0.7 = 70% of image) | Images too large/small |
+| **aspect_ratio** | `[0.8, 1.2]` | Width/height variation | Need square crops |
+| **min_coverage** | `0.3` | Drop if <30% visible | Too many/few dropped |
+| **completeness_threshold** | `0.95` | Mark partial if <95% | Completeness field tuning |
+| **min_objects** | `4` | Skip crop if <4 remain | Samples being skipped |
+| **skip_if_line** | `true` | Skip if line objects present | Cable/fiber integrity |
+| **prob** | `1.0` | Crop probability | Sample diversity |
+
+### Common Configurations
+
+**Conservative** (start here):
+```yaml
+scale: [0.7, 1.0]           # 70-100% crop
+min_coverage: 0.3           # Drop <30%
+min_objects: 4              # Preserve dense scenes
+skip_if_line: true          # Preserve cables
+prob: 0.3                   # 30% of samples
+```
+
+**Aggressive** (small object focus):
+```yaml
+scale: [0.5, 0.8]           # 50-80% crop
+min_coverage: 0.3           # Drop <30%
+min_objects: 2              # Allow sparse scenes
+skip_if_line: false         # Allow line truncation
+prob: 0.5                   # 50% of samples
+```
+
+### Troubleshooting
+
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| Too many skipped crops | `min_objects` too high | Lower to 2-3 |
+| Objects hallucinated | `min_coverage` too low | Raise to 0.4-0.5 |
+| Line objects broken | `skip_if_line=false` | Set to `true` |
+| No completeness updates | Threshold too low | Check coverage distribution |
+
+---
+
+## Appendix B: Migration from Scale Zoom-In
+
+### Problem with `scale` (lo > 1.0)
+
+The `scale` operator with `lo > 1.0` performs center crop **without label filtering**:
+
+```
+Original: 10 objects (all visible)
+After scale=1.3x:
+  - Image: 6 objects visible, 4 pushed to edges
+  - Labels: Still describes all 10 objects ❌
+  - Result: Model hallucinates 4 invisible objects
+```
+
+### Migration Steps
+
+**Step 1**: Convert zoom factor to crop scale
+```
+crop_scale = 1 / zoom_factor
+```
+
+Examples:
+- `scale lo: 1.2` → `crop scale: 0.83`
+- `scale lo: 1.3` → `crop scale: 0.77`
+- `scale lo: 1.4` → `crop scale: 0.71`
+
+**Step 2**: Replace with `random_crop` (fixed scale for center-crop behavior)
+```yaml
+# Before
+- name: scale
+  params: { lo: 1.3, hi: 1.3, prob: 0.25 }
+
+# After
+- name: random_crop
+  params:
+    scale: [0.77, 0.77]          # 1/1.3 = 0.77
+    aspect_ratio: [1.0, 1.0]     # Fixed aspect for center-crop
+    min_coverage: 0.3
+    min_objects: 4
+    skip_if_line: true
+    prob: 0.25
+```
+
+**Step 3**: Test with visualization
+```bash
+python vis_tools/vis_augment_compare.py
+# Check: object counts match between visual and labels
+```
+
+### What's Fixed
+
+✅ **Labels filtered**: GT only describes visible objects  
+✅ **Completeness updated**: "显示完整" → "只显示部分" for partial objects  
+✅ **Geometry truncated**: Coordinates clipped to crop boundaries  
+✅ **No hallucination**: Model trained on aligned data
+
+---
+
+**Last Updated**: 2025-10-27 (v1.1.1)
 

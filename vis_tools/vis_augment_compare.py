@@ -26,13 +26,14 @@ from src.datasets.augmentation.ops import (
     HueSaturationValue,
     CLAHE,
     AutoContrast,
-    Equalize,
     Solarize,
     Posterize,
     Sharpness,
     AlbumentationsColor,
     PadToMultiple,
+    ExpandToFitAffine,
     ResizeByScale,
+    RandomCrop,
 )
 from src.datasets.augment import apply_augmentations
 from vis_tools.vis_helper import draw_objects, generate_colors, create_legend
@@ -42,46 +43,65 @@ from vis_tools.vis_helper import draw_objects, generate_colors, create_legend
 class VisConfig:
     """Configuration for augmentation visualization.
     
-    Edit the instantiation in __main__ to test different augmentation settings.
-    High probabilities help verify coordinate transforms are correct, especially for resize operations.
+    Tests ALL available augmentation operations with EXTREME settings and HIGH probabilities
+    to thoroughly verify coordinate transforms, geometry handling, and edge cases.
     """
     jsonl_path: str
     out_dir: str
     num_samples: int = 8
     variants: int = 3  # number of random augmented variants per sample
     seed: int = 2025
-    # Path to the training YAML to mirror augmentation exactly
-    config_yaml: str = '/data/Qwen3-VL/configs/stage_3_vision_all_lora.yaml'
     
-    # Geometric augmentations
-    rotate_p: float = 0.9
-    max_deg: float = 20.0
-    scale_p: float = 0.9
-    scale_lo: float = 0.8
-    scale_hi: float = 1.2
+    # Set to None to use extreme testing pipeline, or path to YAML to mirror training
+    config_yaml: str | None = None
+    
+    # EXTREME GEOMETRIC AUGMENTATIONS (test coordinate transforms)
     hflip_p: float = 0.9
-    vflip_p: float = 0.3
+    vflip_p: float = 0.5
+    rotate_p: float = 0.9
+    max_deg: float = 30.0           # Extreme rotation
+    scale_p: float = 0.9
+    scale_lo: float = 0.7           # Extreme shrink
+    scale_hi: float = 1.5           # Extreme grow
     
-    # Resolution resizing (critical for multi-scale training - tests coordinate scaling)
+    # EXTREME RESOLUTION CHANGES (test rescaling)
     resize_by_scale_p: float = 0.9
-    resize_lo: float = 0.6
-    resize_hi: float = 1.5
+    resize_lo: float = 0.5          # Extreme shrink (50%)
+    resize_hi: float = 1.8          # Extreme grow (180%)
     resize_align_multiple: int = 32
     
-    # Color augmentations
+    # SMART CROPPING (test label filtering & geometry truncation)
+    random_crop_p: float = 0.5      # Test crop filtering
+    random_crop_scale_lo: float = 0.6
+    random_crop_scale_hi: float = 1.0
+    crop_min_coverage: float = 0.25 # More aggressive filtering
+    crop_min_objects: int = 3       # Lower threshold for testing
+    crop_skip_if_line: bool = True
+    
+    # EXTREME COLOR AUGMENTATIONS (test visual changes)
     color_p: float = 0.9
+    color_brightness: tuple = (0.5, 1.5)  # Extreme brightness
+    color_contrast: tuple = (0.5, 1.5)    # Extreme contrast
+    color_saturation: tuple = (0.5, 1.5)  # Extreme saturation
     gamma_p: float = 0.8
+    gamma_range: tuple = (0.6, 1.6)       # Extreme gamma
     hsv_p: float = 0.8
-    clahe_p: float = 0.5
-    auto_contrast_p: float = 0.3
-    equalize_p: float = 0.2
-    solarize_p: float = 0.0
-    posterize_p: float = 0.0
+    hsv_hue_delta: int = 25               # Extreme hue shift
+    hsv_sat: tuple = (0.6, 1.5)
+    hsv_val: tuple = (0.6, 1.5)
+    clahe_p: float = 0.6
+    clahe_clip_limit: float = 4.0         # Strong CLAHE
+    auto_contrast_p: float = 0.4
+    solarize_p: float = 0.3               # Test solarize
+    solarize_threshold: int = 128
+    posterize_p: float = 0.3              # Test posterize
+    posterize_bits: int = 3               # Extreme posterize
     sharpness_p: float = 0.7
-    albumentations_p: float = 0.0
+    sharpness_range: tuple = (0.3, 2.5)   # Extreme sharpness
+    albumentations_p: float = 0.0         # Optional
     albumentations_preset: str = "strong"
     
-    # Padding (always applied last to match training)
+    # Padding
     pad_multiple: int = 32
 
 
@@ -111,8 +131,12 @@ def _load_pil(img_entry: Any, *, jsonl_path: str) -> Image.Image:
 
 
 def _build_pipeline_from_yaml(cfg: VisConfig) -> tuple[Compose, str]:
-    if not cfg.config_yaml or not os.path.isfile(cfg.config_yaml):
-        raise FileNotFoundError(f"config_yaml not found: {cfg.config_yaml}")
+    """Load augmentation pipeline from YAML config. Raises exception if YAML not found."""
+    if not cfg.config_yaml:
+        raise FileNotFoundError("config_yaml is None (using extreme testing mode)")
+    if not os.path.isfile(cfg.config_yaml):
+        raise FileNotFoundError(f"config_yaml file not found: {cfg.config_yaml}")
+    
     with open(cfg.config_yaml, 'r', encoding='utf-8') as f:
         conf = yaml.safe_load(f)
     custom = (conf or {}).get('custom') or {}
@@ -127,66 +151,115 @@ def _build_pipeline_from_yaml(cfg: VisConfig) -> tuple[Compose, str]:
 
 
 def _build_random_pipeline(rng: Random, cfg: VisConfig):
+    """Build pipeline with ALL augmentation operations using EXTREME settings.
+    
+    This tests:
+    - Geometric transforms (rotation, scale, flip) with extreme parameters
+    - Canvas expansion (expand_to_fit_affine) to preserve all content
+    - Smart cropping with label filtering
+    - Color augmentations with extreme ranges
+    - Coordinate transform correctness under all operations
+    """
     ops = []
     labels: List[str] = []
+    
+    # === GEOMETRIC AUGMENTATIONS (affine accumulation) ===
     if rng.random() < cfg.hflip_p:
         ops.append(HFlip(1.0))
         labels.append("hflip")
+    
     if rng.random() < cfg.vflip_p:
         ops.append(VFlip(1.0))
         labels.append("vflip")
+    
     if rng.random() < cfg.rotate_p:
-        # choose signed degree centered at 0
         deg = rng.uniform(-cfg.max_deg, cfg.max_deg)
-        ops.append(Rotate(abs(deg), 1.0))  # Rotate expects max_deg; prob handled by inclusion
-        labels.append(f"rot={deg:.1f}")
+        ops.append(Rotate(abs(deg), 1.0))
+        labels.append(f"rot={deg:.1f}°")
+    
     if rng.random() < cfg.scale_p:
         s = rng.uniform(cfg.scale_lo, cfg.scale_hi)
         ops.append(Scale(s, s, 1.0))
-        labels.append(f"scale={s:.3f}")
+        labels.append(f"scale={s:.2f}")
+    
+    # === EXPAND CANVAS (barrier - preserves all rotated/scaled content) ===
+    ops.append(ExpandToFitAffine(multiple=cfg.pad_multiple))
+    labels.append("expand")
+    
+    # === SMART CROPPING (barrier - filters labels) ===
+    if rng.random() < cfg.random_crop_p:
+        ops.append(RandomCrop(
+            scale=(cfg.random_crop_scale_lo, cfg.random_crop_scale_hi),
+            aspect_ratio=(0.9, 1.1),
+            min_coverage=cfg.crop_min_coverage,
+            min_objects=cfg.crop_min_objects,
+            skip_if_line=cfg.crop_skip_if_line,
+            prob=1.0
+        ))
+        labels.append(f"crop({cfg.random_crop_scale_lo:.1f}-{cfg.random_crop_scale_hi:.1f})")
+    
+    # === RESOLUTION RESIZING (barrier - tests coordinate scaling) ===
+    if rng.random() < cfg.resize_by_scale_p:
+        ops.append(ResizeByScale(
+            lo=cfg.resize_lo,
+            hi=cfg.resize_hi,
+            align_multiple=cfg.resize_align_multiple,
+            prob=1.0
+        ))
+        labels.append(f"resize({cfg.resize_lo:.1f}-{cfg.resize_hi:.1f})")
+    
+    # === COLOR AUGMENTATIONS (deferred, applied after all geometric ops) ===
     if rng.random() < cfg.color_p:
-        # Match YAML medium defaults: 0.8-1.2 ranges
-        ops.append(ColorJitter(brightness=(0.8, 1.2), contrast=(0.8, 1.2), saturation=(0.8, 1.2), prob=1.0))
-        labels.append("cj")
+        ops.append(ColorJitter(
+            brightness=cfg.color_brightness,
+            contrast=cfg.color_contrast,
+            saturation=cfg.color_saturation,
+            prob=1.0
+        ))
+        labels.append("colorJitter")
+    
     if rng.random() < cfg.gamma_p:
-        ops.append(Gamma(gamma=(0.8, 1.3), prob=1.0))
+        ops.append(Gamma(gamma=cfg.gamma_range, prob=1.0))
         labels.append("gamma")
+    
     if rng.random() < cfg.hsv_p:
-        ops.append(HueSaturationValue(hue_delta_deg=(-15, 15), sat=(0.8, 1.3), val=(0.8, 1.3), prob=1.0))
+        ops.append(HueSaturationValue(
+            hue_delta_deg=(-cfg.hsv_hue_delta, cfg.hsv_hue_delta),
+            sat=cfg.hsv_sat,
+            val=cfg.hsv_val,
+            prob=1.0
+        ))
         labels.append("hsv")
+    
     if rng.random() < cfg.clahe_p:
-        ops.append(CLAHE(clip_limit=3.0, tile_grid_size=(8, 8), prob=1.0))
+        ops.append(CLAHE(clip_limit=cfg.clahe_clip_limit, tile_grid_size=(8, 8), prob=1.0))
         labels.append("clahe")
+    
     if rng.random() < cfg.auto_contrast_p:
         ops.append(AutoContrast(cutoff=0, prob=1.0))
-        labels.append("autoC")
-    if rng.random() < cfg.equalize_p:
-        ops.append(Equalize(prob=1.0))
-        labels.append("eq")
+        labels.append("autoContrast")
+    
     if rng.random() < cfg.solarize_p:
-        ops.append(Solarize(threshold=128, prob=1.0))
-        labels.append("solar")
+        ops.append(Solarize(threshold=cfg.solarize_threshold, prob=1.0))
+        labels.append("solarize")
+    
     if rng.random() < cfg.posterize_p:
-        ops.append(Posterize(bits=4, prob=1.0))
-        labels.append("post")
+        ops.append(Posterize(bits=cfg.posterize_bits, prob=1.0))
+        labels.append("posterize")
+    
     if rng.random() < cfg.sharpness_p:
-        ops.append(Sharpness(factor=(0.4, 2.0), prob=1.0))
-        labels.append("sharp")
+        ops.append(Sharpness(factor=cfg.sharpness_range, prob=1.0))
+        labels.append("sharpness")
+    
     if rng.random() < cfg.albumentations_p:
         ops.append(AlbumentationsColor(preset=cfg.albumentations_preset, prob=1.0))
         labels.append(f"alb-{cfg.albumentations_preset}")
-    # Resolution resizing (barrier op - flushes affine and changes image size)
-    if rng.random() < cfg.resize_by_scale_p:
-        ops.append(ResizeByScale(lo=cfg.resize_lo, hi=cfg.resize_hi, align_multiple=cfg.resize_align_multiple, prob=1.0))
-        labels.append(f"resize({cfg.resize_lo:.2f}-{cfg.resize_hi:.2f})")
-    if not ops:
-        # ensure at least one op to visualize
+    
+    # Ensure we have at least some ops
+    if len(ops) < 2:
         ops.append(ColorJitter(brightness=(0.8, 1.2), contrast=(0.8, 1.2), saturation=(0.8, 1.2), prob=1.0))
-        labels.append("cj")
-    # Always enforce pad-to-multiple to mirror training
-    if cfg.pad_multiple and cfg.pad_multiple > 0:
-        ops.append(PadToMultiple(cfg.pad_multiple))
-        labels.append(f"pad{cfg.pad_multiple}")
+        labels.append("fallback-cj")
+    
     return Compose(ops), "|".join(labels)
 
 
@@ -196,13 +269,18 @@ def visualize_samples(cfg: VisConfig) -> None:
 
     base_rng = Random(cfg.seed)
 
-    # Prefer exact training augmentation from YAML
-    use_yaml = True
-    try:
-        yaml_pipeline, yaml_label = _build_pipeline_from_yaml(cfg)
-    except Exception as e:
-        print(f"[WARN] Failed to load training YAML augmentation: {e}. Falling back to random config.")
-        use_yaml = False
+    # Prefer exact training augmentation from YAML if provided
+    use_yaml = False
+    if cfg.config_yaml:
+        try:
+            yaml_pipeline, yaml_label = _build_pipeline_from_yaml(cfg)
+            use_yaml = True
+            print(f"[INFO] Using augmentation from YAML: {cfg.config_yaml}")
+        except Exception as e:
+            print(f"[ERROR] Failed to load training YAML augmentation: {e}")
+            print(f"[INFO] Falling back to extreme testing pipeline")
+    else:
+        print(f"[INFO] Using extreme testing pipeline (config_yaml=None)")
 
     for idx, rec in enumerate(records):
         images = rec.get('images') or []
@@ -248,6 +326,15 @@ def visualize_samples(cfg: VisConfig) -> None:
                 height=im0.height,
                 rng=rng,
             )
+            # Check if objects were filtered by crop
+            if len(geoms_new) != len(per_obj_geoms):
+                print(f"  [CROP] Sample {idx}, variant {j+1}: {len(per_obj_geoms)} → {len(geoms_new)} objects")
+                # Check if crop metadata is available
+                if hasattr(pipe, 'last_kept_indices') and pipe.last_kept_indices is not None:
+                    print(f"         Kept indices: {pipe.last_kept_indices}")
+                    if hasattr(pipe, 'last_object_coverages') and pipe.last_object_coverages:
+                        avg_cov = sum(pipe.last_object_coverages) / len(pipe.last_object_coverages)
+                        print(f"         Avg coverage of kept objects: {avg_cov:.2%}")
             # Use returned PIL image directly
             variants_imgs.append(_load_pil(out_imgs[0], jsonl_path=cfg.jsonl_path))
             variants_objs.append(_geom_to_objects(geoms_new))
@@ -264,10 +351,14 @@ def visualize_samples(cfg: VisConfig) -> None:
         color_map = generate_colors(labels_all)
 
         draw_objects(axes[0], im0, objs0, color_map, scaled=True)
-        axes[0].set_title('Original (GT)')
+        axes[0].set_title(f'Original (GT) - {len(objs0)} objects')
         for c in range(1, cols):
             draw_objects(axes[c], variants_imgs[c - 1], variants_objs[c - 1], color_map, scaled=True)
-            axes[c].set_title(f'Aug {c}: {variant_titles[c - 1]}')
+            obj_count = len(variants_objs[c - 1])
+            title = f'Aug {c}: {variant_titles[c - 1]}\n{obj_count} objects'
+            if obj_count != len(objs0):
+                title += f' ({obj_count - len(objs0):+d})'
+            axes[c].set_title(title, fontsize=9)
         create_legend(fig, color_map, {l: [labels_all.count(l), labels_all.count(l)] for l in set(labels_all)})
         out_path = os.path.join(cfg.out_dir, f'vis_{idx:05d}.jpg')
         fig.tight_layout()
@@ -278,40 +369,50 @@ def visualize_samples(cfg: VisConfig) -> None:
 
 if __name__ == '__main__':
     # ========================================================================
-    # CONFIGURATION - Edit here to test different augmentation settings
+    # EXTREME AUGMENTATION TESTING - Tests ALL ops with extreme settings
     # ========================================================================
-    # High probabilities help verify coordinate transforms work correctly,
-    # especially for ResizeByScale which changes image dimensions.
-    # 
-    # To match your training config, copy values from:
-    # configs/stage_3_vision_lora.yaml -> custom.augmentation.ops
     
     cfg = VisConfig(
         jsonl_path='data/bbu_full_768/train.jsonl',
-        out_dir='vis_out/augment_stage3_exact',
+        out_dir='vis_out/augment_extreme_test',
         num_samples=8,
         variants=3,
         seed=2025,
-        # Set this to the exact training YAML you used for Stage 3
+        
+        # === MODE SELECTION ===
+        # config_yaml=None              → Use EXTREME testing (default - all ops, extreme params)
+        # config_yaml='path/to/yaml'    → Mirror exact training augmentation
+        config_yaml=None,
+        
+        # All parameters use EXTREME defaults (see VisConfig class above).
+        # Override specific parameters here for custom testing:
+        # 
         # Examples:
-        #   '/data/Qwen3-VL/configs/stage_3_vision_all_lora.yaml'
-        #   '/data/Qwen3-VL/configs/stage_3_vision_last6_lora.yaml'
-        #   '/data/Qwen3-VL/configs/stage_3_vision_all_full.yaml'
-        #   '/data/Qwen3-VL/configs/stage_3_vision_last6_full.yaml'
-        config_yaml='/data/Qwen3-VL/configs/stage_3_vision_all_lora.yaml',
+        #   max_deg=45.0,               # Even more extreme rotation
+        #   random_crop_p=1.0,          # Always crop
+        #   crop_min_objects=2,         # Allow fewer objects
+        #   resize_lo=0.3,              # Extreme shrink (30%)
     )
-    # Note: All augmentation probabilities and parameters are set in the
-    # VisConfig dataclass defaults above. You can override them here if needed.
     
-    print("[CONFIG] Augmentation Visualization")
     print("=" * 70)
-    print(f"  Input:     {cfg.jsonl_path}")
-    print(f"  Output:    {cfg.out_dir}")
-    print(f"  Samples:   {cfg.num_samples} images × {cfg.variants} variants each")
-    print(f"  Seed:      {cfg.seed}")
-    print()
-    print("  Using training YAML for augmentation:")
-    print(f"    {cfg.config_yaml}")
+    if cfg.config_yaml:
+        print("MIRRORING TRAINING AUGMENTATION FROM YAML")
+        print(f"  YAML: {cfg.config_yaml}")
+    else:
+        print("🔥 EXTREME AUGMENTATION TESTING MODE 🔥")
+        print()
+        print("Testing ALL augmentation operations with EXTREME settings:")
+        print(f"  ✓ Geometric: hflip({cfg.hflip_p:.0%}), vflip({cfg.vflip_p:.0%}), rot(±{cfg.max_deg}°), scale({cfg.scale_lo}-{cfg.scale_hi})")
+        print(f"  ✓ Resize: {cfg.resize_lo}x - {cfg.resize_hi}x resolution changes")
+        print(f"  ✓ Crop: {cfg.random_crop_p:.0%} prob, min_coverage={cfg.crop_min_coverage}, min_objects={cfg.crop_min_objects}")
+        print(f"  ✓ Color: brightness/contrast/saturation {cfg.color_brightness}")
+        print(f"  ✓ Advanced: gamma({cfg.gamma_p:.0%}), hsv({cfg.hsv_p:.0%}), clahe({cfg.clahe_p:.0%}), sharpness({cfg.sharpness_p:.0%})")
+        print(f"  ✓ Effects: solarize({cfg.solarize_p:.0%}), posterize({cfg.posterize_p:.0%}), autoContrast({cfg.auto_contrast_p:.0%})")
+    print("=" * 70)
+    print(f"Input:     {cfg.jsonl_path}")
+    print(f"Output:    {cfg.out_dir}")
+    print(f"Samples:   {cfg.num_samples} images × {cfg.variants} variants each")
+    print(f"Seed:      {cfg.seed}")
     print("=" * 70)
     print()
     

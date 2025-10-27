@@ -86,6 +86,13 @@ class ImageAugmenter(Protocol):
 class Compose:
     def __init__(self, ops: List[ImageAugmenter]):
         self.ops = list(ops)
+        
+        # Metadata storage for crop operations (propagated from operators)
+        self.last_kept_indices: List[int] | None = None
+        self.last_object_coverages: List[float] | None = None
+        
+        # Check if any operator allows geometry drops
+        self.allows_geometry_drops = any(getattr(op, 'allows_geometry_drops', False) for op in ops)
 
     def apply(
         self,
@@ -98,6 +105,10 @@ class Compose:
     ) -> Tuple[List[Any], List[Dict[str, Any]]]:
         out_images: List[Any] = images
         out_geoms: List[Dict[str, Any]] = geoms
+        
+        # Clear metadata from previous run
+        self.last_kept_indices = None
+        self.last_object_coverages = None
         
         # Make width/height mutable for pre-flush hooks
         current_width = width
@@ -148,6 +159,12 @@ class Compose:
                     )
                 _flush_affine()
                 out_images, out_geoms = op.apply(out_images, out_geoms, width=current_width, height=current_height, rng=rng)
+                
+                # Propagate crop metadata from operator to Compose
+                if hasattr(op, 'last_kept_indices'):
+                    self.last_kept_indices = getattr(op, 'last_kept_indices', None)
+                    self.last_object_coverages = getattr(op, 'last_object_coverages', None)
+                
                 # Barrier may change image size (e.g., padding); update width/height
                 if isinstance(out_images, list) and out_images:
                     im0 = out_images[0]

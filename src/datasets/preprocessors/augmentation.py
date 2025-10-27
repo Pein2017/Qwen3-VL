@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional
 
 from .base import BasePreprocessor
 from ..utils import extract_geometry
+from ...utils.logger import get_logger
 
 
 class AugmentationPreprocessor(BasePreprocessor):
@@ -87,25 +88,68 @@ class AugmentationPreprocessor(BasePreprocessor):
             images, per_obj_geoms, pipeline, rng=self.rng
         )
         
-        # Update geometries in objects
-        j = 0
-        for i, obj in enumerate(objs):
-            if obj.get("bbox_2d") is not None or obj.get("quad") is not None or obj.get("line") is not None:
-                g = per_obj_geoms_new[j]
-                j += 1
-                # Update with new geometry, clear others
-                if "bbox_2d" in g:
-                    obj["bbox_2d"] = g["bbox_2d"]
-                    obj.pop("quad", None)
-                    obj.pop("line", None)
-                elif "quad" in g:
-                    obj["quad"] = g["quad"]
-                    obj.pop("bbox_2d", None)
-                    obj.pop("line", None)
-                elif "line" in g:
-                    obj["line"] = g["line"]
-                    obj.pop("bbox_2d", None)
-                    obj.pop("quad", None)
+        # Check if crop was applied (filtering may have occurred)
+        kept_indices = getattr(pipeline, "last_kept_indices", None)
+        
+        if kept_indices is None:
+            # No crop applied (or crop was skipped) - update geometries only
+            j = 0
+            for i, obj in enumerate(objs):
+                if obj.get("bbox_2d") is not None or obj.get("quad") is not None or obj.get("line") is not None:
+                    g = per_obj_geoms_new[j]
+                    j += 1
+                    # Update with new geometry, clear others
+                    self._update_geometry_field(obj, g)
+        else:
+            # Crop was applied - filter objects and update completeness
+            filtered_objects: List[Dict[str, Any]] = []
+            coverages = getattr(pipeline, "last_object_coverages", [])
+            
+            # Get completeness threshold from the pipeline's last crop operator
+            # (For now, we assume the crop operator is accessible; alternatively,
+            # we could store completeness_threshold as pipeline metadata)
+            completeness_threshold = 0.95  # Default
+            # Try to get from pipeline's crop operators
+            for op in pipeline.ops if hasattr(pipeline, 'ops') else []:
+                if hasattr(op, 'completeness_threshold'):
+                    completeness_threshold = op.completeness_threshold
+                    break
+            
+            # Build mapping from original obj indices to new geometries
+            obj_idx_with_geom = []
+            for i, obj in enumerate(objs):
+                if obj.get("bbox_2d") is not None or obj.get("quad") is not None or obj.get("line") is not None:
+                    obj_idx_with_geom.append(i)
+            
+            # Filter and update objects
+            completeness_updates = 0
+            for idx_in_kept, orig_idx in enumerate(kept_indices):
+                # orig_idx refers to the index in the original geometries list
+                # Map back to the object index
+                obj_idx = obj_idx_with_geom[orig_idx]
+                obj = objs[obj_idx]
+                new_geom = per_obj_geoms_new[idx_in_kept]
+                cov = coverages[idx_in_kept] if idx_in_kept < len(coverages) else 1.0
+                
+                # Update geometry field (single field only)
+                self._update_geometry_field(obj, new_geom)
+                
+                # Update completeness field if below threshold
+                if cov < completeness_threshold and "显示完整" in obj.get("desc", ""):
+                    obj["desc"] = obj["desc"].replace("显示完整", "只显示部分")
+                    completeness_updates += 1
+                
+                filtered_objects.append(obj)
+            
+            # Replace objects list with filtered objects
+            rec["objects"] = filtered_objects
+            
+            # Log crop filtering results (debug level)
+            logger = get_logger("augmentation.preprocessor")
+            logger.debug(
+                f"Crop filter: {len(objs)} → {len(filtered_objects)} objects "
+                f"({completeness_updates} marked partial)"
+            )
         
         rec["images"] = images_bytes
 
@@ -124,6 +168,30 @@ class AugmentationPreprocessor(BasePreprocessor):
             # Non-fatal: leave original width/height
             pass
         return rec
+    
+    def _update_geometry_field(self, obj: Dict[str, Any], new_geom: Dict[str, Any]) -> None:
+        """
+        Update object's geometry field, ensuring only ONE geometry type exists.
+        
+        Critical for downstream consistency - builders expect exactly one of:
+        bbox_2d, quad, or line per object.
+        
+        Args:
+            obj: Object dict to update
+            new_geom: New geometry dict with bbox_2d, quad, or line field
+        """
+        if "bbox_2d" in new_geom:
+            obj["bbox_2d"] = new_geom["bbox_2d"]
+            obj.pop("quad", None)
+            obj.pop("line", None)
+        elif "quad" in new_geom:
+            obj["quad"] = new_geom["quad"]
+            obj.pop("bbox_2d", None)
+            obj.pop("line", None)
+        elif "line" in new_geom:
+            obj["line"] = new_geom["line"]
+            obj.pop("bbox_2d", None)
+            obj.pop("quad", None)
 
 
 __all__ = ["AugmentationPreprocessor"]

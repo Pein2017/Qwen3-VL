@@ -1,6 +1,478 @@
-# Reference
+# Training & Inference Reference
 
-Status: Optional — Advanced topics and FAQ. Prefer the concise guides first.
+Comprehensive guide for training, inference, deployment, and advanced topics.
+
+**Source**: `src/sft.py`, `src/stage_a/`, `src/stage_b/`, `scripts/`, `configs/`
+
+---
+
+## Table of Contents
+
+- [Training](#training)
+  - [Essentials](#training-essentials)
+  - [Modes](#training-modes)
+  - [Two-Stage Recipe](#two-stage-recipe)
+  - [Troubleshooting](#training-troubleshooting)
+- [Inference](#inference)
+  - [Checkpoints](#checkpoints)
+  - [Dense Captioning](#dense-captioning)
+  - [Stage-A & Stage-B](#stage-ab)
+  - [Deployment Tips](#deployment-tips)
+- [Advanced Topics & FAQ](#advanced-topics--faq)
+- [Architecture & Implementation](#architecture--implementation)
+
+---
+
+## Architecture & Implementation
+
+### Source Code Layout
+
+**Training Pipeline**:
+- `src/sft.py` - Main entry point, `SwiftSft` integration
+- `src/config/` - YAML loading, config merging, `TrainArguments` assembly
+- `src/README.md` - Source-level architecture documentation
+
+**Dataset Components**:
+- `src/datasets/dense_caption.py` - `DenseCaptionDataset` (mode selection, augmentation config)
+- `src/datasets/dynamic_pair.py` - `DynamicPairDataset` (epoch-seeded pairing engine)
+- `src/datasets/builders/jsonlines.py` - `JSONLinesBuilder` (message formatting)
+- `src/datasets/preprocessors/` - Validation, augmentation preprocessing
+- `src/datasets/collators.py` - Tensor preparation, packing logic
+- `src/datasets/data_details.md` - Data schema documentation
+
+**Geometry & Augmentation**:
+- `src/datasets/geometry.py` - Core geometry transforms (bbox, quad, line)
+- `src/datasets/augmentation/base.py` - `Compose` pipeline, `ImageAugmenter` protocol
+- `src/datasets/augmentation/ops.py` - All augmentation operators (Rotate, Flip, Crop, etc.)
+
+**Utilities & Infrastructure**:
+- `src/utils/logger.py` - Rank-aware logging (DDP-safe)
+- `src/utils/README.md` - Utilities documentation
+- `src/callbacks/save_delay_callback.py` - `SaveDelayCallback` (checkpoint throttling)
+
+### Key Components Deep Dive
+
+**ConfigLoader** (`src/config/loader.py`):
+- Loads YAML, merges with base configs
+- Resolves `global_max_length` → `model.max_model_len` + `template.max_length`
+- Builds `TrainArguments` (typed dataclass)
+- Source of truth for all configuration behavior
+
+**DenseCaptionDataset** (`src/datasets/dense_caption.py`):
+```python
+# What it does:
+# 1. Wraps JSONL data with preprocessors
+# 2. Selects dense vs summary mode per pairing group (epoch-seeded)
+# 3. Configures augmentation pipeline (bypass_prob, ops)
+# 4. Handles both train and validation splits
+```
+
+**DynamicPairDataset** (`src/datasets/dynamic_pair.py`):
+```python
+# What it does:
+# 1. Groups records by images_per_user_turn
+# 2. Epoch-seeded RNG for deterministic pairing
+# 3. Calls preprocessors → builder → returns single item
+# 4. Handles variable-length groups at dataset boundaries
+```
+
+**JSONLinesBuilder** (`src/datasets/builders/jsonlines.py`):
+```python
+# What it does:
+# 1. Formats multi-image groups → single-turn messages
+# 2. User message: [image1, image2, ..., prompt]
+# 3. Assistant message: {"图片_1": [...], "图片_2": [...]}
+# 4. Attaches top-level "objects" with pixel coords (for template normalization)
+# 5. Handles dense/summary modes differently
+```
+
+**Geometry Transforms** (`src/datasets/geometry.py`):
+```python
+# Core function: transform_geometry(geom, M, width, height)
+# - Applies affine matrix M to bbox/quad/line
+# - Clips to image bounds (with polygon/line clipping algorithms)
+# - Preserves degenerate geometries (fallback to clamping)
+# - Handles rotation without clipping for fully-inside quads
+```
+
+**Augmentation Pipeline** (`src/datasets/augmentation/`):
+```python
+# Compose pipeline:
+# 1. Accumulates affine ops (rotate, flip, scale) → single matrix M
+# 2. Flushes on barriers (resize, crop, expand) → applies M
+# 3. Color ops deferred (applied after geometric ops)
+# 4. Propagates crop metadata (kept_indices, coverages)
+```
+
+### Token Flow Details
+
+**Vision Token Insertion**:
+```
+Image (PIL) 
+  → Processor (resizes to multiple of patch_size)
+  → Vision Encoder (ViT) → [batch, num_patches, hidden_dim]
+  → Aligner (MLP projector) → [batch, num_tokens, llm_dim]
+  → Replace <|image_pad|> placeholders in LLM input
+```
+
+**Aligner Components** (in Qwen3-VL model):
+- `model.visual.merger` - Main MLP projector
+- `model.visual.deepstack_merger_list.{0,1,2}` - Additional projection layers
+- Located in `model.visual.*` (HuggingFace model structure)
+
+**Chat Template Mechanics**:
+- Template automatically inserts `<|image_pad|>` tokens
+- Placeholder count = `image_grid_thw.prod()` per image
+- Do NOT manually insert placeholders in text
+- Template handles vision token expansion automatically
+
+### Logging & Callbacks
+
+**Rank-Aware Logging** (`src/utils/logger.py`):
+```python
+from src.utils.logger import get_logger
+
+logger = get_logger("my_module")
+logger.info("Rank 0 only")           # Only logged on main process
+logger.debug("Debug info")            # Controlled by --debug flag
+logger.warning("Warning (all ranks)") # Logged on all ranks if severe
+```
+
+**SaveDelayCallback** (`src/callbacks/save_delay_callback.py`):
+```python
+# Prevents early checkpoints before model has learned anything
+# Config: custom.save_delay_steps (default: 0, disabled)
+# Example: save_delay_steps: 100 → no saves until step 100
+```
+
+### Health Check Implementation
+
+**Validation Points** (enforced in code):
+
+1. **Image Placeholder Count** (`src/datasets/builders/jsonlines.py`):
+   - User message image count matches `len(images)`
+   - Template inserts correct number of `<|image_pad|>` tokens
+
+2. **Grid Alignment** (`src/datasets/collators.py`):
+   - `image_grid_thw` shape matches `pixel_values` dimensions
+   - Each image has valid T×H×W grid
+
+3. **Label Masking** (template encoding):
+   - Image tokens in `input_ids` have `labels = -100`
+   - Assistant tokens have `labels = input_ids[pos]`
+   - User tokens have `labels = -100`
+
+4. **Geometry Normalization** (`JSONLinesBuilder`):
+   - Top-level `objects` kept in pixel space
+   - Template normalizes `bbox_2d` to norm1000 during encoding
+   - Assistant text uses `emit_norm` setting
+
+### Extension Points
+
+**Add New Preprocessor**:
+1. Create `src/datasets/preprocessors/my_preprocessor.py`
+2. Implement `BasePreprocessor` protocol
+3. Register in `DenseCaptionDataset.__init__`
+
+**Add New Augmentation Op**:
+1. Add class to `src/datasets/augmentation/ops.py`
+2. Implement `ImageAugmenter` protocol (`affine()` or `apply()`)
+3. Use in YAML: `- name: my_op`
+
+**Add New Builder**:
+1. Create `src/datasets/builders/my_builder.py`
+2. Implement builder protocol (`build_messages()`)
+3. Configure in dataset initialization
+
+### Critical Implementation Details
+
+**Adapter Preparation** (`src/sft.py`):
+```python
+# MUST be called before creating trainer
+sft = SwiftSft(args)
+sft.prepare_model()  # Configures LoRA, freezes, modules_to_save
+trainer = sft.create_trainer()  # Now trainer has correct config
+```
+
+**Packing Implementation**:
+- Enabled via `training.packing: true`
+- Collator concatenates samples to `max_length`
+- Requires Flash Attention 2+ (Qwen3-VL native)
+- Incompatible with `lazy_tokenize`
+
+**Freeze Logic** (`src/sft.py` + `SwiftSft`):
+```python
+# freeze_llm: true → model.model.layers[*].requires_grad = False
+# freeze_vit: true → model.visual.*.requires_grad = False
+# freeze_aligner: false → model.visual.merger*.requires_grad = True
+```
+
+---
+
+## Training
+
+### Training Essentials
+
+**YAML-Only Surface**:
+- Avoid CLI flags beyond `--config` (and optional `--base_config`, `--debug`)
+- All configuration in YAML files
+- Single length knob: `global_max_length`
+
+**Critical Setup**:
+```yaml
+# Always set these
+model:
+  model: /path/to/Qwen3-VL-4B-Instruct
+template:
+  template: qwen3_vl
+  max_length: 4096           # Or use global_max_length
+
+# Set global_max_length as the single length knob
+global_max_length: 4096      # Proxies both model.max_model_len and template.max_length
+```
+
+**Adapter Preparation** (Critical!):
+```python
+# Always call sft.prepare_model() before creating trainer
+# This configures adapters, freezes, modules_to_save
+sft.prepare_model(...)
+```
+
+❌ **Common mistake**: Forgetting `prepare_model()` → full model saved instead of adapter
+
+### Training Modes
+
+| Mode | Memory | Speed | Use Case |
+|------|--------|-------|----------|
+| **Full Fine-Tuning** | Highest | Slower | Maximum flexibility, production deployment |
+| **LoRA** | ~240MB | Faster | Iteration, experimentation, adapter deployment |
+| **Selective Freezing** | Variable | Fast | Targeted component training |
+
+**LoRA Configuration**:
+```yaml
+tuner:
+  train_type: lora
+  lora_rank: 32
+  lora_alpha: 64
+  target_modules: [all-linear]      # Or specific modules
+  freeze_llm: false                 # Control what to freeze
+  freeze_vit: true
+  freeze_aligner: false
+```
+
+**Selective Freezing** (Mix with LoRA or Full):
+- `freeze_llm: true` - Freeze language model
+- `freeze_vit: true` - Freeze vision encoder
+- `freeze_aligner: false` - Train aligner (projector)
+
+### Two-Stage Recipe (Recommended)
+
+**Stage 1: Aligner-Only LoRA**
+```yaml
+# Learn vision-language alignment
+tuner:
+  train_type: lora
+  target_modules: [all-linear]
+  freeze_llm: true                  # Freeze LLM
+  freeze_vit: true                  # Freeze ViT
+  freeze_aligner: false             # Train aligner only
+
+training:
+  num_train_epochs: 3
+  learning_rate: 1.0e-4
+```
+
+**Stage 2: LLM + Aligner LoRA**
+```yaml
+# Refine language while preserving alignment
+model:
+  model: /path/to/base/Qwen3-VL-4B-Instruct
+
+tuner:
+  train_type: lora
+  target_modules: [all-linear]
+  freeze_llm: false                 # Train LLM
+  freeze_vit: true                  # Keep ViT frozen
+  freeze_aligner: false             # Train aligner
+  resume_from_checkpoint: /path/to/stage1/checkpoint-XXX
+
+training:
+  num_train_epochs: 2
+  learning_rate: 5.0e-5             # Lower LR for fine-tuning
+```
+
+**Benefits**:
+- Stage 1 learns alignment without language drift
+- Stage 2 refines language without breaking alignment
+- Faster convergence than single-stage
+- Better generalization
+
+### Packing (Padding-Free Training)
+
+**Enable Packing**:
+```yaml
+training:
+  packing: true
+```
+
+**Benefits**:
+- Eliminates padding waste
+- 20-30% faster training
+- Better GPU utilization
+
+**Requirements**:
+- Qwen3-VL (Flash Attention 2+)
+- Incompatible with `lazy_tokenize`
+- Compatible with LoRA and full fine-tuning
+
+### Training Health Checks
+
+Before training, verify:
+
+- [ ] Vision tokens present (`pixel_values`, `image_grid_thw`)
+- [ ] Image placeholders match image count in user messages
+- [ ] `modules_to_save` lists any full-tuned modules (if used)
+- [ ] Adapter config correct (for LoRA mode)
+- [ ] Correct base model path
+- [ ] `global_max_length` or `template.max_length` set
+
+**Debug Mode**:
+```bash
+python -m src.sft --config config.yaml --debug
+```
+
+### Training Troubleshooting
+
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| Full model saved instead of adapter | Missing `sft.prepare_model()` | Always call before trainer creation |
+| Zero gradients for vision/aligner | Wrong content format | Use `{"type": "image", "image": path}` |
+| OOM | Batch size / length too large | Lower batch size, enable gradient checkpointing, use ZeRO |
+| Slow convergence | Learning rate mismatch | Try 1e-4 for LoRA, 5e-5 for full |
+| NaN loss | LR too high or bad data | Lower LR, check data validation |
+
+---
+
+## Inference
+
+### Checkpoints
+
+**Adapter-Based** (Recommended for Development):
+```bash
+# Load base + LoRA adapter
+CUDA_VISIBLE_DEVICES=0 swift infer \
+  --model /path/to/Qwen3-VL-4B-Instruct \
+  --adapters /path/to/checkpoint-XXX \
+  --stream true --max_new_tokens 2048
+```
+
+**Benefits**:
+- Small adapter file (~240MB)
+- Flexible (swap adapters easily)
+- Easy to version control
+
+**Merged** (Recommended for Production):
+```bash
+# Merge adapter into base model
+CUDA_VISIBLE_DEVICES=0 swift export \
+  --model /path/to/Qwen3-VL-4B-Instruct \
+  --adapters /path/to/checkpoint-XXX \
+  --merge_lora true \
+  --output_dir /path/to/merged \
+  --save_safetensors true
+```
+
+**Benefits**:
+- Single self-contained checkpoint
+- Faster inference (no adapter overhead)
+- Easier deployment
+
+### Dense Captioning (Standard)
+
+**Input Format**:
+```python
+messages = [{
+    "role": "user",
+    "content": [
+        {"type": "image", "image": "img1.jpg"},
+        {"type": "image", "image": "img2.jpg"},
+        {"type": "text", "text": "请描述图片中的所有物体"}
+    ]
+}]
+```
+
+**Output Format**:
+```json
+{
+  "图片_1": [
+    {"bbox_2d": [100, 200, 300, 400], "desc": "BBU设备/品牌:华为/型号:5900"},
+    ...
+  ],
+  "图片_2": [...]
+}
+```
+
+**Best Practices**:
+- Use deterministic generation (low temperature) for deployment
+- Set `max_new_tokens` based on expected output length
+- Stream responses for better UX
+
+### Stage-A & Stage-B
+
+**Stage-A: Per-Image Summaries**
+
+Purpose: Generate one-line Chinese summaries per image
+
+```bash
+python -m src.stage_a.run \
+  --model /path/to/merged \
+  --input images/ \
+  --output summaries.jsonl
+```
+
+Output format:
+```json
+{"image_id": "img1", "summary": "BBU设备×1/光模块×3/线缆×2"}
+```
+
+**Stage-B: Group-Level Verdict**
+
+Purpose: Multi-image scene-level pass/fail judgment
+
+```bash
+python -m src.stage_b.run \
+  --input summaries.jsonl \
+  --output verdicts.jsonl
+```
+
+Output format (two lines):
+```
+通过
+理由: 所有设备安装规范，无明显问题
+```
+
+### Deployment Tips
+
+**Latency Optimization**:
+1. Use merged checkpoints (faster than adapter loading)
+2. Enable Flash Attention 2 (default for Qwen3-VL)
+3. Use bfloat16 precision (balance speed/quality)
+4. Batch multiple images when possible
+
+**Memory Optimization**:
+1. Use quantization (int8/int4) for large-scale deployment
+2. Lower `max_model_len` if not needed
+3. Use gradient checkpointing during training (no impact on inference)
+
+**Quality Optimization**:
+1. Set temperature=0 for deterministic output
+2. Use appropriate `top_p` (0.9 default)
+3. Validate output format with regex/JSON parsing
+4. Keep processor/template aligned with base model
+
+---
+
+## Advanced Topics & FAQ
 
 ## Learning Rate Scheduler (FAQ)
 

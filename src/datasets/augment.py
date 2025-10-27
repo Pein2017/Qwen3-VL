@@ -6,6 +6,7 @@ import random
 from typing import Any, Dict, List, Optional, Tuple
 
 from PIL import Image
+from ..utils.logger import get_logger
 
 
 def _image_to_bytes(img: Image.Image) -> bytes:
@@ -73,8 +74,15 @@ def apply_augmentations(
         raise TypeError("pipeline.apply must return list[dict] as second element")
     if len(out_imgs) != len(pil_images):
         raise ValueError(f"pipeline.apply returned {len(out_imgs)} images, expected {len(pil_images)}")
+    # Check if pipeline allows geometry drops (from crop operations)
+    allows_drops = getattr(pipeline, 'allows_geometry_drops', False)
+    
     if len(geoms) != len(per_object_geoms):
-        raise ValueError(f"pipeline.apply returned {len(geoms)} geometries, expected {len(per_object_geoms)}")
+        if not allows_drops:
+            raise ValueError(f"pipeline.apply returned {len(geoms)} geometries, expected {len(per_object_geoms)}")
+        # Crop operation: log but allow count change
+        logger = get_logger("augmentation.validation")
+        logger.debug(f"Crop filtered {len(per_object_geoms)} → {len(geoms)} objects")
     # Validate that all output images share the same size; allow size change (e.g., padding to multiples)
     out_w, out_h = out_imgs[0].width, out_imgs[0].height
     for i, im in enumerate(out_imgs):

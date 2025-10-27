@@ -7,6 +7,19 @@ from PIL import Image
 
 
 def canonicalize_quad(points8: List[int | float]) -> List[int]:
+    """
+    DEPRECATED: This function reorders quad points based on position relative to centroid.
+    
+    WARNING: Do NOT use this for quads from geometry transformations (rotation, affine, crop)!
+    Those quads are already in correct clockwise order from transform_geometry().
+    Reordering breaks rotated quads by destroying the correct corner connectivity.
+    
+    Only use this for:
+    - Legacy data with unknown/arbitrary quad ordering
+    - External sources not using our geometry transformation pipeline
+    
+    For modern augmentation pipeline: Use points as-is (already clockwise ordered).
+    """
     if not isinstance(points8, (list, tuple)) or len(points8) != 8:
         return [int(round(v)) for v in (points8 or [])]
     pts = [(float(points8[i]), float(points8[i + 1])) for i in range(0, 8, 2)]
@@ -42,8 +55,8 @@ def draw_objects(ax, img: Image.Image, objects: List[Dict[str, Any]], color_map:
         pts = obj["points"]
         desc = obj.get("desc", "")
         pts_px = pts if scaled else _inverse_scale(pts, w, h)
-        if gtype == "quad" and len(pts_px) == 8:
-            pts_px = canonicalize_quad(pts_px)
+        # NOTE: Do NOT canonicalize quad points - they are already in correct clockwise order
+        # from geometry transformations. Reordering breaks rotated quads!
         color = color_map.get(desc) or "#000000"
         if gtype == "bbox_2d" and len(pts_px) == 4:
             x1, y1, x2, y2 = pts_px

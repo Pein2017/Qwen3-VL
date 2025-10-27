@@ -25,6 +25,11 @@ from ..geometry import (
     clip_polyline_to_rect,
     points_to_xyxy,
     translate,
+    # Coverage and cropping utilities
+    get_aabb,
+    intersect_aabb,
+    compute_coverage,
+    translate_geometry,
 )
 from .base import ImageAugmenter
 from .registry import register
@@ -302,17 +307,20 @@ class ResizeByScale(ImageAugmenter):
                     scaled.append(float(pts[i]) * sx)
                     scaled.append(float(pts[i + 1]) * sy)
                 clipped = sutherland_hodgman_clip(scaled, new_w, new_h)
-                if len(clipped) // 2 < 3:
-                    # drop degenerate
-                    continue
-                if len(clipped) // 2 != 4:
-                    rect = min_area_rect(clipped)
-                    if not rect:
-                        continue
-                    clipped = rect
-                clipped = to_clockwise(clipped)
-                q = clamp_points(clipped, new_w, new_h)
-                out_geoms.append({"quad": q})
+                if len(clipped) // 2 >= 3:
+                    # Valid polygon after clipping
+                    if len(clipped) // 2 != 4:
+                        rect = min_area_rect(clipped)
+                        if rect:
+                            clipped = rect
+                        # else: keep clipped polygon even if not exactly 4 points
+                    clipped = to_clockwise(clipped)
+                    q = clamp_points(clipped, new_w, new_h)
+                    out_geoms.append({"quad": q})
+                else:
+                    # Degenerate: preserve by clamping original scaled coords
+                    q = clamp_points(to_clockwise(scaled), new_w, new_h)
+                    out_geoms.append({"quad": q})
             elif "line" in g:
                 pts = g["line"]
                 scaled: List[float] = []
@@ -324,7 +332,17 @@ class ResizeByScale(ImageAugmenter):
                 clipped = dedupe_consecutive_points(clipped)
                 if len(clipped) >= 4:
                     out_geoms.append({"line": clipped})
-                # else drop
+                else:
+                    # Degenerate: preserve by collapsing to minimal 2-point line
+                    raw = clamp_points(scaled, new_w, new_h)
+                    raw = dedupe_consecutive_points(raw)
+                    if len(raw) >= 4:
+                        out_geoms.append({"line": raw[:4]})
+                    elif len(raw) >= 2:
+                        out_geoms.append({"line": [raw[0], raw[1], raw[0], raw[1]]})
+                    else:
+                        # Extreme fallback: point at (0,0)
+                        out_geoms.append({"line": [0.0, 0.0, 0.0, 0.0]})
             else:
                 out_geoms.append(g)
 
@@ -431,22 +449,6 @@ class AutoContrast(ImageAugmenter):
         for img in images:
             im = _pil(img).convert("RGB")
             out_imgs.append(ImageOps.autocontrast(im, cutoff=self.cutoff))
-        return out_imgs, geoms
-
-
-@register("equalize")
-class Equalize(ImageAugmenter):
-    def __init__(self, prob: float = 0.5):
-        self.prob = float(prob)
-        self.kind = "color"
-
-    def apply(self, images: List[Any], geoms: List[Dict[str, Any]], *, width: int, height: int, rng: Any):
-        if rng.random() >= self.prob:
-            return images, geoms
-        out_imgs: List[Any] = []
-        for img in images:
-            im = _pil(img).convert("RGB")
-            out_imgs.append(ImageOps.equalize(im))
         return out_imgs, geoms
 
 
@@ -587,6 +589,198 @@ class AlbumentationsColor(ImageAugmenter):
         return out_imgs, geoms
 
 
+@register("random_crop")
+class RandomCrop(ImageAugmenter):
+    """
+    Random crop with label filtering for dense captioning.
+    
+    Crops a random region from the image and filters geometries based on visibility.
+    If filtered objects < min_objects or any filtered object is a line (when skip_if_line=True),
+    the entire crop operation is skipped and original images/geometries are returned unchanged.
+    
+    Parameters:
+        scale: (min, max) tuple for crop size as fraction of original image (default: (0.6, 1.0))
+        aspect_ratio: (min, max) tuple for aspect ratio variation (default: (0.8, 1.2))
+        min_coverage: minimum coverage ratio to keep object (default: 0.3)
+        completeness_threshold: coverage threshold for marking "只显示部分" (default: 0.95)
+        min_objects: skip crop if filtered objects < this value (default: 4)
+        skip_if_line: skip crop if any filtered object is a line (default: True)
+        prob: probability of applying crop (default: 1.0)
+    """
+    def __init__(
+        self,
+        scale: Tuple[float, float] = (0.6, 1.0),
+        aspect_ratio: Tuple[float, float] = (0.8, 1.2),
+        min_coverage: float = 0.3,
+        completeness_threshold: float = 0.95,
+        min_objects: int = 4,
+        skip_if_line: bool = True,
+        prob: float = 1.0,
+    ):
+        self.scale = (float(scale[0]), float(scale[1]))
+        self.aspect_ratio = (float(aspect_ratio[0]), float(aspect_ratio[1]))
+        self.min_coverage = float(min_coverage)
+        self.completeness_threshold = float(completeness_threshold)
+        self.min_objects = int(min_objects)
+        self.skip_if_line = bool(skip_if_line)
+        self.prob = float(prob)
+        self.kind = "barrier"
+        
+        # Metadata storage (set by apply, read by preprocessor)
+        self.last_kept_indices: List[int] | None = None
+        self.last_object_coverages: List[float] | None = None
+        self.allows_geometry_drops = True  # Signal to validation
+    
+    def apply(self, images: List[Any], geoms: List[Dict[str, Any]], *, width: int, height: int, rng: Any):
+        logger = get_logger("augmentation.random_crop")
+        
+        # Clear metadata from previous call
+        self.last_kept_indices = None
+        self.last_object_coverages = None
+        
+        if rng.random() >= self.prob:
+            return images, geoms
+        
+        # Sample crop size
+        crop_scale = rng.uniform(self.scale[0], self.scale[1])
+        aspect = rng.uniform(self.aspect_ratio[0], self.aspect_ratio[1])
+        
+        # Compute crop dimensions
+        base_size = math.sqrt(width * height * crop_scale)
+        crop_w = max(1, int(round(base_size * math.sqrt(aspect))))
+        crop_h = max(1, int(round(base_size / math.sqrt(aspect))))
+        
+        # Clamp to image bounds
+        crop_w = min(crop_w, width)
+        crop_h = min(crop_h, height)
+        
+        # Sample random position
+        max_x = width - crop_w
+        max_y = height - crop_h
+        crop_x = int(rng.randrange(0, max_x + 1)) if max_x > 0 else 0
+        crop_y = int(rng.randrange(0, max_y + 1)) if max_y > 0 else 0
+        
+        crop_bbox = [float(crop_x), float(crop_y), float(crop_x + crop_w), float(crop_y + crop_h)]
+        
+        # Compute coverage and filter geometries
+        kept_indices: List[int] = []
+        coverages: List[float] = []
+        filtered_geoms: List[Dict[str, Any]] = []
+        
+        for idx, g in enumerate(geoms):
+            cov = compute_coverage(g, crop_bbox)
+            if cov >= self.min_coverage:
+                kept_indices.append(idx)
+                coverages.append(cov)
+                filtered_geoms.append(g)
+        
+        # Check skip conditions
+        if len(filtered_geoms) < self.min_objects:
+            logger.debug(f"Crop would filter to {len(filtered_geoms)} < {self.min_objects} objects. Skipping crop.")
+            return images, geoms
+        
+        if self.skip_if_line:
+            has_line = any("line" in g for g in filtered_geoms)
+            if has_line:
+                logger.debug("Crop region contains line object. Skipping crop to preserve cable/fiber integrity.")
+                return images, geoms
+        
+        # Proceed with crop - truncate and translate geometries
+        cropped_geoms: List[Dict[str, Any]] = []
+        for g in filtered_geoms:
+            # Truncate geometry to crop boundary
+            if "bbox_2d" in g:
+                x1, y1, x2, y2 = g["bbox_2d"]
+                # Clip to crop region
+                clipped_x1 = max(crop_bbox[0], min(crop_bbox[2], x1))
+                clipped_y1 = max(crop_bbox[1], min(crop_bbox[3], y1))
+                clipped_x2 = max(crop_bbox[0], min(crop_bbox[2], x2))
+                clipped_y2 = max(crop_bbox[1], min(crop_bbox[3], y2))
+                truncated = {"bbox_2d": [clipped_x1, clipped_y1, clipped_x2, clipped_y2]}
+            elif "quad" in g:
+                pts = g["quad"]
+                # Translate to crop origin for clipping
+                pts_translated = []
+                for i in range(0, len(pts), 2):
+                    pts_translated.append(pts[i] - crop_bbox[0])
+                    pts_translated.append(pts[i + 1] - crop_bbox[1])
+                clipped = sutherland_hodgman_clip(pts_translated, crop_w, crop_h)
+                # Reduce redundant vertices introduced by axis-aligned clipping
+                from ..geometry import simplify_polygon, choose_four_corners
+                clipped = simplify_polygon(clipped)
+                
+                if len(clipped) // 2 >= 3:
+                    # Prefer true 4-corner representation when possible
+                    if len(clipped) // 2 > 4:
+                        best4 = choose_four_corners(clipped)
+                        if best4:
+                            clipped = best4
+                    if len(clipped) // 2 != 4:
+                        rect = min_area_rect(clipped)
+                        if rect:
+                            clipped = rect
+                    clipped = to_clockwise(clipped)
+                    # Translate back to image coords for final translation step
+                    final_pts = []
+                    for i in range(0, len(clipped), 2):
+                        final_pts.append(clipped[i] + crop_bbox[0])
+                        final_pts.append(clipped[i + 1] + crop_bbox[1])
+                    truncated = {"quad": final_pts}
+                else:
+                    # Degenerate quad - clamp to crop boundary
+                    clamped = []
+                    for i in range(0, len(pts), 2):
+                        clamped.append(max(crop_bbox[0], min(crop_bbox[2], pts[i])))
+                        clamped.append(max(crop_bbox[1], min(crop_bbox[3], pts[i + 1])))
+                    truncated = {"quad": clamped}
+            elif "line" in g:
+                pts = g["line"]
+                # Translate to crop origin
+                pts_translated = []
+                for i in range(0, len(pts), 2):
+                    pts_translated.append(pts[i] - crop_bbox[0])
+                    pts_translated.append(pts[i + 1] - crop_bbox[1])
+                # Clip line to crop boundary
+                clipped = clip_polyline_to_rect(pts_translated, crop_w, crop_h)
+                # Translate back
+                final_pts = []
+                for i in range(0, len(clipped), 2):
+                    final_pts.append(clipped[i] + crop_bbox[0])
+                    final_pts.append(clipped[i + 1] + crop_bbox[1])
+                
+                if len(final_pts) >= 4:
+                    truncated = {"line": final_pts}
+                else:
+                    # Degenerate line - clamp to crop boundary
+                    clamped = []
+                    for i in range(0, len(pts), 2):
+                        clamped.append(max(crop_bbox[0], min(crop_bbox[2], pts[i])))
+                        clamped.append(max(crop_bbox[1], min(crop_bbox[3], pts[i + 1])))
+                    if len(clamped) >= 4:
+                        truncated = {"line": clamped[:4]}
+                    else:
+                        truncated = {"line": [crop_bbox[0], crop_bbox[1], crop_bbox[0], crop_bbox[1]]}
+            else:
+                truncated = g
+            
+            # Translate to crop coordinates
+            translated = translate_geometry(truncated, -crop_bbox[0], -crop_bbox[1])
+            cropped_geoms.append(translated)
+        
+        # Crop images
+        out_imgs: List[Any] = []
+        for img in images:
+            im = _pil(img)
+            out_imgs.append(im.crop((crop_x, crop_y, crop_x + crop_w, crop_y + crop_h)))
+        
+        # Store metadata for preprocessor
+        self.last_kept_indices = kept_indices
+        self.last_object_coverages = coverages
+        
+        logger.debug(f"Crop applied: {len(geoms)} → {len(cropped_geoms)} objects (region: {crop_bbox})")
+        return out_imgs, cropped_geoms
+
+
 __all__ = [
     "HFlip",
     "VFlip",
@@ -597,12 +791,12 @@ __all__ = [
     "HueSaturationValue",
     "CLAHE",
     "AutoContrast",
-    "Equalize",
     "Solarize",
     "Posterize",
     "Sharpness",
     "AlbumentationsColor",
     "PadToMultiple",
+    "RandomCrop",
 ]
 
 
