@@ -75,22 +75,91 @@ def test_line_clipping_and_dedup():
     assert min(ys) >= 0 and max(ys) <= 49
 
 
-def test_expand_to_fit_and_pad_multiple():
-    rng = random.Random(9)
+def test_rotate_with_expansion_and_32_alignment():
+    """Rotation with canvas expansion: no cropping, dims are multiples of 32, quads align."""
+    rng = random.Random(42)
     cfg = {"ops": [
-        {"name": "rotate", "params": {"max_deg": 0.0, "prob": 1.0}},
+        {"name": "rotate", "params": {"max_deg": 30.0, "prob": 1.0}},
         {"name": "expand_to_fit_affine", "params": {"multiple": 32}},
     ]}
     compose: Compose = build_compose_from_config(cfg)
-    imgs = [_blank(101, 77)]
-    geoms = [{"bbox_2d": [5, 5, 95, 60]}]
-    out_imgs, out_geoms = compose.apply(imgs, geoms, width=101, height=77, rng=rng)
+    imgs = [_blank(100, 80)]
+    geoms = [{"bbox_2d": [10, 10, 90, 70]}]
+    
+    out_imgs, out_geoms = compose.apply(imgs, geoms, width=100, height=80, rng=rng)
     w, h = out_imgs[0].size
+    
+    # Dimensions are multiples of 32
     assert w % 32 == 0 and h % 32 == 0
-    # geometry unchanged by expansion-only barrier
-    assert "bbox_2d" in out_geoms[0]
-    x1, y1, x2, y2 = out_geoms[0]["bbox_2d"]
-    assert 0 <= x1 < x2 <= w - 1
-    assert 0 <= y1 < y2 <= h - 1
+    # Expanded beyond original (rotated corners extend)
+    assert w >= 100 or h >= 80
+    # Quad promoted from bbox due to rotation
+    assert "quad" in out_geoms[0]
+    q = out_geoms[0]["quad"]
+    assert len(q) == 8
+    # All quad points within new bounds
+    xs, ys = q[0::2], q[1::2]
+    assert min(xs) >= 0 and max(xs) <= w - 1
+    assert min(ys) >= 0 and max(ys) <= h - 1
+
+
+def test_mixed_affines_with_expansion():
+    """Rotate + scale + flip before expansion: AABB correct, geometry consistent."""
+    rng = random.Random(123)
+    cfg = {"ops": [
+        {"name": "rotate", "params": {"max_deg": 15.0, "prob": 1.0}},
+        {"name": "scale", "params": {"lo": 1.2, "hi": 1.2, "prob": 1.0}},
+        {"name": "hflip", "params": {"prob": 1.0}},
+        {"name": "expand_to_fit_affine", "params": {"multiple": 32}},
+    ]}
+    compose: Compose = build_compose_from_config(cfg)
+    imgs = [_blank(64, 64)]
+    geoms = [
+        {"bbox_2d": [5, 5, 20, 20]},
+        {"quad": [30, 10, 50, 12, 48, 30, 28, 28]},
+        {"line": [10, 50, 30, 50, 30, 60]}
+    ]
+    
+    out_imgs, out_geoms = compose.apply(imgs, geoms, width=64, height=64, rng=rng)
+    w, h = out_imgs[0].size
+    
+    assert w % 32 == 0 and h % 32 == 0
+    assert len(out_geoms) == 3
+    # Check bbox promoted to quad, quad still quad, line still line
+    assert "quad" in out_geoms[0]  # bbox → quad
+    assert "quad" in out_geoms[1]
+    assert "line" in out_geoms[2]
+
+
+def test_pixel_limit_enforcement():
+    """Verify expand_to_fit_affine enforces max_pixels limit and scales down when exceeded."""
+    rng = random.Random(999)
+    # Large rotation on large image should trigger scaling
+    max_pixels = 100000
+    cfg = {"ops": [
+        {"name": "rotate", "params": {"max_deg": 45.0, "prob": 1.0}},
+        {"name": "expand_to_fit_affine", "params": {"multiple": 32, "max_pixels": max_pixels}},
+    ]}
+    compose: Compose = build_compose_from_config(cfg)
+    imgs = [_blank(400, 400)]
+    geoms = [{"bbox_2d": [50, 50, 350, 350]}]
+    
+    out_imgs, out_geoms = compose.apply(imgs, geoms, width=400, height=400, rng=rng)
+    w, h = out_imgs[0].size
+    
+    # Should be significantly smaller than unconstrained expansion (would be ~566×566 for 45° rotation)
+    assert w < 400 and h < 400  # Scaled down from original
+    # Allow small overshoot due to 32-multiple alignment (at most one alignment step)
+    assert w * h <= max_pixels + (32 * max(w, h))
+    # Should still be multiple of 32
+    assert w % 32 == 0 and h % 32 == 0
+    # Geometry should still be valid
+    assert "quad" in out_geoms[0]  # bbox promoted to quad due to rotation
+    q = out_geoms[0]["quad"]
+    assert len(q) == 8
+    # All points within bounds
+    xs, ys = q[0::2], q[1::2]
+    assert min(xs) >= 0 and max(xs) <= w - 1
+    assert min(ys) >= 0 and max(ys) <= h - 1
 
 

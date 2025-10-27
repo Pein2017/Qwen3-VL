@@ -15,17 +15,19 @@ class AugmentationPreprocessor(BasePreprocessor):
     - Composable with other preprocessors
     """
     
-    def __init__(self, *, augmenter: Optional[Any] = None, rng: Optional[random.Random] = None, **kwargs):
+    def __init__(self, *, augmenter: Optional[Any] = None, rng: Optional[random.Random] = None, bypass_prob: float = 0.0, **kwargs):
         """Initialize augmentation preprocessor.
         
         Args:
             augmenter: AugmentationConfig instance
             rng: Random number generator for reproducibility
+            bypass_prob: Probability (0-1) of bypassing augmentation for clean samples
             **kwargs: Additional configuration
         """
         super().__init__(**kwargs)
         self.augmenter = augmenter
         self.rng = rng if rng is not None else random.Random()
+        self.bypass_prob = float(bypass_prob)
     
     def preprocess(self, row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Apply augmentations to a record.
@@ -37,6 +39,10 @@ class AugmentationPreprocessor(BasePreprocessor):
             Augmented record
         """
         if self.augmenter is None:
+            return row
+        
+        # Randomly bypass augmentation for clean samples
+        if self.rng.random() < self.bypass_prob:
             return row
         
         row = self._augment_record(row)

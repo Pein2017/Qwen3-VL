@@ -174,6 +174,7 @@ def main():
 
     # Configure augmentation via YAML builder (applies only to training)
     augmenter = None
+    bypass_prob = 0.0
     aug_cfg = custom_config.get('augmentation')
     if isinstance(aug_cfg, dict) and aug_cfg.get('enabled', True):
         try:
@@ -181,7 +182,8 @@ def main():
             # Ensure ops are registered by importing ops module
             from .datasets.augmentation import ops as _register_ops  # noqa: F401
             augmenter = build_compose_from_config(aug_cfg)
-            logger.info("Augmentation pipeline built from YAML (training only)")
+            bypass_prob = float(aug_cfg.get('bypass_prob', 0.0))
+            logger.info(f"Augmentation pipeline built (bypass_prob={bypass_prob:.2f}, training only)")
         except Exception as e:
             raise ValueError(f"Failed to build augmentation pipeline from YAML: {e}")
     
@@ -244,6 +246,7 @@ def main():
         emit_norm=custom_config['emit_norm'],
         config=dp_config,
         augmenter=augmenter,
+        bypass_prob=bypass_prob,
         sample_limit=train_sample_limit,
         summary_ratio=summary_ratio,
         system_prompt_dense=system_prompt_dense,
@@ -372,6 +375,7 @@ def main():
             emit_norm=custom_config['emit_norm'],
             config=dp_config,
             augmenter=None,  # No augmentation for validation
+            bypass_prob=0.0,  # Explicit: no bypass for validation
             sample_limit=val_sample_limit,
             summary_ratio=summary_ratio,
             system_prompt_dense=system_prompt_dense,

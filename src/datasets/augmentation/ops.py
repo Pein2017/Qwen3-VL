@@ -6,6 +6,8 @@ from typing import Any, Dict, List, Tuple
 from PIL import Image, ImageEnhance, ImageOps
 import numpy as np
 
+from ...utils.logger import get_logger
+
 from ..geometry import (
     apply_affine,
     compose_affine,
@@ -16,6 +18,7 @@ from ..geometry import (
     dedupe_consecutive_points,
     invert_affine,
     scale_center,
+    scale_matrix,
     sutherland_hodgman_clip,
     min_area_rect,
     to_clockwise,
@@ -33,14 +36,6 @@ def _pil(img: Any) -> Image.Image:
     return img
 
 
-def _to_bytes(img: Image.Image) -> Dict[str, bytes]:
-    import io
-
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    return {"bytes": buf.getvalue()}
-
-
 def _pad_to_multiple(img: Image.Image, *, mult: int = 32) -> Image.Image:
     w, h = img.width, img.height
     new_w = ((w + mult - 1) // mult) * mult
@@ -50,16 +45,6 @@ def _pad_to_multiple(img: Image.Image, *, mult: int = 32) -> Image.Image:
     canvas = Image.new("RGB", (new_w, new_h), (0, 0, 0))
     canvas.paste(img, (0, 0))
     return canvas
-
-
-def _bbox_from_points(points: List[float], width: int, height: int) -> List[int]:
-    xs = points[0::2]
-    ys = points[1::2]
-    x1, x2 = min(xs), max(xs)
-    y1, y2 = min(ys), max(ys)
-    bb = clamp_points([x1, y1, x2, y2], width, height)
-    # degeneracy: if collapsed, caller may fallback
-    return bb
 
 
 @register("hflip")
@@ -73,44 +58,6 @@ class HFlip(ImageAugmenter):
             return None
         return hflip_matrix(width)
 
-    def apply(self, images: List[Any], geoms: List[Dict[str, Any]], *, width: int, height: int, rng: Any):
-        if rng.random() >= self.prob:
-            return images, geoms
-        M = hflip_matrix(width)
-        Minv = invert_affine(M)
-        coeffs = (Minv[0][0], Minv[0][1], Minv[0][2], Minv[1][0], Minv[1][1], Minv[1][2])
-        out_imgs = [_pil(img).transform((width, height), Image.AFFINE, data=coeffs, resample=Image.BICUBIC) for img in images]
-        out_geoms: List[Dict[str, Any]] = []
-        for g in geoms:
-            if "bbox_2d" in g:
-                x1, y1, x2, y2 = g["bbox_2d"]
-                pts = [x1, y1, x2, y1, x2, y2, x1, y2]
-                t = apply_affine(pts, M)
-                bb = _bbox_from_points(t, width, height)
-                # fallback if degenerate
-                if bb[0] == bb[2] or bb[1] == bb[3]:
-                    out_geoms.append({"bbox_2d": [x1, y1, x2, y2]})
-                else:
-                    out_geoms.append({"bbox_2d": bb})
-            elif "quad" in g:
-                t = apply_affine(g["quad"], M)
-                q = clamp_points(t, width, height)
-                if min(q[0::2]) == max(q[0::2]) and min(q[1::2]) == max(q[1::2]):
-                    out_geoms.append({"quad": g["quad"]})
-                else:
-                    out_geoms.append({"quad": q})
-            elif "line" in g:
-                t = apply_affine(g["line"], M)
-                l = clamp_points(t, width, height)
-                l = dedupe_consecutive_points(l)
-                if len(l) < 4:
-                    out_geoms.append({"line": g["line"]})
-                else:
-                    out_geoms.append({"line": l})
-            else:
-                out_geoms.append(g)
-        return out_imgs, out_geoms
-
 
 @register("vflip")
 class VFlip(ImageAugmenter):
@@ -123,50 +70,12 @@ class VFlip(ImageAugmenter):
             return None
         return vflip_matrix(height)
 
-    def apply(self, images: List[Any], geoms: List[Dict[str, Any]], *, width: int, height: int, rng: Any):
-        if rng.random() >= self.prob:
-            return images, geoms
-        M = vflip_matrix(height)
-        Minv = invert_affine(M)
-        coeffs = (Minv[0][0], Minv[0][1], Minv[0][2], Minv[1][0], Minv[1][1], Minv[1][2])
-        out_imgs = [_pil(img).transform((width, height), Image.AFFINE, data=coeffs, resample=Image.BICUBIC) for img in images]
-        out_geoms: List[Dict[str, Any]] = []
-        for g in geoms:
-            if "bbox_2d" in g:
-                x1, y1, x2, y2 = g["bbox_2d"]
-                pts = [x1, y1, x2, y1, x2, y2, x1, y2]
-                t = apply_affine(pts, M)
-                bb = _bbox_from_points(t, width, height)
-                if bb[0] == bb[2] or bb[1] == bb[3]:
-                    out_geoms.append({"bbox_2d": [x1, y1, x2, y2]})
-                else:
-                    out_geoms.append({"bbox_2d": bb})
-            elif "quad" in g:
-                t = apply_affine(g["quad"], M)
-                q = clamp_points(t, width, height)
-                if min(q[0::2]) == max(q[0::2]) and min(q[1::2]) == max(q[1::2]):
-                    out_geoms.append({"quad": g["quad"]})
-                else:
-                    out_geoms.append({"quad": q})
-            elif "line" in g:
-                t = apply_affine(g["line"], M)
-                l = clamp_points(t, width, height)
-                l = dedupe_consecutive_points(l)
-                if len(l) < 4:
-                    out_geoms.append({"line": g["line"]})
-                else:
-                    out_geoms.append({"line": l})
-            else:
-                out_geoms.append(g)
-        return out_imgs, out_geoms
-
 
 @register("rotate")
 class Rotate(ImageAugmenter):
     def __init__(self, max_deg: float = 10.0, prob: float = 0.5):
         self.max_deg = float(max_deg)
         self.prob = float(prob)
-
         self.kind = "affine"
 
     def affine(self, width: int, height: int, rng: Any):
@@ -176,44 +85,6 @@ class Rotate(ImageAugmenter):
         # Use pixel-center pivot ((W-1)/2, (H-1)/2) to match image warp
         return rotate_center(deg, (width - 1) / 2.0, (height - 1) / 2.0)
 
-    def apply(self, images: List[Any], geoms: List[Dict[str, Any]], *, width: int, height: int, rng: Any):
-        if self.max_deg <= 0 or rng.random() >= self.prob:
-            return images, geoms
-        deg = rng.uniform(-self.max_deg, self.max_deg)
-        M = rotate_center(deg, (width - 1) / 2.0, (height - 1) / 2.0)
-        Minv = invert_affine(M)
-        coeffs = (Minv[0][0], Minv[0][1], Minv[0][2], Minv[1][0], Minv[1][1], Minv[1][2])
-        out_imgs = [_pil(img).transform((width, height), Image.AFFINE, data=coeffs, resample=Image.BICUBIC) for img in images]
-        out_geoms: List[Dict[str, Any]] = []
-        for g in geoms:
-            if "bbox_2d" in g:
-                x1, y1, x2, y2 = g["bbox_2d"]
-                pts = [x1, y1, x2, y1, x2, y2, x1, y2]
-                t = apply_affine(pts, M)
-                bb = _bbox_from_points(t, width, height)
-                if bb[0] == bb[2] or bb[1] == bb[3]:
-                    out_geoms.append({"bbox_2d": [x1, y1, x2, y2]})
-                else:
-                    out_geoms.append({"bbox_2d": bb})
-            elif "quad" in g:
-                t = apply_affine(g["quad"], M)
-                q = clamp_points(t, width, height)
-                if min(q[0::2]) == max(q[0::2]) and min(q[1::2]) == max(q[1::2]):
-                    out_geoms.append({"quad": g["quad"]})
-                else:
-                    out_geoms.append({"quad": q})
-            elif "line" in g:
-                t = apply_affine(g["line"], M)
-                l = clamp_points(t, width, height)
-                l = dedupe_consecutive_points(l)
-                if len(l) < 4:
-                    out_geoms.append({"line": g["line"]})
-                else:
-                    out_geoms.append({"line": l})
-            else:
-                out_geoms.append(g)
-        return out_imgs, out_geoms
-
 
 @register("scale")
 class Scale(ImageAugmenter):
@@ -221,7 +92,6 @@ class Scale(ImageAugmenter):
         self.lo = float(lo)
         self.hi = float(hi)
         self.prob = float(prob)
-
         self.kind = "affine"
 
     def affine(self, width: int, height: int, rng: Any):
@@ -229,44 +99,6 @@ class Scale(ImageAugmenter):
             return None
         s = rng.uniform(self.lo, self.hi)
         return scale_center(s, s, width / 2.0, height / 2.0)
-
-    def apply(self, images: List[Any], geoms: List[Dict[str, Any]], *, width: int, height: int, rng: Any):
-        if rng.random() >= self.prob:
-            return images, geoms
-        s = rng.uniform(self.lo, self.hi)
-        M = scale_center(s, s, width / 2.0, height / 2.0)
-        Minv = invert_affine(M)
-        coeffs = (Minv[0][0], Minv[0][1], Minv[0][2], Minv[1][0], Minv[1][1], Minv[1][2])
-        out_imgs = [_pil(img).transform((width, height), Image.AFFINE, data=coeffs, resample=Image.BICUBIC) for img in images]
-        out_geoms: List[Dict[str, Any]] = []
-        for g in geoms:
-            if "bbox_2d" in g:
-                x1, y1, x2, y2 = g["bbox_2d"]
-                pts = [x1, y1, x2, y1, x2, y2, x1, y2]
-                t = apply_affine(pts, M)
-                bb = _bbox_from_points(t, width, height)
-                if bb[0] == bb[2] or bb[1] == bb[3]:
-                    out_geoms.append({"bbox_2d": [x1, y1, x2, y2]})
-                else:
-                    out_geoms.append({"bbox_2d": bb})
-            elif "quad" in g:
-                t = apply_affine(g["quad"], M)
-                q = clamp_points(t, width, height)
-                if min(q[0::2]) == max(q[0::2]) and min(q[1::2]) == max(q[1::2]):
-                    out_geoms.append({"quad": g["quad"]})
-                else:
-                    out_geoms.append({"quad": q})
-            elif "line" in g:
-                t = apply_affine(g["line"], M)
-                l = clamp_points(t, width, height)
-                l = dedupe_consecutive_points(l)
-                if len(l) < 4:
-                    out_geoms.append({"line": g["line"]})
-                else:
-                    out_geoms.append({"line": l})
-            else:
-                out_geoms.append(g)
-        return out_imgs, out_geoms
 
 
 @register("color_jitter")
@@ -314,43 +146,113 @@ class PadToMultiple(ImageAugmenter):
 @register("expand_to_fit_affine")
 class ExpandToFitAffine(ImageAugmenter):
     """
-    Barrier op: expand canvas to enclose the image after applying an affine M, then optionally pad to multiple.
+    Barrier op: expand canvas to enclose the image after applying accumulated affines, then pad to multiple.
+
+    Uses pre_flush_hook to modify the affine matrix and canvas dimensions before warping, ensuring
+    rotated/scaled content is fully contained without cropping.
 
     Params:
-      deg_range: tuple or None; if provided, builds rotation matrix around pixel-center for visualization/testing
       multiple: optional int to pad to multiple after expansion (e.g., 32). None to skip padding.
+      max_pixels: maximum pixel count (width × height). If expansion would exceed this, scales down
+                  proportionally to fit. Default: 921600 (960×960) to align with Qwen3-VL constraints.
     """
 
-    def __init__(self, multiple: int | None = 32):
+    def __init__(self, multiple: int | None = 32, max_pixels: int = 921600):
         self.multiple = int(multiple) if multiple else None
+        self.max_pixels = int(max_pixels)
         self.kind = "barrier"
 
-    def apply(self, images: List[Any], geoms: List[Dict[str, Any]], *, width: int, height: int, rng: Any):
-        # Use previously accumulated affine from Compose; here we simply compute expansion for identity
-        # The Compose will flush affines before this barrier, so we expand identity-transformed image as a no-op.
-        # To support expansion against a known next affine, users should place this after setting M_total externally.
-        # Practical approach: expand to fit a rotation sampled here and re-warp back to identity to produce enlarged canvas.
-        # For now, expand to fit the original image corners (no-op), then pad to multiple.
-        # Corners in pixel coordinates
-        corners = [0.0, 0.0, width - 1.0, 0.0, width - 1.0, height - 1.0, 0.0, height - 1.0]
-        # AABB equals original size
-        x1, y1, x2, y2 = points_to_xyxy(corners)
-        new_w = int(round(x2 - x1 + 1))
-        new_h = int(round(y2 - y1 + 1))
+    def pre_flush_hook(self, M_total: List[List[float]], width: int, height: int, rng: Any) -> Tuple[List[List[float]], int, int]:
+        """
+        Compute AABB of original corners under M_total, translate to top-left origin, and pad to multiple.
+        If resulting dimensions exceed max_pixels, scales down proportionally to fit within limit.
+        
+        Returns: (M_total_updated, new_width, new_height)
+        """
+        logger = get_logger("augmentation.expand")
+        
+        # Check if M_total is identity (skip expansion if no transform)
+        is_identity = (
+            abs(M_total[0][0] - 1.0) < 1e-9 and 
+            abs(M_total[1][1] - 1.0) < 1e-9 and
+            abs(M_total[0][1]) < 1e-9 and 
+            abs(M_total[1][0]) < 1e-9 and
+            abs(M_total[0][2]) < 1e-9 and
+            abs(M_total[1][2]) < 1e-9
+        )
+        if is_identity:
+            # Still apply padding to multiple if requested
+            if self.multiple and self.multiple > 1:
+                m = self.multiple
+                new_width = ((width + m - 1) // m) * m
+                new_height = ((height + m - 1) // m) * m
+                # Check pixel limit even for identity
+                if new_width * new_height > self.max_pixels:
+                    scale = math.sqrt(self.max_pixels / (new_width * new_height))
+                    new_width = int(new_width * scale)
+                    new_height = int(new_height * scale)
+                    # Re-align to multiple after scaling
+                    new_width = ((new_width + m - 1) // m) * m
+                    new_height = ((new_height + m - 1) // m) * m
+                return M_total, new_width, new_height
+            return M_total, width, height
+        
+        # Compute AABB of original corners under M_total
+        corners = [0.0, 0.0, float(width - 1), 0.0, float(width - 1), float(height - 1), 0.0, float(height - 1)]
+        transformed = apply_affine(corners, M_total)
+        bbox = points_to_xyxy(transformed)
+        minX, minY, maxX, maxY = bbox
+        
+        # Translate to top-left origin (keep non-negative coordinates)
+        T = translate(-minX, -minY)
+        M_total_updated = compose_affine(T, M_total)
+        
+        # Compute new dimensions
+        new_width = int(math.ceil(maxX - minX + 1))
+        new_height = int(math.ceil(maxY - minY + 1))
+        
+        # Round to multiples if requested
         if self.multiple and self.multiple > 1:
             m = self.multiple
-            new_w = ((new_w + m - 1) // m) * m
-            new_h = ((new_h + m - 1) // m) * m
-        out_imgs: List[Any] = []
-        for img in images:
-            im = _pil(img)
-            if im.width == new_w and im.height == new_h:
-                out_imgs.append(im)
-            else:
-                canvas = Image.new("RGB", (new_w, new_h), (0, 0, 0))
-                canvas.paste(im, (0, 0))
-                out_imgs.append(canvas)
-        return out_imgs, geoms
+            new_width = ((new_width + m - 1) // m) * m
+            new_height = ((new_height + m - 1) // m) * m
+        
+        # Safety check: enforce max pixel count
+        pixel_count = new_width * new_height
+        if pixel_count > self.max_pixels:
+            # Scale down proportionally to fit within limit
+            scale_factor = math.sqrt(self.max_pixels / pixel_count)
+            scaled_width = int(new_width * scale_factor)
+            scaled_height = int(new_height * scale_factor)
+            
+            # Re-align to multiple after scaling
+            if self.multiple and self.multiple > 1:
+                m = self.multiple
+                scaled_width = ((scaled_width + m - 1) // m) * m
+                scaled_height = ((scaled_height + m - 1) // m) * m
+            
+            # Update affine matrix to account for the scaling
+            S = scale_matrix(scale_factor, scale_factor)
+            M_total_updated = compose_affine(S, M_total_updated)
+            
+            logger.warning(
+                f"ExpandToFitAffine: Canvas expansion ({new_width}×{new_height} = {pixel_count} pixels) "
+                f"exceeds max_pixels={self.max_pixels}. Scaling down to {scaled_width}×{scaled_height} "
+                f"({scaled_width * scaled_height} pixels, factor={scale_factor:.3f}). "
+                f"Consider reducing rotation/scale augmentation strength."
+            )
+            
+            new_width = scaled_width
+            new_height = scaled_height
+        
+        return M_total_updated, new_width, new_height
+
+    def apply(self, images: List[Any], geoms: List[Dict[str, Any]], *, width: int, height: int, rng: Any) -> Tuple[List[Any], List[Dict[str, Any]]]:
+        """
+        No-op: expansion already handled in pre_flush_hook.
+        Images have already been warped to the expanded canvas by Compose.
+        """
+        return images, geoms
 
 
 @register("resize_by_scale")

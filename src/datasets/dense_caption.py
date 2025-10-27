@@ -27,6 +27,7 @@ class DenseCaptionDataset(DynamicPairDataset):
         summary_ratio: Optional[float] = None,
         system_prompt_dense: Optional[str] = None,
         system_prompt_summary: Optional[str] = None,
+        bypass_prob: float = 0.0,
     ):
         """Initialize dense caption dataset with dynamic mode selection.
         
@@ -41,6 +42,7 @@ class DenseCaptionDataset(DynamicPairDataset):
                           None or 0 = always dense; 1.0 = always summary
             system_prompt_dense: System prompt for dense mode (fallback to template if None)
             system_prompt_summary: System prompt for summary mode (required if summary_ratio > 0)
+            bypass_prob: Probability (0..1) of bypassing augmentation to preserve clean samples (default 0.0)
         """
         self.summary_ratio = summary_ratio if summary_ratio is not None else 0.0
         self.system_prompt_dense = system_prompt_dense
@@ -73,6 +75,7 @@ class DenseCaptionDataset(DynamicPairDataset):
             pair_message_builder=self.placeholder_builder,
             config=config,
             augmenter=augmenter,
+            bypass_prob=bypass_prob,
         )
         
         self._rng = random.Random(self.config.seed)

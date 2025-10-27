@@ -1,4 +1,4 @@
-## MODIFIED Requirements
+## ADDED Requirements
 
 ### Requirement: Preserve geometry under affine transforms
 - The augmentation pipeline SHALL accumulate affines across sequential affine ops and apply a single transform to geometry per flush.
@@ -29,8 +29,6 @@
 #### Scenario: collapse at corner
 - WHEN a very thin rotated bbox is clipped near a corner and collapses to <3 unique points
 - THEN the object is dropped with a warning including record index and object index.
-
-## ADDED Requirements
 
 ### Requirement: Minimum-area rectangle fallback
 - When `poly` is not emitted, the clipped polygon MUST be approximated by a minimum-area rectangle and output as `quad`.
@@ -110,5 +108,39 @@
 #### Scenario: post-rotate pad
 - WHEN rotation yields 1100×1100 canvas
 - THEN pad to 1120×1120; geometry remains identical in pixel positions.
+
+### Requirement: Pre-flush hook protocol for barriers
+- The system SHALL support an optional `pre_flush_hook(M_total, width, height, rng)` method on barrier operators with `kind="barrier"` to modify accumulated affine matrix and canvas dimensions BEFORE warping occurs.
+- The hook MUST return `(M_total_modified, new_width, new_height)` as a tuple.
+- Compose SHALL call the hook before flushing affines if it exists, using returned values for the warp operation.
+- Hooks MUST be deterministic (use provided rng) and MUST NOT access images or geometry directly.
+#### Scenario: canvas expansion before rotation warp
+- GIVEN `ExpandToFitAffine` implements `pre_flush_hook()`
+- WHEN Compose encounters this barrier after accumulated rotation affine
+- THEN hook computes expanded dimensions, translates affine, returns updated values
+- AND Compose warps images using the expanded dimensions and modified affine
+
+### Requirement: Pixel limit safety with proportional scaling
+- Canvas expansion operations MUST enforce a configurable `max_pixels` limit (default: 921600 for Qwen3-VL).
+- If expanded dimensions exceed `max_pixels`, the system SHALL scale down proportionally using `scale_factor = sqrt(max_pixels / pixel_count)`.
+- The scaling SHALL be applied to both affine matrix (via `scale_matrix`) and dimensions.
+- Dimensions after scaling SHALL still be rounded to the configured multiple (e.g., 32).
+- A warning SHALL be logged with: original dimensions, scaled dimensions, scale factor, and suggestion to reduce augmentation strength.
+#### Scenario: large rotation exceeds pixel limit
+- GIVEN a 1024×1024 image, 30° rotation would expand to 1344×1344 = 1,806,336 pixels
+- WHEN max_pixels is 921600 (960×960)
+- THEN system scales down by factor ~0.706
+- AND final dimensions are 960×960 (or nearest 32-multiple)
+- AND warning is logged: "Canvas expansion (1344×1344 = 1806336 pixels) exceeds max_pixels=921600..."
+
+### Requirement: Rank-aware centralized logging
+- Augmentation operations SHALL use centralized logging via `src/utils/logger.py`.
+- In distributed training, only rank 0 SHALL log by default (unless QWEN3VL_VERBOSE=1).
+- Warning messages MUST include actionable information (dimensions, scale factors, suggestions).
+#### Scenario: distributed training with 4 GPUs
+- GIVEN training with 4 GPUs and pixel limit warnings
+- WHEN warnings would be triggered
+- THEN only rank 0 emits log messages
+- AND messages contain specific dimensions and remediation advice
 
 

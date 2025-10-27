@@ -88,6 +88,7 @@ class DynamicPairDataset(Dataset):
         config: Optional[DynamicPairingConfig] = None,
         augmenter: Optional[Any] = None,
         preprocessor: Optional[Any] = None,
+        bypass_prob: float = 0.0,
     ) -> None:
         self.base_records: List[Dict[str, Any]] = list(base_records)
         self.template = template
@@ -96,6 +97,7 @@ class DynamicPairDataset(Dataset):
         self.config = config or DynamicPairingConfig()
         self.augmenter = augmenter  # Kept for backward compatibility
         self.preprocessor = preprocessor
+        self.bypass_prob = float(bypass_prob)
         self._epoch: int = 0
         self._rng = random.Random(self._seed_for_epoch(self._epoch))
         # Build an index permutation for this epoch to enable per-epoch shuffling
@@ -105,7 +107,7 @@ class DynamicPairDataset(Dataset):
         # If augmenter provided but no preprocessor, create augmentation preprocessor
         if self.augmenter is not None and self.preprocessor is None:
             from .preprocessors import AugmentationPreprocessor
-            self.preprocessor = AugmentationPreprocessor(augmenter=self.augmenter)
+            self.preprocessor = AugmentationPreprocessor(augmenter=self.augmenter, bypass_prob=self.bypass_prob)
 
     @staticmethod
     def from_jsonl(jsonl_path: str, template: Any, **kwargs) -> "DynamicPairDataset":

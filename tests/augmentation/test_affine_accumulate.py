@@ -84,9 +84,9 @@ def test_resize_by_scale_changes_size_and_scales_geoms():
     nw, nh = out_imgs[0].width, out_imgs[0].height
     assert nw == 92 and nh == 60  # 60*1.5=90 -> align 4 => 92; 40*1.5=60
     bb = out_geoms[0]["bbox_2d"]
-    # bbox scaled by 1.5
-    assert abs(bb[0] - 15) < 1e-3 and abs(bb[1] - 15) < 1e-3
-    assert abs(bb[2] - 30) < 1e-3 and abs(bb[3] - 30) < 1e-3
+    # bbox scaled by 1.5 (with integer clamping tolerance)
+    assert abs(bb[0] - 15) <= 1 and abs(bb[1] - 15) <= 1
+    assert abs(bb[2] - 30) <= 1 and abs(bb[3] - 30) <= 1
 
 
 def test_color_after_warp_no_geom_change():

@@ -44,8 +44,8 @@ tuner:
   lora_bias: none
 
 training:
-  output_dir: ./output/10-26/stage_3
-  run_name: last6_lora-epoch_50-eff_batch_16
+  output_dir: ./output/10-27/stage_3
+  run_name: last6_lora-epoch_50-eff_batch_32
   add_version: true
   save_safetensors: true
   per_device_train_batch_size: 2
@@ -76,7 +76,7 @@ training:
   save_total_limit: 2
 
   # Verbose logging
-  logging_dir: ./tb/10-26
+  logging_dir: ./tb/10-27
   logging_steps: 10
   logging_first_step: true
 
@@ -96,6 +96,7 @@ custom:
   # Augmentation pipeline (training only). Eval remains unchanged.
   augmentation:
     enabled: true
+    bypass_prob: 0.1  # 10% of training samples remain clean (no augmentation)
     ops:
       # Geometric ops
       - name: hflip

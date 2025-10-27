@@ -20,6 +20,57 @@ from ..geometry import (
 
 
 class ImageAugmenter(Protocol):
+    """
+    Protocol for augmentation operators.
+    
+    Operators implement one or more methods depending on their type:
+    
+    1. **Affine Ops** (kind="affine"): HFlip, VFlip, Rotate, Scale
+       - Implement: affine(width, height, rng) -> Optional[Matrix3x3]
+       - Compose accumulates these and applies in a single warp for efficiency
+       
+    2. **Color Ops** (kind="color"): ColorJitter, Gamma, HSV, etc.
+       - Implement: apply(images, geoms, ...) -> (images, geoms)
+       - Deferred until after all affines are flushed (geometry unchanged)
+       
+    3. **Barrier Ops** (kind="barrier"): ResizeByScale, PadToMultiple, ExpandToFitAffine
+       - Implement: apply(images, geoms, ...) -> (images, geoms)
+       - Optionally: pre_flush_hook(M_total, width, height, rng) -> (M_total, width, height)
+       - Barrier forces affine flush before and after; may change canvas size
+    
+    ## Pre-Flush Hook Protocol (Advanced)
+    
+    Barrier ops may implement `pre_flush_hook()` to modify accumulated affines and canvas
+    dimensions BEFORE warping occurs. This enables operations like canvas expansion.
+    
+    Signature:
+        def pre_flush_hook(
+            self,
+            M_total: List[List[float]],  # Accumulated 3×3 affine matrix
+            width: int,                   # Current canvas width
+            height: int,                  # Current canvas height  
+            rng: random.Random            # RNG for deterministic behavior
+        ) -> Tuple[List[List[float]], int, int]:
+            '''Returns: (M_total_modified, new_width, new_height)'''
+    
+    Execution Flow:
+        1. Accumulate affine ops into M_total
+        2. Encounter barrier → call pre_flush_hook(M_total, W, H) if present
+        3. Warp images using returned (M, W, H)
+        4. Call barrier.apply() on warped images
+        5. Update working (width, height) from output images
+    
+    Example: ExpandToFitAffine
+        - Computes AABB of corners under M_total
+        - Translates by (-minX, -minY) to shift to non-negative coords
+        - Returns (translated_M, expanded_W, expanded_H)
+        - Result: Rotated content fully visible without cropping
+    
+    Constraints:
+        - Must be deterministic (use provided rng)
+        - Must not access/modify images or geometry directly
+        - Should validate returned dimensions are reasonable
+    """
     def apply(
         self,
         images: List[Any],
@@ -47,9 +98,13 @@ class Compose:
     ) -> Tuple[List[Any], List[Dict[str, Any]]]:
         out_images: List[Any] = images
         out_geoms: List[Dict[str, Any]] = geoms
+        
+        # Make width/height mutable for pre-flush hooks
+        current_width = width
+        current_height = height
 
         # Accumulate affine transforms, defer color ops, flush on barriers
-        def _warp_images_with_matrix(imgs: List[Any], M) -> List[Any]:
+        def _warp_images_with_matrix(imgs: List[Any], M, w: int, h: int) -> List[Any]:
             Minv = invert_affine(M)
             coeffs = (
                 Minv[0][0], Minv[0][1], Minv[0][2],
@@ -57,15 +112,14 @@ class Compose:
             )
             return [
                 (img if isinstance(img, Image.Image) else img).transform(
-                    (width, height), Image.AFFINE, data=coeffs, resample=Image.BICUBIC
+                    (w, h), Image.AFFINE, data=coeffs, resample=Image.BICUBIC
                 ) for img in imgs
             ]
 
-        def _apply_affine_to_geoms(gs: List[Dict[str, Any]], M) -> List[Dict[str, Any]]:
-            import logging
+        def _apply_affine_to_geoms(gs: List[Dict[str, Any]], M, w: int, h: int) -> List[Dict[str, Any]]:
             new_geoms: List[Dict[str, Any]] = []
             for g in gs:
-                out = transform_geometry(g, M, width=width, height=height)
+                out = transform_geometry(g, M, width=w, height=h)
                 new_geoms.append(out)
             return new_geoms
 
@@ -74,34 +128,38 @@ class Compose:
 
         def _flush_affine():
             nonlocal out_images, out_geoms, M_total
-            out_images = _warp_images_with_matrix(out_images, M_total)
-            out_geoms = _apply_affine_to_geoms(out_geoms, M_total)
+            out_images = _warp_images_with_matrix(out_images, M_total, current_width, current_height)
+            out_geoms = _apply_affine_to_geoms(out_geoms, M_total, current_width, current_height)
             M_total = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
 
         for op in self.ops:
             kind = getattr(op, "kind", None)
             if kind == "affine":
-                M_op = op.affine(width, height, rng)  # may be None on skip
+                M_op = op.affine(current_width, current_height, rng)  # may be None on skip
                 if M_op is not None:
                     M_total = compose_affine(M_op, M_total)
             elif kind == "color":
                 deferred_color_ops.append(op)
             else:
-                # Barrier: flush current affines then apply barrier op
+                # Barrier: check for pre-flush hook, then flush, then apply barrier op
+                if hasattr(op, 'pre_flush_hook'):
+                    M_total, current_width, current_height = op.pre_flush_hook(
+                        M_total, current_width, current_height, rng
+                    )
                 _flush_affine()
-                out_images, out_geoms = op.apply(out_images, out_geoms, width=width, height=height, rng=rng)
+                out_images, out_geoms = op.apply(out_images, out_geoms, width=current_width, height=current_height, rng=rng)
                 # Barrier may change image size (e.g., padding); update width/height
                 if isinstance(out_images, list) and out_images:
                     im0 = out_images[0]
                     if isinstance(im0, Image.Image):
-                        width, height = im0.width, im0.height
+                        current_width, current_height = im0.width, im0.height
 
         # Final flush for any remaining accumulated affines
         _flush_affine()
 
         # Apply deferred color ops in order
         for op in deferred_color_ops:
-            out_images, out_geoms = op.apply(out_images, out_geoms, width=width, height=height, rng=rng)
+            out_images, out_geoms = op.apply(out_images, out_geoms, width=current_width, height=current_height, rng=rng)
 
         return out_images, out_geoms
 
