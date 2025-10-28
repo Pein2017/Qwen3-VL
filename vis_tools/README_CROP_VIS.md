@@ -227,5 +227,4 @@ custom:
           prob: 0.3
 ```
 
-Then train and verify with `examples/monitor_crop_augmentation.py` for production statistics.
 

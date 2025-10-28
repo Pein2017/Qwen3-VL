@@ -5,7 +5,7 @@ Qwen3-VL visualization script (no CLI):
   - Read JSONL
   - Inference with training user prompt
   - Parse norm1000 predictions; inverse-scale to pixels
-  - Plot GT (left) vs Pred (right) in a 1×2 layout and save
+  - Plot GT (left) vs Pred (middle) vs Legend (right) in a 1×3 layout and save
 """
 
 from __future__ import annotations
@@ -15,14 +15,17 @@ import sys
 import json
 import ast
 import re
-import math
 from pathlib import Path
 from typing import Any, Dict, List
 
 import torch
 from PIL import Image
 import matplotlib.pyplot as plt
-from vis_tools.vis_helper import draw_objects, generate_colors, create_legend, canonicalize_quad
+import matplotlib.patches as patches
+from vis_tools.vis_helper import (
+    draw_objects,
+    canonicalize_quad,
+)
 from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
 
 
@@ -31,17 +34,17 @@ from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
 # ==============================
 
 # Required paths
-CKPT_PATH = "output/stage_3_merged-10-27/v_1"  # HF dir or merged checkpoint
+CKPT_PATH = "output/stage_4_merged-10-28/resumed-checkpoint-1932"  # HF dir or merged checkpoint  # HF dir or merged checkpoint
 JSONL_PATH = "data/bbu_full_768/val.jsonl"
 
 # Runtime settings
 LIMIT = 10
-DEVICE = "cuda:1"
-SAVE_DIR = "vis_out/10-27/v_1"
-MAX_NEW_TOKENS = 4096
-TEMPERATURE = 0.001
-TOP_P = 0.8
-REPETITION_PENALTY = 1.05
+DEVICE = "cuda:0"
+SAVE_DIR = "vis_out/10-28/resumed-checkpoint-1932-v2"
+MAX_NEW_TOKENS = 2048
+TEMPERATURE = 0.1  # Balanced randomness to avoid loops while maintaining quality
+TOP_P = 0.9  # Nucleus sampling - cuts off low-probability tail
+REPETITION_PENALTY = 1.05  # Strong penalty against repetition (was 1.05, very weak)
 
 
 # Optional: override training user prompt (None uses training default)
@@ -86,7 +89,9 @@ model.eval()
 
 # Enable CUDA perf/kvcache optimizations when available
 try:
-    if torch.cuda.is_available() and (isinstance(DEVICE, str) and DEVICE.startswith("cuda")):
+    if torch.cuda.is_available() and (
+        isinstance(DEVICE, str) and DEVICE.startswith("cuda")
+    ):
         try:
             torch.backends.cuda.matmul.allow_tf32 = True
         except Exception:
@@ -101,7 +106,9 @@ try:
             pass
         try:
             # Prefer FlashAttention kernels where possible
-            torch.backends.cuda.sdp_kernel(enable_flash=True, enable_mem_efficient=False, enable_math=False)
+            torch.backends.cuda.sdp_kernel(
+                enable_flash=True, enable_mem_efficient=False, enable_math=False
+            )
         except Exception:
             pass
 except Exception:
@@ -124,6 +131,7 @@ processor.image_processor.do_resize = False
 # Inference helpers
 # ======================
 
+
 def run_infer_one(pil_img: Image.Image, prompt: str) -> tuple[str, str]:
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT_TEXT},
@@ -136,11 +144,15 @@ def run_infer_one(pil_img: Image.Image, prompt: str) -> tuple[str, str]:
         },
     ]
     # Use the tokenizer's chat template owned by the processor
-    text = processor.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
+    text = processor.apply_chat_template(
+        messages, add_generation_prompt=True, tokenize=False
+    )
 
     inputs = processor(images=[pil_img], text=[text], return_tensors="pt")
     # Move tensors to model device
-    inputs = {k: (v.to(model.device) if hasattr(v, "to") else v) for k, v in inputs.items()}
+    inputs = {
+        k: (v.to(model.device) if hasattr(v, "to") else v) for k, v in inputs.items()
+    }
 
     with torch.inference_mode():
         gen = model.generate(
@@ -150,6 +162,8 @@ def run_infer_one(pil_img: Image.Image, prompt: str) -> tuple[str, str]:
             temperature=TEMPERATURE,
             top_p=TOP_P,
             repetition_penalty=REPETITION_PENALTY,
+            early_stopping=True,  # Stop when EOS is generated
+            length_penalty=1.0,  # Neutral length preference
             use_cache=True,
         )
     # Strip prompt tokens from the front
@@ -227,7 +241,10 @@ def _json_loads_best_effort(s: str):
 def parse_prediction(text: str) -> List[Dict[str, Any]]:
     def _build_objects_from_dict(obj_dict: Dict[str, Any]) -> List[Dict[str, Any]]:
         parsed_local: List[Dict[str, Any]] = []
-        for _, val in sorted(obj_dict.items(), key=lambda kv: kv[0] if isinstance(kv[0], str) else str(kv[0])):
+        for _, val in sorted(
+            obj_dict.items(),
+            key=lambda kv: kv[0] if isinstance(kv[0], str) else str(kv[0]),
+        ):
             if not isinstance(val, dict):
                 continue
             desc = val.get("desc", "")
@@ -267,7 +284,11 @@ def parse_prediction(text: str) -> List[Dict[str, Any]]:
             if any(isinstance(k, str) and k.startswith("图片_") for k in obj.keys()):
                 try:
                     first_key = sorted(
-                        [k for k in obj.keys() if isinstance(k, str) and k.startswith("图片_")],
+                        [
+                            k
+                            for k in obj.keys()
+                            if isinstance(k, str) and k.startswith("图片_")
+                        ],
                         key=lambda x: int(str(x).split("_")[-1]),
                     )[0]
                     obj = obj.get(first_key) or {}
@@ -290,7 +311,7 @@ def parse_prediction(text: str) -> List[Dict[str, Any]]:
                 i = brace_idx + 1
                 results: List[Dict[str, Any]] = []
                 while True:
-                    key_idx = text.find("\"object_", i)
+                    key_idx = text.find('"object_', i)
                     if key_idx == -1:
                         break
                     # Find the '{' that starts the value
@@ -316,12 +337,12 @@ def parse_prediction(text: str) -> List[Dict[str, Any]]:
                         # object truncated; stop here (drop incomplete)
                         break
                     # Build a tiny JSON to parse this object
-                    obj_str = text[key_idx: end_found + 1]
+                    obj_str = text[key_idx : end_found + 1]
                     # Reconstruct as {"object_N": { ... }} to json.loads
                     left_quote = obj_str.find('"')
                     sep_colon = obj_str.find(":", left_quote)
                     obj_key = obj_str[left_quote:sep_colon].strip()
-                    obj_val = obj_str[sep_colon + 1:].strip()
+                    obj_val = obj_str[sep_colon + 1 :].strip()
                     tiny = "{" + obj_key + ":" + obj_val + "}"
                     tiny_obj = _json_loads_best_effort(tiny)
                     if isinstance(tiny_obj, dict):
@@ -385,26 +406,33 @@ def _generate_colors(labels: List[str]) -> Dict[str, str]:
     return colors
 
 
-def _create_legend(fig, color_map: Dict[str, str], counts: Dict[str, List[int]]) -> None:
+def _create_legend(
+    ax_legend, color_map: Dict[str, str], counts: Dict[str, List[int]]
+) -> None:
+    """Place legend in a dedicated subplot axis instead of overlaying the figure."""
+    ax_legend.axis("off")
+
     legend_elements = []
-    active = [l for l, c in counts.items() if c[0] > 0 or c[1] > 0]
-    active.sort(key=lambda l: sum(counts[l]), reverse=True)
+    active = [label for label, c in counts.items() if c[0] > 0 or c[1] > 0]
+    active.sort(key=lambda label: sum(counts[label]), reverse=True)
     for label in active:
         gt_c, pr_c = counts[label]
         legend_label = f"{label} ({gt_c}/{pr_c})"
         legend_elements.append(
-            patches.Patch(facecolor="none", edgecolor=color_map[label], label=legend_label)
+            patches.Patch(
+                facecolor="none", edgecolor=color_map[label], label=legend_label
+            )
         )
     if not legend_elements:
         return
-    legend = fig.legend(
+
+    legend = ax_legend.legend(
         handles=legend_elements,
-        loc="upper right",
-        bbox_to_anchor=(0.98, 0.98),
+        loc="center",
         framealpha=0.95,
-        fontsize=8,
+        fontsize=10,
         title="Object Categories (GT/Pred)",
-        title_fontsize=9,
+        title_fontsize=11,
     )
     legend.get_frame().set_facecolor("white")
     legend.get_frame().set_edgecolor("lightgray")
@@ -414,7 +442,13 @@ def _canonicalize_quad(points8: List[int | float]) -> List[int]:
     return canonicalize_quad(points8)
 
 
-def _draw_objects(ax, img: Image.Image, objects: List[Dict[str, Any]], color_map: Dict[str, str], scaled: bool) -> None:
+def _draw_objects(
+    ax,
+    img: Image.Image,
+    objects: List[Dict[str, Any]],
+    color_map: Dict[str, str],
+    scaled: bool,
+) -> None:
     ax.imshow(img)
     ax.axis("off")
     w, h = img.size
@@ -430,16 +464,37 @@ def _draw_objects(ax, img: Image.Image, objects: List[Dict[str, Any]], color_map
         color = color_map.get(desc) or "#000000"
         if gtype == "bbox_2d" and len(pts_px) == 4:
             x1, y1, x2, y2 = pts_px
-            ax.add_patch(patches.Rectangle((x1, y1), x2 - x1, y2 - y1, fill=False, edgecolor=color, linewidth=2))
+            ax.add_patch(
+                patches.Rectangle(
+                    (x1, y1), x2 - x1, y2 - y1, fill=False, edgecolor=color, linewidth=2
+                )
+            )
         elif gtype == "quad" and len(pts_px) == 8:
             # Draw polygon with dashed outline similar to vis_generation
             quad_coords = [(pts_px[i], pts_px[i + 1]) for i in range(0, 8, 2)]
-            poly = patches.Polygon(quad_coords, closed=True, fill=False, edgecolor=color, linewidth=2, linestyle="--", alpha=0.9)
+            poly = patches.Polygon(
+                quad_coords,
+                closed=True,
+                fill=False,
+                edgecolor=color,
+                linewidth=2,
+                linestyle="--",
+                alpha=0.9,
+            )
             ax.add_patch(poly)
         elif gtype == "line" and len(pts_px) >= 4 and len(pts_px) % 2 == 0:
             xs = pts_px[::2]
             ys = pts_px[1::2]
-            ax.plot(xs, ys, color=color, linewidth=3, linestyle="-", marker="o", markersize=3, alpha=0.9)
+            ax.plot(
+                xs,
+                ys,
+                color=color,
+                linewidth=3,
+                linestyle="-",
+                marker="o",
+                markersize=3,
+                alpha=0.9,
+            )
 
 
 # ======================
@@ -494,7 +549,9 @@ def extract_gt_objects(rec: Dict[str, Any], image_index: int) -> List[Dict[str, 
             if gtype is None:
                 continue
             desc = refs[i] if i < len(refs) else ""
-            objs.append({"desc": desc, "type": gtype, "points": [float(x) for x in pts]})
+            objs.append(
+                {"desc": desc, "type": gtype, "points": [float(x) for x in pts]}
+            )
         return objs
 
     # Format B: list of per-object dicts [{desc, bbox_2d|quad|line, image_id?}, ...]
@@ -510,7 +567,13 @@ def extract_gt_objects(rec: Dict[str, Any], image_index: int) -> List[Dict[str, 
                 continue
             if obj.get("image_id") is not None and int(obj["image_id"]) != image_index:
                 continue
-            objs.append({"desc": obj.get("desc", ""), "type": gtype, "points": [float(x) for x in pts]})
+            objs.append(
+                {
+                    "desc": obj.get("desc", ""),
+                    "type": gtype,
+                    "points": [float(x) for x in pts],
+                }
+            )
         return objs
 
     return objs
@@ -546,18 +609,39 @@ def main() -> None:
             gt_objs = rec.get("gt", [])
             pred_objs = rec.get("pred", [])
 
-            fig, (ax_l, ax_r) = plt.subplots(1, 2, figsize=(12, 6))
-            draw_objects(ax_l, img, [
-                {
-                    "type": o["type"],
-                    "points": [int(round(p)) for p in o["points"]],
-                    "desc": o.get("desc", ""),
-                }
-                for o in gt_objs
-            ], {"": "#00FF00"}, scaled=True)
+            # Build legend color map
+            labels = [o.get("desc", "") for o in gt_objs] + [
+                o.get("desc", "") for o in pred_objs
+            ]
+            color_map = _generate_colors(labels)
+            counts: Dict[str, List[int]] = {}
+            for o in gt_objs:
+                key = o.get("desc", "")
+                counts.setdefault(key, [0, 0])[0] += 1
+            for o in pred_objs:
+                key = o.get("desc", "")
+                counts.setdefault(key, [0, 0])[1] += 1
+
+            fig, (ax_l, ax_r, ax_legend) = plt.subplots(1, 3, figsize=(18, 6))
+            draw_objects(
+                ax_l,
+                img,
+                [
+                    {
+                        "type": o["type"],
+                        "points": [int(round(p)) for p in o["points"]],
+                        "desc": o.get("desc", ""),
+                    }
+                    for o in gt_objs
+                ],
+                color_map,
+                scaled=True,
+            )
             ax_l.set_title("GT")
-            draw_objects(ax_r, img, pred_objs, {"": "#FF3333"}, scaled=False)
+            draw_objects(ax_r, img, pred_objs, color_map, scaled=False)
             ax_r.set_title("Prediction" + ("" if pred_objs else " (parse failed)"))
+            _create_legend(ax_legend, color_map, counts)
+
             out_path = Path(SAVE_DIR) / f"vis_{count:05d}.jpg"
             fig.tight_layout()
             fig.savefig(out_path, dpi=120)
@@ -611,13 +695,15 @@ def main() -> None:
                         for o in gt
                     ],
                     "pred": pred_objs,
-                    "raw_text": raw_text if 'raw_text' in locals() else "",
-                    "clean_text": clean_text if 'clean_text' in locals() else "",
+                    "raw_text": raw_text if "raw_text" in locals() else "",
+                    "clean_text": clean_text if "clean_text" in locals() else "",
                 }
             )
 
         # Build legend color map using labels appearing in this figure
-        labels = [o.get("desc", "") for o in gt] + [o.get("desc", "") for o in pred_objs]
+        labels = [o.get("desc", "") for o in gt] + [
+            o.get("desc", "") for o in pred_objs
+        ]
         color_map = _generate_colors(labels)
 
         # Track counts for legend
@@ -629,25 +715,32 @@ def main() -> None:
             key = o.get("desc", "")
             counts.setdefault(key, [0, 0])[1] += 1
 
-        # Plot 1×2
-        fig, (ax_l, ax_r) = plt.subplots(1, 2, figsize=(14, 7))
+        # Plot 1×3 (GT | Pred | Legend)
+        fig, (ax_l, ax_r, ax_legend) = plt.subplots(1, 3, figsize=(18, 6))
         # GT is already in pixels
-        draw_objects(ax_l, img, [
-            {
-                "type": o["type"],
-                "points": [int(round(p)) for p in o["points"]],
-                "desc": o.get("desc", ""),
-            }
-            for o in gt
-        ], color_map, scaled=True)
+        draw_objects(
+            ax_l,
+            img,
+            [
+                {
+                    "type": o["type"],
+                    "points": [int(round(p)) for p in o["points"]],
+                    "desc": o.get("desc", ""),
+                }
+                for o in gt
+            ],
+            color_map,
+            scaled=True,
+        )
         ax_l.set_title("GT")
 
         draw_objects(ax_r, img, pred_objs, color_map, scaled=False)
         ax_r.set_title("Prediction" + ("" if pred_objs else " (parse failed)"))
 
+        _create_legend(ax_legend, color_map, counts)
+
         out_path = Path(SAVE_DIR) / f"vis_{count:05d}.jpg"
         fig.tight_layout()
-        create_legend(fig, color_map, counts)
         fig.savefig(out_path, dpi=120)
         plt.close(fig)
 
@@ -665,5 +758,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-

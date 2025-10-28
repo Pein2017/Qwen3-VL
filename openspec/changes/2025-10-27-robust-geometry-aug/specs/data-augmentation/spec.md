@@ -95,7 +95,7 @@
 
 ### Requirement: Canvas expansion to enclose affine
 - Before applying a general affine (rotation, shear, non-uniform scale), the system SHALL optionally expand the canvas so that the entire original image is enclosed after the transform without truncation.
-- Expansion SHALL compute the transformed image corners under M and choose a canvas that fully contains the bounding quad; empty regions are filled with a constant color.
+- Expansion SHALL compute the transformed image corners under M, align expanded dimensions to the configured multiple, and fill empty regions with a constant color while recording padding ratios for telemetry.
 - After expansion, the affine SHALL be recomposed so that geometry and images align in the expanded coordinate system without loss.
 #### Scenario: rotate 45° on 768×1024
 - GIVEN a 768×1024 image and 45° rotation
@@ -122,10 +122,9 @@
 
 ### Requirement: Pixel limit safety with proportional scaling
 - Canvas expansion operations MUST enforce a configurable `max_pixels` limit (default: 921600 for Qwen3-VL).
-- If expanded dimensions exceed `max_pixels`, the system SHALL scale down proportionally using `scale_factor = sqrt(max_pixels / pixel_count)`.
-- The scaling SHALL be applied to both affine matrix (via `scale_matrix`) and dimensions.
-- Dimensions after scaling SHALL still be rounded to the configured multiple (e.g., 32).
-- A warning SHALL be logged with: original dimensions, scaled dimensions, scale factor, and suggestion to reduce augmentation strength.
+- Expansion SHALL align dimensions to the configured multiple before evaluating the pixel cap.
+- If aligned dimensions exceed `max_pixels`, the system SHALL scale down proportionally, then floor to the nearest aligned size that does not exceed the limit, updating the affine accordingly.
+- Warnings SHALL include original dimensions, aligned dimensions, final dimensions, scale factors, and remediation advice.
 #### Scenario: large rotation exceeds pixel limit
 - GIVEN a 1024×1024 image, 30° rotation would expand to 1344×1344 = 1,806,336 pixels
 - WHEN max_pixels is 921600 (960×960)

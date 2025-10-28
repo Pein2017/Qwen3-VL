@@ -1,10 +1,10 @@
+
 from __future__ import annotations
 
 import io
-import json
 import os
 from dataclasses import dataclass
-from typing import Any, Dict, List, Sequence
+from typing import Any, Dict, List
 from random import Random
 
 from PIL import Image
@@ -20,22 +20,11 @@ from src.datasets.augmentation.ops import (
     HFlip,
     Rotate,
     Scale,
-    ColorJitter,
     VFlip,
-    Gamma,
-    HueSaturationValue,
-    CLAHE,
-    AutoContrast,
-    Solarize,
-    Posterize,
-    Sharpness,
-    AlbumentationsColor,
-    PadToMultiple,
     ExpandToFitAffine,
     ResizeByScale,
     RandomCrop,
 )
-from src.datasets.augment import apply_augmentations
 from vis_tools.vis_helper import draw_objects, generate_colors, create_legend
 
 
@@ -49,8 +38,8 @@ class VisConfig:
     jsonl_path: str
     out_dir: str
     num_samples: int = 8
-    variants: int = 3  # number of random augmented variants per sample
-    seed: int = 2025
+    variants: int = 4  # number of random augmented variants per sample
+    seed: int = 2021
     
     # Set to None to use extreme testing pipeline, or path to YAML to mirror training
     config_yaml: str | None = None
@@ -79,42 +68,86 @@ class VisConfig:
     crop_skip_if_line: bool = True
     
     # EXTREME COLOR AUGMENTATIONS (test visual changes)
-    color_p: float = 0.9
-    color_brightness: tuple = (0.5, 1.5)  # Extreme brightness
-    color_contrast: tuple = (0.5, 1.5)    # Extreme contrast
-    color_saturation: tuple = (0.5, 1.5)  # Extreme saturation
-    gamma_p: float = 0.8
-    gamma_range: tuple = (0.6, 1.6)       # Extreme gamma
-    hsv_p: float = 0.8
-    hsv_hue_delta: int = 25               # Extreme hue shift
+    color_p: float = 0.0
+    color_brightness: tuple = (0.5, 1.5)
+    color_contrast: tuple = (0.5, 1.5)
+    color_saturation: tuple = (0.5, 1.5)
+    gamma_p: float = 0.0
+    gamma_range: tuple = (0.6, 1.6)
+    hsv_p: float = 0.0
+    hsv_hue_delta: int = 25
     hsv_sat: tuple = (0.6, 1.5)
     hsv_val: tuple = (0.6, 1.5)
-    clahe_p: float = 0.6
-    clahe_clip_limit: float = 4.0         # Strong CLAHE
-    auto_contrast_p: float = 0.4
-    solarize_p: float = 0.3               # Test solarize
+    clahe_p: float = 0.0
+    clahe_clip_limit: float = 4.0
+    auto_contrast_p: float = 0.0
+    solarize_p: float = 0.0
     solarize_threshold: int = 128
-    posterize_p: float = 0.3              # Test posterize
-    posterize_bits: int = 3               # Extreme posterize
-    sharpness_p: float = 0.7
-    sharpness_range: tuple = (0.3, 2.5)   # Extreme sharpness
-    albumentations_p: float = 0.0         # Optional
+    posterize_p: float = 0.0
+    posterize_bits: int = 3
+    sharpness_p: float = 0.0
+    sharpness_range: tuple = (0.3, 2.5)
+    albumentations_p: float = 0.0
     albumentations_preset: str = "strong"
     
     # Padding
     pad_multiple: int = 32
 
 
-def _geom_to_objects(geoms: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _extract_description(obj: Dict[str, Any]) -> str:
+    candidate_keys = (
+        "desc",
+        "text",
+        "caption",
+        "name",
+        "label",
+        "category",
+        "title",
+        "ref",
+    )
+    for key in candidate_keys:
+        value = obj.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+
+    attrs = obj.get("attributes")
+    if isinstance(attrs, dict):
+        attr_keys = (
+            "desc",
+            "text",
+            "caption",
+            "name",
+            "label",
+            "category",
+            "描述",
+            "名称",
+        )
+        for key in attr_keys:
+            value = attrs.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+
+    return ""
+
+
+def _geom_to_objects(
+    geoms: List[Dict[str, Any]],
+    descs: List[str] | None = None,
+) -> List[Dict[str, Any]]:
     objs: List[Dict[str, Any]] = []
-    for g in geoms:
+    for idx, g in enumerate(geoms):
+        desc = ""
+        if descs is not None and idx < len(descs):
+            desc = descs[idx] or ""
         if 'bbox_2d' in g:
-            objs.append({'type': 'bbox_2d', 'points': g['bbox_2d'], 'desc': 'bbox_2d'})
+            objs.append({'type': 'bbox_2d', 'points': g['bbox_2d'], 'desc': desc or 'bbox_2d'})
         elif 'quad' in g:
-            objs.append({'type': 'quad', 'points': g['quad'], 'desc': 'quad'})
+            objs.append({'type': 'quad', 'points': g['quad'], 'desc': desc or 'quad'})
         elif 'line' in g:
-            objs.append({'type': 'line', 'points': g['line'], 'desc': 'line'})
+            objs.append({'type': 'line', 'points': g['line'], 'desc': desc or 'line'})
     return objs
+
+
 
 
 def _load_pil(img_entry: Any, *, jsonl_path: str) -> Image.Image:
@@ -146,7 +179,7 @@ def _build_pipeline_from_yaml(cfg: VisConfig) -> tuple[Compose, str]:
     compose = build_compose_from_config(aug)
     # Build readable label from op names in order
     ops = aug.get('ops') or []
-    label = 'yaml:' + ','.join([str(op.get('name')) for op in ops if isinstance(op, dict) and op.get('name')])
+    label = 'yaml:' + ','.join(str(op.get('name')) for op in ops if isinstance(op, dict) and op.get('name'))
     return compose, label
 
 
@@ -209,56 +242,7 @@ def _build_random_pipeline(rng: Random, cfg: VisConfig):
         labels.append(f"resize({cfg.resize_lo:.1f}-{cfg.resize_hi:.1f})")
     
     # === COLOR AUGMENTATIONS (deferred, applied after all geometric ops) ===
-    if rng.random() < cfg.color_p:
-        ops.append(ColorJitter(
-            brightness=cfg.color_brightness,
-            contrast=cfg.color_contrast,
-            saturation=cfg.color_saturation,
-            prob=1.0
-        ))
-        labels.append("colorJitter")
-    
-    if rng.random() < cfg.gamma_p:
-        ops.append(Gamma(gamma=cfg.gamma_range, prob=1.0))
-        labels.append("gamma")
-    
-    if rng.random() < cfg.hsv_p:
-        ops.append(HueSaturationValue(
-            hue_delta_deg=(-cfg.hsv_hue_delta, cfg.hsv_hue_delta),
-            sat=cfg.hsv_sat,
-            val=cfg.hsv_val,
-            prob=1.0
-        ))
-        labels.append("hsv")
-    
-    if rng.random() < cfg.clahe_p:
-        ops.append(CLAHE(clip_limit=cfg.clahe_clip_limit, tile_grid_size=(8, 8), prob=1.0))
-        labels.append("clahe")
-    
-    if rng.random() < cfg.auto_contrast_p:
-        ops.append(AutoContrast(cutoff=0, prob=1.0))
-        labels.append("autoContrast")
-    
-    if rng.random() < cfg.solarize_p:
-        ops.append(Solarize(threshold=cfg.solarize_threshold, prob=1.0))
-        labels.append("solarize")
-    
-    if rng.random() < cfg.posterize_p:
-        ops.append(Posterize(bits=cfg.posterize_bits, prob=1.0))
-        labels.append("posterize")
-    
-    if rng.random() < cfg.sharpness_p:
-        ops.append(Sharpness(factor=cfg.sharpness_range, prob=1.0))
-        labels.append("sharpness")
-    
-    if rng.random() < cfg.albumentations_p:
-        ops.append(AlbumentationsColor(preset=cfg.albumentations_preset, prob=1.0))
-        labels.append(f"alb-{cfg.albumentations_preset}")
-    
-    # Ensure we have at least some ops
-    if len(ops) < 2:
-        ops.append(ColorJitter(brightness=(0.8, 1.2), contrast=(0.8, 1.2), saturation=(0.8, 1.2), prob=1.0))
-        labels.append("fallback-cj")
+    # No color ops for alignment visualization
     
     return Compose(ops), "|".join(labels)
 
@@ -278,14 +262,15 @@ def visualize_samples(cfg: VisConfig) -> None:
             print(f"[INFO] Using augmentation from YAML: {cfg.config_yaml}")
         except Exception as e:
             print(f"[ERROR] Failed to load training YAML augmentation: {e}")
-            print(f"[INFO] Falling back to extreme testing pipeline")
+            print("[INFO] Falling back to extreme testing pipeline")
     else:
-        print(f"[INFO] Using extreme testing pipeline (config_yaml=None)")
+        print("[INFO] Using extreme testing pipeline (config_yaml=None)")
 
     for idx, rec in enumerate(records):
         images = rec.get('images') or []
         objs = rec.get('objects') or []
         per_obj_geoms: List[Dict[str, Any]] = []
+        per_obj_descs: List[str] = []
         for o in objs:
             g: Dict[str, Any] = {}
             if o.get('bbox_2d') is not None:
@@ -296,6 +281,7 @@ def visualize_samples(cfg: VisConfig) -> None:
                 g['line'] = o['line']
             if g:
                 per_obj_geoms.append(g)
+                per_obj_descs.append(_extract_description(o))
 
         # Resolve images to PIL
         pil_images: List[Image.Image] = []
@@ -305,12 +291,13 @@ def visualize_samples(cfg: VisConfig) -> None:
         # Load original image (first)
         im0 = pil_images[0]
         # Prepare objects for drawing
-        objs0 = _geom_to_objects(per_obj_geoms)
+        objs0 = _geom_to_objects(per_obj_geoms, per_obj_descs)
 
         # Build N random pipelines and apply
         variants_imgs: List[Image.Image] = []
         variants_objs: List[List[Dict[str, Any]]] = []
         variant_titles: List[str] = []
+        
         for j in range(int(cfg.variants)):
             # per-variant rng derived from base
             rng = Random(base_rng.random())
@@ -326,18 +313,26 @@ def visualize_samples(cfg: VisConfig) -> None:
                 height=im0.height,
                 rng=rng,
             )
+
             # Check if objects were filtered by crop
             if len(geoms_new) != len(per_obj_geoms):
                 print(f"  [CROP] Sample {idx}, variant {j+1}: {len(per_obj_geoms)} → {len(geoms_new)} objects")
-                # Check if crop metadata is available
                 if hasattr(pipe, 'last_kept_indices') and pipe.last_kept_indices is not None:
                     print(f"         Kept indices: {pipe.last_kept_indices}")
                     if hasattr(pipe, 'last_object_coverages') and pipe.last_object_coverages:
                         avg_cov = sum(pipe.last_object_coverages) / len(pipe.last_object_coverages)
                         print(f"         Avg coverage of kept objects: {avg_cov:.2%}")
+
             # Use returned PIL image directly
             variants_imgs.append(_load_pil(out_imgs[0], jsonl_path=cfg.jsonl_path))
-            variants_objs.append(_geom_to_objects(geoms_new))
+            kept_indices = getattr(pipe, 'last_kept_indices', None)
+            if isinstance(kept_indices, list):
+                descs_new = [per_obj_descs[i] for i in kept_indices if i < len(per_obj_descs)]
+            elif len(geoms_new) == len(per_obj_descs):
+                descs_new = per_obj_descs
+            else:
+                descs_new = per_obj_descs[: len(geoms_new)]
+            variants_objs.append(_geom_to_objects(geoms_new, descs_new))
             variant_titles.append(title)
 
         # Matplotlib side-by-side: original + variants
@@ -345,10 +340,22 @@ def visualize_samples(cfg: VisConfig) -> None:
         fig, axes = plt.subplots(1, cols, figsize=(6 * cols, 6))
         if cols == 1:
             axes = [axes]
+        
+        # Collect all labels for color mapping and counting
         labels_all = [o['desc'] for o in objs0]
         for arr in variants_objs:
             labels_all.extend([o['desc'] for o in arr])
         color_map = generate_colors(labels_all)
+        
+        # Track counts: GT vs each augmented variant (use first variant for legend)
+        counts: Dict[str, List[int]] = {}
+        for o in objs0:
+            key = o.get('desc', '')
+            counts.setdefault(key, [0, 0])[0] += 1
+        if variants_objs:
+            for o in variants_objs[0]:  # Use first variant for comparison
+                key = o.get('desc', '')
+                counts.setdefault(key, [0, 0])[1] += 1
 
         draw_objects(axes[0], im0, objs0, color_map, scaled=True)
         axes[0].set_title(f'Original (GT) - {len(objs0)} objects')
@@ -359,7 +366,8 @@ def visualize_samples(cfg: VisConfig) -> None:
             if obj_count != len(objs0):
                 title += f' ({obj_count - len(objs0):+d})'
             axes[c].set_title(title, fontsize=9)
-        create_legend(fig, color_map, {l: [labels_all.count(l), labels_all.count(l)] for l in set(labels_all)})
+        
+        create_legend(fig, color_map, counts)
         out_path = os.path.join(cfg.out_dir, f'vis_{idx:05d}.jpg')
         fig.tight_layout()
         fig.savefig(out_path, dpi=120)
@@ -379,19 +387,7 @@ if __name__ == '__main__':
         variants=3,
         seed=2025,
         
-        # === MODE SELECTION ===
-        # config_yaml=None              → Use EXTREME testing (default - all ops, extreme params)
-        # config_yaml='path/to/yaml'    → Mirror exact training augmentation
         config_yaml=None,
-        
-        # All parameters use EXTREME defaults (see VisConfig class above).
-        # Override specific parameters here for custom testing:
-        # 
-        # Examples:
-        #   max_deg=45.0,               # Even more extreme rotation
-        #   random_crop_p=1.0,          # Always crop
-        #   crop_min_objects=2,         # Allow fewer objects
-        #   resize_lo=0.3,              # Extreme shrink (30%)
     )
     
     print("=" * 70)

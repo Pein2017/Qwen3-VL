@@ -1,8 +1,11 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Tuple
+import os
+from typing import Any, Dict, List, Tuple, Sequence
 
 import matplotlib.patches as patches
+from matplotlib import font_manager
+import matplotlib.pyplot as plt
 from PIL import Image
 
 
@@ -46,7 +49,7 @@ def canonicalize_quad(points8: List[int | float]) -> List[int]:
     return [int(round(v)) for xy in sorted_pts for v in xy]
 
 
-def draw_objects(ax, img: Image.Image, objects: List[Dict[str, Any]], color_map: Dict[str, str], scaled: bool) -> None:
+def draw_objects(ax, img: Image.Image, objects: List[Dict[str, Any]], color_map: Dict[str, str], scaled: bool, show_labels: bool = True) -> None:
     ax.imshow(img)
     ax.axis("off")
     w, h = img.size
@@ -58,17 +61,41 @@ def draw_objects(ax, img: Image.Image, objects: List[Dict[str, Any]], color_map:
         # NOTE: Do NOT canonicalize quad points - they are already in correct clockwise order
         # from geometry transformations. Reordering breaks rotated quads!
         color = color_map.get(desc) or "#000000"
+        
+        # Determine label position (top-left corner of geometry)
+        label_x, label_y = None, None
+        
         if gtype == "bbox_2d" and len(pts_px) == 4:
             x1, y1, x2, y2 = pts_px
             ax.add_patch(patches.Rectangle((x1, y1), x2 - x1, y2 - y1, fill=False, edgecolor=color, linewidth=2))
+            label_x, label_y = x1, y1
         elif gtype == "quad" and len(pts_px) == 8:
             quad_coords = [(pts_px[i], pts_px[i + 1]) for i in range(0, 8, 2)]
             poly = patches.Polygon(quad_coords, closed=True, fill=False, edgecolor=color, linewidth=2, linestyle="--", alpha=0.9)
             ax.add_patch(poly)
+            # Use top-most point for label
+            label_x = min(pts_px[::2])
+            label_y = min(pts_px[1::2])
         elif gtype == "line" and len(pts_px) >= 4 and len(pts_px) % 2 == 0:
             xs = pts_px[::2]
             ys = pts_px[1::2]
             ax.plot(xs, ys, color=color, linewidth=3, linestyle="-", marker="o", markersize=3, alpha=0.9)
+            # Use first point for label
+            label_x, label_y = xs[0], ys[0]
+        
+        # Draw text label if requested and desc is non-empty
+        if show_labels and desc and label_x is not None and label_y is not None:
+            ax.text(
+                label_x,
+                label_y - 5,  # Offset above the shape
+                desc,
+                color=color,
+                fontsize=8,
+                weight='bold',
+                bbox=dict(facecolor='white', alpha=0.7, edgecolor=color, linewidth=1, pad=2),
+                verticalalignment='bottom',
+                horizontalalignment='left',
+            )
 
 
 def inverse_scale(points: List[int | float], w: int, h: int) -> List[int]:
@@ -103,8 +130,8 @@ def generate_colors(labels: List[str]) -> Dict[str, str]:
 
 def create_legend(fig, color_map: Dict[str, str], counts: Dict[str, List[int]]) -> None:
     legend_elements = []
-    active = [l for l, c in counts.items() if c[0] > 0 or c[1] > 0]
-    active.sort(key=lambda l: sum(counts[l]), reverse=True)
+    active = [label for label, c in counts.items() if c[0] > 0 or c[1] > 0]
+    active.sort(key=lambda label: sum(counts[label]), reverse=True)
     for label in active:
         import matplotlib.patches as patches
         gt_c, pr_c = counts[label]
@@ -125,12 +152,75 @@ def create_legend(fig, color_map: Dict[str, str], counts: Dict[str, List[int]]) 
     legend.get_frame().set_edgecolor("lightgray")
 
 
+def create_caption_completeness_text(fig, caption_series: Sequence[tuple[str, Dict[str, int]]]) -> None:
+    if not caption_series:
+        return
+    headers = [label for label, _ in caption_series]
+    lines = ["Caption completeness (GT vs Aug)"]
+    header_line = "状态".ljust(6) + " ".join(label.center(8) for label in headers)
+    lines.append(header_line)
+    for status in ("显示完整", "只显示部分", "未标记"):
+        row = status.ljust(6)
+        for _, counts in caption_series:
+            row += str(counts.get(status, 0)).center(8)
+        lines.append(row)
+    fig.text(
+        0.02,
+        0.02,
+        "\n".join(lines),
+        fontsize=8,
+        va="bottom",
+        ha="left",
+        bbox=dict(facecolor="white", alpha=0.75, edgecolor="lightgray"),
+    )
+
+
 __all__ = [
     "canonicalize_quad",
     "draw_objects",
     "inverse_scale",
     "generate_colors",
     "create_legend",
+    "create_caption_completeness_text",
 ]
+
+
+_font_candidates = [
+    ("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", [
+        "Noto Sans CJK SC",
+        "Noto Sans CJK JP",
+        "Noto Sans CJK KR",
+    ]),
+    ("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc", [
+        "Noto Sans CJK SC",
+        "Noto Sans CJK JP",
+        "Noto Sans CJK KR",
+    ]),
+    ("/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc", ["WenQuanYi Zen Hei"]),
+    ("/usr/share/fonts/truetype/arphic/ukai.ttc", ["AR PL UKai CN"]),
+]
+_font_installed = False
+for path, family_list in _font_candidates:
+    if not os.path.exists(path):
+        continue
+    try:
+        font_manager.fontManager.addfont(path)
+        # Ensure sans-serif fallback list exists
+        current_sans = plt.rcParams.get("font.sans-serif", [])
+        if isinstance(current_sans, str):
+            current_sans = [current_sans]
+        updated = list(current_sans)
+        for fam in family_list:
+            if fam not in updated:
+                updated.append(fam)
+        plt.rcParams["font.sans-serif"] = updated
+        # Point default family to sans-serif so the above list is used
+        plt.rcParams["font.family"] = ["sans-serif"]
+        _font_installed = True
+        break
+    except Exception:
+        continue
+if not _font_installed:
+    plt.rcParams.setdefault("font.family", ["sans-serif"])
 
 

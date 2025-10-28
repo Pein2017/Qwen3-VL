@@ -227,6 +227,23 @@ custom:
         params: { brightness: [0.75, 1.25], prob: 0.5 }
 ```
 
+### Domain Context: BBU Installation Inspection
+
+This corpus covers telecom cabinet inspections, focused on **BBU (Baseband Unit) installation quality**. Understanding the domain helps keep dense annotations, summaries, and production flows aligned.
+
+- **Dense captioning** (training) enumerates every inspected item. Object types map to the attribute taxonomy in `data_conversion/hierarchical_attribute_mapping.json` and `data_conversion/attribute_taxonomy.json` (ignore the `occlusion` block). Core categories include:
+  - `bbu` (BBU设备) — expects attributes such as brand (`bbu_brand`), completeness (`bbu_stituation`), and windshield requirement (`bbu_equipment`).
+  - `bbu_shield` (挡风板) — brand, completeness, obstruction status, and installation direction.
+  - `connect_point` (接地/接线端子), `label` (标签), plus `fiber` / `wire` lines for cabling.
+  Geometry constraints from the mapping JSON enforce quads/bboxes for hardware and polylines for cabling.
+- **Summary / Stage-A / Stage-B** (production) reuse the same records:
+  - Stage-A generates per-image summaries (requires every record to carry a `summary`).
+  - Stage-B consumes multiple images per site to emit a final deployment verdict.
+  - Keep taxonomies in sync so Stage pipelines and dense training stay compatible.
+- **Hierarchy semantics**: Attribute templates are slash-delimited (`brand/completeness/...`). Conditional levels (e.g., windshield conformity) only appear when parent attributes require them. Free-text `special_situation` fields append at the end.
+
+When adding new inspection criteria, update both conversion JSON files and regenerate summaries before training to avoid drift between dense captions and production outputs.
+
 ---
 
 ## Best Practices
@@ -330,8 +347,8 @@ Before training:
 - **Augmentation**: [AUGMENTATION.md](AUGMENTATION.md) - Geometry-aware transforms
 - **Training**: [REFERENCE.md](REFERENCE.md#training) - Full training guide
 - **Architecture**: [README.md](README.md#architecture) - End-to-end pipeline
+- **Upstream Models**: [UPSTREAM_DEPENDENCIES.md](UPSTREAM_DEPENDENCIES.md) - HF Qwen3-VL + ms-swift background
 
 ---
 
-**Last Updated**: 2025-10-27 (v1.1.1)
-
+**Last Updated**: 2025-10-28 (v1.1.2)

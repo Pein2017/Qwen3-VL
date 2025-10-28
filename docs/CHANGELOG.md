@@ -6,6 +6,40 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.1.3] - 2025-10-28
+
+### Fixed - Dense Augmentation Telemetry & Safety
+
+**Change ID**: `2025-10-28-dense-augmentation-telemetry`
+
+#### Summary
+Addressed two dense-caption regressions by enforcing canvas pixel limits post-alignment and by replacing AABB coverage heuristics with exact polygon clipping. Added telemetry hooks to troubleshoot crop skips, padding ratios, and completeness updates.
+
+#### Technical Details
+- `ExpandToFitAffine` now recomputes scaling after 32× alignment, floors to legal multiples, updates padding ratio telemetry, and skips redundant resampling for identity transforms.
+- `compute_polygon_coverage` performs Sutherland–Hodgman clipping + shoelace area for quads, while `RandomCrop` records coverage, skip reasons, and structured completeness metadata updates.
+- `Compose` avoids unnecessary warps when the affine matrix is identity and surfaces image size/padding data for downstream consumers.
+- Added debugging logs in `apply_augmentations` for retained indices, coverage histograms, skip reasons, and padding ratios under logger `augmentation.telemetry`.
+- Regression tests: ensured polygon coverage thresholds and pixel-cap enforcement (including identity-alignment scaling) are exercised.
+
+#### Files Changed
+- `src/datasets/geometry.py`
+- `src/datasets/augmentation/ops.py`
+- `src/datasets/augmentation/base.py`
+- `src/datasets/preprocessors/augmentation.py`
+- `src/datasets/augment.py`
+- `tests/augmentation/test_crop_coverage.py`
+- `tests/test_augmentation_geometry.py`
+- `docs/AUGMENTATION.md`
+
+#### Impact
+- ✅ Canvas expansion never exceeds configured `max_pixels`
+- ✅ Dense crops drop near-invisible objects and update completeness metadata reliably
+- ✅ Telemetry exposes skip reasons, padding ratios, and coverage stats for tuning
+- ✅ Regression tests guard against future regressions in coverage and pixel limits
+
+---
+
 ## [1.1.2] - 2025-10-27
 
 ### Changed - Middle Gray Padding Strategy

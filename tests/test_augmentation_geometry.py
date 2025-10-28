@@ -149,8 +149,8 @@ def test_pixel_limit_enforcement():
     
     # Should be significantly smaller than unconstrained expansion (would be ~566×566 for 45° rotation)
     assert w < 400 and h < 400  # Scaled down from original
-    # Allow small overshoot due to 32-multiple alignment (at most one alignment step)
-    assert w * h <= max_pixels + (32 * max(w, h))
+    # Pixel budget must be respected after alignment adjustments
+    assert w * h <= max_pixels
     # Should still be multiple of 32
     assert w % 32 == 0 and h % 32 == 0
     # Geometry should still be valid
@@ -159,6 +159,30 @@ def test_pixel_limit_enforcement():
     assert len(q) == 8
     # All points within bounds
     xs, ys = q[0::2], q[1::2]
+    assert min(xs) >= 0 and max(xs) <= w - 1
+    assert min(ys) >= 0 and max(ys) <= h - 1
+
+
+def test_pixel_limit_identity_alignment_scaling():
+    """Identity transform with alignment still respects max_pixels."""
+    rng = random.Random(123)
+    max_pixels = 6400  # 80×80
+    cfg = {"ops": [
+        {"name": "expand_to_fit_affine", "params": {"multiple": 32, "max_pixels": max_pixels}},
+    ]}
+    compose: Compose = build_compose_from_config(cfg)
+    imgs = [_blank(80, 120)]  # Alignment to 32 would produce 96×128 (12288 px) without scaling
+    geoms = [{"bbox_2d": [10, 20, 60, 100]}]
+
+    out_imgs, out_geoms = compose.apply(imgs, geoms, width=80, height=120, rng=rng)
+    w, h = out_imgs[0].size
+
+    assert w * h <= max_pixels
+    assert w % 32 == 0 and h % 32 == 0
+    geom = out_geoms[0]
+    coords = geom.get("quad") or geom.get("bbox_2d")
+    xs = coords[0::2]
+    ys = coords[1::2]
     assert min(xs) >= 0 and max(xs) <= w - 1
     assert min(ys) >= 0 and max(ys) <= h - 1
 

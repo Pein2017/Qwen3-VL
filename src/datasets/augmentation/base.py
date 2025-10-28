@@ -13,7 +13,6 @@ from ..geometry import (
     sutherland_hodgman_clip,
     to_clockwise,
     classify_affine_kind,
-    min_area_rect,
     clip_polyline_to_rect,
     transform_geometry,
 )
@@ -139,11 +138,29 @@ class Compose:
         M_total = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
         deferred_color_ops: List[Any] = []
 
-        def _flush_affine():
+        def _is_identity_matrix(M: List[List[float]]) -> bool:
+            return (
+                abs(M[0][0] - 1.0) < 1e-9 and
+                abs(M[1][1] - 1.0) < 1e-9 and
+                abs(M[0][1]) < 1e-9 and
+                abs(M[1][0]) < 1e-9 and
+                abs(M[0][2]) < 1e-9 and
+                abs(M[1][2]) < 1e-9
+            )
+
+        def _flush_affine(force: bool = False):
             nonlocal out_images, out_geoms, M_total
+            if not force and _is_identity_matrix(M_total):
+                out_geoms = _apply_affine_to_geoms(out_geoms, M_total, current_width, current_height)
+                self.last_image_width = current_width
+                self.last_image_height = current_height
+                return
             out_images = _warp_images_with_matrix(out_images, M_total, current_width, current_height)
             out_geoms = _apply_affine_to_geoms(out_geoms, M_total, current_width, current_height)
             M_total = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+            # Track latest image size for telemetry consumers
+            self.last_image_width = current_width
+            self.last_image_height = current_height
 
         for op in self.ops:
             kind = getattr(op, "kind", None)
@@ -159,7 +176,8 @@ class Compose:
                     M_total, current_width, current_height = op.pre_flush_hook(
                         M_total, current_width, current_height, rng
                     )
-                _flush_affine()
+                force_flush = getattr(op, 'force_flush_affine', False)
+                _flush_affine(force=force_flush)
                 out_images, out_geoms = op.apply(out_images, out_geoms, width=current_width, height=current_height, rng=rng)
                 
                 # Propagate crop metadata from operator to Compose
@@ -172,6 +190,11 @@ class Compose:
                     im0 = out_images[0]
                     if isinstance(im0, Image.Image):
                         current_width, current_height = im0.width, im0.height
+                        # Update padding ratio if available
+                        if hasattr(op, 'padding_ratio'):
+                            self.last_padding_ratio = getattr(op, 'padding_ratio')
+                        else:
+                            self.last_padding_ratio = None
 
         # Final flush for any remaining accumulated affines
         _flush_affine()

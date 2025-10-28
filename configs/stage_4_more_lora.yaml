@@ -67,10 +67,10 @@ training:
 
   # Eval & checkpointing
   eval_strategy: steps
-  save_strategy: epoch
+  save_strategy: steps
   save_total_limit: 4
   eval_steps: 20
-  save_steps: 5
+  save_steps: 690
 
   # Verbose logging
   logging_dir: ./tb/10-28/stage_4

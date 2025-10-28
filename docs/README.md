@@ -7,6 +7,7 @@ Status: Active — Internal Engineering
 - **Data & Datasets** → `DATA_AND_DATASETS.md` - Schema, builders, preprocessing
 - **Augmentation** → `AUGMENTATION.md` - Geometry transforms, smart cropping
 - **Training & Inference** → `REFERENCE.md` - Full guide, recipes, FAQ
+- **Upstream Dependencies** → `UPSTREAM_DEPENDENCIES.md` - HF Qwen3-VL + ms-swift context
 - **Experiments** → `experiments/` - Training comparisons, ablations
 
 ## Recent Updates
@@ -82,4 +83,3 @@ Vision Encoder (ViT) → Aligner (Projector) → LLM
 ---
 
 **Last Updated**: 2025-10-27 (v1.1.1)
-

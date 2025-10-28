@@ -164,7 +164,7 @@ def round_points(points: Sequence[float]) -> List[int]:
 
 # --- Robust geometry helpers for augmentation ---
 
-from typing import Callable
+from typing import Callable, Literal
 
 
 def _rect_bounds(width: float, height: float) -> Tuple[float, float, float, float]:
@@ -670,6 +670,77 @@ def aabb_area(bbox: List[float]) -> float:
     width = max(0.0, bbox[2] - bbox[0])
     height = max(0.0, bbox[3] - bbox[1])
     return width * height
+
+
+def _polygon_area(points: List[float]) -> float:
+    if len(points) < 6:
+        return 0.0
+    area = 0.0
+    pts = _pair_points(points)
+    for i in range(len(pts)):
+        x1, y1 = pts[i]
+        x2, y2 = pts[(i + 1) % len(pts)]
+        area += x1 * y2 - x2 * y1
+    return abs(area) * 0.5
+
+
+def compute_polygon_coverage(
+    geom: Dict[str, Any],
+    crop_bbox: List[float],
+    *,
+    fallback: Literal["bbox", "auto"] = "auto",
+) -> float:
+    """Compute coverage using polygon clipping when possible.
+
+    Args:
+        geom: geometry dict (quad or bbox_2d)
+        crop_bbox: crop [x1, y1, x2, y2]
+        fallback: if "bbox", returns AABB-based coverage when polygon coverage is zero.
+
+    Returns:
+        coverage ratio in [0, 1]
+    """
+    x1, y1, x2, y2 = crop_bbox
+    crop_w = max(0.0, x2 - x1)
+    crop_h = max(0.0, y2 - y1)
+    if crop_w <= 0 or crop_h <= 0:
+        return 0.0
+
+    if "quad" in geom:
+        pts = geom["quad"]
+        total_area = _polygon_area(pts)
+        if total_area <= 0.0:
+            return 0.0
+        translated: List[float] = []
+        for i in range(0, len(pts), 2):
+            translated.append(pts[i] - x1)
+            translated.append(pts[i + 1] - y1)
+        clipped = sutherland_hodgman_clip(translated, crop_w, crop_h)
+        clipped = simplify_polygon(clipped)
+        visible_area = _polygon_area(clipped)
+        if visible_area <= 0.0:
+            return 0.0
+        coverage = visible_area / total_area
+    elif "bbox_2d" in geom:
+        gx1, gy1, gx2, gy2 = geom["bbox_2d"]
+        total_area = max(0.0, (gx2 - gx1) * (gy2 - gy1))
+        if total_area <= 0.0:
+            return 0.0
+        inter_x1 = max(gx1, x1)
+        inter_y1 = max(gy1, y1)
+        inter_x2 = min(gx2, x2)
+        inter_y2 = min(gy2, y2)
+        if inter_x2 <= inter_x1 or inter_y2 <= inter_y1:
+            return 0.0
+        visible_area = (inter_x2 - inter_x1) * (inter_y2 - inter_y1)
+        coverage = visible_area / total_area
+    else:
+        return compute_coverage(geom, crop_bbox)
+
+    coverage = max(0.0, min(1.0, coverage))
+    if coverage == 0.0 and fallback == "bbox":
+        return compute_coverage(geom, crop_bbox)
+    return coverage
 
 
 def compute_coverage(geom: Dict[str, Any], crop_bbox: List[float]) -> float:

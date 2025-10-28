@@ -15,7 +15,7 @@ The augmentation pipeline handles 3 geometry types (bbox, quad, polyline) with p
 
 ### ✅ **Safety Limits**
 - Enforces max pixel count (921,600 by default for Qwen3-VL)
-- Proportional scaling when limits exceeded
+- Proportional scaling when limits exceeded (recomputed after 32× alignment to guarantee the pixel cap)
 - Actionable warnings guide configuration tuning
 
 ### ✅ **Efficient Implementation**
@@ -26,7 +26,8 @@ The augmentation pipeline handles 3 geometry types (bbox, quad, polyline) with p
 ### ✅ **Smart Cropping with Label Filtering** 🆕 *(v1.1 - Oct 2025)*
 - Automatic object filtering based on visibility (min_coverage threshold)
 - Geometry truncation at crop boundaries (bbox/quad/line)
-- Completeness field updates: `显示完整` → `只显示部分` for partially visible objects
+- Polygon-aware coverage for quads (Sutherland–Hodgman clipping plus shoelace area computation) to avoid elongated false positives
+- Completeness field updates: `显示完整` → `只显示部分` for partially visible objects (structured metadata supported)
 - Skip conditions: preserves dense scenes (<4 objects) and line objects (cables/fibers)
 - Perfect visual-label alignment for dense detection captioning
 - See [Crop Quick Reference](CROP_QUICK_REFERENCE.md) and [Migration Guide](MIGRATION_SCALE_TO_CROP.md)
@@ -70,8 +71,8 @@ The augmentation pipeline handles 3 geometry types (bbox, quad, polyline) with p
 **Key Capabilities**:
 1. **Coverage-based filtering**: Objects <30% visible are dropped from GT
 2. **Geometry truncation**: Bbox/quad/line clipped to crop boundaries
-3. **Completeness tracking**: Automatic `显示完整` ↔ `只显示部分` updates based on coverage
-4. **Smart skip conditions**: Preserves dense scenes (<4 objects) and line objects
+3. **Completeness tracking**: Automatic `显示完整` ↔ `只显示部分` updates based on coverage (including `attributes.completeness` when present)
+4. **Smart skip conditions**: Preserves dense scenes (<4 objects) and line objects; emits telemetry on skip reasons
 
 **Configuration Example**:
 ```yaml
@@ -86,6 +87,26 @@ The augmentation pipeline handles 3 geometry types (bbox, quad, polyline) with p
 ```
 
 **Impact**: Eliminates visual-label misalignment for dense captioning tasks. See [CROP_QUICK_REFERENCE.md](CROP_QUICK_REFERENCE.md) for full details.
+
+---
+
+### October 2025: Telemetry & Validation Enhancements (v1.1.3)
+**Status**: ✅ Deployed  
+**Change ID**: `2025-10-28-dense-augmentation-telemetry`
+
+**What Changed**:
+- Pixel-cap enforcement re-runs after 32× alignment and rounds down to the nearest legal multiple, guaranteeing `max_pixels` is never exceeded.
+- RandomCrop now measures quads via polygon clipping (shoelace area computation) rather than AABB overlap.
+- Completeness updates propagate to structured metadata fields (`attributes.completeness`, `attributes.完整性`), with debug logging when replacements are skipped.
+- Compose skips redundant identity warps; telemetry captures padding ratios, crop skip reasons, and kept-object coverage summaries via logger `augmentation.telemetry`.
+- Regression tests cover pixel-cap enforcement (including identity alignment) and polygon coverage edge cases.
+
+**Impact**:
+- Prevents neutral padding from exceeding the token budget and diluting supervision.
+- Dense-caption labels drop nearly invisible objects, reducing hallucinations.
+- Debug/test runs can inspect augmentation telemetry without additional instrumentation.
+- Visualization tooling (`vis_tools/vis_augment_compare.py`) now overlays per-object captions alongside geometry, matching training labels.
+- Updated visualization tooling (`vis_tools/vis_augment_compare.py`) now overlays per-object captions alongside geometry, matching training captions.
 
 ---
 

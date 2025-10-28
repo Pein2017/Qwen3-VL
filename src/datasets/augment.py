@@ -15,6 +15,25 @@ def _image_to_bytes(img: Image.Image) -> bytes:
     return buf.getvalue()
 
 
+def _capture_crop_metadata(pipeline: Any) -> Optional[Dict[str, Any]]:
+    kept = getattr(pipeline, "last_kept_indices", None)
+    if kept is None:
+        return None
+    width = getattr(pipeline, "last_image_width", None)
+    height = getattr(pipeline, "last_image_height", None)
+    padding_ratio = getattr(pipeline, "last_padding_ratio", None)
+    return {
+        "kept_indices": list(kept),
+        "coverages": list(getattr(pipeline, "last_object_coverages", []) or []),
+        "allows_geometry_drops": bool(getattr(pipeline, "allows_geometry_drops", False)),
+        "width": width,
+        "height": height,
+        "padding_ratio": padding_ratio,
+        "skip_reason": getattr(pipeline, "last_crop_skip_reason", None),
+        "skip_counts": getattr(pipeline, "last_skip_counters", {}),
+    }
+
+
 def apply_augmentations(
     images: List[str | Image.Image],
     per_object_geoms: List[Dict[str, Any]],
@@ -91,6 +110,24 @@ def apply_augmentations(
                 f"augmentation pipeline must produce images with identical size; image[0]={out_w}x{out_h}, image[{i}]={im.width}x{im.height}"
             )
     images_bytes = [{"bytes": _image_to_bytes(img)} for img in out_imgs]
+
+    # Attach telemetry for downstream debug consumers
+    crop_meta = _capture_crop_metadata(pipeline)
+    if crop_meta is not None:
+        logger = get_logger("augmentation.telemetry")
+        logger.debug(
+            "Crop telemetry: kept=%s coverages=%s drops=%s size=%s padding=%s skip=%s counts=%s",
+            crop_meta["kept_indices"],
+            [round(float(c), 4) for c in crop_meta["coverages"]],
+            crop_meta["allows_geometry_drops"],
+            (crop_meta.get("width"), crop_meta.get("height")),
+            crop_meta.get("padding_ratio"),
+            crop_meta.get("skip_reason"),
+            crop_meta.get("skip_counts"),
+        )
+        # expose for preprocessors (pipeline metadata already set, but ensure Compose sees latest)
+        setattr(pipeline, "last_crop_summary", crop_meta)
+
     return images_bytes, geoms
 
 

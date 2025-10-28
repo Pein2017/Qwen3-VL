@@ -29,6 +29,7 @@ from ..geometry import (
     get_aabb,
     intersect_aabb,
     compute_coverage,
+    compute_polygon_coverage,
     translate_geometry,
 )
 from .base import ImageAugmenter
@@ -168,6 +169,7 @@ class ExpandToFitAffine(ImageAugmenter):
         self.multiple = int(multiple) if multiple else None
         self.max_pixels = int(max_pixels)
         self.kind = "barrier"
+        self.force_flush_affine = True
 
     def pre_flush_hook(self, M_total: List[List[float]], width: int, height: int, rng: Any) -> Tuple[List[List[float]], int, int]:
         """
@@ -177,81 +179,184 @@ class ExpandToFitAffine(ImageAugmenter):
         Returns: (M_total_updated, new_width, new_height)
         """
         logger = get_logger("augmentation.expand")
-        
+        def _align_and_cap(canvas_w: int, canvas_h: int) -> Tuple[int, int, int, int, float, float, int, int, bool]:
+            if canvas_w <= 0 or canvas_h <= 0:
+                raise ValueError(
+                    f"ExpandToFitAffine received non-positive dimensions ({canvas_w}, {canvas_h})."
+                )
+
+            aligned_w, aligned_h = canvas_w, canvas_h
+            if self.multiple and self.multiple > 1:
+                m = self.multiple
+                aligned_w = ((aligned_w + m - 1) // m) * m
+                aligned_h = ((aligned_h + m - 1) // m) * m
+
+            initial_pixels = aligned_w * aligned_h
+            scale_x = 1.0
+            scale_y = 1.0
+            final_w = aligned_w
+            final_h = aligned_h
+            scaled = False
+
+            if initial_pixels > self.max_pixels:
+                scaled = True
+                scale = math.sqrt(self.max_pixels / initial_pixels)
+                target_w = aligned_w * scale
+                target_h = aligned_h * scale
+
+                if self.multiple and self.multiple > 1:
+                    m = self.multiple
+                    floor_w = int(math.floor(target_w))
+                    floor_h = int(math.floor(target_h))
+                    floor_w = max(m, (floor_w // m) * m)
+                    floor_h = max(m, (floor_h // m) * m)
+                    if floor_w == 0:
+                        floor_w = m
+                    if floor_h == 0:
+                        floor_h = m
+                    pixel_count = floor_w * floor_h
+                    while pixel_count > self.max_pixels and floor_w > m:
+                        floor_w -= m
+                        pixel_count = floor_w * floor_h
+                    while pixel_count > self.max_pixels and floor_h > m:
+                        floor_h -= m
+                        pixel_count = floor_w * floor_h
+                    final_w, final_h = floor_w, floor_h
+                else:
+                    floor_w = max(1, int(math.floor(target_w)))
+                    floor_h = max(1, int(math.floor(target_h)))
+                    pixel_count = floor_w * floor_h
+                    while pixel_count > self.max_pixels and floor_w > 1:
+                        floor_w -= 1
+                        pixel_count = floor_w * floor_h
+                    while pixel_count > self.max_pixels and floor_h > 1:
+                        floor_h -= 1
+                        pixel_count = floor_w * floor_h
+                    final_w, final_h = floor_w, floor_h
+
+                if final_w <= 0 or final_h <= 0:
+                    raise ValueError(
+                        "ExpandToFitAffine could not enforce positive canvas dimensions after scaling."
+                    )
+
+                final_pixels = final_w * final_h
+                if final_pixels > self.max_pixels:
+                    raise ValueError(
+                        f"ExpandToFitAffine could not enforce max_pixels={self.max_pixels}: "
+                        f"final canvas {final_w}×{final_h} ({final_pixels} pixels)."
+                    )
+
+                scale_x = final_w / aligned_w
+                scale_y = final_h / aligned_h
+            else:
+                final_pixels = initial_pixels
+
+            return (
+                aligned_w,
+                aligned_h,
+                final_w,
+                final_h,
+                scale_x,
+                scale_y,
+                initial_pixels,
+                final_pixels,
+                scaled,
+            )
+
         # Check if M_total is identity (skip expansion if no transform)
         is_identity = (
-            abs(M_total[0][0] - 1.0) < 1e-9 and 
+            abs(M_total[0][0] - 1.0) < 1e-9 and
             abs(M_total[1][1] - 1.0) < 1e-9 and
-            abs(M_total[0][1]) < 1e-9 and 
+            abs(M_total[0][1]) < 1e-9 and
             abs(M_total[1][0]) < 1e-9 and
             abs(M_total[0][2]) < 1e-9 and
             abs(M_total[1][2]) < 1e-9
         )
         if is_identity:
-            # Still apply padding to multiple if requested
-            if self.multiple and self.multiple > 1:
-                m = self.multiple
-                new_width = ((width + m - 1) // m) * m
-                new_height = ((height + m - 1) // m) * m
-                # Check pixel limit even for identity
-                if new_width * new_height > self.max_pixels:
-                    scale = math.sqrt(self.max_pixels / (new_width * new_height))
-                    new_width = int(new_width * scale)
-                    new_height = int(new_height * scale)
-                    # Re-align to multiple after scaling
-                    new_width = ((new_width + m - 1) // m) * m
-                    new_height = ((new_height + m - 1) // m) * m
-                return M_total, new_width, new_height
-            return M_total, width, height
-        
+            (
+                aligned_w,
+                aligned_h,
+                new_width,
+                new_height,
+                scale_x,
+                scale_y,
+                original_pixels,
+                final_pixels,
+                scaled,
+            ) = _align_and_cap(width, height)
+            if scaled:
+                S = scale_matrix(scale_x, scale_y)
+                M_total = compose_affine(S, M_total)
+                logger.warning(
+                    "ExpandToFitAffine: Canvas ({0}×{1} = {2} pixels) exceeds max_pixels={3}. "
+                    "Scaled down to {4}×{5} = {6} pixels (scale_x={7:.4f}, scale_y={8:.4f}). "
+                    "Consider reducing rotation/scale augmentation strength.".format(
+                        aligned_w,
+                        aligned_h,
+                        original_pixels,
+                        self.max_pixels,
+                        new_width,
+                        new_height,
+                        final_pixels,
+                        scale_x,
+                        scale_y,
+                    )
+                )
+            total_pixels = max(1, new_width * new_height)
+            padded_pixels = max(0.0, float(total_pixels) - float(width * height))
+            self.padding_ratio = padded_pixels / float(total_pixels)
+            return M_total, new_width, new_height
+
         # Compute AABB of original corners under M_total
         corners = [0.0, 0.0, float(width - 1), 0.0, float(width - 1), float(height - 1), 0.0, float(height - 1)]
         transformed = apply_affine(corners, M_total)
         bbox = points_to_xyxy(transformed)
         minX, minY, maxX, maxY = bbox
-        
+
         # Translate to top-left origin (keep non-negative coordinates)
         T = translate(-minX, -minY)
         M_total_updated = compose_affine(T, M_total)
-        
-        # Compute new dimensions
-        new_width = int(math.ceil(maxX - minX + 1))
-        new_height = int(math.ceil(maxY - minY + 1))
-        
-        # Round to multiples if requested
-        if self.multiple and self.multiple > 1:
-            m = self.multiple
-            new_width = ((new_width + m - 1) // m) * m
-            new_height = ((new_height + m - 1) // m) * m
-        
-        # Safety check: enforce max pixel count
-        pixel_count = new_width * new_height
-        if pixel_count > self.max_pixels:
-            # Scale down proportionally to fit within limit
-            scale_factor = math.sqrt(self.max_pixels / pixel_count)
-            scaled_width = int(new_width * scale_factor)
-            scaled_height = int(new_height * scale_factor)
-            
-            # Re-align to multiple after scaling
-            if self.multiple and self.multiple > 1:
-                m = self.multiple
-                scaled_width = ((scaled_width + m - 1) // m) * m
-                scaled_height = ((scaled_height + m - 1) // m) * m
-            
-            # Update affine matrix to account for the scaling
-            S = scale_matrix(scale_factor, scale_factor)
+
+        # Compute new dimensions and enforce alignment/pixel cap
+        raw_width = int(math.ceil(maxX - minX + 1))
+        raw_height = int(math.ceil(maxY - minY + 1))
+        (
+            aligned_w,
+            aligned_h,
+            new_width,
+            new_height,
+            scale_x,
+            scale_y,
+            original_pixels,
+            final_pixels,
+            scaled,
+        ) = _align_and_cap(raw_width, raw_height)
+
+        self.padding_ratio = 0.0
+
+        if scaled:
+            S = scale_matrix(scale_x, scale_y)
             M_total_updated = compose_affine(S, M_total_updated)
-            
             logger.warning(
-                f"ExpandToFitAffine: Canvas expansion ({new_width}×{new_height} = {pixel_count} pixels) "
-                f"exceeds max_pixels={self.max_pixels}. Scaling down to {scaled_width}×{scaled_height} "
-                f"({scaled_width * scaled_height} pixels, factor={scale_factor:.3f}). "
-                f"Consider reducing rotation/scale augmentation strength."
+                "ExpandToFitAffine: Canvas expansion ({0}×{1} = {2} pixels) exceeds max_pixels={3}. "
+                "Scaled down to {4}×{5} = {6} pixels (scale_x={7:.4f}, scale_y={8:.4f}). "
+                "Consider reducing rotation/scale augmentation strength.".format(
+                    aligned_w,
+                    aligned_h,
+                    original_pixels,
+                    self.max_pixels,
+                    new_width,
+                    new_height,
+                    final_pixels,
+                    scale_x,
+                    scale_y,
+                )
             )
-            
-            new_width = scaled_width
-            new_height = scaled_height
-        
+
+        total_pixels = max(1, new_width * new_height)
+        padded_pixels = max(0.0, float(total_pixels) - float(raw_width * raw_height))
+        self.padding_ratio = padded_pixels / float(total_pixels)
+
         return M_total_updated, new_width, new_height
 
     def apply(self, images: List[Any], geoms: List[Dict[str, Any]], *, width: int, height: int, rng: Any) -> Tuple[List[Any], List[Dict[str, Any]]]:
@@ -632,6 +737,8 @@ class RandomCrop(ImageAugmenter):
         self.last_kept_indices: List[int] | None = None
         self.last_object_coverages: List[float] | None = None
         self.allows_geometry_drops = True  # Signal to validation
+        self.last_skip_reason: str | None = None
+        self.last_skip_counters: Dict[str, int] = {}
     
     def apply(self, images: List[Any], geoms: List[Dict[str, Any]], *, width: int, height: int, rng: Any):
         logger = get_logger("augmentation.random_crop")
@@ -639,6 +746,8 @@ class RandomCrop(ImageAugmenter):
         # Clear metadata from previous call
         self.last_kept_indices = None
         self.last_object_coverages = None
+        self.last_skip_reason = None
+        self.last_skip_counters = {}
         
         if rng.random() >= self.prob:
             return images, geoms
@@ -670,7 +779,7 @@ class RandomCrop(ImageAugmenter):
         filtered_geoms: List[Dict[str, Any]] = []
         
         for idx, g in enumerate(geoms):
-            cov = compute_coverage(g, crop_bbox)
+            cov = compute_polygon_coverage(g, crop_bbox, fallback="bbox")
             if cov >= self.min_coverage:
                 kept_indices.append(idx)
                 coverages.append(cov)
@@ -678,13 +787,19 @@ class RandomCrop(ImageAugmenter):
         
         # Check skip conditions
         if len(filtered_geoms) < self.min_objects:
+            reason = "min_objects"
             logger.debug(f"Crop would filter to {len(filtered_geoms)} < {self.min_objects} objects. Skipping crop.")
+            self.last_skip_reason = reason
+            self.last_skip_counters[reason] = self.last_skip_counters.get(reason, 0) + 1
             return images, geoms
         
         if self.skip_if_line:
             has_line = any("line" in g for g in filtered_geoms)
             if has_line:
+                reason = "line_object"
                 logger.debug("Crop region contains line object. Skipping crop to preserve cable/fiber integrity.")
+                self.last_skip_reason = reason
+                self.last_skip_counters[reason] = self.last_skip_counters.get(reason, 0) + 1
                 return images, geoms
         
         # Proceed with crop - truncate and translate geometries

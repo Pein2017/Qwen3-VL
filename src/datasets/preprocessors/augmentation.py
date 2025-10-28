@@ -123,6 +123,7 @@ class AugmentationPreprocessor(BasePreprocessor):
             
             # Filter and update objects
             completeness_updates = 0
+            structured_updates = 0
             for idx_in_kept, orig_idx in enumerate(kept_indices):
                 # orig_idx refers to the index in the original geometries list
                 # Map back to the object index
@@ -135,9 +136,30 @@ class AugmentationPreprocessor(BasePreprocessor):
                 self._update_geometry_field(obj, new_geom)
                 
                 # Update completeness field if below threshold
-                if cov < completeness_threshold and "显示完整" in obj.get("desc", ""):
-                    obj["desc"] = obj["desc"].replace("显示完整", "只显示部分")
-                    completeness_updates += 1
+                if cov < completeness_threshold:
+                    desc = obj.get("desc", "")
+                    if "显示完整" in desc:
+                        obj["desc"] = desc.replace("显示完整", "只显示部分")
+                        completeness_updates += 1
+                    # Structured completeness metadata support
+                    attrs = obj.get("attributes")
+                    if isinstance(attrs, dict):
+                        completeness_key = None
+                        for key in ("completeness", "完整性", "complete"):
+                            if key in attrs:
+                                completeness_key = key
+                                break
+                        if completeness_key is not None:
+                            value = attrs.get(completeness_key)
+                            if value == "显示完整":
+                                attrs[completeness_key] = "只显示部分"
+                                structured_updates += 1
+                        else:
+                            logger = get_logger("augmentation.preprocessor")
+                            logger.debug(
+                                "Completeness metadata missing expected key on object; desc_updated=%s",
+                                "显示完整" in desc,
+                            )
                 
                 filtered_objects.append(obj)
             
@@ -148,7 +170,7 @@ class AugmentationPreprocessor(BasePreprocessor):
             logger = get_logger("augmentation.preprocessor")
             logger.debug(
                 f"Crop filter: {len(objs)} → {len(filtered_objects)} objects "
-                f"({completeness_updates} marked partial)"
+                f"({completeness_updates} desc updates, {structured_updates} attribute updates)"
             )
         
         rec["images"] = images_bytes

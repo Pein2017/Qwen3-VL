@@ -1,10 +1,10 @@
 #!/bin/bash
 # Merge LoRA adapter into base model for end2end inference
-base_model=output/stage_2_merged-10-25
-adapters=output/10-27/stage_3/v0-20251027-072155/last6_lora-epoch_50-eff_batch_32/checkpoint-40
-output_dir=output/stage_3_merged-10-27/v_1
+base_model=output/stage_3_merged-10-27/v_2
+adapters=output/10-28/stage_4/v0-20251028-013852/more_lora_last_4_8-weaker_aug-epoch_20-resumed/checkpoint-2484
+output_dir=output/stage_4_merged-10-28/resumed-checkpoint-2484
 
-CUDA_VISIBLE_DEVICES=0 \
+CUDA_VISIBLE_DEVICES=2 \
 swift export \
     --model $base_model \
     --adapters $adapters \
