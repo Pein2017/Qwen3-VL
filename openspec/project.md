@@ -23,7 +23,7 @@
 
 ## Source Layout Highlights
 - `src/sft.py` — loads YAML (`src/config/loader.py`), prepares the model via `swift.llm.train.sft.SwiftSft`, and wires datasets/augmenters.
-- `src/config/` — prompt schemes, TrainArguments adapters, config merging helpers.
+- `src/config/` — prompts, TrainArguments adapters, config merging helpers.
 - `src/datasets/`
   - `geometry.py` — canonical geometry math (affines, clipping, coverage, normalization).
   - `augmentation/` — operator registry, Compose pipeline, YAML builder.
@@ -64,7 +64,7 @@
 ## Workflow Cheatsheet
 1. Select or clone a base YAML in `configs/`.
 2. Update/extend preprocessors or augmentation as needed in `src/datasets/`.
-3. Modify prompts or config helpers in `src/config/` if new schemes are required.
+3. Modify prompts or config helpers in `src/config/` if customization is needed.
 4. Keep documentation in sync (relevant `docs/*.md`, config file headers).
 5. Validate with unit tests + visualization + targeted training run (or documented plan).
 6. For feature work, follow the OpenSpec process (`openspec/AGENTS.md`) and archive changes once shipped.

@@ -7,10 +7,6 @@ model:
 
 # Use model's native chat template; max length unified via base.yaml or global_max_length
 
-
-prompts:
-  scheme: B
-
 tuner:
   train_type: lora
   use_swift_lora: false  # Use PEFT backend for better compatibility

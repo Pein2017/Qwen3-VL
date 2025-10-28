@@ -18,7 +18,7 @@ Skip formal proposals only for self-contained fixes that restore intended behavi
 3. **Code reconnaissance**:
    - `src/sft.py` for launch flow and how YAML is consumed.
    - `src/datasets/` subpackages that map to the planned change (preprocessors, augmentation, geometry, builders, collators).
-   - `src/config/` for prompt schemes, TrainArguments helpers, and config loaders.
+   - `src/config/` for prompts, TrainArguments helpers, and config loaders.
 4. **Config survey**: open `configs/base.yaml` plus the stage or summary config closest to the requested scenario.
 5. **Scripts & tooling**: note entrypoints in `scripts/` and visual aids in `vis_tools/` that will help validate the change.
 
@@ -38,7 +38,7 @@ Document findings in the proposal so reviewers can follow the thread quickly.
 - **Configs (`configs/`)**: use inheritance; add overrides in the narrowest stage config. Ensure new keys are consumed in `src/sft.py` or relevant helper.
 - **Augmentation / geometry**: centralize math in `src/datasets/geometry.py` and register operators via `src/datasets/augmentation/registry.py`. Mirror changes in docs + visual tools.
 - **Preprocessors & builders**: extend `src/datasets/preprocessors/base.py` or `builders/base.py`; update tests under `tests/` or add new ones mirroring dataset flows.
-- **Prompts**: update `src/config/prompts.py` and reflect scheme changes in YAML (`prompts.scheme`, `custom.user_prompt`).
+- **Prompts**: update `src/config/prompts.py` and optionally override in YAML (`prompts.system`, `prompts.user`).
 - **Scripts**: shell helpers belong in `scripts/`; ensure they are runnable via `conda run -n ms`.
 - **Docs**: keep `docs/` synchronized with any behavioral change. Summarize new knobs in the relevant README.
 

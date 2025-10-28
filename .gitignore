@@ -12,6 +12,8 @@
 !data_conversion/
 !tests/ 
 !compare/
+!.cursor/
+!references/
 
 # Track files in the tracked folders
 !src/**
@@ -27,6 +29,8 @@
 !.cursorindexingignore
 !AGENTS.md
 !compare/**
+.cursor/**
+references/**
 
 # Ignore common Python cache folders
 **/__pycache__/

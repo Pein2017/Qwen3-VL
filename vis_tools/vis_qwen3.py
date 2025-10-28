@@ -162,8 +162,6 @@ def run_infer_one(pil_img: Image.Image, prompt: str) -> tuple[str, str]:
             temperature=TEMPERATURE,
             top_p=TOP_P,
             repetition_penalty=REPETITION_PENALTY,
-            early_stopping=True,  # Stop when EOS is generated
-            length_penalty=1.0,  # Neutral length preference
             use_cache=True,
         )
     # Strip prompt tokens from the front

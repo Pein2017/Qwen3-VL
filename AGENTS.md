@@ -25,7 +25,7 @@ Keep this managed block so 'openspec update' can refresh the instructions.
 ## Core Surface
 - `src/` — code:
   - `sft.py` launches supervised fine tuning via `swift.llm.train.sft.SwiftSft`.
-  - `config/` resolves YAML into `TrainArguments`, prompt schemes, and template wiring.
+  - `config/` resolves YAML into `TrainArguments`, prompts, and template wiring.
   - `datasets/` covers geometry helpers, augmentation, preprocessors, builders, and dynamic pairing.
   - `utils/`, `callbacks/`, `stage_a/`, `stage_b/` hold supporting logic for training variants.
 - `docs/` — authoritative background (augmentation, data prep, reference workflows).

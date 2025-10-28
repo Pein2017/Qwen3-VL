@@ -6,9 +6,6 @@ model:
   # Point to stage 2 best checkpoint - will load base model + LLM LoRA
   model: output/stage_2_merged-10-25
 
-prompts:
-  scheme: B
-
 tuner:
   train_type: lora
   use_swift_lora: false

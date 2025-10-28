@@ -6,9 +6,6 @@ model:
   model: model_cache/models/Qwen/Qwen3-VL-4B-Instruct
   # model: output/stage_1_full_aligner_only/best/eff_batch_32-lr_1e-4/checkpoint-200
 
-prompts:
-  scheme: B
-
 tuner:
   train_type: full
   freeze_llm: true

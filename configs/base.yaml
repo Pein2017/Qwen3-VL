@@ -9,9 +9,6 @@ model:
 template:
   template: qwen3_vl
   truncation_strategy: right
-  
-prompts:
-  scheme: B
 
 training:
   # defaults, can be overridden per-environment

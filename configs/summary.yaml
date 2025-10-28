@@ -7,33 +7,26 @@
 
 extends: base.yaml
 
-prompts:
-  scheme: B  # Dense system prompt (summary prompt injected at dataset level)
-
-
 model:
   # Point to stage 2 best checkpoint - will load base model + LLM LoRA
   # model: output/10-22/stage_1/best/eff_batch_32-per_image_2-resumed_lr_1e-4/checkpoint-200
-  model: output/stage_3_merged/data_aug_on-epoch_50
+  model: output/stage_4_merged-10-28/resumed-checkpoint-1932
 
 tuner:
   train_type: lora
   target_modules: [all-linear]
-  # LLM last-2 layers only; freeze vision tower
+  # LLM last-4 layers only; freeze vision tower completely
   freeze_llm: false
   freeze_vit: true
-  # Full-tune MLP aligner while using LoRA for LLM
-  freeze_aligner: false
+  # Freeze MLP aligner (already tuned in dense training; LLM LoRA adapts to summary task)
+  freeze_aligner: true
   use_swift_lora: false
-  # LoRA targets: LLM last-2 blocks only
-  target_regex: '^(?:model\.)?language_model\.layers\.(?:34|35)\.(?:self_attn\.(?:q_proj|k_proj|v_proj|o_proj)|mlp\.(?:gate_proj|up_proj|down_proj))$'
-  modules_to_save:
-    # Full-tune aligner (projector)
-    - model.visual.merger
-    - model.visual.deepstack_merger_list.0
-    - model.visual.deepstack_merger_list.1
-    - model.visual.deepstack_merger_list.2
-    # Optionally include LLM blocks if you want to persist full-tuned heads (not needed for pure LoRA on LLM)
+  # LoRA targets: LLM last-4 blocks only (layers 32, 33, 34, 35)
+  target_regex: '^(?:model\.)?language_model\.layers\.(?:32|33|34|35)\.(?:self_attn\.(?:q_proj|k_proj|v_proj|o_proj)|mlp\.(?:gate_proj|up_proj|down_proj))$'
+  modules_to_save: []
+    # Aligner frozen - no modules to save
+    # Vision tower frozen - no vision modules
+    # LLM uses LoRA adapters only
   lora_rank: 16
   lora_alpha: 32
   lora_dropout: 0.1
@@ -41,11 +34,11 @@ tuner:
 
 training:
   num_train_epochs: 10
-  per_device_train_batch_size: 4
+  per_device_train_batch_size: 1
   per_device_eval_batch_size: 2
-  output_dir: output/summary/10-25/per_image_1
-  logging_dir: tb/summary/10-25/per_image_1
-  run_name: epoch_10-ratio_1.0-aug_off
+  output_dir: output/summary/10-28/summary/
+  logging_dir: tb/summary/10-28/summary
+  run_name: llm_last4_lora-aug_conservative-eff_batch_32-epoch_10
 
   # Trainer/runtime additions for parity with stage_3
   packing: true
@@ -84,43 +77,43 @@ deepspeed:
 
 custom:
   emit_norm: norm1000
-  images_per_user_turn: 1
+  images_per_user_turn: 4
   
   # Each pairing group has a probability summary_ratio of being in summary mode
-  summary_ratio: 1.0  # 60% summary groups, 40% dense groups (per group, not per sample)
+  summary_ratio: 1.0  # 100% summary mode (pure summary training)
   dump_conversation_text: false
   augmentation:
-    enabled: off
+    # ✅ ENABLED for summary mode - safe because no geometric coordinates to misalign
+    # Summary counting is invariant to geometric transforms (flip/rotate/scale)
+    # Conservative settings to avoid overfitting while preserving object counts
+    enabled: true
+    bypass_prob: 0.15  # 15% clean samples (slightly higher than dense mode)
     ops:
-      # Geometric ops
+      # Geometric ops - SAFE for counting (objects remain in frame)
       - name: hflip
-        params: { prob: 0.3 }
+        params: { prob: 0.4 }
       - name: vflip
-        params: { prob: 0.1 }
+        params: { prob: 0.15 }
       - name: rotate
-        params: { max_deg: 15.0, prob: 0.3 }
-      # ✅ Zoom-IN focused (better for small objects) - always zoom in, never out
-      - name: scale
-        params: { lo: 1.05, hi: 1.25, prob: 0.2 }
-      # ✅ Multi-scale training: prefer medium-large sizes (no aggressive shrinking)
-      - name: resize_by_scale
-        params: { lo: 0.85, hi: 1.1, align_multiple: 32, prob: 0.5 }
-      # Color ops (medium strength default)
-      - name: color_jitter
-        params: { brightness: [0.85, 1.15], contrast: [0.85, 1.15], saturation: [0.85, 1.15], prob: 0.3 }
-      - name: gamma
-        params: { gamma: [0.9, 1.1], prob: 0.2 }
-      - name: hsv
-        params: { hue_delta_deg: [-10, 10], sat: [0.9, 1.1], val: [0.9, 1.1], prob: 0.2 }
-      - name: clahe
-        params: { clip_limit: 3.0, tile_grid_size: [8, 8], prob: 0.1 }
-      - name: auto_contrast
-        params: { cutoff: 0, prob: 0.05 }
-      - name: equalize
-        params: { prob: 0.05 }
-      - name: sharpness
-        params: { factor: [0.85, 1.2], prob: 0.2 }
-      # Enforce size multiple for Qwen3-VL vision grid (pad only; keeps pixel coords)
-      - name: pad_to_multiple
+        params: { max_deg: 20.0, prob: 0.35 }
+      # Expand canvas to fit rotated content (no objects cropped out)
+      - name: expand_to_fit_affine
         params: { multiple: 32 }
+      # ✅ Multi-scale training: vary image size for robustness
+      - name: resize_by_scale
+        params: { lo: 0.85, hi: 1.15, align_multiple: 32, prob: 0.6 }
+      # Color ops - CONSERVATIVE (preserve object recognizability for counting)
+      - name: color_jitter
+        params: { brightness: [0.90, 1.10], contrast: [0.90, 1.10], saturation: [0.90, 1.10], prob: 0.35 }
+      - name: gamma
+        params: { gamma: [0.92, 1.08], prob: 0.2 }
+      - name: hsv
+        params: { hue_delta_deg: [-8, 8], sat: [0.92, 1.08], val: [0.92, 1.08], prob: 0.2 }
+      - name: clahe
+        params: { clip_limit: 2.5, tile_grid_size: [8, 8], prob: 0.1 }
+      - name: sharpness
+        params: { factor: [0.9, 1.15], prob: 0.2 }
+      # ❌ NO random_crop - would remove objects and make count summaries incorrect
+      # ❌ NO scale zoom-in - would crop objects out of frame
+      # ❌ NO aggressive color ops - could make objects unrecognizable
 

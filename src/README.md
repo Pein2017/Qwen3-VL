@@ -249,7 +249,6 @@ ms-swift uses a **strict key-value convention** for multimodal content where the
 （已移除）模板负责插入 图片_{i} 分隔，代码不再提供 `group_key_prefix` 配置项。
 - 顶层 `objects.ref/bbox/image_id` 保留为原始像素坐标，模板自动归一化为 norm1000
 - 不再有 section headers 或 `image_index` 字段
-- `prompts.scheme`: A (minimal/prior-free) or B (informative, adds ordering/taxonomy hints)
 - **Packing** (optional): `training.packing: true` to concatenate samples to `global_max_length`, eliminating padding waste
   - ✅ Compatible with Qwen3-VL (`support_padding_free=True`)
   - ⚠️ Incompatible with `lazy_tokenize`; requires bin-packing preprocessing
@@ -314,12 +313,13 @@ custom:
   emit_norm: norm1000               # none | norm100 | norm1000
   # 无需配置 group_key_prefix；模板自动插入 图片_{i}
 
-prompts:
-  scheme: B | B   # A: 极简格式约束；B: 薄领域提示
-  system: |
-    你是图像密集标注助手。只返回原始 JSON-lines…（B 可额外包含对象类型与排序提示）
-    模板自动插入 图片_{i} 分隔，无需在文本中手动分段
-  user: 描述所有对象
+# prompts section is no longer required - default system prompt is used automatically
+# Custom prompts can be specified via:
+# prompts:
+#   system: |
+#     你是图像密集标注助手。只返回原始 JSON-lines…
+#     模板自动插入 图片_{i} 分隔，无需在文本中手动分段
+#   user: 描述所有对象
 ```
 
 ### Config inheritance rules
@@ -375,33 +375,27 @@ Tip: keep `training.aligner_lr` (and optionally `training.vit_lr`) to control pe
 
 ### Dynamic Per-Group Prompt Selection (Optional)
 
-**New feature**: Train with multiple output formats simultaneously by selecting prompts per pairing group.
+**Feature**: Train with multiple output formats simultaneously by selecting prompts per pairing group.
 
 **Supported modes**:
-- **Dense-only (default, unchanged)**: `prompts.scheme: A` or `B` → grouped JSON with geometry + description
-- **Summary-only**: `prompts.scheme: summary` → grouped JSON with one-line summaries only
-- **Mixed (dynamic)**: `prompts.scheme: B` + `custom.summary_ratio: 0.5` → randomly alternate per group
+- **Dense-only (default)**: grouped JSON with geometry + description
+- **Summary-only**: `custom.summary_ratio: 1.0` → grouped JSON with one-line summaries only
+- **Mixed (dynamic)**: `custom.summary_ratio: 0.5` → randomly alternate per group (50% summary, 50% dense)
 
 **Key insight**: All samples in one pairing group see the same system prompt and produce the same output format (all dense or all summary), ensuring coherent JSON shapes.
 
-**Backward compatibility**: All existing configs (e.g., `stage_3_vision_lora.yaml`) work unchanged. Simply omit `summary_ratio` to stay in dense-only mode.
+**Backward compatibility**: All existing configs work unchanged. Simply omit `summary_ratio` to stay in dense-only mode.
 
 **Usage**:
 ```yaml
-# Dense-only (existing behavior, no changes)
-prompts:
-  scheme: B
-
+# Dense-only (default behavior)
 custom:
   train_jsonl: data/bbu_full_768/train.jsonl
-  # No summary_ratio → always dense
+  # No summary_ratio → always dense (default)
 ```
 
 ```yaml
 # Mixed: 50% summary, 50% dense per group
-prompts:
-  scheme: B
-
 custom:
   train_jsonl: data/bbu_full_768/train.jsonl
   summary_ratio: 0.5  # Each group: 50% summary, 50% dense
