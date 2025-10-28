@@ -39,13 +39,15 @@ def main() -> None:
     # Configuration (edit these)
 
     # model_path = "output/summary_merged/10-25-aug_on-full_last2_llm"
-    model_path="output/stage_2_llm_lora/10-25"
+    model_path="output/stage_3_merged-10-27/v_2"
     image_paths = [
         'demo/images/QC-20230106-0000211_16517.jpeg',
-        "demo/images/test_demo.jpg"
+        'demo/images/QC-20230106-0000211_16519.jpeg',
+        # "demo/images/test_demo.jpg"
     ]
     prompt = "请介绍一下这两张图片"
     max_new_tokens=512
+    temperature=0.0001
     # prompt='Describe the image(s) briefly.'
 
 
@@ -112,10 +114,10 @@ def main() -> None:
     message_content = [{"type": "image", "image": img} for img in images]
     message_content.append({"type": "text", "text": prompt})
     messages = [
-        # {
-        #     "role": "system",
-        #     "content": SYSTEM_PROMPT_B,
-        # },
+        {
+            "role": "system",
+            "content": SYSTEM_PROMPT_B,
+        },
         {
             "role": "user",
             "content": message_content,
@@ -157,7 +159,8 @@ def main() -> None:
             **inputs,
             max_new_tokens=max_new_tokens,
             do_sample=True,
-            temperature=0.3,
+            temperature=temperature,
+            repetition_penalty=1.05,
             use_cache=True,
         )
 

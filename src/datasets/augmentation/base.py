@@ -121,9 +121,11 @@ class Compose:
                 Minv[0][0], Minv[0][1], Minv[0][2],
                 Minv[1][0], Minv[1][1], Minv[1][2],
             )
+            # Use middle gray (128, 128, 128) for fill areas to achieve zero in normalized space
+            # after Qwen3-VL's normalization: (pixel/255 - 0.5) / 0.5
             return [
                 (img if isinstance(img, Image.Image) else img).transform(
-                    (w, h), Image.AFFINE, data=coeffs, resample=Image.BICUBIC
+                    (w, h), Image.AFFINE, data=coeffs, resample=Image.BICUBIC, fillcolor=(128, 128, 128)
                 ) for img in imgs
             ]
 

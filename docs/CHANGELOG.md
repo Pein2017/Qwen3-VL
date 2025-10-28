@@ -6,6 +6,35 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.1.2] - 2025-10-27
+
+### Changed - Middle Gray Padding Strategy
+
+**Change ID**: `2025-10-27-middle-gray-padding`
+
+#### Summary
+Changed padding color from black (0,0,0) to middle gray (128,128,128) to achieve zero in Qwen3-VL's normalized space, minimizing distribution shift during augmentation.
+
+#### Technical Details
+- **Affected operations**: `_pad_to_multiple()`, `Image.transform()` affine warps, canvas expansion
+- **Normalization context**: Qwen3-VL uses symmetric normalization `(pixel/255 - 0.5) / 0.5`
+- **Rationale**: 
+  - Black (0) normalizes to -1.0, creating artificial high-contrast boundaries
+  - Middle gray (128) normalizes to ~0.003 ≈ 0, appearing neutral to the model
+  - Prevents model from learning spurious edge artifacts at padding boundaries
+  
+#### Files Changed
+- `src/datasets/augmentation/ops.py`: Updated `_pad_to_multiple()` canvas creation
+- `src/datasets/augmentation/base.py`: Added `fillcolor=(128, 128, 128)` to `Image.transform()`
+
+#### Impact
+- ✅ Reduced distribution shift from padding areas
+- ✅ Improved training stability with rotation/expansion augmentation
+- ✅ Better model generalization (no spurious edge detection)
+- ✅ Visually neutral padding in augmentation visualizations
+
+---
+
 ## [1.1.0] - 2025-10-27
 
 ### Added - Smart Cropping with Label Filtering

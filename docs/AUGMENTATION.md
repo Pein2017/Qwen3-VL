@@ -33,6 +33,25 @@ The augmentation pipeline handles 3 geometry types (bbox, quad, polyline) with p
 
 ## Recent Updates
 
+### October 2025: Middle Gray Padding (v1.1.2)
+**Status**: ✅ Deployed  
+**Change ID**: `2025-10-27-middle-gray-padding`
+
+**What Changed**:
+- Changed padding color from black (0,0,0) to middle gray (128,128,128)
+- Applies to: `_pad_to_multiple()`, `Image.transform()` affine warps, canvas expansion
+- Achieves zero in normalized space after Qwen3-VL's symmetric normalization
+
+**Why This Matters**:
+- Black padding normalized to -1.0, creating artificial boundaries that harm training
+- Middle gray (128) normalizes to ~0, appearing neutral to the model
+- Minimizes distribution shift and prevents the model from learning spurious edge artifacts
+- Improves training stability when using aggressive rotation/expansion augmentation
+
+**Impact**: Better model generalization, especially with rotation and canvas expansion operations.
+
+---
+
 ### October 2025: Smart Crop with Label Filtering (v1.1)
 **Status**: ✅ Deployed  
 **Change ID**: `2025-10-27-add-smart-crop-with-label-filter`
@@ -213,6 +232,42 @@ Crop operators store metadata that the preprocessor uses to filter and update ob
 - `last_kept_indices`: Indices of retained objects
 - `last_object_coverages`: Coverage ratio [0.0, 1.0] for each retained object
 - `allows_geometry_drops`: Flag to relax validation (geometry count can decrease)
+
+## Padding Strategy
+
+### Why Padding Matters
+
+Augmentation operations like rotation, canvas expansion, and alignment to 32-multiples introduce padding areas. The fill color significantly impacts training quality and distribution shift.
+
+### Qwen3-VL Normalization
+
+Qwen3-VL uses **symmetric normalization** that maps RGB [0, 255] to [-1, 1]:
+```python
+# From preprocessor_config.json
+image_mean = [0.5, 0.5, 0.5]
+image_std = [0.5, 0.5, 0.5]
+
+# Normalization formula
+normalized = (pixel/255 - 0.5) / 0.5 = 2*(pixel/255) - 1
+```
+
+### Optimal Padding Color: Middle Gray (128, 128, 128)
+
+**Why this value**:
+- **Zero in normalized space**: `(128/255 - 0.5) / 0.5 ≈ 0.003 ≈ 0`
+- **Neutral point**: Model sees padding as "neutral" rather than strong negative values
+- **Minimal distribution shift**: Avoids artificial high-contrast boundaries
+- **Better than black (0,0,0)**: Black normalizes to -1.0, creating strong artifacts
+- **Better than white (255,255,255)**: White normalizes to +1.0, equally problematic
+
+**Implementation locations**:
+1. `_pad_to_multiple()`: Padding to 32-multiple for ViT requirements
+2. `Image.transform()`: Fill color for affine warps (rotation, scale)
+3. Canvas expansion: Background for expanded areas
+
+**Visual impact**: Gray padding is visually neutral and doesn't create distracting edges during augmentation visualization.
+
+---
 
 ## Canvas Expansion Deep Dive
 
@@ -709,5 +764,5 @@ python vis_tools/vis_augment_compare.py
 
 ---
 
-**Last Updated**: 2025-10-27 (v1.1.1)
+**Last Updated**: 2025-10-27 (v1.1.2)
 

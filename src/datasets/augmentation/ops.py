@@ -47,7 +47,9 @@ def _pad_to_multiple(img: Image.Image, *, mult: int = 32) -> Image.Image:
     new_h = ((h + mult - 1) // mult) * mult
     if new_w == w and new_h == h:
         return img
-    canvas = Image.new("RGB", (new_w, new_h), (0, 0, 0))
+    # Use middle gray (128, 128, 128) for padding to achieve zero in normalized space.
+    # Qwen3-VL normalization: (pixel/255 - 0.5) / 0.5, so 128 → ~0
+    canvas = Image.new("RGB", (new_w, new_h), (128, 128, 128))
     canvas.paste(img, (0, 0))
     return canvas
 

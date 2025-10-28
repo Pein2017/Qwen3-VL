@@ -1,9 +1,9 @@
 extends: base.yaml
 
-# Stage 3: LoRA on LAST-6 Vision blocks, LoRA on LLM last-2; aligner full-tuned
+# Stage 4: LoRA on LAST-12 Vision blocks, LoRA on LLM last-4; aligner full-tuned
 
 model:
-  # Point to stage 2 best checkpoint - will load base model + LLM LoRA
+  # Point to stage 3 best checkpoint - will load base model + previous LoRA
   model: output/stage_2_merged-10-25
 
 prompts:
@@ -12,12 +12,12 @@ prompts:
 tuner:
   train_type: lora
   use_swift_lora: false
-  freeze_llm: false     # ← Enable LoRA on LLM last-2 (see target_regex below)
-  freeze_vit: false     # ← Add LoRA to LAST-6 Vision blocks
-  freeze_aligner: true  # ← Keep aligner frozen (already full-tuned in stage 2)
+  freeze_llm: false     # ← Enable LoRA on LLM last-4 (see target_regex below)
+  freeze_vit: false     # ← Add LoRA to LAST-12 Vision blocks
+  freeze_aligner: true  # ← Keep aligner frozen (already full-tuned in previous stages)
   target_modules: [all-linear]
-  # LLM last-2 + Vision LAST-6 blocks (18-23)
-  target_regex: '^(?:model\.)?(?:language_model\.layers\.(?:34|35)\.(?:self_attn\.(?:q_proj|k_proj|v_proj|o_proj)|mlp\.(?:gate_proj|up_proj|down_proj))|visual\.blocks\.(?:18|19|20|21|22|23)\.(?:attn\.(?:qkv|proj)|mlp\.(?:linear_fc1|linear_fc2)))$'
+  # LLM last-4 + Vision LAST-12 blocks (12-23)
+  target_regex: '^(?:model\.)?(?:language_model\.layers\.(?:32|33|34|35)\.(?:self_attn\.(?:q_proj|k_proj|v_proj|o_proj)|mlp\.(?:gate_proj|up_proj|down_proj))|visual\.blocks\.(?:1[2-9]|2[0-3])\.(?:attn\.(?:qkv|proj)|mlp\.(?:linear_fc1|linear_fc2)))$'
   
   # --- Alternative Configurations (choose ONE and replace target_regex above) ---
   # 4B: LLM last-4 + Vision last-4 (original default):
@@ -33,7 +33,7 @@ tuner:
   # 8B: LLM last-6 + Vision last-6 (Vision: 21|22|23|24|25|26):
   # target_regex: '^(?:model\.)?(?:language_model\.layers\.(?:30|31|32|33|34|35)\.(?:self_attn\.(?:q_proj|k_proj|v_proj|o_proj)|mlp\.(?:gate_proj|up_proj|down_proj))|visual\.blocks\.(?:21|22|23|24|25|26)\.(?:attn\.(?:qkv|proj)|mlp\.(?:linear_fc1|linear_fc2)))$'
   modules_to_save:
-    # Stage 3: Continue full-tuning aligner (optional - remove if you want to freeze it)
+    # Stage 4: Continue full-tuning MLP aligner
     - model.visual.merger
     - model.visual.deepstack_merger_list.0
     - model.visual.deepstack_merger_list.1
@@ -44,20 +44,20 @@ tuner:
   lora_bias: none
 
 training:
-  output_dir: ./output/10-27/stage_3
-  run_name: last6_lora-epoch_20-eff_batch_16-better_aug-lr_3.0e-4
+  output_dir: ./output/10-28/stage_4
+  run_name: more_lora_last_4_8-weaker_aug-epoch_20-from_stage2
   add_version: true
   save_safetensors: true
   per_device_train_batch_size: 2
   per_device_eval_batch_size: 2
   packing: true
   weight_decay: 0.1
-  warmup_ratio: 0.2
+  warmup_ratio: 0.1
 
   optimizer: multimodal
-  learning_rate: 1.0e-4   # Vision LoRA learning rate
-  vit_lr: 3.0e-4          # Slightly above base LR for LoRA on LAST-6
-  aligner_lr: 1.0e-4      # Aligner continues training (if in modules_to_save)
+  learning_rate: 1.0e-4   # LLM LoRA learning rate (last-4 blocks)
+  vit_lr: 3.0e-4          # Vision LoRA learning rate (last-12 blocks)
+  aligner_lr: 1.0e-4      # Aligner full-tuning learning rate
   num_train_epochs: 20
 
   lr_scheduler_kwargs:
@@ -73,7 +73,7 @@ training:
   save_steps: 5
 
   # Verbose logging
-  logging_dir: ./tb/10-27
+  logging_dir: ./tb/10-28/stage_4
   logging_steps: 10
   logging_first_step: true
 
@@ -123,36 +123,23 @@ custom:
           completeness_threshold: 0.95    # Mark "只显示部分" if <95% visible
           min_objects: 4                  # Skip crop if <4 objects (dense scenes)
           skip_if_line: true              # Skip crop if line objects present
-          prob: 0.3                       # 30% of samples
-      
-      # ✅ Center Crop with Label Filtering (replacement for scale zoom-in)
-      # - Same filtering and completeness tracking as random_crop
-      # - Fixed center position instead of random
-      # - name: center_crop
-      #   params:
-      #     scale: 0.75                     # Keep 75% (= 1.33x zoom)
-      #     min_coverage: 0.3               # Drop objects <30% visible
-      #     completeness_threshold: 0.95    # Mark "只显示部分" if <95% visible
-      #     min_objects: 4                  # Skip crop if <4 objects
-      #     skip_if_line: true              # Preserve cable/fiber paths
-      #     prob: 0.25
-      
+          prob: 0.2                       # 30% of samples
       # ✅ Multi-scale training: prefer medium-large sizes (no aggressive shrinking)
       - name: resize_by_scale
-        params: { lo: 0.75, hi: 1.2, align_multiple: 32, prob: 0.7 }
-      # Color ops (medium strength default)
+        params: { lo: 0.9, hi: 1.2, align_multiple: 32, prob: 0.7 }
+      # Color ops (reduced strength for less distortion)
       - name: color_jitter
-        params: { brightness: [0.75, 1.25], contrast: [0.75, 1.25], saturation: [0.75, 1.25], prob: 0.5 }
+        params: { brightness: [0.85, 1.15], contrast: [0.85, 1.15], saturation: [0.85, 1.15], prob: 0.4 }
       - name: gamma
-        params: { gamma: [0.8, 1.3], prob: 0.3 }
+        params: { gamma: [0.85, 1.2], prob: 0.25 }
       - name: hsv
-        params: { hue_delta_deg: [-15, 15], sat: [0.8, 1.3], val: [0.8, 1.3], prob: 0.3 }
+        params: { hue_delta_deg: [-10, 10], sat: [0.9, 1.15], val: [0.9, 1.15], prob: 0.25 }
       - name: clahe
-        params: { clip_limit: 3.0, tile_grid_size: [8, 8], prob: 0.2 }
+        params: { clip_limit: 2.5, tile_grid_size: [8, 8], prob: 0.15 }
       - name: auto_contrast
-        params: { cutoff: 0, prob: 0.12 }
+        params: { cutoff: 0, prob: 0.1 }
       # equalize removed - redundant with auto_contrast (both global histogram ops)
       - name: sharpness
-        params: { factor: [0.7, 1.4], prob: 0.25 }
+        params: { factor: [0.8, 1.3], prob: 0.2 }
       # Note: pad_to_multiple removed - expand_to_fit_affine already handles it
 

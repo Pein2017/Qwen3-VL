@@ -31,15 +31,15 @@ from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
 # ==============================
 
 # Required paths
-CKPT_PATH = "output/stage_3_merged/data_aug_off"  # HF dir or merged checkpoint
+CKPT_PATH = "output/stage_3_merged-10-27/v_1"  # HF dir or merged checkpoint
 JSONL_PATH = "data/bbu_full_768/val.jsonl"
 
 # Runtime settings
 LIMIT = 10
-DEVICE = "cuda:0"
-SAVE_DIR = "vis_out/data_aug_off"
+DEVICE = "cuda:1"
+SAVE_DIR = "vis_out/10-27/v_1"
 MAX_NEW_TOKENS = 4096
-TEMPERATURE = 0.05
+TEMPERATURE = 0.001
 TOP_P = 0.8
 REPETITION_PENALTY = 1.05
 

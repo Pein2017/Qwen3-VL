@@ -179,7 +179,7 @@ All geometries (bbox_2d, quad, line) SHALL remain correct and valid in the augme
 
 ### Requirement: Canvas expansion to enclose affine
 - Before applying a general affine (rotation, shear, non-uniform scale), the system SHALL optionally expand the canvas so that the entire original image is enclosed after the transform without truncation.
-- Expansion SHALL compute the transformed image corners under M and choose a canvas that fully contains the bounding quad; empty regions are filled with a constant color.
+- Expansion SHALL compute the transformed image corners under M and choose a canvas that fully contains the bounding quad; empty regions are filled with middle gray RGB(128,128,128).
 - After expansion, the affine SHALL be recomposed so that geometry and images align in the expanded coordinate system without loss.
 #### Scenario: rotate 45° on 768×1024
 - GIVEN a 768×1024 image and 45° rotation
@@ -188,10 +188,26 @@ All geometries (bbox_2d, quad, line) SHALL remain correct and valid in the augme
 
 ### Requirement: Multiple-of-32 sizing without truncation
 - The final canvas width and height MUST be rounded up to the nearest multiple of 32 by padding (no cropping).
+- Padding SHALL use middle gray RGB(128,128,128) to achieve zero in Qwen3-VL's normalized space.
 - Geometry coordinates MUST remain valid and unchanged by the padding except for clamping to the new bounds.
 #### Scenario: post-rotate pad
 - WHEN rotation yields 1100×1100 canvas
 - THEN pad to 1120×1120; geometry remains identical in pixel positions.
+
+### Requirement: Neutral padding color to minimize distribution shift
+- All padding and fill operations (canvas expansion, affine warps, alignment padding) SHALL use middle gray RGB(128,128,128).
+- This color MUST map to approximately zero after Qwen3-VL's symmetric normalization: `(pixel/255 - 0.5) / 0.5`.
+- Black (0,0,0) or white (255,255,255) SHALL NOT be used as they create artificial high-contrast boundaries (normalize to ±1.0).
+#### Scenario: affine transform fillcolor
+- WHEN `PIL.Image.transform()` applies an affine warp
+- THEN the `fillcolor` parameter is set to `(128, 128, 128)`
+#### Scenario: padding to multiple
+- WHEN creating a new canvas via `Image.new()` for padding to 32-multiple
+- THEN the background color is `(128, 128, 128)`
+#### Scenario: normalized value verification
+- GIVEN Qwen3-VL normalization: `image_mean=[0.5,0.5,0.5]`, `image_std=[0.5,0.5,0.5]`
+- WHEN padding pixel value is 128
+- THEN normalized value is `(128/255 - 0.5) / 0.5 ≈ 0.003 ≈ 0`
 
 ### Requirement: Pre-flush hook protocol for barriers
 - The system SHALL support an optional `pre_flush_hook(M_total, width, height, rng)` method on barrier operators with `kind="barrier"` to modify accumulated affine matrix and canvas dimensions BEFORE warping occurs.

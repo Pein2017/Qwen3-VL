@@ -59,7 +59,6 @@ training:
   save_strategy: best
   eval_steps: 20
   save_steps: 40
-  load_best_model_at_end: true
   metric_for_best_model: eval_loss
   greater_is_better: false
   save_total_limit: 2
