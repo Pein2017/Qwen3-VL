@@ -6,7 +6,7 @@ set -euo pipefail
 # Example: mission=BBU安装方式检查（正装） gpu=1 bash scripts/stage_a_infer.sh
 
 # Fixed configuration
-CHECKPOINT="output/summary_merged/10-25-aug_on-full_last2_llm"
+CHECKPOINT="output/summary_merged/10-28"
 INPUT_DIR="group_data/bbu_scene_2.0_order"
 OUTPUT_DIR="output_post/stage_a"
 
@@ -25,9 +25,9 @@ fi
 BATCH_SIZE="16"
 MAX_PIXELS="786432"
 MAX_NEW_TOKENS="1024"
-TEMPERATURE="0.0"
+TEMPERATURE="0.0001"
 TOP_P="1.0"
-REP_PENALTY="1.1"
+REP_PENALTY="1.05"
 LOG_LEVEL="INFO"
 
 # Print configuration

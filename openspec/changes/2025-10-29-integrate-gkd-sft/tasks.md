@@ -1,0 +1,6 @@
+- [x] Survey ms-swift GKD trainer + arguments to confirm required config knobs
+- [x] Draft GKD-enabled Stage-2/Stage-3 YAML overlays with teacher paths + beta/sft_alpha defaults
+- [x] Implement launch glue (script or config helper) to call ms-swift GKD from our pipeline
+- [x] Add KL + CE telemetry capture (log history + tensorboard key names)
+- [x] Document usage and tuning guidance in dense caption training doc
+- [x] Run smoke validation on indoor/outdoor caption slice; record hallucination delta

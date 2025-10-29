@@ -307,6 +307,57 @@ training:
 - Faster convergence than single-stage
 - Better generalization
 
+### KL Anchoring with GKD
+
+Use Generalized Knowledge Distillation (GKD) when dense-caption SFT starts hallucinating away from the base checkpoint.
+
+- **Activation**: switch to the GKD overlays (`configs/stage_2_llm_lora_gkd.yaml`, `configs/stage_3_gkd.yaml`). They inherit the vanilla stage configs and only add:
+  ```yaml
+  rlhf:
+    rlhf_type: gkd
+    teacher_model: /abs/path/to/base/Qwen3-VL-4B-Instruct
+    beta: 0.5        # KL weight
+    sft_alpha: 0.3   # CE mix-in weight
+    seq_kd: true
+    lmbda: 0.5       # On-policy mixing ratio
+    max_completion_length: 256
+    temperature: 0.9
+  custom:
+    trainer_variant: gkd_monitor  # enable KL+CE logging wrapper
+  ```
+- **Launch**: run the usual entrypoint (`python -m src.sft --config <gkd-config.yaml>`). The loader instantiates `SwiftRLHF` behind the scenes, loads the frozen teacher, and routes training through ms-swift’s `GKDTrainer`.
+- **Telemetry**: the wrapper keeps the huggingface `loss` scalar and emits `train/loss`, `train/sft_loss`, `train/kl_loss`, `train/token_accuracy`, and `train/token_count` (plus eval counterparts). Watch for `train/kl_loss` spikes to catch drift early; compare `train/sft_loss` against your vanilla SFT runs to ensure language quality is intact.
+
+#### Forward-only KD (recommended for domain migration)
+
+Use this when you want CE to drive adaptation while KL lightly anchors logits to the base model, without any on-policy sampling.
+
+```yaml
+rlhf:
+  rlhf_type: gkd
+  teacher_model: /abs/path/to/base/Qwen3-VL-4B-Instruct
+  sft_alpha: 1.0   # CE dominates (domain learning)
+  beta: 0.1        # light KL anchoring
+  seq_kd: false    # no teacher sampling
+  lmbda: 0.0       # no student sampling
+  # temperature/max_completion_length are ignored in forward-only mode
+```
+
+Notes:
+- Teacher == Student base at init → KL≈0 initially; increases only with drift.
+- If overfitting/drift persists: raise `beta` to 0.2–0.3.
+- If under-adapting: lower `beta` to 0.05 or reduce LR/epochs.
+- **Tuning**:
+  - Increase `beta` (→ stronger anchoring) if hallucinations persist.
+  - Increase `sft_alpha` if CE should dominate (e.g., when the dataset is clean but narrow).
+  - Decrease `lmbda` to rely less on on-policy generations when the student is unstable.
+- **Compute Overhead**: expect ~1.8–2.0× wall-clock vs. vanilla SFT (teacher forward pass + optional teacher sampling when `seq_kd=true`). Budget epochs accordingly.
+- **Monitoring Checklist**:
+  - `train/kl_loss` steady or slowly decreasing → healthy anchoring.
+  - `train/sft_loss` aligns with prior SFT runs → no regression.
+  - `eval/kl_loss` jump → teacher/template mismatch (fix tokenizer/template).
+- **Smoke Test**: set `custom.sample_limit: 32` and `training.save_steps: 5` in a temporary overlay, then run `python -m src.sft --config configs/stage_3_gkd.yaml`. Verify `logging.jsonl` includes `train/kl_loss`, `train/sft_loss`, and the output directory writes checkpoints.
+
 ### Packing (Padding-Free Training)
 
 **Enable Packing**:

@@ -111,14 +111,28 @@ class Scale(ImageAugmenter):
 
 @register("color_jitter")
 class ColorJitter(ImageAugmenter):
-    def __init__(self, brightness=(0.7, 1.3), contrast=(0.7, 1.3), saturation=(0.7, 1.3), prob: float = 1.0):
+    def __init__(
+        self,
+        brightness=(0.7, 1.3),
+        contrast=(0.7, 1.3),
+        saturation=(0.7, 1.3),
+        prob: float = 1.0,
+    ):
         self.brightness = tuple(map(float, brightness))
         self.contrast = tuple(map(float, contrast))
         self.saturation = tuple(map(float, saturation))
         self.prob = float(prob)
         self.kind = "color"
 
-    def apply(self, images: List[Any], geoms: List[Dict[str, Any]], *, width: int, height: int, rng: Any):
+    def apply(
+        self,
+        images: List[Any],
+        geoms: List[Dict[str, Any]],
+        *,
+        width: int,
+        height: int,
+        rng: Any,
+    ):
         if rng.random() >= self.prob:
             return images, geoms
         out_imgs: List[Any] = []
@@ -142,7 +156,15 @@ class PadToMultiple(ImageAugmenter):
         self.multiple = int(multiple)
         self.kind = "barrier"
 
-    def apply(self, images: List[Any], geoms: List[Dict[str, Any]], *, width: int, height: int, rng: Any):
+    def apply(
+        self,
+        images: List[Any],
+        geoms: List[Dict[str, Any]],
+        *,
+        width: int,
+        height: int,
+        rng: Any,
+    ):
         out_imgs: List[Any] = []
         for img in images:
             im = _pil(img)
@@ -171,15 +193,20 @@ class ExpandToFitAffine(ImageAugmenter):
         self.kind = "barrier"
         self.force_flush_affine = True
 
-    def pre_flush_hook(self, M_total: List[List[float]], width: int, height: int, rng: Any) -> Tuple[List[List[float]], int, int]:
+    def pre_flush_hook(
+        self, M_total: List[List[float]], width: int, height: int, rng: Any
+    ) -> Tuple[List[List[float]], int, int]:
         """
         Compute AABB of original corners under M_total, translate to top-left origin, and pad to multiple.
         If resulting dimensions exceed max_pixels, scales down proportionally to fit within limit.
-        
+
         Returns: (M_total_updated, new_width, new_height)
         """
         logger = get_logger("augmentation.expand")
-        def _align_and_cap(canvas_w: int, canvas_h: int) -> Tuple[int, int, int, int, float, float, int, int, bool]:
+
+        def _align_and_cap(
+            canvas_w: int, canvas_h: int
+        ) -> Tuple[int, int, int, int, float, float, int, int, bool]:
             if canvas_w <= 0 or canvas_h <= 0:
                 raise ValueError(
                     f"ExpandToFitAffine received non-positive dimensions ({canvas_w}, {canvas_h})."
@@ -265,12 +292,12 @@ class ExpandToFitAffine(ImageAugmenter):
 
         # Check if M_total is identity (skip expansion if no transform)
         is_identity = (
-            abs(M_total[0][0] - 1.0) < 1e-9 and
-            abs(M_total[1][1] - 1.0) < 1e-9 and
-            abs(M_total[0][1]) < 1e-9 and
-            abs(M_total[1][0]) < 1e-9 and
-            abs(M_total[0][2]) < 1e-9 and
-            abs(M_total[1][2]) < 1e-9
+            abs(M_total[0][0] - 1.0) < 1e-9
+            and abs(M_total[1][1] - 1.0) < 1e-9
+            and abs(M_total[0][1]) < 1e-9
+            and abs(M_total[1][0]) < 1e-9
+            and abs(M_total[0][2]) < 1e-9
+            and abs(M_total[1][2]) < 1e-9
         )
         if is_identity:
             (
@@ -308,7 +335,16 @@ class ExpandToFitAffine(ImageAugmenter):
             return M_total, new_width, new_height
 
         # Compute AABB of original corners under M_total
-        corners = [0.0, 0.0, float(width - 1), 0.0, float(width - 1), float(height - 1), 0.0, float(height - 1)]
+        corners = [
+            0.0,
+            0.0,
+            float(width - 1),
+            0.0,
+            float(width - 1),
+            float(height - 1),
+            0.0,
+            float(height - 1),
+        ]
         transformed = apply_affine(corners, M_total)
         bbox = points_to_xyxy(transformed)
         minX, minY, maxX, maxY = bbox
@@ -337,7 +373,7 @@ class ExpandToFitAffine(ImageAugmenter):
         if scaled:
             S = scale_matrix(scale_x, scale_y)
             M_total_updated = compose_affine(S, M_total_updated)
-            logger.warning(
+            logger.debug(
                 "ExpandToFitAffine: Canvas expansion ({0}×{1} = {2} pixels) exceeds max_pixels={3}. "
                 "Scaled down to {4}×{5} = {6} pixels (scale_x={7:.4f}, scale_y={8:.4f}). "
                 "Consider reducing rotation/scale augmentation strength.".format(
@@ -359,7 +395,15 @@ class ExpandToFitAffine(ImageAugmenter):
 
         return M_total_updated, new_width, new_height
 
-    def apply(self, images: List[Any], geoms: List[Dict[str, Any]], *, width: int, height: int, rng: Any) -> Tuple[List[Any], List[Dict[str, Any]]]:
+    def apply(
+        self,
+        images: List[Any],
+        geoms: List[Dict[str, Any]],
+        *,
+        width: int,
+        height: int,
+        rng: Any,
+    ) -> Tuple[List[Any], List[Dict[str, Any]]]:
         """
         No-op: expansion already handled in pre_flush_hook.
         Images have already been warped to the expanded canvas by Compose.
@@ -369,7 +413,14 @@ class ExpandToFitAffine(ImageAugmenter):
 
 @register("resize_by_scale")
 class ResizeByScale(ImageAugmenter):
-    def __init__(self, lo: float = 0.8, hi: float = 1.2, scales: List[float] | None = None, align_multiple: int | None = 32, prob: float = 1.0):
+    def __init__(
+        self,
+        lo: float = 0.8,
+        hi: float = 1.2,
+        scales: List[float] | None = None,
+        align_multiple: int | None = 32,
+        prob: float = 1.0,
+    ):
         self.lo = float(lo)
         self.hi = float(hi)
         self.scales = [float(s) for s in (scales or [])]
@@ -377,7 +428,15 @@ class ResizeByScale(ImageAugmenter):
         self.prob = float(prob)
         self.kind = "barrier"
 
-    def apply(self, images: List[Any], geoms: List[Dict[str, Any]], *, width: int, height: int, rng: Any):
+    def apply(
+        self,
+        images: List[Any],
+        geoms: List[Dict[str, Any]],
+        *,
+        width: int,
+        height: int,
+        rng: Any,
+    ):
         if rng.random() >= self.prob:
             return images, geoms
         # choose scale
@@ -464,12 +523,23 @@ class Gamma(ImageAugmenter):
         self.prob = float(prob)
         self.kind = "color"
 
-    def apply(self, images: List[Any], geoms: List[Dict[str, Any]], *, width: int, height: int, rng: Any):
+    def apply(
+        self,
+        images: List[Any],
+        geoms: List[Dict[str, Any]],
+        *,
+        width: int,
+        height: int,
+        rng: Any,
+    ):
         if rng.random() >= self.prob:
             return images, geoms
         out_imgs: List[Any] = []
         g = max(1e-6, rng.uniform(self.gamma[0], self.gamma[1]))
-        lut = [min(255, max(0, int(round(self.gain * (i / 255.0) ** g * 255.0)))) for i in range(256)]
+        lut = [
+            min(255, max(0, int(round(self.gain * (i / 255.0) ** g * 255.0))))
+            for i in range(256)
+        ]
         lut = lut * 3  # apply to R,G,B equally
         for img in images:
             im = _pil(img).convert("RGB").point(lut)
@@ -479,14 +549,28 @@ class Gamma(ImageAugmenter):
 
 @register("hsv")
 class HueSaturationValue(ImageAugmenter):
-    def __init__(self, hue_delta_deg=(-20.0, 20.0), sat=(0.7, 1.4), val=(0.7, 1.4), prob: float = 1.0):
+    def __init__(
+        self,
+        hue_delta_deg=(-20.0, 20.0),
+        sat=(0.7, 1.4),
+        val=(0.7, 1.4),
+        prob: float = 1.0,
+    ):
         self.hue_delta_deg = (float(hue_delta_deg[0]), float(hue_delta_deg[1]))
         self.sat = (float(sat[0]), float(sat[1]))
         self.val = (float(val[0]), float(val[1]))
         self.prob = float(prob)
         self.kind = "color"
 
-    def apply(self, images: List[Any], geoms: List[Dict[str, Any]], *, width: int, height: int, rng: Any):
+    def apply(
+        self,
+        images: List[Any],
+        geoms: List[Dict[str, Any]],
+        *,
+        width: int,
+        height: int,
+        rng: Any,
+    ):
         if rng.random() >= self.prob:
             return images, geoms
         out_imgs: List[Any] = []
@@ -513,21 +597,35 @@ class HueSaturationValue(ImageAugmenter):
 
 @register("clahe")
 class CLAHE(ImageAugmenter):
-    def __init__(self, clip_limit: float = 3.0, tile_grid_size=(8, 8), prob: float = 0.5):
+    def __init__(
+        self, clip_limit: float = 3.0, tile_grid_size=(8, 8), prob: float = 0.5
+    ):
         self.clip_limit = float(clip_limit)
         self.tile_grid_size = (int(tile_grid_size[0]), int(tile_grid_size[1]))
         self.prob = float(prob)
         self.kind = "color"
 
-    def apply(self, images: List[Any], geoms: List[Dict[str, Any]], *, width: int, height: int, rng: Any):
+    def apply(
+        self,
+        images: List[Any],
+        geoms: List[Dict[str, Any]],
+        *,
+        width: int,
+        height: int,
+        rng: Any,
+    ):
         if rng.random() >= self.prob:
             return images, geoms
         try:
             import cv2  # type: ignore
         except Exception as e:
-            raise RuntimeError("CLAHE requires opencv-python-headless installed in the 'ms' environment") from e
+            raise RuntimeError(
+                "CLAHE requires opencv-python-headless installed in the 'ms' environment"
+            ) from e
         out_imgs: List[Any] = []
-        clahe = cv2.createCLAHE(clipLimit=self.clip_limit, tileGridSize=self.tile_grid_size)
+        clahe = cv2.createCLAHE(
+            clipLimit=self.clip_limit, tileGridSize=self.tile_grid_size
+        )
         for img in images:
             im = _pil(img).convert("RGB")
             arr = np.asarray(im)
@@ -549,7 +647,15 @@ class AutoContrast(ImageAugmenter):
         self.prob = float(prob)
         self.kind = "color"
 
-    def apply(self, images: List[Any], geoms: List[Dict[str, Any]], *, width: int, height: int, rng: Any):
+    def apply(
+        self,
+        images: List[Any],
+        geoms: List[Dict[str, Any]],
+        *,
+        width: int,
+        height: int,
+        rng: Any,
+    ):
         if rng.random() >= self.prob:
             return images, geoms
         out_imgs: List[Any] = []
@@ -566,7 +672,15 @@ class Solarize(ImageAugmenter):
         self.prob = float(prob)
         self.kind = "color"
 
-    def apply(self, images: List[Any], geoms: List[Dict[str, Any]], *, width: int, height: int, rng: Any):
+    def apply(
+        self,
+        images: List[Any],
+        geoms: List[Dict[str, Any]],
+        *,
+        width: int,
+        height: int,
+        rng: Any,
+    ):
         if rng.random() >= self.prob:
             return images, geoms
         out_imgs: List[Any] = []
@@ -583,7 +697,15 @@ class Posterize(ImageAugmenter):
         self.prob = float(prob)
         self.kind = "color"
 
-    def apply(self, images: List[Any], geoms: List[Dict[str, Any]], *, width: int, height: int, rng: Any):
+    def apply(
+        self,
+        images: List[Any],
+        geoms: List[Dict[str, Any]],
+        *,
+        width: int,
+        height: int,
+        rng: Any,
+    ):
         if rng.random() >= self.prob:
             return images, geoms
         out_imgs: List[Any] = []
@@ -600,7 +722,15 @@ class Sharpness(ImageAugmenter):
         self.prob = float(prob)
         self.kind = "color"
 
-    def apply(self, images: List[Any], geoms: List[Dict[str, Any]], *, width: int, height: int, rng: Any):
+    def apply(
+        self,
+        images: List[Any],
+        geoms: List[Dict[str, Any]],
+        *,
+        width: int,
+        height: int,
+        rng: Any,
+    ):
         if rng.random() >= self.prob:
             return images, geoms
         out_imgs: List[Any] = []
@@ -626,39 +756,90 @@ class AlbumentationsColor(ImageAugmenter):
                 "AlbumentationsColor requires 'albumentations'. Install it with 'opencv-python-headless' in the 'ms' env."
             ) from e
         if self.preset == "strong":
-            return A.ReplayCompose([
-                A.OneOf([
-                    A.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.1, p=1.0),
-                    A.RandomBrightnessContrast(brightness_limit=0.35, contrast_limit=0.35, p=1.0),
-                    A.RandomGamma(gamma_limit=(60, 180), p=1.0),
-                ], p=0.9),
-                A.OneOf([
-                    A.HueSaturationValue(hue_shift_limit=15, sat_shift_limit=30, val_shift_limit=30, p=1.0),
-                    A.RGBShift(r_shift_limit=20, g_shift_limit=20, b_shift_limit=20, p=1.0),
-                ], p=0.7),
-                A.OneOf([
-                    A.CLAHE(clip_limit=3.0, tile_grid_size=(8, 8), p=1.0),
-                    A.Equalize(p=1.0),
-                ], p=0.5),
-                A.ChannelShuffle(p=0.1),
-            ], p=1.0)
+            return A.ReplayCompose(
+                [
+                    A.OneOf(
+                        [
+                            A.ColorJitter(
+                                brightness=0.4,
+                                contrast=0.4,
+                                saturation=0.4,
+                                hue=0.1,
+                                p=1.0,
+                            ),
+                            A.RandomBrightnessContrast(
+                                brightness_limit=0.35, contrast_limit=0.35, p=1.0
+                            ),
+                            A.RandomGamma(gamma_limit=(60, 180), p=1.0),
+                        ],
+                        p=0.9,
+                    ),
+                    A.OneOf(
+                        [
+                            A.HueSaturationValue(
+                                hue_shift_limit=15,
+                                sat_shift_limit=30,
+                                val_shift_limit=30,
+                                p=1.0,
+                            ),
+                            A.RGBShift(
+                                r_shift_limit=20,
+                                g_shift_limit=20,
+                                b_shift_limit=20,
+                                p=1.0,
+                            ),
+                        ],
+                        p=0.7,
+                    ),
+                    A.OneOf(
+                        [
+                            A.CLAHE(clip_limit=3.0, tile_grid_size=(8, 8), p=1.0),
+                            A.Equalize(p=1.0),
+                        ],
+                        p=0.5,
+                    ),
+                    A.ChannelShuffle(p=0.1),
+                ],
+                p=1.0,
+            )
         elif self.preset == "extreme":
-            return A.ReplayCompose([
-                A.ColorJitter(brightness=0.6, contrast=0.6, saturation=0.6, hue=0.2, p=0.9),
-                A.RandomGamma(gamma_limit=(40, 220), p=0.7),
-                A.HueSaturationValue(hue_shift_limit=20, sat_shift_limit=40, val_shift_limit=40, p=0.9),
-                A.OneOf([
-                    A.CLAHE(clip_limit=4.0, tile_grid_size=(8, 8), p=1.0),
-                    A.Equalize(p=1.0),
-                    A.Solarize(threshold=128, p=1.0),
-                    A.Posterize(num_bits=4, p=1.0),
-                ], p=0.7),
-                A.ChannelShuffle(p=0.2),
-            ], p=1.0)
+            return A.ReplayCompose(
+                [
+                    A.ColorJitter(
+                        brightness=0.6, contrast=0.6, saturation=0.6, hue=0.2, p=0.9
+                    ),
+                    A.RandomGamma(gamma_limit=(40, 220), p=0.7),
+                    A.HueSaturationValue(
+                        hue_shift_limit=20,
+                        sat_shift_limit=40,
+                        val_shift_limit=40,
+                        p=0.9,
+                    ),
+                    A.OneOf(
+                        [
+                            A.CLAHE(clip_limit=4.0, tile_grid_size=(8, 8), p=1.0),
+                            A.Equalize(p=1.0),
+                            A.Solarize(threshold=128, p=1.0),
+                            A.Posterize(num_bits=4, p=1.0),
+                        ],
+                        p=0.7,
+                    ),
+                    A.ChannelShuffle(p=0.2),
+                ],
+                p=1.0,
+            )
         else:
             raise ValueError(f"Unknown albumentations preset: {self.preset}")
 
-    def apply(self, images: List[Any], geoms: List[Dict[str, Any]], *, width: int, height: int, rng: Any):
+    def apply(
+        self,
+        images: List[Any],
+        geoms: List[Dict[str, Any]],
+        *,
+        width: int,
+        height: int,
+        rng: Any,
+    ):
         if rng.random() >= self.prob:
             return images, geoms
         try:
@@ -700,11 +881,11 @@ class AlbumentationsColor(ImageAugmenter):
 class RandomCrop(ImageAugmenter):
     """
     Random crop with label filtering for dense captioning.
-    
+
     Crops a random region from the image and filters geometries based on visibility.
     If filtered objects < min_objects or any filtered object is a line (when skip_if_line=True),
     the entire crop operation is skipped and original images/geometries are returned unchanged.
-    
+
     Parameters:
         scale: (min, max) tuple for crop size as fraction of original image (default: (0.6, 1.0))
         aspect_ratio: (min, max) tuple for aspect ratio variation (default: (0.8, 1.2))
@@ -714,6 +895,7 @@ class RandomCrop(ImageAugmenter):
         skip_if_line: skip crop if any filtered object is a line (default: True)
         prob: probability of applying crop (default: 1.0)
     """
+
     def __init__(
         self,
         scale: Tuple[float, float] = (0.6, 1.0),
@@ -732,76 +914,95 @@ class RandomCrop(ImageAugmenter):
         self.skip_if_line = bool(skip_if_line)
         self.prob = float(prob)
         self.kind = "barrier"
-        
+
         # Metadata storage (set by apply, read by preprocessor)
         self.last_kept_indices: List[int] | None = None
         self.last_object_coverages: List[float] | None = None
         self.allows_geometry_drops = True  # Signal to validation
         self.last_skip_reason: str | None = None
         self.last_skip_counters: Dict[str, int] = {}
-    
-    def apply(self, images: List[Any], geoms: List[Dict[str, Any]], *, width: int, height: int, rng: Any):
+
+    def apply(
+        self,
+        images: List[Any],
+        geoms: List[Dict[str, Any]],
+        *,
+        width: int,
+        height: int,
+        rng: Any,
+    ):
         logger = get_logger("augmentation.random_crop")
-        
+
         # Clear metadata from previous call
         self.last_kept_indices = None
         self.last_object_coverages = None
         self.last_skip_reason = None
         self.last_skip_counters = {}
-        
+
         if rng.random() >= self.prob:
             return images, geoms
-        
+
         # Sample crop size
         crop_scale = rng.uniform(self.scale[0], self.scale[1])
         aspect = rng.uniform(self.aspect_ratio[0], self.aspect_ratio[1])
-        
+
         # Compute crop dimensions
         base_size = math.sqrt(width * height * crop_scale)
         crop_w = max(1, int(round(base_size * math.sqrt(aspect))))
         crop_h = max(1, int(round(base_size / math.sqrt(aspect))))
-        
+
         # Clamp to image bounds
         crop_w = min(crop_w, width)
         crop_h = min(crop_h, height)
-        
+
         # Sample random position
         max_x = width - crop_w
         max_y = height - crop_h
         crop_x = int(rng.randrange(0, max_x + 1)) if max_x > 0 else 0
         crop_y = int(rng.randrange(0, max_y + 1)) if max_y > 0 else 0
-        
-        crop_bbox = [float(crop_x), float(crop_y), float(crop_x + crop_w), float(crop_y + crop_h)]
-        
+
+        crop_bbox = [
+            float(crop_x),
+            float(crop_y),
+            float(crop_x + crop_w),
+            float(crop_y + crop_h),
+        ]
+
         # Compute coverage and filter geometries
         kept_indices: List[int] = []
         coverages: List[float] = []
         filtered_geoms: List[Dict[str, Any]] = []
-        
+
         for idx, g in enumerate(geoms):
             cov = compute_polygon_coverage(g, crop_bbox, fallback="bbox")
             if cov >= self.min_coverage:
                 kept_indices.append(idx)
                 coverages.append(cov)
                 filtered_geoms.append(g)
-        
+
         # Check skip conditions
         if len(filtered_geoms) < self.min_objects:
             reason = "min_objects"
-            logger.debug(f"Crop would filter to {len(filtered_geoms)} < {self.min_objects} objects. Skipping crop.")
+            logger.debug(
+                f"Crop would filter to {len(filtered_geoms)} < {self.min_objects} objects. Skipping crop."
+            )
             self.last_skip_reason = reason
             self.last_skip_counters[reason] = self.last_skip_counters.get(reason, 0) + 1
             return images, geoms
-        
+
         if self.skip_if_line:
             has_line = any("line" in g for g in filtered_geoms)
             if has_line:
                 reason = "line_object"
-                logger.debug("Crop region contains line object. Skipping crop to preserve cable/fiber integrity.")
+                logger.debug(
+                    "Crop region contains line object. Skipping crop to preserve cable/fiber integrity."
+                )
                 self.last_skip_reason = reason
-                self.last_skip_counters[reason] = self.last_skip_counters.get(reason, 0) + 1
+                self.last_skip_counters[reason] = (
+                    self.last_skip_counters.get(reason, 0) + 1
+                )
                 return images, geoms
-        
+
         # Proceed with crop - truncate and translate geometries
         cropped_geoms: List[Dict[str, Any]] = []
         for g in filtered_geoms:
@@ -813,7 +1014,9 @@ class RandomCrop(ImageAugmenter):
                 clipped_y1 = max(crop_bbox[1], min(crop_bbox[3], y1))
                 clipped_x2 = max(crop_bbox[0], min(crop_bbox[2], x2))
                 clipped_y2 = max(crop_bbox[1], min(crop_bbox[3], y2))
-                truncated = {"bbox_2d": [clipped_x1, clipped_y1, clipped_x2, clipped_y2]}
+                truncated = {
+                    "bbox_2d": [clipped_x1, clipped_y1, clipped_x2, clipped_y2]
+                }
             elif "quad" in g:
                 pts = g["quad"]
                 # Translate to crop origin for clipping
@@ -824,8 +1027,9 @@ class RandomCrop(ImageAugmenter):
                 clipped = sutherland_hodgman_clip(pts_translated, crop_w, crop_h)
                 # Reduce redundant vertices introduced by axis-aligned clipping
                 from ..geometry import simplify_polygon, choose_four_corners
+
                 clipped = simplify_polygon(clipped)
-                
+
                 if len(clipped) // 2 >= 3:
                     # Prefer true 4-corner representation when possible
                     if len(clipped) // 2 > 4:
@@ -864,7 +1068,7 @@ class RandomCrop(ImageAugmenter):
                 for i in range(0, len(clipped), 2):
                     final_pts.append(clipped[i] + crop_bbox[0])
                     final_pts.append(clipped[i + 1] + crop_bbox[1])
-                
+
                 if len(final_pts) >= 4:
                     truncated = {"line": final_pts}
                 else:
@@ -876,25 +1080,34 @@ class RandomCrop(ImageAugmenter):
                     if len(clamped) >= 4:
                         truncated = {"line": clamped[:4]}
                     else:
-                        truncated = {"line": [crop_bbox[0], crop_bbox[1], crop_bbox[0], crop_bbox[1]]}
+                        truncated = {
+                            "line": [
+                                crop_bbox[0],
+                                crop_bbox[1],
+                                crop_bbox[0],
+                                crop_bbox[1],
+                            ]
+                        }
             else:
                 truncated = g
-            
+
             # Translate to crop coordinates
             translated = translate_geometry(truncated, -crop_bbox[0], -crop_bbox[1])
             cropped_geoms.append(translated)
-        
+
         # Crop images
         out_imgs: List[Any] = []
         for img in images:
             im = _pil(img)
             out_imgs.append(im.crop((crop_x, crop_y, crop_x + crop_w, crop_y + crop_h)))
-        
+
         # Store metadata for preprocessor
         self.last_kept_indices = kept_indices
         self.last_object_coverages = coverages
-        
-        logger.debug(f"Crop applied: {len(geoms)} → {len(cropped_geoms)} objects (region: {crop_bbox})")
+
+        logger.debug(
+            f"Crop applied: {len(geoms)} → {len(cropped_geoms)} objects (region: {crop_bbox})"
+        )
         return out_imgs, cropped_geoms
 
 
@@ -915,5 +1128,3 @@ __all__ = [
     "PadToMultiple",
     "RandomCrop",
 ]
-
-

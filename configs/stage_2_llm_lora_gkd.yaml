@@ -1,0 +1,21 @@
+extends: stage_2_llm_lora.yaml
+
+# Stage 2 overlay: enable GKD anchoring during dense-caption SFT
+
+rlhf:
+  rlhf_type: gkd
+  teacher_model: model_cache/models/Qwen/Qwen3-VL-4B-Instruct
+  beta: 0.5
+  sft_alpha: 0.3
+  seq_kd: true
+  lmbda: 0.5
+  max_completion_length: 256
+  temperature: 0.9
+
+training:
+  output_dir: ./output/10-25/stage_2_llm_lora_gkd
+  run_name: lora_8_16-5e-4-eff_batch_32-last_4-gkd
+
+custom:
+  trainer_variant: gkd_monitor
+

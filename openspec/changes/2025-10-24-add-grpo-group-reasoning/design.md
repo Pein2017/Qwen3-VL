@@ -7,7 +7,7 @@
 - **Input**: Mission-based directory structure: `<root>/<mission>/{审核通过,审核不通过}/<group_id>/*.{jpg,jpeg,png}`
 - **Processing**: Batch inference (configurable batch_size, default 4); hybrid batching with automatic chunking for large groups; ~4-5x speedup over sequential
 - **Prompts**: Mission-dependent system and user prompts in Chinese (see `src/stage_a/prompts.py`)
-- **Output**: Streaming JSONL (one file per mission); each line = one group with `{group_id, mission, label, images, per_image{图片_i: summary}, raw_texts, clean_texts, timestamp}`
+- **Output**: Streaming JSONL (one file per mission); each line = one group with `{group_id, mission, label, images: [排好序的文件名...], per_image{图片_i: summary}}`
 - **Validation**: Strict fail-fast on empty summaries or 图片_{i} misalignment
 - **Key features**: Resumable (writes incrementally), monitorable (`tail -f`), safe interruption (Ctrl+C preserves completed groups)
 

@@ -5,7 +5,7 @@ import yaml
 from pathlib import Path
 from typing import Any, Dict, Optional, Set, List
 
-from swift.llm.argument import TrainArguments
+from swift.llm.argument import RLHFArguments, TrainArguments
 
 from .prompts import SYSTEM_PROMPT, SYSTEM_PROMPT_SUMMARY, USER_PROMPT
 
@@ -192,7 +192,15 @@ class ConfigLoader:
         extracted_custom_keys: Dict[str, Any] = {}
 
         # Merge sections in order (later can override earlier)
-        sections = ["model", "quantization", "data", "template", "tuner", "training"]
+        sections = [
+            "model",
+            "quantization",
+            "data",
+            "template",
+            "tuner",
+            "training",
+            "rlhf",
+        ]
 
         for section in sections:
             if section in config:
@@ -216,9 +224,17 @@ class ConfigLoader:
             if ds_config.get("enabled", False):
                 args_dict["deepspeed"] = ds_config.get("config", "zero2")
 
-        # Create TrainArguments with all merged parameters
-        # ms-swift's TrainArguments will fill in defaults for missing fields
-        train_args = TrainArguments(**args_dict)
+        # Create TrainArguments/RLHFArguments with all merged parameters
+        # ms-swift dataclasses will fill in defaults for missing fields
+        args_cls = RLHFArguments if args_dict.get("rlhf_type") else TrainArguments
+        train_args = args_cls(**args_dict)
+
+        trainer_variant = config.get("custom", {}).get("trainer_variant")
+        if trainer_variant:
+            try:
+                setattr(train_args, "trainer_variant", str(trainer_variant))
+            except Exception:
+                pass
 
         # Re-attach extracted custom keys as attributes on TrainArguments so the
         # runner can access them without breaking ms-swift constructor

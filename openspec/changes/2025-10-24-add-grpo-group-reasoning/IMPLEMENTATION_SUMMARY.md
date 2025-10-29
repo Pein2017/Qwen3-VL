@@ -15,7 +15,7 @@
 - Support for {jpg, jpeg, png} with natural sort
 - Group ID extraction from filename or subdirectory
 
-**Output**: One JSONL per mission with per-image summaries grouped by scene
+**Output**: One JSONL per mission with per-image summaries grouped by scene (`images` now stores sorted filenames; timestamp removed)
 
 ---
 

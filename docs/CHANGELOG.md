@@ -40,6 +40,28 @@ Addressed two dense-caption regressions by enforcing canvas pixel limits post-al
 
 ---
 
+## [1.1.4] - 2025-10-29
+
+### Added - GKD KL Anchoring + Telemetry
+
+**Change ID**: `2025-10-29-integrate-gkd-sft`
+
+#### Summary
+Introduced Generalized Knowledge Distillation (GKD) training overlays and a local wrapper to log KL and CE metrics. Added forward-only KD guidance for domain migration (no on-policy sampling) and updated docs/specs.
+
+#### Technical Details
+- New overlays: `configs/stage_2_llm_lora_gkd.yaml`, `configs/stage_3_gkd.yaml`
+- Trainer wrapper: `src/trainers/gkd_monitor.py` emits `train/loss`, `train/sft_loss`, `train/kl_loss`, `train/token_accuracy`, `train/token_count`
+- Config loader & runner glue: select wrapper via `custom.trainer_variant: gkd_monitor`
+- Docs: REFERENCE updated with forward-only KD recipe; spec refined accordingly
+
+#### Impact
+- ✅ KL anchoring available without upstream code changes
+- ✅ Clear telemetry for drift detection
+- ✅ Forward-only KD recommended defaults (`sft_alpha≈1.0`, `beta≈0.1`, `seq_kd=false`, `lmbda=0.0`)
+
+---
+
 ## [1.1.2] - 2025-10-27
 
 ### Changed - Middle Gray Padding Strategy

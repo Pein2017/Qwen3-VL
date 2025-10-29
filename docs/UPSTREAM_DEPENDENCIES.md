@@ -59,6 +59,14 @@ _Source: `/data/ms-swift/swift/` (notably `swift/llm/train/sft.py` and `swift/ll
 - Streaming datasets use `EncodePreprocessor` to tokenize on the fly while respecting template logic.
 
 ### Callbacks & Metrics
+### RLHF & GKD
+
+- **GKD (Generalized Knowledge Distillation)** is provided by TRL/ms-swift. In this repo we:
+  - Use `rlhf_type: gkd` to enable KD between student and a frozen teacher.
+  - Select a local wrapper via `custom.trainer_variant: gkd_monitor` to expose telemetry without modifying upstream code.
+  - Support forward-only KD (no on-policy sampling): set `seq_kd: false`, `lmbda: 0.0`.
+  - TRL versions ≥0.17 recommended. ms-swift adapts TRL GKD; trainer selection occurs in `src/sft.py`.
+
 - Extra callbacks (`swift.plugin.extra_callbacks`) added via `SwiftSft._prepare_callbacks()` include logging helpers, checkpoint throttling, and optional visualization.
 - `SwiftSft._save_val_dataset()` saves the validation split to `val_dataset.jsonl` on rank 0 when the validation set is carved from training data—useful for reproduction.
 

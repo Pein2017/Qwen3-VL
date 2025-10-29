@@ -4,7 +4,8 @@ import torch
 from PIL import Image
 from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
 
-from src.config.prompts import SYSTEM_PROMPT_B
+from src.config.prompts import SYSTEM_PROMPT  # noqa
+from src.config.prompts import SYSTEM_PROMPT_SUMMARY  # noqa
 
 
 def load_images(image_paths: List[str]) -> List[Image.Image]:
@@ -39,17 +40,25 @@ def main() -> None:
     # Configuration (edit these)
 
     # model_path = "output/summary_merged/10-25-aug_on-full_last2_llm"
-    model_path="output/stage_3_merged-10-27/v_2"
-    image_paths = [
-        'demo/images/QC-20230106-0000211_16517.jpeg',
-        'demo/images/QC-20230106-0000211_16519.jpeg',
-        # "demo/images/test_demo.jpg"
-    ]
-    prompt = "请介绍一下这两张图片"
-    max_new_tokens=512
-    temperature=0.0001
-    # prompt='Describe the image(s) briefly.'
+    model_path = "output/stage_3_merged/10-29"
 
+    # image_paths = [
+    #     # "demo/images/QC-20230106-0000211_16517.jpeg",
+    #     # "demo/images/QC-20230106-0000211_16519.jpeg",
+    #     "demo/images/test_demo.jpg",
+    # ]
+    image_paths = [
+        # "demo/irrelevant_images/QC-TEMP-20241028-0015135_4206555.jpeg",
+        # "demo/irrelevant_images/QC-TEMP-20241028-0015135_4206556.jpeg",
+        "demo/irrelevant_images/QC-TEMP-20241028-0015135_4206715.jpeg",
+    ]
+    prompt = "请用自然语言描述一下这些图片"
+    max_new_tokens = 512
+    temperature = 0.0
+    top_p = 0.9
+    top_k = None
+    repetition_penalty = 1.05
+    # prompt='Describe the image(s) briefly.'
 
     device = "cuda:1"
     torch.backends.cuda.matmul.allow_tf32 = True
@@ -61,11 +70,15 @@ def main() -> None:
     processor = AutoProcessor.from_pretrained(model_path)
     # Inspect template to ensure 图片_ injection is present
     try:
-        template_str = getattr(getattr(processor, "tokenizer", None), "chat_template", None)
+        template_str = getattr(
+            getattr(processor, "tokenizer", None), "chat_template", None
+        )
         if isinstance(template_str, str):
             print(f"Template loaded. Contains '图片_': {'图片_' in template_str}")
         else:
-            print("Template string not available on processor.tokenizer; relying on apply_chat_template output.")
+            print(
+                "Template string not available on processor.tokenizer; relying on apply_chat_template output."
+            )
     except Exception:
         print("Template inspection failed; proceeding.")
 
@@ -80,7 +93,7 @@ def main() -> None:
     model.eval()
     # Report dtype support and current model param dtype
     try:
-        bf16_ok = getattr(torch.cuda, 'is_bf16_supported', lambda: False)()
+        bf16_ok = getattr(torch.cuda, "is_bf16_supported", lambda: False)()
         print(f"CUDA bf16 supported: {bf16_ok}")
         print(f"Model param dtype: {next(model.parameters()).dtype}")
     except Exception:
@@ -95,8 +108,14 @@ def main() -> None:
     except Exception:
         pass
     try:
-        attn_impl = getattr(model.config, "attn_implementation", getattr(model.config, "_attn_implementation", None))
-        use_cache_flag = getattr(getattr(model, "generation_config", None), "use_cache", None)
+        attn_impl = getattr(
+            model.config,
+            "attn_implementation",
+            getattr(model.config, "_attn_implementation", None),
+        )
+        use_cache_flag = getattr(
+            getattr(model, "generation_config", None), "use_cache", None
+        )
         print(f"Attention impl: {attn_impl}; use_cache: {use_cache_flag}")
     except Exception:
         pass
@@ -114,10 +133,10 @@ def main() -> None:
     message_content = [{"type": "image", "image": img} for img in images]
     message_content.append({"type": "text", "text": prompt})
     messages = [
-        {
-            "role": "system",
-            "content": SYSTEM_PROMPT_B,
-        },
+        # {
+        #     "role": "system",
+        #     "content": SYSTEM_PROMPT_SUMMARY,
+        # },
         {
             "role": "user",
             "content": message_content,
@@ -131,13 +150,17 @@ def main() -> None:
         add_generation_prompt=True,
     )
     # Preview the templated text and label counts
-    preview_len = 600
-    preview = text[:preview_len]
-    print("\n--- Chat text preview (first 600 chars) ---")
-    print(preview)
-    print("--- end preview ---\n")
+    print("\n--- FULL Chat text (for debugging) ---")
+    print(text)
+    print("--- end full text ---\n")
     label_count = text.count("图片_")
-    print(f"Occurrences of '图片_': {label_count}; has 图片_1: {'图片_1' in text}, 图片_2: {'图片_2' in text}")
+    print(
+        f"Occurrences of '图片_': {label_count}; has 图片_1: {'图片_1' in text}, 图片_2: {'图片_2' in text}"
+    )
+    # Show all occurrences
+    for i in range(1, 10):
+        if f"图片_{i}" in text:
+            print(f"  Found: 图片_{i}")
 
     print("Preprocessing inputs...")
     if images:
@@ -154,19 +177,31 @@ def main() -> None:
             inputs[k] = v.to(device)
 
     print("Generating...")
+    do_sample = temperature is not None and temperature > 0
+    generation_kwargs = {
+        "max_new_tokens": max_new_tokens,
+        "repetition_penalty": repetition_penalty,
+        "use_cache": True,
+        "do_sample": do_sample,
+    }
+
+    if do_sample:
+        generation_kwargs["temperature"] = temperature
+        if top_p is not None:
+            generation_kwargs["top_p"] = top_p
+        if top_k is not None:
+            generation_kwargs["top_k"] = top_k
+
     with torch.inference_mode():
         generated_ids = model.generate(
             **inputs,
-            max_new_tokens=max_new_tokens,
-            do_sample=True,
-            temperature=temperature,
-            repetition_penalty=1.05,
-            use_cache=True,
+            **generation_kwargs,
         )
 
     # Trim input prefix to get only newly generated tokens
     generated_ids_trimmed = [
-        out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs["input_ids"], generated_ids)
+        out_ids[len(in_ids) :]
+        for in_ids, out_ids in zip(inputs["input_ids"], generated_ids)
     ]
 
     # Decode
@@ -182,5 +217,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-
