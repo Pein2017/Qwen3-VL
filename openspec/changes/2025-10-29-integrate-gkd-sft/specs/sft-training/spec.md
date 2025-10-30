@@ -42,16 +42,16 @@
 
 ---
 
-### Requirement: KL/CE telemetry
-- Training logs SHALL expose `train/kl_loss`, `train/sft_loss`, total `train/loss`, and `train/token_accuracy` every logging step, and emit matching `eval/*` metrics without duplicating prefixes (e.g., no `train/eval/*`).
+### Requirement: KD/CE telemetry
+- Training logs SHALL expose `train/llm_kd_loss`, `train/vision_kd_loss`, `train/sft_loss`, total `train/loss`, and `train/token_accuracy` every logging step, and emit matching `eval/*` metrics without duplicating prefixes (e.g., no `train/eval/*`).
 - `logging.jsonl` SHALL include these fields; tensorboard curves SHALL be emitted when enabled.
-- Evaluation mode SHALL omit teacher forwards and only log CE-derived metrics.
+- Evaluation mode SHALL include the teacher forward when a teacher model is configured so the same KD breakdown (`eval/llm_kd_loss`, `eval/vision_kd_loss`, `eval/sft_loss`) is reported.
 - Teacher forwards MUST run without enabling `torch.autocast` when DeepSpeed is active unless the DeepSpeed config explicitly turns on autocast; otherwise dtype mismatches SHALL be avoided by casting teacher logits to the student dtype.
 
-#### Scenario: KL spikes detection
+#### Scenario: KD spikes detection
 - GIVEN a run with `beta>0`
 - WHEN reading `logging.jsonl`
-- THEN entries contain finite KL values; NaN must trigger a clear warning and step identification
+- THEN entries contain finite KD values; NaN must trigger a clear warning that cites the metric name and step
 
 #### Scenario: DeepSpeed autocast guard
 - GIVEN a DeepSpeed configuration that does not set `torch.autocast`
@@ -67,7 +67,7 @@
 #### Scenario: Vanilla SFT config
 - GIVEN `stage_3_vision_llm.yaml` without an `rlhf` block
 - WHEN loaded through `src.sft`
-- THEN the pipeline instantiates `SwiftSft`, no teacher model is loaded, and training arguments match the pre-change behavior
+- THEN the pipeline instantiates `SwiftSft`, no teacher model is loaded, and training arguments match the pre-change behavior. When the telemetry wrapper is used without a teacher, it SHALL fall back to logging only `*/sft_loss` while leaving KD metrics absent.
 
 ---
 
@@ -78,7 +78,7 @@
 #### Scenario: Minimal run
 - GIVEN teacher + student paths and a small JSONL
 - WHEN running `--config stage_3_gkd.yaml`
-- THEN training finishes, checkpoints are saved, and KL/CE are logged
+- THEN training finishes, checkpoints are saved, and the KD/CE breakdown (`*/llm_kd_loss`, `*/vision_kd_loss`, `*/sft_loss`) is logged
 
 ---
 

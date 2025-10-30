@@ -125,7 +125,7 @@ def test_gkd_monitor_logs_losses(monkeypatch):
 
     trainer = object.__new__(GKDTrainerWithMetrics)
     trainer._metrics = {"train": defaultdict(list), "eval": defaultdict(list)}
-    trainer._metrics["train"]["kl_loss"].extend([0.1, 0.2])
+    trainer._metrics["train"]["llm_kd_loss"].extend([0.1, 0.2])
     trainer._metrics["train"]["sft_loss"].extend([0.4, 0.5])
     trainer._metrics["train"]["loss"].extend([0.5, 0.7])
     trainer._metrics["train"]["token_accuracy"].extend([0.8, 0.9])
@@ -133,7 +133,7 @@ def test_gkd_monitor_logs_losses(monkeypatch):
 
     trainer.log({"eval/loss": 1.23})
 
-    assert pytest.approx(captured_logs["train/kl_loss"], rel=1e-6) == (0.1 + 0.2) / 2
+    assert pytest.approx(captured_logs["train/llm_kd_loss"], rel=1e-6) == (0.1 + 0.2) / 2
     assert pytest.approx(captured_logs["train/sft_loss"], rel=1e-6) == (0.4 + 0.5) / 2
     assert pytest.approx(captured_logs["train/loss"], rel=1e-6) == (0.5 + 0.7) / 2
     assert (
@@ -145,14 +145,14 @@ def test_gkd_monitor_logs_losses(monkeypatch):
     assert "train/eval/loss" not in captured_logs
     assert not trainer._metrics["train"]
 
-    trainer._metrics["eval"]["kl_loss"].extend([0.3])
+    trainer._metrics["eval"]["llm_kd_loss"].extend([0.3])
     trainer._metrics["eval"]["sft_loss"].extend([0.6])
     trainer._metrics["eval"]["loss"].extend([0.9])
     trainer._metrics["eval"]["token_accuracy"].extend([0.4])
 
     trainer.log({})
 
-    assert pytest.approx(captured_logs["eval/kl_loss"], rel=1e-6) == 0.3
+    assert pytest.approx(captured_logs["eval/llm_kd_loss"], rel=1e-6) == 0.3
     assert pytest.approx(captured_logs["eval/sft_loss"], rel=1e-6) == 0.6
     assert pytest.approx(captured_logs["eval/loss"], rel=1e-6) == 0.9
     assert pytest.approx(captured_logs["eval/token_accuracy"], rel=1e-6) == 0.4
@@ -223,7 +223,7 @@ def test_gkd_compute_loss_aligns_tokens():
     torch.testing.assert_close(captured["student"], expected_student)
     torch.testing.assert_close(captured["teacher"], expected_teacher)
     assert captured["beta"] == pytest.approx(0.25)
-    assert trainer._metrics["train"]["kl_loss"][0].item() == pytest.approx(0.5)
+    assert trainer._metrics["train"]["llm_kd_loss"][0].item() == pytest.approx(0.5)
     assert trainer._metrics["train"]["token_accuracy"][0].item() == pytest.approx(1.0)
 
 
@@ -344,7 +344,7 @@ def test_visual_kd_adds_weighted_loss():
     trainer = object.__new__(GKDTrainerWithMetrics)
     trainer._metrics = {"train": defaultdict(list), "eval": defaultdict(list)}
     trainer.teacher_model = teacher_model  # type: ignore[assignment]
-    trainer.beta = 0.0
+    trainer.beta = 0.5
     trainer.args = SimpleNamespace(sft_alpha=0.0)  # type: ignore[assignment]
     trainer.get_use_logits_to_keep = lambda default_value=True: False  # type: ignore[method-assign]
     trainer.prepare_logits_to_keep = lambda inputs: None  # type: ignore[method-assign]
@@ -403,7 +403,7 @@ def test_visual_kd_skips_when_disabled():
     trainer = object.__new__(GKDTrainerWithMetrics)
     trainer._metrics = {"train": defaultdict(list), "eval": defaultdict(list)}
     trainer.teacher_model = teacher_model  # type: ignore[assignment]
-    trainer.beta = 0.0
+    trainer.beta = 0.5
     trainer.args = SimpleNamespace(sft_alpha=0.0)  # type: ignore[assignment]
     trainer.get_use_logits_to_keep = lambda default_value=True: False  # type: ignore[method-assign]
     trainer.prepare_logits_to_keep = lambda inputs: None  # type: ignore[method-assign]
@@ -428,7 +428,7 @@ def test_visual_kd_skips_when_disabled():
     assert "vision_kd_loss" not in trainer._metrics["train"]
 
 
-def test_gkd_eval_logs_kl_loss():
+def test_gkd_eval_logs_llm_kd_loss():
     labels = torch.tensor([[1, 2, -100]])
     vocab_size = 4
 
@@ -454,7 +454,7 @@ def test_gkd_eval_logs_kl_loss():
     trainer = object.__new__(GKDTrainerWithMetrics)
     trainer._metrics = {"train": defaultdict(list), "eval": defaultdict(list)}
     trainer.teacher_model = teacher_model  # type: ignore[assignment]
-    trainer.beta = 0.0
+    trainer.beta = 0.5
     trainer.args = SimpleNamespace(sft_alpha=0.0)  # type: ignore[assignment]
     trainer.get_use_logits_to_keep = lambda default_value=True: False  # type: ignore[method-assign]
     trainer.prepare_logits_to_keep = lambda inputs: None  # type: ignore[method-assign]
@@ -487,8 +487,8 @@ def test_gkd_eval_logs_kl_loss():
     loss = trainer.compute_loss(student_model, {"labels": labels})
     assert isinstance(loss, torch.Tensor)
 
-    assert pytest.approx(loss.item(), rel=1e-6) == 0.0
+    assert pytest.approx(loss.item(), rel=1e-6) == 0.25
     eval_metrics = trainer._metrics["eval"]
-    assert pytest.approx(eval_metrics["kl_loss"][0].item(), rel=1e-6) == 0.25
-    assert pytest.approx(eval_metrics["loss"][0].item(), rel=1e-6) == 0.0
+    assert pytest.approx(eval_metrics["llm_kd_loss"][0].item(), rel=1e-6) == 0.25
+    assert pytest.approx(eval_metrics["loss"][0].item(), rel=1e-6) == 0.25
     assert pytest.approx(eval_metrics["sft_loss"][0].item(), rel=1e-6) == 0.0

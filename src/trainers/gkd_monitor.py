@@ -27,6 +27,7 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
         self._visual_hooks = []
         self._student_visual_cache: Dict[str, torch.Tensor] = {}
         self._teacher_visual_cache: Dict[str, torch.Tensor] = {}
+        self._missing_teacher_warned = False
 
         cfg_raw = getattr(self.args, "visual_kd_config", VisualKDConfig.disabled())
         if isinstance(cfg_raw, Mapping):
@@ -53,6 +54,13 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
                     "visual_kd enabled but no targets provided; disabling feature regularizer"
                 )
                 self._visual_kd_enabled = False
+
+        teacher_available = self._has_teacher_model()
+        if self._visual_kd_enabled and not teacher_available:
+            logger.warning(
+                "visual_kd enabled but no teacher model is attached; disabling feature regularizer."
+            )
+            self._visual_kd_enabled = False
 
         if self._visual_kd_enabled:
             try:
@@ -111,12 +119,16 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
         mode = "train" if model.training else "eval"
 
         teacher_outputs = None
-        need_teacher = model.training or self._visual_kd_enabled or not model.training
-        kl_loss: Optional[torch.Tensor] = None
+        llm_kd_loss: Optional[torch.Tensor] = None
+
+        teacher_available = self._has_teacher_model()
+        llm_kd_active = teacher_available and bool(getattr(self, "beta", 0.0))
+        need_teacher = teacher_available and (llm_kd_active or self._visual_kd_enabled)
 
         if need_teacher:
             teacher_outputs = self._run_teacher_forward(model_inputs, student_logits)
 
+        if teacher_outputs is not None and (llm_kd_active or self._visual_kd_enabled):
             teacher_logits = teacher_outputs.logits.to(dtype)
             teacher_logits_next = teacher_logits[:, :-1, :]
             teacher_vocab_size = teacher_logits_next.shape[-1]
@@ -128,47 +140,50 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
                     "Ensure both models share the same tokenizer and vocabulary."
                 )
 
-            if valid_count > 0:
-                masked_teacher_logits = teacher_logits_next.masked_select(
-                    mask.unsqueeze(-1)
-                ).view(1, valid_count, teacher_vocab_size)
-                student_for_kl = (
-                    masked_student_logits
-                    if model.training
-                    else masked_student_logits.detach()
-                )
-                kl_loss = self.generalized_jsd_loss(
-                    student_logits=student_for_kl,
-                    teacher_logits=masked_teacher_logits,
-                    beta=self.beta,
-                )
-            else:
-                kl_loss = student_logits.new_zeros(())
+            if llm_kd_active:
+                if valid_count > 0:
+                    masked_teacher_logits = teacher_logits_next.masked_select(
+                        mask.unsqueeze(-1)
+                    ).view(1, valid_count, teacher_vocab_size)
+                    student_for_kl = (
+                        masked_student_logits
+                        if model.training
+                        else masked_student_logits.detach()
+                    )
+                    llm_kd_loss = self.generalized_jsd_loss(
+                        student_logits=student_for_kl,
+                        teacher_logits=masked_teacher_logits,
+                        beta=self.beta,
+                    )
+                else:
+                    llm_kd_loss = student_logits.new_zeros(())
+        elif llm_kd_active and not self._missing_teacher_warned:
+            logger.warning(
+                "beta=%.4f but no teacher model is attached; skipping llm KD term.",
+                float(self.beta),
+            )
+            self._missing_teacher_warned = True
 
         ce_loss = outputs_student.loss
-        sft_alpha = getattr(self.args, "sft_alpha", 0.0)
-
-        if model.training:
-            kl_loss_tensor = (
-                kl_loss
-                if isinstance(kl_loss, torch.Tensor)
-                else student_logits.new_zeros(())
-            )
-            total_loss = kl_loss_tensor
-            self._metrics[mode]["kl_loss"].append(kl_loss_tensor.detach().cpu())
-            if ce_loss is not None and sft_alpha > 0:
-                total_loss = total_loss + sft_alpha * ce_loss
-            if ce_loss is not None:
-                self._metrics[mode]["sft_loss"].append(ce_loss.detach().cpu())
+        sft_alpha = float(getattr(self.args, "sft_alpha", 0.0))
+        if not teacher_available:
+            # Fallback to CE-only weighting when no teacher is wired (pure SFT mode).
+            sft_weight = 1.0
         else:
-            base_loss = ce_loss if ce_loss is not None else outputs_student.loss
-            if base_loss is None:
-                base_loss = student_logits.new_zeros(())
-            total_loss = base_loss
-            if ce_loss is not None:
-                self._metrics[mode]["sft_loss"].append(ce_loss.detach().cpu())
-            if kl_loss is not None:
-                self._metrics[mode]["kl_loss"].append(kl_loss.detach().cpu())
+            sft_weight = sft_alpha
+
+        total_loss = student_logits.new_zeros((), dtype=dtype, device=student_logits.device)
+
+        if llm_kd_loss is not None:
+            total_loss = total_loss + llm_kd_loss
+            self._metrics[mode]["llm_kd_loss"].append(llm_kd_loss.detach().cpu())
+
+        if ce_loss is not None:
+            weighted_sft_loss = ce_loss * sft_weight
+            total_loss = total_loss + weighted_sft_loss
+            self._metrics[mode]["sft_loss"].append(weighted_sft_loss.detach().cpu())
+        else:
+            weighted_sft_loss = None
 
         if self._visual_kd_enabled:
             vision_loss = self._compute_visual_kd_loss()
@@ -220,7 +235,10 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
 
     def _register_visual_hooks(self) -> None:
         student_unwrapped = self.accelerator.unwrap_model(self.model)
-        teacher_unwrapped = self.accelerator.unwrap_model(self.teacher_model)
+        teacher_model = getattr(self, "teacher_model", None)
+        if teacher_model is None:
+            raise RuntimeError("visual_kd requires a teacher model")
+        teacher_unwrapped = self.accelerator.unwrap_model(teacher_model)
 
         student_visual = self._resolve_visual_branch(student_unwrapped)
         teacher_visual = self._resolve_visual_branch(teacher_unwrapped)
@@ -398,6 +416,9 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
         if not hasattr(self, "_teacher_visual_cache"):
             self._teacher_visual_cache = {}
 
+    def _has_teacher_model(self) -> bool:
+        return hasattr(self, "teacher_model") and self.teacher_model is not None
+
     def log(self, logs: Dict[str, float], start_time: Optional[float] = None) -> None:
         sanitized_logs: Dict[str, float] = dict(logs)
         aggregated_logs: Dict[str, float] = {}
@@ -423,11 +444,16 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
                 finite_mask = torch.isfinite(stacked)
                 if not torch.all(finite_mask):
                     bad_count = int((~finite_mask).sum().item())
+                    step_info = ""
+                    state = getattr(self, "state", None)
+                    if state is not None and getattr(state, "global_step", None) is not None:
+                        step_info = f" (step={int(state.global_step)})"
                     logger.warning(
-                        "Skipping %s non-finite %s entries in %s mode",
+                        "Skipping %s non-finite %s entries in %s mode%s",
                         bad_count,
                         key,
                         mode,
+                        step_info,
                     )
                 finite_values = stacked[finite_mask]
                 if finite_values.numel() == 0:

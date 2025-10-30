@@ -89,11 +89,11 @@ Addressed two dense-caption regressions by enforcing canvas pixel limits post-al
 **Change ID**: `2025-10-29-integrate-gkd-sft`
 
 #### Summary
-Introduced Generalized Knowledge Distillation (GKD) training overlays and a local wrapper to log KL and CE metrics. Added forward-only KD guidance for domain migration (no on-policy sampling) and updated docs/specs.
+Introduced Generalized Knowledge Distillation (GKD) training overlays and a local wrapper to log KD and CE metrics. Added forward-only KD guidance for domain migration (no on-policy sampling) and updated docs/specs.
 
 #### Technical Details
 - New overlays: `configs/stage_2_llm_lora_gkd.yaml`, `configs/stage_3_gkd.yaml`
-- Trainer wrapper: `src/trainers/gkd_monitor.py` emits `train/loss`, `train/sft_loss`, `train/kl_loss`, `train/token_accuracy` (and `eval/*` counterparts) with deduplicated prefixes; evaluation skips the teacher forward for cheaper validation.
+- Trainer wrapper: `src/trainers/gkd_monitor.py` emits `train/loss`, `train/sft_loss`, `train/llm_kd_loss`, `train/vision_kd_loss`, `train/token_accuracy` (and `eval/*` counterparts) with deduplicated prefixes; evaluation mirrors the same breakdown so KD health can be tracked on validation as well.
 - Config loader & runner glue: select wrapper via `custom.trainer_variant: gkd_monitor`
 - Docs: REFERENCE updated with forward-only KD recipe; spec refined accordingly
 
@@ -296,4 +296,3 @@ Added polygon simplification pipeline:
 ---
 
 **Last Updated**: 2025-10-27
-

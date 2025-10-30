@@ -327,7 +327,7 @@ Use Generalized Knowledge Distillation (GKD) when dense-caption SFT starts hallu
     trainer_variant: gkd_monitor  # enable KL+CE logging wrapper
   ```
 - **Launch**: run the usual entrypoint (`python -m src.sft --config <gkd-config.yaml>`). The loader instantiates `SwiftRLHF` behind the scenes, loads the frozen teacher, and routes training through ms-swift’s `GKDTrainer`.
-- **Telemetry**: the wrapper keeps the huggingface `loss` scalar and emits `train/loss`, `train/sft_loss`, `train/kl_loss`, `train/token_accuracy`, plus `eval/*` counterparts. Metrics are prefixed exactly once (`train/*`, `eval/*`) to avoid TensorBoard duplication. Watch for `train/kl_loss` spikes to catch drift early; compare `train/sft_loss` against your vanilla SFT runs to ensure language quality is intact.
+- **Telemetry**: the wrapper keeps the huggingface `loss` scalar and emits `train/loss`, `train/sft_loss`, `train/llm_kd_loss`, `train/vision_kd_loss`, `train/token_accuracy`, plus the same `eval/*` counterparts. Metrics are prefixed exactly once (`train/*`, `eval/*`) to avoid TensorBoard duplication. Watch for `train/llm_kd_loss` spikes to catch drift early; compare `train/sft_loss` against your vanilla SFT runs to ensure language quality is intact.
 
 #### Vision/Aligner Feature KD (optional)
 
@@ -343,7 +343,7 @@ custom:
 ```
 
 - **Effect**: anchors student vision/aligner activations to the frozen teacher while leaving KL + CE to supervise the language tower.
-- **Metrics**: trainer logs `train/vision_kd_loss` / `eval/vision_kd_loss` (post-weight) so you can monitor the regularizer alongside KL/CE.
+- **Metrics**: trainer logs `train/vision_kd_loss` / `eval/vision_kd_loss` (post-weight) so you can monitor the regularizer alongside `llm_kd_loss` and `sft_loss` contributions.
 - **Images only**: batches without `pixel_values` automatically skip the term; no special handling is required for summary-only validation shards.
 - **Preset overlay**: `configs/stage_3_gkd_visual.yaml` extends the standard Stage-3 recipe with the block above—use it as the starting point for experiments.
 
@@ -372,10 +372,10 @@ Notes:
   - Decrease `lmbda` to rely less on on-policy generations when the student is unstable.
 - **Compute Overhead**: expect ~1.6–2.0× wall-clock vs. vanilla SFT (extra teacher forward pass; add teacher sampling cost only if `seq_kd=true`). Evaluation runs skip the teacher and only compute CE, so validation cost stays close to baseline.
 - **Monitoring Checklist**:
-  - `train/kl_loss` steady or slowly decreasing → healthy anchoring.
+- `train/llm_kd_loss` steady or slowly decreasing → healthy anchoring.
   - `train/sft_loss` aligns with prior SFT runs → no regression.
-  - `eval/kl_loss` jump → teacher/template mismatch (fix tokenizer/template).
-- **Smoke Test**: set `custom.sample_limit: 32` and `training.save_steps: 5` in a temporary overlay, then run `python -m src.sft --config configs/stage_3_gkd.yaml`. Verify `logging.jsonl` includes `train/kl_loss`, `train/sft_loss`, and the output directory writes checkpoints.
+- `eval/llm_kd_loss` jump → teacher/template mismatch (fix tokenizer/template).
+- **Smoke Test**: set `custom.sample_limit: 32` and `training.save_steps: 5` in a temporary overlay, then run `python -m src.sft --config configs/stage_3_gkd.yaml`. Verify `logging.jsonl` includes `train/llm_kd_loss`, `train/vision_kd_loss`, `train/sft_loss`, and the output directory writes checkpoints.
 
 ### Packing (Padding-Free Training)
 
@@ -902,4 +902,3 @@ Monitoring: track bbox/quad/line metrics separately; reduce geometric ops if qua
 ---
 
 **Last Updated**: October 25, 2025
-

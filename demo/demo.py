@@ -42,7 +42,7 @@ def main() -> None:
     # Configuration (edit these)
 
     # model_path = "output/summary_merged/10-25-aug_on-full_last2_llm"
-    model_path = "output/stage_3_gkd-merged/10-29/lan_kd_0.04-vision_kd_0.15-weaker_color_aug-checkpoint-400"
+    model_path = "output/stage_3_gkd-merged/10-30/lan_kd_0.04-vision_kd_0.15-weaker_color_aug-checkpoint-1380"
 
     image_paths = [
         #     # "demo/images/QC-20230106-0000211_16517.jpeg",
@@ -58,7 +58,7 @@ def main() -> None:
     temperature = 0.0
     top_p = 0.9
     top_k = None
-    repetition_penalty = 1.05
+    repetition_penalty = 1.06
     # prompt='Describe the image(s) briefly.'
 
     device = "cuda:2"

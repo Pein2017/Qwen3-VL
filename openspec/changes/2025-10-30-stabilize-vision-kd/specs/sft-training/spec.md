@@ -11,13 +11,18 @@
 - THEN the trainer reuses activations from the student/teacher forward passes, computes per-target MSE losses averaged over tokens, sums them, multiplies by `weight`, and adds the result to the batch loss.
 
 ### Requirement: Vision KD telemetry
-- Training logs SHALL include `train/vision_kd_loss` (and `eval/vision_kd_loss` during evaluation) whenever the feature is enabled and images are present.
+- Training logs SHALL include `train/vision_kd_loss` (and `eval/vision_kd_loss` during evaluation) whenever the feature is enabled and images are present, reporting the weighted term alongside `*/llm_kd_loss` and `*/sft_loss`.
 - Non-finite values MUST trigger a warning that names the metric and step, mirroring KL monitoring.
 
 #### Scenario: logging during eval
 - GIVEN `custom.visual_kd.enabled: true`
 - WHEN evaluation runs on an image batch
 - THEN the aggregated logs contain `eval/vision_kd_loss` with a finite scalar.
+
+#### Scenario: missing teacher fallback
+- GIVEN `custom.visual_kd.enabled: true` but the active trainer has no `teacher_model`
+- WHEN training initializes
+- THEN the system emits a warning and disables visual KD, continuing with only the remaining loss terms.
 
 ### Requirement: Disabled behavior
 - With `custom.visual_kd.enabled: false` (or the key absent), the trainer SHALL skip hook registration, avoid computing extra losses, and keep training identical to the current implementation.
@@ -52,5 +57,3 @@
 - GIVEN `custom.visual_kd.enabled: true`
 - WHEN an eval batch contains no images (rare but possible for summary-only records)
 - THEN the trainer emits no `vision_kd_loss` metric for that step and the total loss matches the CE-only path.
-
-

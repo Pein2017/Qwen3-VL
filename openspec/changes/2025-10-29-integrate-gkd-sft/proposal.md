@@ -12,7 +12,7 @@ Recent dense-caption SFT runs collapse the language tower: models hallucinate ou
 ## What Changes
 - **GKD-backed SFT mode**: reuse ms-swift's Generalized Knowledge Distillation trainer so the base checkpoint stays as a frozen teacher.
 - **Config overlays**: add YAML patterns that switch between vanilla SFT and GKD without refactoring stage configs.
-- **KL telemetry**: log KL/CE terms per step to flag drift and provide quick health checks (`train/loss`, `train/sft_loss`, `train/kl_loss`, `train/token_accuracy`, plus `eval/*` mirrors).
+- **KD telemetry**: log KD/CE terms per step to flag drift and provide quick health checks (`train/loss`, `train/sft_loss`, `train/llm_kd_loss`, `train/vision_kd_loss`, `train/token_accuracy`, plus `eval/*` mirrors).
 - **Docs**: capture when to pick GKD vs vanilla SFT, and how to tune `beta`, `sft_alpha`, `seq_kd`; add forward-only KD guidance (seq_kd=false, lmbda=0.0, sft_alpha≈1.0, beta≈0.1) and note that generation knobs are ignored in that mode.
 
 ## Impact
