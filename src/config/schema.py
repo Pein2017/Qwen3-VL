@@ -4,8 +4,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping, MutableMapping, Optional, Sequence, Tuple, Literal
-
+from typing import (
+    Any,
+    Literal,
+    Mapping,
+    MutableMapping,
+    Optional,
+    Sequence,
+    Tuple,
+    cast,
+)
 
 AllowedNorm = Literal["none", "norm100", "norm1000"]
 AllowedVisualDistance = Literal["mse", "cosine"]
@@ -39,8 +47,24 @@ class DeepSpeedConfig:
             return None
         if not isinstance(payload, Mapping):
             raise TypeError("deepspeed section must be a mapping")
-        enabled = bool(payload.get("enabled", False))
-        config_value = payload.get("config", "zero2")
+        if "enabled" not in payload:
+            raise ValueError("deepspeed.enabled must be explicitly set")
+
+        enabled = bool(payload["enabled"])
+
+        if enabled:
+            if "config" not in payload:
+                raise ValueError(
+                    "deepspeed.config must be provided when deepspeed.enabled is true"
+                )
+            config_value = payload["config"]
+        else:
+            config_value = payload.get("config")
+
+        if enabled and (config_value is None or config_value == ""):
+            raise ValueError(
+                "deepspeed.config must be a non-empty value when deepspeed.enabled is true"
+            )
         return cls(enabled=enabled, config=config_value)
 
 
@@ -76,16 +100,14 @@ class SaveDelayConfig:
         return (self.steps or 0) > 0 or (self.epochs or 0.0) > 0
 
     @classmethod
-    def from_mapping(
-        cls, payload: Optional[Mapping[str, Any]]
-    ) -> Optional["DeepSpeedConfig"]:
+    def from_mapping(cls, payload: Optional[Mapping[str, Any]]) -> "SaveDelayConfig":
         if payload is None:
-            return None
+            return cls()
         if not isinstance(payload, Mapping):
-            raise TypeError("deepspeed section must be a mapping")
-        enabled = bool(payload.get("enabled", False))
-        config_value = payload.get("config", "zero2")
-        return cls(enabled=enabled, config=config_value)
+            raise TypeError("save_delay section must be a mapping")
+        steps = payload.get("steps")
+        epochs = payload.get("epochs")
+        return cls.from_raw(steps, epochs)
 
 
 @dataclass(frozen=True)
@@ -225,10 +247,20 @@ class CustomConfig:
 
         extra = dict(data)
 
+        if emit_norm is None:
+            raise ValueError("custom.emit_norm must be provided")
+        if not isinstance(emit_norm, str):
+            raise TypeError("custom.emit_norm must be a string")
+        emit_norm_value = emit_norm.strip()
+        if emit_norm_value not in {"none", "norm100", "norm1000"}:
+            raise ValueError(
+                "custom.emit_norm must be one of {'none', 'norm100', 'norm1000'}"
+            )
+
         return cls(
             train_jsonl=str(train_jsonl) if train_jsonl is not None else "",
             user_prompt=str(user_prompt) if user_prompt is not None else "",
-            emit_norm=str(emit_norm) if emit_norm is not None else "",
+            emit_norm=cast("AllowedNorm", emit_norm_value),
             summary_ratio=summary_ratio,
             system_prompt_summary=system_prompt_summary,
             images_per_user_turn=images_per_user_turn,

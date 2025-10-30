@@ -75,7 +75,7 @@ training:
   save_strategy: steps
   save_total_limit: 6
   eval_steps: 20
-  save_steps: 200
+  save_steps: 500
 
   # Verbose logging
   logging_dir: ./tb/10-30/stage_3_gkd

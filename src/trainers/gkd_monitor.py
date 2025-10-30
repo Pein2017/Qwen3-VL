@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Any, Dict, Optional, Union, Mapping
+from typing import Any, Dict, Mapping, Optional, Union
 
 import torch
 import torch.nn as nn
@@ -45,33 +45,35 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
 
         if self._visual_kd_enabled:
             if self._visual_kd_weight <= 0:
-                logger.warning(
-                    "visual_kd enabled but weight<=0; disabling feature regularizer"
+                raise ValueError(
+                    "visual_kd enabled but weight<=0; disable visual_kd or set a positive weight"
                 )
-                self._visual_kd_enabled = False
             elif not self._visual_kd_targets:
-                logger.warning(
-                    "visual_kd enabled but no targets provided; disabling feature regularizer"
+                raise ValueError(
+                    "visual_kd enabled but no targets provided; specify at least one target or disable visual_kd"
                 )
-                self._visual_kd_enabled = False
 
         teacher_available = self._has_teacher_model()
         if self._visual_kd_enabled and not teacher_available:
-            logger.warning(
-                "visual_kd enabled but no teacher model is attached; disabling feature regularizer."
+            raise RuntimeError(
+                "visual_kd is enabled but no teacher model is attached. Attach a teacher_model or disable visual_kd in the configuration."
             )
-            self._visual_kd_enabled = False
 
         if self._visual_kd_enabled:
             try:
                 self._register_visual_hooks()
             except Exception as exc:
-                logger.warning(
-                    "Failed to register visual KD hooks (%s). Disabling feature regularizer.",
-                    exc,
-                )
-                self._visual_kd_enabled = False
                 self._remove_visual_hooks()
+                raise RuntimeError(
+                    "visual_kd failed to register visual feature hooks. Ensure student and teacher expose the requested visual modules."
+                    f" Original error: {exc}"
+                ) from exc
+
+            if not self._visual_hooks:
+                self._remove_visual_hooks()
+                raise RuntimeError(
+                    "visual_kd enabled but no hooks were registered. Verify the configured targets exist on both student and teacher models."
+                )
 
     def compute_loss(
         self,
@@ -172,7 +174,9 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
         else:
             sft_weight = sft_alpha
 
-        total_loss = student_logits.new_zeros((), dtype=dtype, device=student_logits.device)
+        total_loss = student_logits.new_zeros(
+            (), dtype=dtype, device=student_logits.device
+        )
 
         if llm_kd_loss is not None:
             total_loss = total_loss + llm_kd_loss
@@ -360,6 +364,7 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
             )
 
         contributions = []
+        missing_targets: list[str] = []
         for name in self._visual_kd_targets:
             if name == "deepstack":
                 keys = sorted(
@@ -367,11 +372,16 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
                     for key in self._student_visual_cache.keys()
                     if key.startswith("deepstack_")
                 )
+                if not keys:
+                    missing_targets.append("deepstack (no hooks fired)")
+                    continue
                 layer_losses = []
+                missing_layers = []
                 for key in keys:
                     student_feat = self._student_visual_cache.get(key)
                     teacher_feat = self._teacher_visual_cache.get(key)
                     if student_feat is None or teacher_feat is None:
+                        missing_layers.append(key)
                         continue
                     layer_losses.append(compute_distance(student_feat, teacher_feat))
                 if layer_losses:
@@ -380,16 +390,32 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
                             [loss_item.float() for loss_item in layer_losses]
                         ).mean()
                     )
+                else:
+                    if missing_layers:
+                        missing_targets.append(
+                            "deepstack missing activations: "
+                            + ", ".join(sorted(missing_layers))
+                        )
+                    else:
+                        missing_targets.append("deepstack (no matching activations)")
                 continue
 
             student_feat = self._student_visual_cache.get(name)
             teacher_feat = self._teacher_visual_cache.get(name)
             if student_feat is None or teacher_feat is None:
+                missing_targets.append(name)
                 continue
             contributions.append(compute_distance(student_feat, teacher_feat))
 
         if not contributions:
-            return None
+            missing_desc = (
+                ", ".join(missing_targets) if missing_targets else "all targets"
+            )
+            raise RuntimeError(
+                "visual_kd did not receive any feature activations for the configured targets "
+                f"{tuple(self._visual_kd_targets)} (missing {missing_desc}). "
+                "Ensure the dataset yields image inputs and that both teacher and student expose the requested visual modules."
+            )
 
         stacked = torch.stack([loss.float() for loss in contributions])
         return stacked.mean()
@@ -446,7 +472,10 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
                     bad_count = int((~finite_mask).sum().item())
                     step_info = ""
                     state = getattr(self, "state", None)
-                    if state is not None and getattr(state, "global_step", None) is not None:
+                    if (
+                        state is not None
+                        and getattr(state, "global_step", None) is not None
+                    ):
                         step_info = f" (step={int(state.global_step)})"
                     logger.warning(
                         "Skipping %s non-finite %s entries in %s mode%s",
