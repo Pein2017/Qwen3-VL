@@ -1,4 +1,5 @@
 """Grouped JSON conversation builder"""
+
 import json
 import os
 import base64
@@ -7,6 +8,7 @@ from typing import Any, Dict, List, Literal
 from .base import BaseBuilder
 from ..geometry import normalize_points
 from ..utils import extract_object_points
+from ..contracts import ConversationRecord
 
 
 class JSONLinesBuilder(BaseBuilder):
@@ -14,11 +16,11 @@ class JSONLinesBuilder(BaseBuilder):
 
     Produces a single-round chat where the user embeds all images and the assistant
     responds with one JSON object grouped by 图片_N keys.
-    
+
     Supports two output modes:
     - dense: grouped JSON with geometry + desc (default)
     - summary: grouped JSON with per-image summary strings (loaded from dataset)
-    
+
     Mode selection is determined per pairing group (at dataset level via system_prompt_summary).
     """
 
@@ -38,18 +40,18 @@ class JSONLinesBuilder(BaseBuilder):
 
     def _get_summary_text(self, record: Dict[str, Any], record_index: int) -> str:
         """Extract and validate summary from record.
-        
+
         Args:
             record: The data record
             record_index: Index of the record (for error reporting)
-            
+
         Returns:
             The summary string
-            
+
         Raises:
             ValueError: if summary is missing or invalid
         """
-        summary = record.get('summary')
+        summary = record.get("summary")
         if not isinstance(summary, str) or not summary.strip():
             raise ValueError(
                 f"Missing or invalid 'summary' for record index {record_index}; "
@@ -58,7 +60,9 @@ class JSONLinesBuilder(BaseBuilder):
             )
         return summary
 
-    def build(self, record_a: Dict[str, Any], record_b: Dict[str, Any]) -> Dict[str, Any]:
+    def build(
+        self, record_a: ConversationRecord, record_b: ConversationRecord
+    ) -> Dict[str, Any]:
         """Build grouped JSON messages from two records."""
         records = [record_a, record_b]
 
@@ -81,7 +85,7 @@ class JSONLinesBuilder(BaseBuilder):
                 user_contents.append({"type": "image", "image": self._to_url(image)})
 
             label = f"图片_{image_slot}"
-            
+
             # Branch on mode: all records in this group use the same mode
             if self.mode == "summary":
                 # Summary mode: load and validate summary from record
@@ -90,7 +94,7 @@ class JSONLinesBuilder(BaseBuilder):
                 # Dense mode: build full grouped entry with geometry
                 grouped[label] = self._build_group_entry(objects, record)
                 self._update_objects_metadata(objects_out, objects, image_slot - 1)
-            
+
             record_index += 1
 
         user_contents.append({"type": "text", "text": self.user_prompt})
@@ -98,7 +102,10 @@ class JSONLinesBuilder(BaseBuilder):
         assistant_text = json.dumps(grouped, ensure_ascii=False)
         messages = [
             {"role": "user", "content": user_contents},
-            {"role": "assistant", "content": [{"type": "text", "text": assistant_text}]},
+            {
+                "role": "assistant",
+                "content": [{"type": "text", "text": assistant_text}],
+            },
         ]
 
         merged = {"messages": messages}
@@ -107,7 +114,7 @@ class JSONLinesBuilder(BaseBuilder):
 
         return merged
 
-    def build_many(self, records: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def build_many(self, records: List[ConversationRecord]) -> Dict[str, Any]:
         """Build grouped JSON messages from N records.
 
         Note: Visible labels (e.g., 图片_N) are injected by the chat template.
@@ -129,7 +136,7 @@ class JSONLinesBuilder(BaseBuilder):
                 user_contents.append({"type": "image", "image": self._to_url(image)})
 
             label = f"图片_{image_slot}"
-            
+
             # Branch on mode: all records in this group use the same mode
             if self.mode == "summary":
                 # Summary mode: load and validate summary from record
@@ -138,7 +145,7 @@ class JSONLinesBuilder(BaseBuilder):
                 # Dense mode: build full grouped entry with geometry
                 grouped[label] = self._build_group_entry(objects, record)
                 self._update_objects_metadata(objects_out, objects, image_slot - 1)
-            
+
             record_index += 1
 
         user_contents.append({"type": "text", "text": self.user_prompt})
@@ -146,7 +153,10 @@ class JSONLinesBuilder(BaseBuilder):
         assistant_text = json.dumps(grouped, ensure_ascii=False)
         messages = [
             {"role": "user", "content": user_contents},
-            {"role": "assistant", "content": [{"type": "text", "text": assistant_text}]},
+            {
+                "role": "assistant",
+                "content": [{"type": "text", "text": assistant_text}],
+            },
         ]
 
         merged = {"messages": messages}
@@ -154,7 +164,9 @@ class JSONLinesBuilder(BaseBuilder):
             merged["objects"] = objects_out
         return merged
 
-    def _build_group_entry(self, objects: List[Dict[str, Any]], record: Dict[str, Any]) -> Dict[str, Any]:
+    def _build_group_entry(
+        self, objects: List[Dict[str, Any]], record: Dict[str, Any]
+    ) -> Dict[str, Any]:
         width = float(record.get("width") or 1)
         height = float(record.get("height") or 1)
 
@@ -188,7 +200,9 @@ class JSONLinesBuilder(BaseBuilder):
             if desc:
                 objects_out["ref"].append(desc.split("/")[0])
 
-    def _format_points(self, points: List[float], width: float, height: float) -> List[int | float]:
+    def _format_points(
+        self, points: List[float], width: float, height: float
+    ) -> List[int | float]:
         if self.emit_norm == "none":
             return [float(v) for v in points]
         normalized = normalize_points(points, width, height, self.emit_norm)
@@ -201,15 +215,15 @@ class JSONLinesBuilder(BaseBuilder):
         - If relative path: prefix with ROOT_IMAGE_DIR when available
         - If absolute path: pass through
         """
-        if isinstance(image, dict) and 'bytes' in image:
-            b = image['bytes']
+        if isinstance(image, dict) and "bytes" in image:
+            b = image["bytes"]
             if not isinstance(b, (bytes, bytearray)):
                 raise TypeError("image bytes must be bytes-like")
-            b64 = base64.b64encode(b).decode('ascii')
+            b64 = base64.b64encode(b).decode("ascii")
             return f"data:image/png;base64,{b64}"
         if isinstance(image, str):
             if not os.path.isabs(image):
-                root = os.environ.get('ROOT_IMAGE_DIR')
+                root = os.environ.get("ROOT_IMAGE_DIR")
                 if root:
                     return os.path.join(root, image)
             return image
@@ -218,4 +232,3 @@ class JSONLinesBuilder(BaseBuilder):
 
 
 __all__ = ["JSONLinesBuilder"]
-

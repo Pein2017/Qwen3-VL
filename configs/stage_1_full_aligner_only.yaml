@@ -13,19 +13,19 @@ tuner:
   freeze_aligner: false
 
 training:
-  output_dir: ./output/10-25/stage_1_from_base
+  output_dir: ./output/10-30/stage_1_from_base
   run_name: eff_batch_64-per_image_2-from_base
-  per_device_train_batch_size: 2
+  per_device_train_batch_size: 1
 
   learning_rate: 1.0e-4
   vit_lr: 2.0e-5
   aligner_lr: 1.0e-4
   num_train_epochs: 10
 
-  gradient_accumulation_steps: 2
+  gradient_accumulation_steps: 4
 
   # Verbose logging
-  logging_dir: ./tb/10-25/stage_1_from_base
+  logging_dir: ./tb/10-30/stage_1_from_base
 
 data:
   dataset_num_proc: 8

@@ -5,11 +5,23 @@
 - A frozen `teacher_model` (base Qwen3‑VL) SHALL be loaded with matching tokenizer/template.
 - The trainer SHALL minimize `loss = sft_alpha * CE(student, labels) + beta * KL(teacher||student)` and run on multimodal batches.
 - The teacher MUST be no-grad and never updated.
+- Student logits and labels MUST be aligned via left-shifted slicing (`logits[:, :-1]` vs `labels[:, 1:]`); rotations/wrap-around that leak BOS tokens into the final position are forbidden.
+- Teacher logits MUST be gathered on the identical masked positions, and the trainer SHALL raise an error if teacher/student vocabulary sizes diverge.
 
 #### Scenario: Valid multimodal batch under GKD
 - GIVEN a dataset sample with images + chat messages
 - WHEN `rlhf_type=gkd` is enabled
 - THEN the forward pass computes both CE and KL without altering inputs or template behavior
+
+#### Scenario: Token alignment regression
+- GIVEN labels whose first supervised token is valid (non `-100`)
+- WHEN the trainer prepares logits for KL/accuracy
+- THEN the first token is ignored (no wrap-around), only the aligned next-token pairs participate, and accuracy reflects the same mask as KL
+
+#### Scenario: Teacher vocab mismatch on forward
+- GIVEN a teacher checkpoint whose vocabulary size differs from the student
+- WHEN the trainer tries to compute KL
+- THEN it raises an actionable `ValueError` naming both vocab dimensions instead of padding or silently copying logits
 
 #### Scenario: Teacher mismatch
 - GIVEN a teacher checkpoint with incompatible tokenizer/template
@@ -31,13 +43,20 @@
 ---
 
 ### Requirement: KL/CE telemetry
-- Training logs SHALL expose `train/kl_loss`, `train/sft_loss`, and total `train/loss` every logging step.
+- Training logs SHALL expose `train/kl_loss`, `train/sft_loss`, total `train/loss`, and `train/token_accuracy` every logging step, and emit matching `eval/*` metrics without duplicating prefixes (e.g., no `train/eval/*`).
 - `logging.jsonl` SHALL include these fields; tensorboard curves SHALL be emitted when enabled.
+- Evaluation mode SHALL omit teacher forwards and only log CE-derived metrics.
+- Teacher forwards MUST run without enabling `torch.autocast` when DeepSpeed is active unless the DeepSpeed config explicitly turns on autocast; otherwise dtype mismatches SHALL be avoided by casting teacher logits to the student dtype.
 
 #### Scenario: KL spikes detection
 - GIVEN a run with `beta>0`
 - WHEN reading `logging.jsonl`
 - THEN entries contain finite KL values; NaN must trigger a clear warning and step identification
+
+#### Scenario: DeepSpeed autocast guard
+- GIVEN a DeepSpeed configuration that does not set `torch.autocast`
+- WHEN the trainer executes the teacher forward
+- THEN it skips wrapping the call in `torch.autocast`, preventing DeepSpeed's communication-precision assertion while still returning logits in the student's dtype
 
 ---
 

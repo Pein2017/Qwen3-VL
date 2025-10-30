@@ -4,8 +4,10 @@ import torch
 from PIL import Image
 from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
 
-from src.config.prompts import SYSTEM_PROMPT  # noqa
-from src.config.prompts import SYSTEM_PROMPT_SUMMARY  # noqa
+from src.config.prompts import (
+    SYSTEM_PROMPT,  # noqa
+    SYSTEM_PROMPT_SUMMARY,  # noqa
+)
 
 
 def load_images(image_paths: List[str]) -> List[Image.Image]:
@@ -40,19 +42,18 @@ def main() -> None:
     # Configuration (edit these)
 
     # model_path = "output/summary_merged/10-25-aug_on-full_last2_llm"
-    model_path = "output/stage_3_merged/10-29"
+    model_path = "output/stage_3_gkd-merged/10-29/lan_kd_0.04-vision_kd_0.15-weaker_color_aug-checkpoint-400"
 
-    # image_paths = [
-    #     # "demo/images/QC-20230106-0000211_16517.jpeg",
-    #     # "demo/images/QC-20230106-0000211_16519.jpeg",
-    #     "demo/images/test_demo.jpg",
-    # ]
     image_paths = [
+        #     # "demo/images/QC-20230106-0000211_16517.jpeg",
+        # "demo/images/QC-20230106-0000211_16519.jpeg",
+        # "demo/images/test_demo.jpg",
+        # ]
         # "demo/irrelevant_images/QC-TEMP-20241028-0015135_4206555.jpeg",
-        # "demo/irrelevant_images/QC-TEMP-20241028-0015135_4206556.jpeg",
-        "demo/irrelevant_images/QC-TEMP-20241028-0015135_4206715.jpeg",
+        "demo/irrelevant_images/QC-TEMP-20241028-0015135_4206556.jpeg",
+        # "demo/irrelevant_images/QC-TEMP-20241028-0015135_4206715.jpeg",
     ]
-    prompt = "请用自然语言描述一下这些图片"
+    prompt = "请用自然语言描述"
     max_new_tokens = 512
     temperature = 0.0
     top_p = 0.9
@@ -60,7 +61,7 @@ def main() -> None:
     repetition_penalty = 1.05
     # prompt='Describe the image(s) briefly.'
 
-    device = "cuda:1"
+    device = "cuda:2"
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.benchmark = True
     torch.set_float32_matmul_precision("high")
@@ -89,7 +90,7 @@ def main() -> None:
         torch_dtype=torch.bfloat16,
         attn_implementation="flash_attention_2",
     )
-    model.to(device)
+    model.to(torch.device(device))  # type: ignore[arg-type]
     model.eval()
     # Report dtype support and current model param dtype
     try:
@@ -104,7 +105,9 @@ def main() -> None:
     except Exception:
         pass
     try:
-        model.generation_config.use_cache = True
+        gc = getattr(model, "generation_config", None)
+        if gc is not None:
+            gc.use_cache = True
     except Exception:
         pass
     try:
@@ -135,7 +138,7 @@ def main() -> None:
     messages = [
         # {
         #     "role": "system",
-        #     "content": SYSTEM_PROMPT_SUMMARY,
+        #     "content": SYSTEM_PROMPT,
         # },
         {
             "role": "user",
@@ -172,9 +175,10 @@ def main() -> None:
     show_input_debug(inputs)
 
     # Move tensors to device
+    dev_obj = torch.device(device)
     for k, v in list(inputs.items()):
         if isinstance(v, torch.Tensor):
-            inputs[k] = v.to(device)
+            inputs[k] = v.to(dev_obj)
 
     print("Generating...")
     do_sample = temperature is not None and temperature > 0

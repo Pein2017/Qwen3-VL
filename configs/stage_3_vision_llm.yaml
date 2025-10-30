@@ -4,7 +4,7 @@ extends: base.yaml
 
 model:
   # Point to stage 2 best checkpoint - will load base model + LLM LoRA
-  model: output/stage_2_merged-10-25
+  model: output/stage_2_merged-10-30
 
 tuner:
   train_type: lora
@@ -41,7 +41,7 @@ tuner:
   lora_bias: none
 
 training:
-  output_dir: ./output/10-29/stage_3
+  output_dir: ./output/10-28/stage_3
   run_name: last_4_2-epoch_100-aug_conservative-eff_batch_32
   add_version: true
   save_safetensors: true
@@ -70,7 +70,7 @@ training:
   save_steps: 5
 
   # Verbose logging
-  logging_dir: ./tb/10-29/stage_3
+  logging_dir: ./tb/10-28/stage_3
   logging_steps: 10
   logging_first_step: true
 

@@ -10,7 +10,7 @@ extends: base.yaml
 model:
   # Point to stage 2 best checkpoint - will load base model + LLM LoRA
   # model: output/10-22/stage_1/best/eff_batch_32-per_image_2-resumed_lr_1e-4/checkpoint-200
-  model: output/stage_4_merged-10-29/resumed-checkpoint-1932
+  model: output/stage_4_merged-10-30/resumed-checkpoint-1932
 
 tuner:
   train_type: lora
@@ -36,8 +36,8 @@ training:
   num_train_epochs: 5
   per_device_train_batch_size: 4
   per_device_eval_batch_size: 2
-  output_dir: output/summary/10-29/summary/
-  logging_dir: tb/summary/10-29/summary
+  output_dir: output/summary/10-30/summary/
+  logging_dir: tb/summary/10-30/summary
   run_name: llm_last2_lora-aug_conservative-eff_batch_32-epoch_5
 
   # Trainer/runtime additions for parity with stage_3

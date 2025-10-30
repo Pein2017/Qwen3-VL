@@ -19,8 +19,8 @@
    - No upstream ms-swift edits; our wrapper subclasses the ms-swift GKD trainer.
 
 3. **Telemetry**
-   - Wrapper logs `train/loss`, `train/kl_loss`, `train/sft_loss`, `train/token_accuracy`, `train/token_count` (and eval/*).
-   - Document expected key names so monitoring can alert on KL spikes and CE regressions.
+   - Wrapper logs `train/loss`, `train/kl_loss`, `train/sft_loss`, `train/token_accuracy` plus `eval/*` counterparts, with prefixes emitted exactly once.
+   - Evaluation skips the teacher forward (CE only) to keep validation inexpensive; document keys so monitoring can alert on KL spikes and CE regressions.
 
 4. **Docs & Recipes**
    - Update dense caption guide with: when to choose GKD, recommended `beta`/`sft_alpha`, forward-only KD recipe, and evaluation checklist.
@@ -34,3 +34,9 @@
 - **Teacher weight mismatch**: Ensure teacher & student share tokenizer/template; verify by running processor compatibility check before launch.
 - **Performance hit**: GKD doubles forward passes. Mitigate via gradient accumulation or reduced batch size; document expected GPU memory.
 - **Config drift**: Provide single source overlay; avoid manual flag toggles across multiple configs.
+- **Token alignment regressions**: Earlier drafts used `torch.roll`, which wrapped BOS tokens into the loss window. Mitigate by enforcing slice-based (`[:-1]` vs `[1:]`) alignment, adding unit coverage, and failing fast on vocab mismatches.
+- **DeepSpeed autocast assertions**: DeepSpeed rejects nested `torch.autocast`. Guard the teacher forward so autocast only runs when DeepSpeed is inactive (or explicitly enabled via config) and up-cast teacher logits to the student dtype.
+
+## Post-Implementation Notes (2025-10-29)
+- Implemented hard alignment guarantees: student/teacher logits now share identical masked indices, and vocab mismatches raise explicit errors instead of padding.
+- Added integration tests covering first-token supervision and DeepSpeed guard behavior to detect regressions.

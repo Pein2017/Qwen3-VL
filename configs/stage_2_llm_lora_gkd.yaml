@@ -13,7 +13,7 @@ rlhf:
   temperature: 0.9
 
 training:
-  output_dir: ./output/10-25/stage_2_llm_lora_gkd
+  output_dir: ./output/10-30/stage_2_llm_lora_gkd
   run_name: lora_8_16-5e-4-eff_batch_32-last_4-gkd
 
 custom:

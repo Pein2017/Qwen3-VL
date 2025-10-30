@@ -20,9 +20,19 @@ Main exports:
 - Preprocessors: DenseCaptionPreprocessor, AugmentationPreprocessor
 """
 
+from .contracts import (
+    MessageContent,
+    MessageDict,
+    ConversationRecord,
+    GeometryDict,
+    AugmentationTelemetry,
+    validate_conversation_record,
+    validate_geometry_sequence,
+)
 from .dense_caption import DenseCaptionDataset
 from .dynamic_pair import DynamicPairDataset, DynamicPairingConfig
 from .utils import load_jsonl, extract_object_points, extract_geometry
+
 # AugmentationConfig removed with v1 API; use Compose pipelines directly
 from .augmentation.base import Compose
 from .augmentation.registry import register, get, available
@@ -46,6 +56,14 @@ __all__ = [
     "load_jsonl",
     "extract_object_points",
     "extract_geometry",
+    # Contracts
+    "MessageContent",
+    "MessageDict",
+    "ConversationRecord",
+    "GeometryDict",
+    "AugmentationTelemetry",
+    "validate_conversation_record",
+    "validate_geometry_sequence",
     # Augmentation
     "Compose",
     "register",
@@ -59,5 +77,3 @@ __all__ = [
     "DenseCaptionPreprocessor",
     "AugmentationPreprocessor",
 ]
-
-

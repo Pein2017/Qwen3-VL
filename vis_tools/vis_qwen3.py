@@ -10,42 +10,41 @@ Qwen3-VL visualization script (no CLI):
 
 from __future__ import annotations
 
-import os
-import sys
-import json
 import ast
+import json
+import os
 import re
+import sys
 from pathlib import Path
 from typing import Any, Dict, List
 
+import matplotlib.patches as patches
+import matplotlib.pyplot as plt
 import torch
 from PIL import Image
-import matplotlib.pyplot as plt
-import matplotlib.patches as patches
-from vis_tools.vis_helper import (
-    draw_objects,
-    canonicalize_quad,
-)
 from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
 
+from vis_tools.vis_helper import (
+    canonicalize_quad,
+    draw_objects,
+)
 
 # ==============================
 # Configs (edit these directly)
 # ==============================
 
 # Required paths
-CKPT_PATH = "output/stage_4_merged-10-28/resumed-checkpoint-1932"  # HF dir or merged checkpoint  # HF dir or merged checkpoint
+CKPT_PATH = "output/stage_3_gkd-merged/10-29/lan_kd_0.04-vision_kd_0.15-weaker_color_aug-checkpoint-400"  # HF dir or merged checkpoint  # HF dir or merged checkpoint
 JSONL_PATH = "data/bbu_full_768/val.jsonl"
 
 # Runtime settings
 LIMIT = 10
 DEVICE = "cuda:0"
-SAVE_DIR = "vis_out/10-28/resumed-checkpoint-1932-v2"
+SAVE_DIR = "vis_out/10-29/stage_3_gkd-merged-lan_kd_0.04-vision_kd_0.15-weaker_color_aug-checkpoint-400"
 MAX_NEW_TOKENS = 2048
-TEMPERATURE = 0.1  # Balanced randomness to avoid loops while maintaining quality
+TEMPERATURE = 0.001  # Balanced randomness to avoid loops while maintaining quality
 TOP_P = 0.9  # Nucleus sampling - cuts off low-probability tail
-REPETITION_PENALTY = 1.05  # Strong penalty against repetition (was 1.05, very weak)
-
+REPETITION_PENALTY = 1.05  # Strong penalty against repetition (was 1.1, still too weak for repetitive outputs)
 
 # Optional: override training user prompt (None uses training default)
 USER_PROMPT_OVERRIDE: str | None = None
@@ -66,11 +65,12 @@ SRC_DIR = REPO_DIR / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.append(str(SRC_DIR))
 try:
-    from config.prompts import SYSTEM_PROMPT_B, USER_PROMPT as TRAIN_USER_PROMPT  # type: ignore
+    from src.config.prompts import SYSTEM_PROMPT  # type: ignore
+    from src.config.prompts import USER_PROMPT as TRAIN_USER_PROMPT
 except Exception:
     raise Exception("Failed to import prompts")
 
-SYSTEM_PROMPT_TEXT = SYSTEM_PROMPT_B
+SYSTEM_PROMPT_TEXT = SYSTEM_PROMPT
 USER_PROMPT_TEXT = USER_PROMPT_OVERRIDE or TRAIN_USER_PROMPT
 
 
@@ -84,7 +84,7 @@ model = Qwen3VLForConditionalGeneration.from_pretrained(
     torch_dtype=torch.bfloat16,
     attn_implementation="flash_attention_2",
 )
-model.to(DEVICE)
+model.to(torch.device(DEVICE))  # type: ignore[arg-type]
 model.eval()
 
 # Enable CUDA perf/kvcache optimizations when available
@@ -120,7 +120,9 @@ try:
 except Exception:
     pass
 try:
-    model.generation_config.use_cache = True
+    gc = getattr(model, "generation_config", None)
+    if gc is not None:
+        gc.use_cache = True
 except Exception:
     pass
 
@@ -365,6 +367,49 @@ def inverse_scale(points: List[int | float], w: int, h: int) -> List[int]:
     return out
 
 
+def deduplicate_predictions(
+    pred_objs: List[Dict[str, Any]], verbose: bool = True
+) -> tuple[List[Dict[str, Any]], int]:
+    """Remove identical predictions based on desc, type, and points.
+
+    Args:
+        pred_objs: List of prediction objects
+        verbose: If True, print deduplication stats
+
+    Returns:
+        Tuple of (deduplicated list, number of duplicates removed)
+    """
+    if not pred_objs:
+        return pred_objs, 0
+
+    seen: set[tuple[str, str, tuple[int, ...]]] = set()
+    deduplicated: List[Dict[str, Any]] = []
+    duplicates_removed = 0
+
+    for obj in pred_objs:
+        desc = obj.get("desc", "")
+        gtype = obj.get("type", "")
+        pts = tuple(obj.get("points", []))
+
+        # Create a unique key for this prediction
+        key = (desc, gtype, pts)
+
+        if key in seen:
+            duplicates_removed += 1
+            continue
+
+        seen.add(key)
+        deduplicated.append(obj)
+
+    if verbose and duplicates_removed > 0:
+        print(
+            f"[INFO] Deduplication: removed {duplicates_removed} duplicate(s), "
+            f"keeping {len(deduplicated)} unique prediction(s)"
+        )
+
+    return deduplicated, duplicates_removed
+
+
 # ======================
 # Drawing utilities
 # ======================
@@ -457,7 +502,8 @@ def _draw_objects(
         pts_px = pts if scaled else inverse_scale(pts, w, h)
         # Canonicalize quad ordering to avoid self-crossing (use vis_generation logic)
         if gtype == "quad" and len(pts_px) == 8:
-            pts_px = _canonicalize_quad(pts_px)
+            pts_list: List[int | float] = [int(p) for p in pts_px]
+            pts_px = _canonicalize_quad(pts_list)
 
         color = color_map.get(desc) or "#000000"
         if gtype == "bbox_2d" and len(pts_px) == 4:
@@ -607,18 +653,21 @@ def main() -> None:
             gt_objs = rec.get("gt", [])
             pred_objs = rec.get("pred", [])
 
+            # Deduplicate predictions to remove identical objects
+            pred_objs, _ = deduplicate_predictions(pred_objs, verbose=True)
+
             # Build legend color map
             labels = [o.get("desc", "") for o in gt_objs] + [
                 o.get("desc", "") for o in pred_objs
             ]
             color_map = _generate_colors(labels)
-            counts: Dict[str, List[int]] = {}
+            legend_counts: Dict[str, List[int]] = {}
             for o in gt_objs:
                 key = o.get("desc", "")
-                counts.setdefault(key, [0, 0])[0] += 1
+                legend_counts.setdefault(key, [0, 0])[0] += 1
             for o in pred_objs:
                 key = o.get("desc", "")
-                counts.setdefault(key, [0, 0])[1] += 1
+                legend_counts.setdefault(key, [0, 0])[1] += 1
 
             fig, (ax_l, ax_r, ax_legend) = plt.subplots(1, 3, figsize=(18, 6))
             draw_objects(
@@ -638,7 +687,7 @@ def main() -> None:
             ax_l.set_title("GT")
             draw_objects(ax_r, img, pred_objs, color_map, scaled=False)
             ax_r.set_title("Prediction" + ("" if pred_objs else " (parse failed)"))
-            _create_legend(ax_legend, color_map, counts)
+            _create_legend(ax_legend, color_map, legend_counts)
 
             out_path = Path(SAVE_DIR) / f"vis_{count:05d}.jpg"
             fig.tight_layout()
@@ -667,6 +716,8 @@ def main() -> None:
 
         gt = extract_gt_objects(rec, image_index=0)
 
+        raw_text = ""
+        clean_text = ""
         try:
             raw_text, clean_text = run_infer_one(img, USER_PROMPT_TEXT)
             # Print raw first for debugging
@@ -676,6 +727,8 @@ def main() -> None:
             except Exception:
                 pass
             pred_objs = parse_prediction(clean_text)
+            # Deduplicate predictions to remove identical objects
+            pred_objs, _ = deduplicate_predictions(pred_objs, verbose=True)
         except Exception:
             pred_objs = []
 
@@ -693,8 +746,8 @@ def main() -> None:
                         for o in gt
                     ],
                     "pred": pred_objs,
-                    "raw_text": raw_text if "raw_text" in locals() else "",
-                    "clean_text": clean_text if "clean_text" in locals() else "",
+                    "raw_text": raw_text,
+                    "clean_text": clean_text,
                 }
             )
 

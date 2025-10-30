@@ -6,7 +6,10 @@ import random
 from typing import Any, Dict, List, Optional, Tuple
 
 from PIL import Image
+
 from ..utils.logger import get_logger
+from .augmentation.base import AugmentationPipeline
+from .contracts import AugmentationTelemetry, validate_geometry_sequence
 
 
 def _image_to_bytes(img: Image.Image) -> bytes:
@@ -15,29 +18,10 @@ def _image_to_bytes(img: Image.Image) -> bytes:
     return buf.getvalue()
 
 
-def _capture_crop_metadata(pipeline: Any) -> Optional[Dict[str, Any]]:
-    kept = getattr(pipeline, "last_kept_indices", None)
-    if kept is None:
-        return None
-    width = getattr(pipeline, "last_image_width", None)
-    height = getattr(pipeline, "last_image_height", None)
-    padding_ratio = getattr(pipeline, "last_padding_ratio", None)
-    return {
-        "kept_indices": list(kept),
-        "coverages": list(getattr(pipeline, "last_object_coverages", []) or []),
-        "allows_geometry_drops": bool(getattr(pipeline, "allows_geometry_drops", False)),
-        "width": width,
-        "height": height,
-        "padding_ratio": padding_ratio,
-        "skip_reason": getattr(pipeline, "last_crop_skip_reason", None),
-        "skip_counts": getattr(pipeline, "last_skip_counters", {}),
-    }
-
-
 def apply_augmentations(
     images: List[str | Image.Image],
     per_object_geoms: List[Dict[str, Any]],
-    pipeline: Any,
+    pipeline: AugmentationPipeline,
     *,
     rng: Optional[random.Random] = None,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
@@ -63,7 +47,7 @@ def apply_augmentations(
         if isinstance(p, str):
             path = p
             if not os.path.isabs(path):
-                base = os.environ.get('ROOT_IMAGE_DIR')
+                base = os.environ.get("ROOT_IMAGE_DIR")
                 if not base:
                     raise FileNotFoundError(
                         f"Relative image path '{p}' cannot be resolved: ROOT_IMAGE_DIR is not set. "
@@ -86,19 +70,33 @@ def apply_augmentations(
             raise ValueError(
                 f"All images in a sample must share identical size; expected {base_w}x{base_h}, found image[{i}]={im.width}x{im.height}"
             )
-    out_imgs, geoms = pipeline.apply(pil_images, per_object_geoms, width=base_w, height=base_h, rng=rng)
-    if not isinstance(out_imgs, list) or not all(isinstance(i, Image.Image) for i in out_imgs):
+    validate_geometry_sequence(per_object_geoms)
+
+    out_imgs, geoms = pipeline.apply(
+        pil_images,
+        per_object_geoms,
+        width=base_w,
+        height=base_h,
+        rng=rng,
+    )
+    if not isinstance(out_imgs, list) or not all(
+        isinstance(i, Image.Image) for i in out_imgs
+    ):
         raise TypeError("pipeline.apply must return list[Image.Image] as first element")
     if not isinstance(geoms, list):
         raise TypeError("pipeline.apply must return list[dict] as second element")
     if len(out_imgs) != len(pil_images):
-        raise ValueError(f"pipeline.apply returned {len(out_imgs)} images, expected {len(pil_images)}")
+        raise ValueError(
+            f"pipeline.apply returned {len(out_imgs)} images, expected {len(pil_images)}"
+        )
     # Check if pipeline allows geometry drops (from crop operations)
-    allows_drops = getattr(pipeline, 'allows_geometry_drops', False)
-    
+    allows_drops = getattr(pipeline, "allows_geometry_drops", False)
+
     if len(geoms) != len(per_object_geoms):
         if not allows_drops:
-            raise ValueError(f"pipeline.apply returned {len(geoms)} geometries, expected {len(per_object_geoms)}")
+            raise ValueError(
+                f"pipeline.apply returned {len(geoms)} geometries, expected {len(per_object_geoms)}"
+            )
         # Crop operation: log but allow count change
         logger = get_logger("augmentation.validation")
         logger.debug(f"Crop filtered {len(per_object_geoms)} → {len(geoms)} objects")
@@ -112,23 +110,22 @@ def apply_augmentations(
     images_bytes = [{"bytes": _image_to_bytes(img)} for img in out_imgs]
 
     # Attach telemetry for downstream debug consumers
-    crop_meta = _capture_crop_metadata(pipeline)
-    if crop_meta is not None:
+    validate_geometry_sequence(geoms)
+
+    telemetry: Optional[AugmentationTelemetry] = getattr(pipeline, "last_summary", None)
+    if telemetry is not None:
         logger = get_logger("augmentation.telemetry")
         logger.debug(
             "Crop telemetry: kept=%s coverages=%s drops=%s size=%s padding=%s skip=%s counts=%s",
-            crop_meta["kept_indices"],
-            [round(float(c), 4) for c in crop_meta["coverages"]],
-            crop_meta["allows_geometry_drops"],
-            (crop_meta.get("width"), crop_meta.get("height")),
-            crop_meta.get("padding_ratio"),
-            crop_meta.get("skip_reason"),
-            crop_meta.get("skip_counts"),
+            list(telemetry.kept_indices),
+            [round(float(c), 4) for c in telemetry.coverages],
+            telemetry.allows_geometry_drops,
+            (telemetry.width, telemetry.height),
+            telemetry.padding_ratio,
+            telemetry.skip_reason,
+            telemetry.skip_counts,
         )
         # expose for preprocessors (pipeline metadata already set, but ensure Compose sees latest)
-        setattr(pipeline, "last_crop_summary", crop_meta)
+        setattr(pipeline, "last_crop_summary", telemetry)
 
     return images_bytes, geoms
-
-
-

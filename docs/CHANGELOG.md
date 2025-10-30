@@ -6,6 +6,48 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.1.6] - 2025-10-30
+
+### Added - Stronger Configuration & Augmentation Contracts
+
+**Change ID**: `2025-10-30-config-contract-refactor`
+
+#### Summary
+- Introduced frozen config/dataclass schemas for YAML loading (train/custom/deepspeed/save-delay) with early validation and deterministic defaults.
+- Propagated typed conversation/geometry contracts through dataset builders, preprocessors, and augmentation pipelines.
+- Added augmentation telemetry dataclass + protocol (crop metadata, geometry drops) consumed by preprocessors and debug logging.
+- Wrapped Stage-A CLI runtime args in a `StageAConfig` validator for consistent mission/path checks.
+
+#### Impact
+- ✅ Fails fast on malformed YAML/config overrides with actionable error messages.
+- ✅ Exposes rich augmentation telemetry downstream while keeping legacy attributes for tooling.
+- ✅ Simplifies trainer + callback wiring by surfacing typed configs (`visual_kd`, `save_delay`).
+- ✅ Stage-A inference now rejects invalid missions/paths before launching inference.
+
+---
+
+## [1.1.5] - 2025-10-30
+
+### Added - Vision/Aligner Feature KD for GKD
+
+**Change ID**: `2025-10-30-stabilize-vision-kd`
+
+#### Summary
+Adds an optional visual feature distillation term to the GKD trainer so the vision encoder + aligner stay anchored to the teacher while the language tower adapts to new coordinate formats.
+
+#### Technical Details
+- Config schema: `custom.visual_kd` validated via `ConfigLoader` (defaults disabled, enum checks for distance/targets) and surfaced on `TrainArguments`.
+- Trainer: `src/trainers/gkd_monitor.py` registers hooks on `visual.merger` + `deepstack_merger_list`, computes MSE/cosine distances, and logs `train/vision_kd_loss` / `eval/vision_kd_loss` (post-weight).
+- Tests: extended `tests/test_gkd_monitor_integration.py` with synthetic models covering feature caches, logging, and legacy fallbacks.
+- Docs: `docs/REFERENCE.md` and `docs/DATA_AND_DATASETS.md` describe the knob and operational guidance; new overlay `configs/stage_3_gkd_visual.yaml` demonstrates usage.
+
+#### Impact
+- ✅ Prevents vision/aligner drift without clamping the language tower via KL
+- ✅ Lightweight configuration knob (YAML-only) with telemetry for monitoring
+- ✅ Backwards compatible—existing configs remain unchanged when the block is omitted
+
+---
+
 ## [1.1.3] - 2025-10-28
 
 ### Fixed - Dense Augmentation Telemetry & Safety
@@ -51,7 +93,7 @@ Introduced Generalized Knowledge Distillation (GKD) training overlays and a loca
 
 #### Technical Details
 - New overlays: `configs/stage_2_llm_lora_gkd.yaml`, `configs/stage_3_gkd.yaml`
-- Trainer wrapper: `src/trainers/gkd_monitor.py` emits `train/loss`, `train/sft_loss`, `train/kl_loss`, `train/token_accuracy`, `train/token_count`
+- Trainer wrapper: `src/trainers/gkd_monitor.py` emits `train/loss`, `train/sft_loss`, `train/kl_loss`, `train/token_accuracy` (and `eval/*` counterparts) with deduplicated prefixes; evaluation skips the teacher forward for cheaper validation.
 - Config loader & runner glue: select wrapper via `custom.trainer_variant: gkd_monitor`
 - Docs: REFERENCE updated with forward-only KD recipe; spec refined accordingly
 

@@ -117,6 +117,13 @@ JSONL → DenseCaptionDataset → DynamicPairDataset → Preprocessors → Build
 4. **Builder**: Message formatting (JSONLinesBuilder)
 5. **Collator**: Tensor preparation, optional packing
 
+### Visual Feature Distillation (optional)
+
+- Enable via `custom.visual_kd` when you want to lock the vision/aligner stack to a teacher while giving the language tower more room.
+- The dataset already supplies `pixel_values` and `image_grid_thw`; as long as a record contains images, the trainer captures and distills the corresponding activations automatically.
+- Batches without images (e.g., summary-only validation groups) skip the extra loss—no action required.
+- Keep `images_per_user_turn ≥ 1` so dense examples always surface at least one image for the distillation hooks.
+
 ### DenseCaptionDataset
 
 **Role**: 
@@ -142,6 +149,7 @@ custom:
 - Epoch-seeded RNG for deterministic pairing
 - Handles variable-length groups
 - Respects pairing boundaries
+- Validates every record against shared contracts (`src/datasets/contracts.py`) before preprocessing.
 
 **Flow**:
 ```
@@ -184,6 +192,7 @@ Record → Group by pairing → Select mode → Preprocess → Build messages �
 - Attaches top-level `objects` with pixel coords (for template normalization)
 - Geometries normalized based on `emit_norm` setting
 - Deterministic ordering (图片_1, 图片_2, ...)
+- Consumes validated `ConversationRecord` objects and exposes augmentation telemetry (`pipeline.last_summary`) for downstream health checks.
 
 ---
 
@@ -209,6 +218,7 @@ Record → Group by pairing → Select mode → Preprocess → Build messages �
 - Atomic updates (image + geometries transformed together)
 - Preserves coordinate alignment
 - See [AUGMENTATION.md](AUGMENTATION.md) for details
+- Reads standardized telemetry (`AugmentationTelemetry`) with crop coverage, kept indices, and skip reasons to audit augmentation pipelines.
 
 **Example**:
 ```yaml

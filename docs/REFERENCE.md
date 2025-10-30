@@ -53,9 +53,10 @@ Comprehensive guide for training, inference, deployment, and advanced topics.
 ### Key Components Deep Dive
 
 **ConfigLoader** (`src/config/loader.py`):
-- Loads YAML, merges with base configs
+- Loads YAML and materializes frozen dataclasses (`TrainingConfig`, `CustomConfig`, `SaveDelayConfig`, `VisualKDConfig`)
 - Resolves `global_max_length` → `model.max_model_len` + `template.max_length`
-- Builds `TrainArguments` (typed dataclass)
+- Attaches typed runtime toggles to `TrainArguments` (e.g., `save_delay_config`, `visual_kd_config`)
+- Fails fast with informative errors when schemas or inheritance are invalid
 - Source of truth for all configuration behavior
 
 **DenseCaptionDataset** (`src/datasets/dense_caption.py`):
@@ -141,7 +142,7 @@ logger.warning("Warning (all ranks)") # Logged on all ranks if severe
 **SaveDelayCallback** (`src/callbacks/save_delay_callback.py`):
 ```python
 # Prevents early checkpoints before model has learned anything
-# Config: custom.save_delay_steps (default: 0, disabled)
+# Config: custom.save_delay_steps / custom.save_delay_epochs (via SaveDelayConfig)
 # Example: save_delay_steps: 100 → no saves until step 100
 ```
 
@@ -326,7 +327,25 @@ Use Generalized Knowledge Distillation (GKD) when dense-caption SFT starts hallu
     trainer_variant: gkd_monitor  # enable KL+CE logging wrapper
   ```
 - **Launch**: run the usual entrypoint (`python -m src.sft --config <gkd-config.yaml>`). The loader instantiates `SwiftRLHF` behind the scenes, loads the frozen teacher, and routes training through ms-swift’s `GKDTrainer`.
-- **Telemetry**: the wrapper keeps the huggingface `loss` scalar and emits `train/loss`, `train/sft_loss`, `train/kl_loss`, `train/token_accuracy`, and `train/token_count` (plus eval counterparts). Watch for `train/kl_loss` spikes to catch drift early; compare `train/sft_loss` against your vanilla SFT runs to ensure language quality is intact.
+- **Telemetry**: the wrapper keeps the huggingface `loss` scalar and emits `train/loss`, `train/sft_loss`, `train/kl_loss`, `train/token_accuracy`, plus `eval/*` counterparts. Metrics are prefixed exactly once (`train/*`, `eval/*`) to avoid TensorBoard duplication. Watch for `train/kl_loss` spikes to catch drift early; compare `train/sft_loss` against your vanilla SFT runs to ensure language quality is intact.
+
+#### Vision/Aligner Feature KD (optional)
+
+When the vision encoder or aligner drifts while the language tower needs freedom to adapt (e.g., new coordinate formats), enable the feature distillation block:
+
+```yaml
+custom:
+  visual_kd:
+    enabled: true
+    weight: 0.1              # scalar multiplied into the loss term
+    targets: [merger, deepstack]  # final merged tokens and deepstack adapters
+    distance: mse            # or `cosine`
+```
+
+- **Effect**: anchors student vision/aligner activations to the frozen teacher while leaving KL + CE to supervise the language tower.
+- **Metrics**: trainer logs `train/vision_kd_loss` / `eval/vision_kd_loss` (post-weight) so you can monitor the regularizer alongside KL/CE.
+- **Images only**: batches without `pixel_values` automatically skip the term; no special handling is required for summary-only validation shards.
+- **Preset overlay**: `configs/stage_3_gkd_visual.yaml` extends the standard Stage-3 recipe with the block above—use it as the starting point for experiments.
 
 #### Forward-only KD (recommended for domain migration)
 
@@ -351,7 +370,7 @@ Notes:
   - Increase `beta` (→ stronger anchoring) if hallucinations persist.
   - Increase `sft_alpha` if CE should dominate (e.g., when the dataset is clean but narrow).
   - Decrease `lmbda` to rely less on on-policy generations when the student is unstable.
-- **Compute Overhead**: expect ~1.8–2.0× wall-clock vs. vanilla SFT (teacher forward pass + optional teacher sampling when `seq_kd=true`). Budget epochs accordingly.
+- **Compute Overhead**: expect ~1.6–2.0× wall-clock vs. vanilla SFT (extra teacher forward pass; add teacher sampling cost only if `seq_kd=true`). Evaluation runs skip the teacher and only compute CE, so validation cost stays close to baseline.
 - **Monitoring Checklist**:
   - `train/kl_loss` steady or slowly decreasing → healthy anchoring.
   - `train/sft_loss` aligns with prior SFT runs → no regression.
@@ -473,6 +492,8 @@ messages = [{
 **Stage-A: Per-Image Summaries**
 
 Purpose: Generate one-line Chinese summaries per image
+
+Runtime guardrails: `src.stage_a.cli.StageAConfig` validates checkpoint/input paths, mission name, and generation knobs before inference runs.
 
 ```bash
 python -m src.stage_a.run \

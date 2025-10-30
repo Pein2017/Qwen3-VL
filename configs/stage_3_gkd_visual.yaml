@@ -1,0 +1,9 @@
+extends: stage_3_gkd.yaml
+
+custom:
+  visual_kd:
+    enabled: true
+    weight: 0.1
+    targets: [merger, deepstack]
+    distance: mse
+

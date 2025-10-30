@@ -5,6 +5,7 @@ import copy
 import logging
 import os
 import re
+from dataclasses import asdict
 
 from swift.llm.train.rlhf import SwiftRLHF
 from swift.llm.train.sft import SwiftSft
@@ -25,7 +26,7 @@ def resolve_trainer_cls(train_args):
 from swift.trainers import TrainerFactory
 
 from .datasets import DenseCaptionDataset
-from .config import ConfigLoader
+from .config import ConfigLoader, SaveDelayConfig
 from .utils import get_logger, enable_verbose_logging, set_log_level
 
 # Use the model's native chat_template (JSON/Jinja) shipped with the tokenizer
@@ -109,9 +110,10 @@ def main():
 
     # Load configuration from YAML
     logger.info("Loading configuration...")
-    train_args, custom_config = ConfigLoader.load_training_config(
+    train_args, training_config = ConfigLoader.load_training_config(
         args.config, args.base_config
     )
+    custom_config = training_config.custom
     # Append run_name to output_dir and logging_dir to form final paths
     try:
         run_name = getattr(train_args, "run_name", None)
@@ -162,13 +164,22 @@ def main():
         for key, value in vars(train_args).items():
             if not key.startswith("_"):
                 logger.debug(f"  {key}: {value}")
+        logger.debug("Training configuration sections:")
+        logger.debug(f"  model={training_config.model}")
+        logger.debug(f"  data={training_config.data}")
+        logger.debug(f"  template={training_config.template}")
+        logger.debug(f"  training={training_config.training}")
+        logger.debug(f"  tuner={training_config.tuner}")
+        logger.debug(f"  rlhf={training_config.rlhf}")
+        logger.debug(f"  deepspeed={training_config.deepspeed}")
+        logger.debug(f"  prompts={training_config.prompts}")
         logger.debug("Custom dataset config:")
-        for key, value in custom_config.items():
+        for key, value in asdict(custom_config).items():
             logger.debug(f"  {key}: {value}")
         logger.debug("=" * 70)
 
     # Auto-configure ROOT_IMAGE_DIR from JSONL directory
-    train_jsonl = custom_config.get("train_jsonl") or custom_config.get("jsonl")
+    train_jsonl = custom_config.train_jsonl or custom_config.extra.get("jsonl")
     if not train_jsonl:
         raise ValueError("Config must specify 'custom.train_jsonl' or 'custom.jsonl'")
 
@@ -214,8 +225,8 @@ def main():
 
     # Configure augmentation via YAML builder (applies only to training)
     augmenter = None
-    bypass_prob = 0.0
-    aug_cfg = custom_config.get("augmentation")
+    bypass_prob = float(custom_config.bypass_prob)
+    aug_cfg = custom_config.augmentation
     if isinstance(aug_cfg, dict) and aug_cfg.get("enabled", True):
         try:
             from .datasets.augmentation.builder import build_compose_from_config
@@ -224,7 +235,7 @@ def main():
             from .datasets.augmentation import ops as _register_ops  # noqa: F401
 
             augmenter = build_compose_from_config(aug_cfg)
-            bypass_prob = float(aug_cfg.get("bypass_prob", 0.0))
+            bypass_prob = float(aug_cfg.get("bypass_prob", custom_config.bypass_prob))
             logger.info(
                 f"Augmentation pipeline built (bypass_prob={bypass_prob:.2f}, training only)"
             )
@@ -232,9 +243,17 @@ def main():
             raise ValueError(f"Failed to build augmentation pipeline from YAML: {e}")
 
     # Sample limits for quick smoke tests
-    shared_sample_limit = custom_config.get("sample_limit")
-    train_sample_limit = custom_config.get("train_sample_limit", shared_sample_limit)
-    val_sample_limit = custom_config.get("val_sample_limit", shared_sample_limit)
+    shared_sample_limit = custom_config.sample_limit
+    train_sample_limit = (
+        custom_config.train_sample_limit
+        if custom_config.train_sample_limit is not None
+        else shared_sample_limit
+    )
+    val_sample_limit = (
+        custom_config.val_sample_limit
+        if custom_config.val_sample_limit is not None
+        else shared_sample_limit
+    )
     if train_sample_limit:
         logger.info(f"Train sample limit: {train_sample_limit}")
     if val_sample_limit:
@@ -243,27 +262,25 @@ def main():
     # Build training dataset
     logger.info(f"Loading training dataset: {train_jsonl}")
     # Require minimal explicit keys; others have sane defaults
-    required_keys = ["user_prompt", "emit_norm"]
-    missing = [k for k in required_keys if k not in custom_config]
-    if missing:
-        raise ValueError(f"Missing required custom.* keys: {missing}")
+    if not custom_config.user_prompt or not custom_config.emit_norm:
+        raise ValueError("custom.user_prompt and custom.emit_norm must be provided")
 
     # Build dynamic pairing config
     from .datasets.dynamic_pair import DynamicPairingConfig
 
     dp_config = DynamicPairingConfig(
-        images_per_user_turn=int(custom_config.get("images_per_user_turn", 2)),
+        images_per_user_turn=int(custom_config.images_per_user_turn),
         pre_tokenize=False,
         seed=42,
     )
 
     # Extract mode control parameters
-    summary_ratio = custom_config.get("summary_ratio")
+    summary_ratio = custom_config.summary_ratio
 
     # Prepare system prompts for dynamic mode selection
     # The system prompt is set on the template by ConfigLoader.resolve_prompts
     system_prompt_dense = getattr(sft.template, "system", None)
-    system_prompt_summary = custom_config.get("system_prompt_summary")
+    system_prompt_summary = custom_config.system_prompt_summary
 
     # Log configuration
     if summary_ratio is not None and summary_ratio > 0:
@@ -286,8 +303,8 @@ def main():
     dataset = DenseCaptionDataset.from_jsonl(
         train_jsonl,
         template=sft.template,
-        user_prompt=custom_config["user_prompt"],
-        emit_norm=custom_config["emit_norm"],
+        user_prompt=custom_config.user_prompt,
+        emit_norm=custom_config.emit_norm,
         config=dp_config,
         augmenter=augmenter,
         bypass_prob=bypass_prob,
@@ -352,7 +369,7 @@ def main():
             logger.warning(f"HealthCheck failed: {e}")
 
     # Optional: dump conversation text-only (no tokens, no images) and full tokens
-    dump_conv = bool(custom_config.get("dump_conversation_text", False) or args.debug)
+    dump_conv = bool(custom_config.dump_conversation_text or args.debug)
     if dump_conv and len(dataset) > 0:
         try:
             template = dataset.template
@@ -411,9 +428,7 @@ def main():
             if assistant_gt:
                 logger.debug("Assistant GT:\n" + assistant_gt)
 
-            dump_path = (
-                custom_config.get("dump_conversation_path") or "conversation_text.txt"
-            )
+            dump_path = custom_config.dump_conversation_path or "conversation_text.txt"
             if not os.path.isabs(dump_path):
                 dump_path = os.path.join(train_args.output_dir, dump_path)
             os.makedirs(os.path.dirname(dump_path), exist_ok=True)
@@ -434,14 +449,14 @@ def main():
 
     # Build validation dataset if provided
     eval_dataset = None
-    val_jsonl = custom_config.get("val_jsonl")
+    val_jsonl = custom_config.val_jsonl
     if val_jsonl:
         logger.info(f"Loading validation dataset: {val_jsonl}")
         eval_dataset = DenseCaptionDataset.from_jsonl(
             val_jsonl,
             template=sft.template,
-            user_prompt=custom_config["user_prompt"],
-            emit_norm=custom_config["emit_norm"],
+            user_prompt=custom_config.user_prompt,
+            emit_norm=custom_config.emit_norm,
             config=dp_config,
             augmenter=None,  # No augmentation for validation
             bypass_prob=0.0,  # Explicit: no bypass for validation
@@ -468,14 +483,34 @@ def main():
 
     # Add SaveDelayCallback if save_delay_steps is configured
     callbacks = sft.callbacks.copy() if sft.callbacks else []
-    save_delay_steps = getattr(train_args, "save_delay_steps", None)
-    if save_delay_steps is not None and save_delay_steps > 0:
-        from .callbacks import SaveDelayCallback
+    save_delay_cfg = getattr(train_args, "save_delay_config", None)
+    from .callbacks import SaveDelayCallback
 
-        callbacks.append(SaveDelayCallback(save_delay_steps=save_delay_steps))
-        logger.info(
-            f"SaveDelayCallback enabled: no checkpoints until step {save_delay_steps}"
+    if isinstance(save_delay_cfg, SaveDelayConfig) and save_delay_cfg.active:
+        callbacks.append(SaveDelayCallback(config=save_delay_cfg))
+        delay_info = (
+            f"step {save_delay_cfg.steps}"
+            if save_delay_cfg.steps is not None
+            else f"epoch {save_delay_cfg.epochs}"
         )
+        logger.info(
+            f"SaveDelayCallback enabled: checkpoint saves blocked until {delay_info}"
+        )
+    else:
+        save_delay_steps = getattr(train_args, "save_delay_steps", None)
+        save_delay_epochs = getattr(train_args, "save_delay_epochs", None)
+        if save_delay_steps is not None and save_delay_steps > 0:
+            callbacks.append(SaveDelayCallback(save_delay_steps=save_delay_steps))
+            logger.info(
+                f"SaveDelayCallback enabled: no checkpoints until step {save_delay_steps}"
+            )
+        elif save_delay_epochs is not None and float(save_delay_epochs) > 0:
+            callbacks.append(
+                SaveDelayCallback(save_delay_epochs=float(save_delay_epochs))
+            )
+            logger.info(
+                f"SaveDelayCallback enabled: no checkpoints until epoch {float(save_delay_epochs):.2f}"
+            )
 
     trainer_kwargs = (
         sft._get_trainer_kwargs() if hasattr(sft, "_get_trainer_kwargs") else {}

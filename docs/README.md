@@ -12,6 +12,11 @@ Status: Active — Internal Engineering
 
 ## Recent Updates
 
+### v1.1.2 - Config & Telemetry Contracts (Oct 2025) 📐
+- YAML loader now builds frozen dataclasses (`TrainingConfig`, `CustomConfig`, `SaveDelayConfig`, `VisualKDConfig`) with early validation and deterministic merging.
+- Datasets adopt shared contracts for records/geometry; augmentation telemetry is a typed dataclass surfaced to preprocessors and debug logging.
+- Stage-A CLI wraps runtime flags in `StageAConfig`, catching invalid missions/paths before inference launches.
+
 ### v1.1.1 - Quad Truncation Refinement (Oct 2025) 🔧
 - Fixed rotate+crop quad handling: rotated quads now maintain rotation after crop
 - Added polygon simplification to preserve true quad corners
@@ -40,6 +45,7 @@ YAML → ConfigLoader → SwiftSft → DenseCaptionDataset → DynamicPairDatase
 - Single length knob: `global_max_length` (proxies both model & template)
 - Adapters applied before trainer: `sft.prepare_model(...)`
 - Config-only surface (avoid CLI flags beyond `--config`)
+- Typed configuration contracts (`src/config/schema.py`) validate YAML before training launches.
 
 ### Model Components & Token Flow
 

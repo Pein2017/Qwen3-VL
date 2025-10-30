@@ -1,12 +1,13 @@
 import random
 import copy
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple, cast
 from torch.utils.data import get_worker_info
 
 from torch.utils.data import Dataset
 
 from .utils import load_jsonl
+from .contracts import ConversationRecord, validate_conversation_record
 
 
 def random_pair_selector(index: int, total_size: int, rng: random.Random) -> int:
@@ -21,15 +22,23 @@ def random_pair_selector(index: int, total_size: int, rng: random.Random) -> int
     return partner
 
 
-def default_pair_message_builder(record_a: Dict[str, Any], record_b: Dict[str, Any]) -> Dict[str, Any]:
-    messages_a: List[Dict[str, Any]] = record_a.get("messages") or []
-    messages_b: List[Dict[str, Any]] = record_b.get("messages") or []
+def default_pair_message_builder(
+    record_a: ConversationRecord, record_b: ConversationRecord
+) -> Dict[str, Any]:
+    messages_a: Sequence[Dict[str, Any]] = record_a.get("messages") or []
+    messages_b: Sequence[Dict[str, Any]] = record_b.get("messages") or []
 
-    def extract_user_contents(messages: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+    def extract_user_contents(
+        messages: Sequence[Dict[str, Any]],
+    ) -> Tuple[List[Dict[str, Any]], Optional[str]]:
         for turn in messages:
             if turn.get("role") == "user":
                 contents = turn.get("content") or []
-                text_chunks = [c.get("text") for c in contents if c.get("type") == "text" and c.get("text")]
+                text_chunks = [
+                    c.get("text")
+                    for c in contents
+                    if c.get("type") == "text" and c.get("text")
+                ]
                 user_text = "\n".join(text_chunks) if text_chunks else None
                 return contents, user_text
         return [], None
@@ -65,7 +74,9 @@ def default_pair_message_builder(record_a: Dict[str, Any], record_b: Dict[str, A
         {"role": "user", "content": merged_user_contents},
     ]
     if assistant_text:
-        merged_messages.append({"role": "assistant", "content": [{"type": "text", "text": assistant_text}]})
+        merged_messages.append(
+            {"role": "assistant", "content": [{"type": "text", "text": assistant_text}]}
+        )
 
     return {"messages": merged_messages}
 
@@ -81,16 +92,26 @@ class DynamicPairingConfig:
 class DynamicPairDataset(Dataset):
     def __init__(
         self,
-        base_records: Sequence[Dict[str, Any]],
+        base_records: Sequence[Mapping[str, Any]],
         template: Any,
         pair_selector: Callable[[int, int, random.Random], int] = random_pair_selector,
-        pair_message_builder: Callable[[Dict[str, Any], Dict[str, Any]], Dict[str, Any]] = default_pair_message_builder,
+        pair_message_builder: Callable[
+            [ConversationRecord, ConversationRecord], Dict[str, Any]
+        ] = default_pair_message_builder,
         config: Optional[DynamicPairingConfig] = None,
         augmenter: Optional[Any] = None,
         preprocessor: Optional[Any] = None,
         bypass_prob: float = 0.0,
     ) -> None:
-        self.base_records: List[Dict[str, Any]] = list(base_records)
+        validated_records: List[ConversationRecord] = []
+        for idx, record in enumerate(base_records):
+            try:
+                validated = validate_conversation_record(record)
+            except ValueError as exc:
+                raise ValueError(f"Base record {idx} is invalid: {exc}") from exc
+            validated_records.append(cast(ConversationRecord, copy.deepcopy(validated)))
+
+        self.base_records: List[ConversationRecord] = validated_records
         self.template = template
         self.pair_selector = pair_selector
         self.pair_message_builder = pair_message_builder
@@ -103,11 +124,14 @@ class DynamicPairDataset(Dataset):
         # Build an index permutation for this epoch to enable per-epoch shuffling
         self._index_perm: List[int] = list(range(len(self.base_records)))
         self._rebuild_perm_for_epoch()
-        
+
         # If augmenter provided but no preprocessor, create augmentation preprocessor
         if self.augmenter is not None and self.preprocessor is None:
             from .preprocessors import AugmentationPreprocessor
-            self.preprocessor = AugmentationPreprocessor(augmenter=self.augmenter, bypass_prob=self.bypass_prob)
+
+            self.preprocessor = AugmentationPreprocessor(
+                augmenter=self.augmenter, bypass_prob=self.bypass_prob
+            )
 
     @staticmethod
     def from_jsonl(jsonl_path: str, template: Any, **kwargs) -> "DynamicPairDataset":
@@ -119,7 +143,7 @@ class DynamicPairDataset(Dataset):
 
         Keep the same across ranks so that external samplers can shard consistently.
         """
-        base = int(getattr(self.config, 'seed', 2025)) & 0xFFFFFFFF
+        base = int(getattr(self.config, "seed", 2025)) & 0xFFFFFFFF
         # Mix with an odd constant (golden ratio) for decorrelation across epochs
         mixed = (base ^ ((epoch + 1) * 0x9E3779B1)) & 0xFFFFFFFF
         return mixed
@@ -157,8 +181,13 @@ class DynamicPairDataset(Dataset):
             # Single-record turn: pick current record from permuted order
             base_idx = self._index_perm[index % len(self._index_perm)]
             # Pair with a random partner in base index space
-            partner_base_idx = self.pair_selector(base_idx, len(self.base_records), rng_local)
-            records = [copy.deepcopy(self.base_records[base_idx]), copy.deepcopy(self.base_records[partner_base_idx])]
+            partner_base_idx = self.pair_selector(
+                base_idx, len(self.base_records), rng_local
+            )
+            records = [
+                copy.deepcopy(self.base_records[base_idx]),
+                copy.deepcopy(self.base_records[partner_base_idx]),
+            ]
         else:
             # Sequential grouping into fixed-size chunks: [0..g-1], [g..2g-1], ...
             start = index * group_size
@@ -173,13 +202,25 @@ class DynamicPairDataset(Dataset):
 
         # Apply preprocessing if available (e.g., augmentation)
         if self.preprocessor is not None:
-            if hasattr(self.preprocessor, 'rng'):
+            if hasattr(self.preprocessor, "rng"):
                 self.preprocessor.rng = rng_local
-            records = [self.preprocessor(r) for r in records]
+            processed: List[ConversationRecord] = []
+            for record in records:
+                result = self.preprocessor(record)
+                if result is None:
+                    continue
+                processed.append(result)
+            if not processed:
+                raise ValueError(
+                    "Preprocessor removed all records from the pairing group"
+                )
+            records = processed
 
         # Adapt to builder API: support list of records
         pair_builder = self.pair_message_builder
-        if hasattr(pair_builder, 'build_many') and callable(getattr(pair_builder, 'build_many')):
+        if hasattr(pair_builder, "build_many") and callable(
+            getattr(pair_builder, "build_many")
+        ):
             merged = pair_builder.build_many(records)
         else:
             # Fallback: only two records supported
@@ -197,5 +238,3 @@ __all__ = [
     "random_pair_selector",
     "default_pair_message_builder",
 ]
-
-

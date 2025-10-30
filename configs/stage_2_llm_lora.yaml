@@ -3,7 +3,7 @@ extends: base.yaml
 # Stage 2: LoRA on LLM, freeze ViT; fully train MLP aligner
 
 model:
-  model: output/10-25/stage_1_from_base/v2-20251025-140114/eff_batch_64-per_image_2-from_base/checkpoint-200
+  model: output/10-30/stage_1_from_base/v2-20251025-140114/eff_batch_64-per_image_2-from_base/checkpoint-200
 
 # Use model's native chat template; max length unified via base.yaml or global_max_length
 
@@ -31,7 +31,7 @@ tuner:
   lora_bias: none
 
 training:
-  output_dir: ./output/10-25/stage_2_llm_lora
+  output_dir: ./output/10-30/stage_2_llm_lora
   run_name: lora_8_16-5e-4-eff_batch_32-last_4
   per_device_train_batch_size: 1
 
@@ -45,7 +45,7 @@ training:
   gradient_accumulation_steps: 2
 
   # Verbose logging
-  logging_dir: ./tb/10-25-stage_2
+  logging_dir: ./tb/10-30-stage_2
 
  data:
   dataset_num_proc: 8

@@ -10,6 +10,10 @@ template:
   template: qwen3_vl
   truncation_strategy: right
 
+deepspeed:
+  enabled: true
+  config: zero2
+
 training:
   # defaults, can be overridden per-environment
   gradient_checkpointing: true
@@ -48,6 +52,8 @@ data:
   dataset: [placeholder]
   dataset_num_proc: 8
   dataloader_num_workers: 8
+  dataloader_pin_memory: true
+  dataloader_prefetch_factor: 4
   eval_dataset: [placeholder]
 
 deepspeed:
@@ -58,6 +64,7 @@ custom:
   emit_norm: norm1000
   train_jsonl: data/bbu_full_768/train.jsonl
   val_jsonl: data/bbu_full_768/val.jsonl
+  dump_conversation_path: output/conversation_text.txt
 
 template:
   max_pixels: 1572864999  # an extremely large value so that never `do_resize`

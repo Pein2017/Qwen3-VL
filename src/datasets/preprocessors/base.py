@@ -1,32 +1,28 @@
 """Base preprocessor following ms-swift patterns"""
-from typing import Any, Dict, Optional
+
+from typing import Any, Mapping, Optional
+
+from ..contracts import ConversationRecord, validate_conversation_record
 
 
 class BasePreprocessor:
     """Base preprocessor for row-level transformations.
-    
+
     Follows ms-swift RowPreprocessor pattern for pluggable, composable preprocessing.
     """
-    
-    def __init__(self, **kwargs):
+
+    def __init__(self, **kwargs: Any):
         """Initialize preprocessor with optional configuration."""
         self.config = kwargs
-    
-    def preprocess(self, row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Preprocess a single row.
-        
-        Args:
-            row: Input row dictionary
-            
-        Returns:
-            Processed row dictionary, or None to skip this row
-        """
+
+    def preprocess(self, row: ConversationRecord) -> Optional[ConversationRecord]:
+        """Preprocess a single row."""
         return row
-    
-    def __call__(self, row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+
+    def __call__(self, row: Mapping[str, Any]) -> Optional[ConversationRecord]:
         """Allow preprocessor to be called as a function."""
-        return self.preprocess(row)
+        validated = validate_conversation_record(row)
+        return self.preprocess(validated)
 
 
 __all__ = ["BasePreprocessor"]
-
