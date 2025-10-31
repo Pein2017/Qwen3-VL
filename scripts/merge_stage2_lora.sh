@@ -1,10 +1,10 @@
 #!/bin/bash
 # Merge LoRA adapter into base model for end2end inference
-base_model=output/stage_3_gkd-merged/10-29/lan_kd_0.04-vision_kd_0.15-weaker_color_aug-checkpoint-400
+base_model=output/10-28/stage_4_merged/checkpoint-5000
 
-adapters=output/10-30/stage_3_gkd/v3-20251030-064915/gkd-last_4_2-epoch_20-eff_batch_32-ref_base_model-lan_kd_0.04-vision_kd_0.15-weaker_color_aug/checkpoint-1380
+adapters=output/summary/10-30/summary/v0-20251030-141905/last_llm_4-aug_conservative-eff_batch_32-epoch_5/checkpoint-300
 
-output_dir=output/stage_3_gkd-merged/10-30/lan_kd_0.04-vision_kd_0.15-weaker_color_aug-checkpoint-1380
+output_dir=output/10-30/summary_merged
 
 CUDA_VISIBLE_DEVICES=1 \
 swift export \

@@ -10,7 +10,7 @@ extends: base.yaml
 model:
   # Point to stage 2 best checkpoint - will load base model + LLM LoRA
   # model: output/10-22/stage_1/best/eff_batch_32-per_image_2-resumed_lr_1e-4/checkpoint-200
-  model: output/stage_4_merged-10-30/resumed-checkpoint-1932
+  model: output/10-28/stage_4_merged/checkpoint-5000
 
 tuner:
   train_type: lora
@@ -22,7 +22,7 @@ tuner:
   freeze_aligner: true
   use_swift_lora: false
   # LoRA targets: LLM last-4 blocks only (layers 32, 33, 34, 35)
-  target_regex: '^(?:model\.)?language_model\.layers\.(?:34|35)\.(?:self_attn\.(?:q_proj|k_proj|v_proj|o_proj)|mlp\.(?:gate_proj|up_proj|down_proj))$'
+  target_regex: '^(?:model\.)?language_model\.layers\.(?:32|33|34|35)\.(?:self_attn\.(?:q_proj|k_proj|v_proj|o_proj)|mlp\.(?:gate_proj|up_proj|down_proj))$'
   modules_to_save: []
     # Aligner frozen - no modules to save
     # Vision tower frozen - no vision modules
@@ -35,10 +35,10 @@ tuner:
 training:
   num_train_epochs: 5
   per_device_train_batch_size: 4
-  per_device_eval_batch_size: 2
+  per_device_eval_batch_size: 4
   output_dir: output/summary/10-30/summary/
   logging_dir: tb/summary/10-30/summary
-  run_name: llm_last2_lora-aug_conservative-eff_batch_32-epoch_5
+  run_name: last_llm_4-aug_conservative-eff_batch_32-epoch_5
 
   # Trainer/runtime additions for parity with stage_3
   packing: true
@@ -46,8 +46,7 @@ training:
   learning_rate: 1.0e-4
   vit_lr: 8.0e-5
   aligner_lr: 1.0e-4
-  gradient_accumulation_steps: 1
-  # Eval & checkpointing
+  gradient_accumulation_steps: 2
   eval_strategy: steps
   save_strategy: best
   eval_steps: 20
@@ -87,7 +86,7 @@ custom:
     # Summary counting is invariant to geometric transforms (flip/rotate/scale)
     # Conservative settings to avoid overfitting while preserving object counts
     enabled: true
-    bypass_prob: 0.15  # 15% clean samples (slightly higher than dense mode)
+    bypass_prob: 0.3  # 15% clean samples (slightly higher than dense mode)
     ops:
       # Geometric ops - SAFE for counting (objects remain in frame)
       - name: hflip
