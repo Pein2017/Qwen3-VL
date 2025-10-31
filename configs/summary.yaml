@@ -10,7 +10,7 @@ extends: base.yaml
 model:
   # Point to stage 2 best checkpoint - will load base model + LLM LoRA
   # model: output/10-22/stage_1/best/eff_batch_32-per_image_2-resumed_lr_1e-4/checkpoint-200
-  model: output/10-28/stage_4_merged/checkpoint-5000
+  model: output/stage_3_gkd-merged/10-30/lan_kd_0.04-vision_kd_0.3-weaker_color_aug-checkpoint-3000
 
 tuner:
   train_type: lora

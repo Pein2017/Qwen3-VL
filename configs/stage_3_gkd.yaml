@@ -12,7 +12,7 @@ rlhf:
 
 model:
   # Point to stage 2 best checkpoint - will load base model + LLM LoRA
-  model: output/10-29/stage_1-gkd/v3-20251029-135454/gkd-eff_batch_32-epoch_10/checkpoint-520
+  model: output/stage_3_gkd-merged/10-30/lan_kd_0.04-vision_kd_0.3-weaker_color_aug-checkpoint-1380
 
 tuner:
   train_type: lora
@@ -22,7 +22,7 @@ tuner:
   freeze_aligner: true  # ← Keep aligner frozen (already full-tuned in stage 2)
   target_modules: [all-linear]
   # LLM last-2 + Vision last-4 blocks (20-23)
-  target_regex: '^(?:model\.)?(?:language_model\.layers\.(?:32|33|34|35)\.(?:self_attn\.(?:q_proj|k_proj|v_proj|o_proj)|mlp\.(?:gate_proj|up_proj|down_proj))|visual\.blocks\.(?:18|19|20|21|22|23)\.(?:attn\.(?:qkv|proj)|mlp\.(?:linear_fc1|linear_fc2)))$'
+  target_regex: '^(?:model\.)?(?:language_model\.layers\.(?:32|33|34|35)\.(?:self_attn\.(?:q_proj|k_proj|v_proj|o_proj)|mlp\.(?:gate_proj|up_proj|down_proj))|visual\.blocks\.(?:16|17|18|19|20|21|22|23)\.(?:attn\.(?:qkv|proj)|mlp\.(?:linear_fc1|linear_fc2)))$'
   
   # --- Alternative Configurations (choose ONE and replace target_regex above) ---
   # 4B: LLM last-4 + Vision last-4 (original default):
@@ -49,8 +49,9 @@ tuner:
   lora_bias: none
 
 training:
-  output_dir: ./output/10-30/stage_3_gkd
-  run_name: gkd-last_6_4-epoch_50-eff_batch_32-ref_base_model-lan_kd_0.04-vision_kd_0.3-weaker_color_aug
+  output_dir: ./output/10-31/stage_3_gkd
+  run_name: gkd-last_8_4-epoch_20-eff_batch_16-ref_base_model-lan_kd_0.04-vision_kd_0.08-weaker_color_aug-resumed
+
   add_version: true
   save_safetensors: true
   per_device_train_batch_size: 1
@@ -63,7 +64,7 @@ training:
   learning_rate: 1.0e-4   
   vit_lr: 1.0e-4          
   aligner_lr: 5.0e-5     
-  num_train_epochs: 50
+  num_train_epochs: 20
 
   lr_scheduler_kwargs:
     min_lr: 1.0e-6
@@ -78,7 +79,7 @@ training:
   save_steps: 500
 
   # Verbose logging
-  logging_dir: ./tb/10-30/stage_3_gkd
+  logging_dir: ./tb/10-31/stage_3_gkd
   logging_steps: 10
   logging_first_step: true
 
@@ -95,7 +96,7 @@ deepspeed:
 custom:
   visual_kd:
     enabled: true
-    weight: 0.3  # Heavier anchor on vision/aligner (0.1-0.2 typical). Lower if visuals overfit.
+    weight: 0.08  # Heavier anchor on vision/aligner (0.1-0.2 typical). Lower if visuals overfit.
     targets: [merger, deepstack]
     distance: mse
     
