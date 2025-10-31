@@ -34,13 +34,13 @@ from vis_tools.vis_helper import (
 # ==============================
 
 # Required paths
-CKPT_PATH = "output/stage_3_gkd-merged/10-29/lan_kd_0.04-vision_kd_0.15-weaker_color_aug-checkpoint-400"  # HF dir or merged checkpoint  # HF dir or merged checkpoint
+CKPT_PATH = "output/stage_3_gkd-merged/10-30/lan_kd_0.04-vision_kd_0.3-weaker_color_aug-checkpoint-3000"  # HF dir or merged checkpoint  # HF dir or merged checkpoint
 JSONL_PATH = "data/bbu_full_768/val.jsonl"
 
 # Runtime settings
 LIMIT = 10
 DEVICE = "cuda:0"
-SAVE_DIR = "vis_out/10-29/stage_3_gkd-merged-lan_kd_0.04-vision_kd_0.15-weaker_color_aug-checkpoint-400"
+SAVE_DIR = "vis_out/10-30/stage_3_gkd-merged-lan_kd_0.04-vision_kd_0.3-weaker_color_aug-checkpoint-1380"
 MAX_NEW_TOKENS = 2048
 TEMPERATURE = 0.001  # Balanced randomness to avoid loops while maintaining quality
 TOP_P = 0.9  # Nucleus sampling - cuts off low-probability tail

@@ -8,7 +8,7 @@ import yaml
 from swift.llm.argument import RLHFArguments, TrainArguments
 
 from .prompts import SYSTEM_PROMPT, SYSTEM_PROMPT_SUMMARY, USER_PROMPT
-from .schema import PromptOverrides, TrainingConfig, SaveDelayConfig
+from .schema import PromptOverrides, SaveDelayConfig, TrainingConfig
 
 logger = logging.getLogger(__name__)
 
@@ -115,11 +115,19 @@ class ConfigLoader:
         if not isinstance(prompts_config, dict):
             raise TypeError("prompts section must be a mapping if provided")
 
-        try:
-            sr_raw = config.get("custom", {}).get("summary_ratio", 0.0)
-            summary_ratio = float(sr_raw)
-        except Exception:
-            summary_ratio = 0.0
+        summary_ratio = 0.0
+        custom_section = config.get("custom")
+        if custom_section is not None:
+            if not isinstance(custom_section, dict):
+                raise TypeError("custom section must be a mapping when resolving prompts")
+            if "summary_ratio" in custom_section:
+                sr_raw = custom_section["summary_ratio"]
+                try:
+                    summary_ratio = float(sr_raw)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(
+                        "custom.summary_ratio must be numeric if provided"
+                    ) from exc
 
         default_system = SYSTEM_PROMPT
         output_variant = "dense"
@@ -202,12 +210,10 @@ class ConfigLoader:
         if config.custom.trainer_variant:
             try:
                 setattr(train_args, "trainer_variant", config.custom.trainer_variant)
-            except Exception as exc:  # pragma: no cover - safe guard
-                logger.debug(
-                    "Failed to attach trainer_variant=%s: %s",
-                    config.custom.trainer_variant,
-                    exc,
-                )
+            except Exception as exc:  # pragma: no cover - explicit failure
+                raise RuntimeError(
+                    "Unable to attach trainer_variant to TrainArguments; update ms-swift if interface changed."
+                ) from exc
 
         setattr(train_args, "save_delay_config", save_delay_config)
         if save_delay_config.steps is not None:
@@ -218,7 +224,22 @@ class ConfigLoader:
         try:
             setattr(train_args, "visual_kd_config", config.custom.visual_kd)
         except Exception as exc:  # pragma: no cover
-            logger.debug("Failed to attach visual_kd_config: %s", exc)
+            raise RuntimeError(
+                "Unable to attach visual_kd_config to TrainArguments; ensure ms-swift exposes this attribute."
+            ) from exc
+
+        inner_args = getattr(train_args, "training_args", None)
+        if inner_args is None:
+            raise RuntimeError(
+                "TrainArguments missing nested training_args; ms-swift interface may have changed."
+            )
+
+        try:
+            setattr(inner_args, "visual_kd_config", config.custom.visual_kd)
+        except Exception as exc:  # pragma: no cover
+            raise RuntimeError(
+                "Unable to attach visual_kd_config to inner training arguments; ensure ms-swift exposes this attribute."
+            ) from exc
 
         return train_args
 
