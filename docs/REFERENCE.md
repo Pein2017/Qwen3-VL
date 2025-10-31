@@ -504,7 +504,7 @@ python -m src.stage_a.run \
 
 Output format:
 ```json
-{"image_id": "img1", "summary": "BBU设备×1/光模块×3/线缆×2"}
+{"image_id": "img1", "summary": "BBU设备×1，光模块×3，线缆×2"}
 ```
 
 **Stage-B: Group-Level Verdict**

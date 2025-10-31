@@ -91,14 +91,16 @@ Requires `summary` field in every record.
 
 ### Summary Field Standard
 
-Format requirements:
-- Replace commas with slashes (`/`)
-- Group identical items with `×N`
-- Preserve order
-- Optional `备注:` segment as final slash level
-- No special tokens
+Format requirements (aligned with training/inference prompts):
+- Use Chinese comma '，' between items (object entries)
+- Group identical items with `×N` (full-width ×, no space before N)
+- Preserve visual order: 自上到下、再从左到右（线对象以最左端点为起点）
+- Inside an object entry, keep taxonomy with slashes: 类型/属性[,属性]/[条件属性]
+- Remarks only once at the end: prepend with `，备注: ...`
+- Single sentence per image: no newlines, no trailing '。', no extra spaces
+- No geometry or coordinate arrays in summary strings
 
-**Example**: `光模块×3/线缆×2/BBU设备×1/备注:顶部有灰尘`
+**Example**: `光模块×3，线缆×2，BBU设备×1，备注: 顶部有灰尘`
 
 ---
 
