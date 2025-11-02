@@ -8,7 +8,7 @@ Modular, YAML-driven pipeline for fine-tuning Qwen3-VL on dense captioning tasks
 - **Geometry-aware**: Affine transformations preserve spatial accuracy
 - **JSON-lines first**: Grouped JSON output with geometry preserved
 
-**Pipeline**: YAML Config → ConfigLoader → SwiftSft → DenseCaptionDataset → DynamicPairDataset → Training Loop
+**Pipeline**: YAML Config → ConfigLoader → SwiftSft → DenseCaptionDataset → Training Loop
 
 ## Table of Contents
 - [Overview](#overview)
@@ -37,7 +37,7 @@ Modular, YAML-driven pipeline for fine-tuning Qwen3-VL on dense captioning tasks
 
 - YAML config is the single source of truth → `ConfigLoader` merges/validates and instantiates ms-swift `TrainArguments`.
 - `SwiftSft` initializes model and template (uses the model's native chat_template); adapters applied via `sft.prepare_model(...)`.
-- `DenseCaptionDataset` wraps `DynamicPairDataset` with `JSONLinesBuilder` and optional `AugmentationPreprocessor`.
+- `DenseCaptionDataset` orchestrates preprocessing, mode selection, and `JSONLinesBuilder` per sample (no pairing).
 - Template encodes messages, adds vision tokens, and normalizes coordinates (top-level objects → norm1000) during encoding.
 - Trainer from ms-swift runs training; checkpoints save adapters (LoRA) or merged weights depending on workflow.
 
@@ -53,13 +53,13 @@ src/
 │   │   ├── base.py        # BasePreprocessor interface
 │   │   ├── dense_caption.py  # Validation & filtering
 │   │   └── augmentation.py   # Geometry-aware augmentation
+│   ├── dense_caption.py   # DenseCaptionDataset (single-image orchestration)
 │   ├── builders/           # Message format builders
 │   │   ├── base.py        # BaseBuilder interface
-│   │   └── jsonlines.py   # Grouped JSON output
+│   │   └── jsonlines.py   # Minimal object-hierarchy output
 │   ├── utils.py           # load_jsonl, extract_geometry
 │   ├── geometry.py        # Affine transforms, normalization
 │   ├── augment.py         # Image + geometry augmentation
-│   ├── dynamic_pair.py    # DynamicPairDataset (core engine)
 │   ├── collators.py       # Data collators (padding-free, etc.)
 │   └── data_details.md    # JSONL schema specification
 ├── utils/
@@ -145,31 +145,33 @@ JSONL records (see `data_details.md`):
 - `summary`: **standardized all-slash format** (required for summary modes, optional otherwise)
 
 ### Per-Sample Pipeline
-**Executed in `DynamicPairDataset.__getitem__(index)`**
+**Executed in `DenseCaptionDataset.__getitem__(index)`**
 
 ```
-Index → Pair Selection (epoch-seeded RNG) 
-     → Deep Copy (rec_a, rec_b)
+Index → Epoch-seeded permutation
+     → Deep copy single record
      → Preprocessing (optional augmentation)
-     → Message Building (JSONLines)
+     → Mode Selection (dense or summary)
+     → Message Building (JSONLines, minimal object map)
      → Template Encoding (tokenization, bbox norm1000)
      → Training Sample
 ```
 
 **Step Details**:
-1. **Pair Selection**: Random pairing with epoch-based seeding for reproducibility
-2. **Preprocessing**: `AugmentationPreprocessor` applies affine transforms to images + geometries atomically
-3. **Message Building**: 
-   - `JSONLinesBuilder`: User prompt embeds all images; assistant returns grouped JSON per 图片_N
-   - Creates top-level `objects` with exact point arrays for template normalization
-4. **Template Encoding**: ms-swift adds `<image>` tokens, normalizes bbox to norm1000, tokenizes
+1. **Record Selection**: Epoch-based permutation ensures deterministic shuffling across workers while staying single-image.
+2. **Preprocessing**: `AugmentationPreprocessor` applies affine transforms to images + geometries atomically.
+3. **Mode Selection**: `summary_ratio` controls dense vs summary per sample; summary mode switches prompts on the fly.
+4. **Message Building**:
+   - `JSONLinesBuilder`: User prompt embeds the image; assistant returns `{ "object_1": {...}, ... }` (no per-image wrapper).
+   - Summary mode yields a single formatted string. Top-level `objects` retain exact point arrays for template normalization.
+5. **Template Encoding**: ms-swift adds `<image>` tokens, normalizes bbox to norm1000, and tokenizes text.
 
 ### Processing Stages (concise)
 
 1) JSONL record loaded (images, objects, width/height, optional summary)
-2) Grouping/pairing by `DynamicPairDataset` (epoch-seeded RNG; optional augmentation via preprocessor)
-3) Per-group mode select (dense or summary) in `DenseCaptionDataset` → instantiate `JSONLinesBuilder(mode=...)`
-4) Builder assembles one-turn chat: user embeds all images + prompt; assistant returns grouped JSON
+2) Optional preprocessing (augmentation, validation)
+3) Mode select (dense or summary) in `DenseCaptionDataset` → instantiate `JSONLinesBuilder(mode=...)`
+4) Builder assembles one-turn chat: user embeds image + prompt; assistant returns minimal object hierarchy or summary string
 5) Template encodes: inserts vision tokens, normalizes top-level `objects.bbox` to norm1000, tokenizes text
 6) DataLoader yields tensors: `input_ids`, `attention_mask`, `labels`, `pixel_values`, `image_grid_thw`, `objects`
 
@@ -190,29 +192,22 @@ Index → Pair Selection (epoch-seeded RNG)
 
 ### Message Formats
 
-**JSONLinesBuilder**（Grouped JSON 场景）:
+**JSONLinesBuilder**（单图输出）:
 ```json
 {
-  "图片_1": {
-    "object_1": {
-      "quad": [x1,y1,...,x4,y4],
-      "desc": "BBU设备/华为/显示完整/..."
-    },
-    "object_2": {
-      "line": [x1,y1,...,xn,yn],
-      "desc": "光纤/有保护措施/..."
-    }
+  "object_1": {
+    "quad": [x1,y1,...,x4,y4],
+    "desc": "BBU设备/华为/显示完整/..."
   },
-  "图片_2": {
-    "object_1": {
-      "bbox_2d": [x1,y1,x2,y2],
-      "desc": "螺丝、光纤插头/..."
-    }
+  "object_2": {
+    "line_points": 4,
+    "line": [x1,y1,...,x4,y4],
+    "desc": "光纤/有保护措施/..."
   }
 }
 ```
 
-**User turn**: 所有图片放在 `content` 列表中，末尾附上一段文字指令。
+**User turn**: `content` 先嵌入单张图片，再追加文本指令；无需额外的编号标签。
 
 **⚠️ CRITICAL: ms-swift Image Format Convention**
 
@@ -246,7 +241,7 @@ ms-swift uses a **strict key-value convention** for multimodal content where the
 **Configuration**:
 - `global_max_length`: Single knob for full conversation length (prompt + completion); overrides `model.max_model_len` and `template.max_length`
 - `emit_norm`: 控制文本输出的坐标空间（none/norm100/norm1000）
-（已移除）模板负责插入 图片_{i} 分隔，代码不再提供 `group_key_prefix` 配置项。
+输出直接使用单图对象映射，`group_key_prefix` 配置项保持移除。
 - 顶层 `objects.ref/bbox/image_id` 保留为原始像素坐标，模板自动归一化为 norm1000
 - 不再有 section headers 或 `image_index` 字段
 - **Packing** (optional): `training.packing: true` to concatenate samples to `global_max_length`, eliminating padding waste
@@ -255,7 +250,7 @@ ms-swift uses a **strict key-value convention** for multimodal content where the
   - Best for variable-length samples; ~90-95% GPU utilization
 
 **Dual Representation Strategy**:
-1. **Assistant 文本**: 使用 grouped JSON，几何字段直接暴露（bbox_2d/quad/line）。
+1. **Assistant 文本**: 使用 object-index JSON（`object_{n}`），几何字段直接暴露（bbox_2d/quad/line）。
 2. **顶层 objects**: 精确像素坐标供模板在编码阶段转换为 norm1000。
 3. 增广后的几何与文本保持一致。
 
@@ -277,7 +272,6 @@ ms-swift uses a **strict key-value convention** for multimodal content where the
 | **Preprocessors** | Row-level transformations | `AugmentationPreprocessor`, `DenseCaptionPreprocessor` |
 | **Builders** | Pair → message conversion | `JSONLinesBuilder` |
 | **ConfigLoader** | YAML management | Merge configs, resolve prompts → `TrainArguments` |
-| **DynamicPairDataset** | Core engine | Epoch-seeded pairing, orchestrates pipeline |
 | **DenseCaptionDataset** | High-level wrapper | Selects builder, configures augmentation |
 
 
@@ -297,7 +291,7 @@ model:
   model: path/to/Qwen3-VL-4B-Instruct
 
 template:
-  template: qwen3_vl             # use model's chat_template.json (图片_{i} auto-injected)
+  template: qwen3_vl             # use model's chat_template.json (vision tokens handled automatically)
   max_length: 4096
   truncation_strategy: right
   max_pixels: 589824             # e.g., up to 1024x1024
@@ -311,14 +305,14 @@ custom:
   train_jsonl: data/bbu_full_768/train.jsonl
   val_jsonl: data/bbu_full_768/val.jsonl
   emit_norm: norm1000               # none | norm100 | norm1000
-  # 无需配置 group_key_prefix；模板自动插入 图片_{i}
+  # 无需配置 group_key_prefix；输出已是单图 object_{n} 结构
 
 # prompts section is no longer required - default system prompt is used automatically
 # Custom prompts can be specified via:
 # prompts:
 #   system: |
 #     你是图像密集标注助手。只返回原始 JSON-lines…
-#     模板自动插入 图片_{i} 分隔，无需在文本中手动分段
+#     输出仅包含 object_{n} 键，无需在文本中手动分段
 #   user: 描述所有对象
 ```
 
@@ -428,13 +422,13 @@ CUDA_VISIBLE_DEVICES=0 conda run -n ms swift export \
   --max_shard_size 5GB
 ```
 
-## Dynamic grouping & augmentation (dataset)
+## Dataset knobs
 
-- images_per_user_turn: group N records/images into a single user turn (default 2)
-- augment_prob: probability to apply geometry-aware augmentation during training
+- summary_ratio: probability of sampling summary mode (set to 0 for dense-only)
+- augmentation.*: geometry-aware augmentation pipeline (Compose config)
 - dump_conversation_text: write one decoded conversation sample to disk for inspection
 
-These live under the `custom` section in YAML and are consumed by `src/sft.py` and `datasets/dynamic_pair.py`.
+These live under the `custom` section in YAML and are consumed by `src/sft.py` and `datasets/dense_caption.py`.
 
 ## Health checks (fail-fast)
 - **Chat template & images**: User turn image count must match placeholders; mismatches error.

@@ -3,7 +3,8 @@
 """Stage-B prompting: system and user message templates for group-level judgment."""
 from __future__ import annotations
 
-from typing import Dict, List
+import re
+from typing import Dict, List, Tuple
 
 # Import centralized mission definitions
 from src.config.missions import STAGE_B_MISSION_FOCUS as MISSION_FOCUS_MAP
@@ -21,6 +22,22 @@ STAGE_B_SYSTEM_PROMPT = """你是通信机房质检助手。
 请避免重复用语/模板化句式，允许多种合理表达；若关键项不可确认（如标签缺失/安装方向不明），请输出'不通过'，并简要说明原因。"""
 
 
+_INDEX_RE = re.compile(r"(\d+)$")
+
+
+def _sorted_summaries(stage_a_summaries: Dict[str, str]) -> List[Tuple[str, str]]:
+    def _index(key: str) -> int:
+        match = _INDEX_RE.search(key)
+        if match:
+            try:
+                return int(match.group(1))
+            except ValueError:
+                return 0
+        return 0
+
+    return sorted(stage_a_summaries.items(), key=lambda item: _index(item[0]))
+
+
 def build_stage_b_messages(
     stage_a_summaries: Dict[str, str],
     task_type: str,
@@ -28,28 +45,27 @@ def build_stage_b_messages(
     """Build Stage-B messages for group-level judgment.
     
     Args:
-        stage_a_summaries: Dict mapping 图片_i to Chinese summary text
+        stage_a_summaries: Dict mapping image_i (or legacy 图片_i) to Chinese summary text
         task_type: One of the 4 supported missions
         
     Returns:
         List of message dicts with system and user roles (text-only, no images)
         
     Example:
-        >>> summaries = {"图片_1": "BBU设备/华为/显示完整", "图片_2": "螺丝/符合要求"}
+        >>> summaries = {"image_1": "BBU设备/华为/显示完整", "image_2": "螺丝/符合要求"}
         >>> msgs = build_stage_b_messages(summaries, "挡风板安装检查")
         >>> len(msgs)
         2
         >>> msgs[0]["role"]
         'system'
     """
-    # Sort by 图片_i key for deterministic ordering
-    sorted_keys = sorted(
-        stage_a_summaries.keys(),
-        key=lambda k: int(k.replace("图片_", "")) if k.startswith("图片_") else 0
-    )
-    
-    # Build summary lines text
-    summary_lines = [f"{key}: {stage_a_summaries[key]}" for key in sorted_keys]
+    sorted_items = _sorted_summaries(stage_a_summaries)
+
+    # Build summary lines text with deterministic ordering
+    summary_lines = [
+        f"图像 {idx}: {text}"
+        for idx, (_, text) in enumerate(sorted_items, start=1)
+    ]
     summaries_text = "\n".join(summary_lines)
     
     # Get mission-specific focus

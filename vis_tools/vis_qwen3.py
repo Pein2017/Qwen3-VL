@@ -34,17 +34,17 @@ from vis_tools.vis_helper import (
 # ==============================
 
 # Required paths
-CKPT_PATH = "output/stage_3_gkd-merged/10-30/lan_kd_0.04-vision_kd_0.3-weaker_color_aug-checkpoint-3000"  # HF dir or merged checkpoint  # HF dir or merged checkpoint
+CKPT_PATH = "output/stage_3_gkd-merged/11-01/checkpoint-3450"  # HF dir or merged checkpoint  # HF dir or merged checkpoint
 JSONL_PATH = "data/bbu_full_768/val.jsonl"
 
 # Runtime settings
 LIMIT = 10
-DEVICE = "cuda:0"
-SAVE_DIR = "vis_out/10-30/stage_3_gkd-merged-lan_kd_0.04-vision_kd_0.3-weaker_color_aug-checkpoint-1380"
+DEVICE = "cuda:1"
+SAVE_DIR = "vis_out/11-01/stage_3_gkd-merged-checkpoint-3450"
 MAX_NEW_TOKENS = 2048
 TEMPERATURE = 0.001  # Balanced randomness to avoid loops while maintaining quality
 TOP_P = 0.9  # Nucleus sampling - cuts off low-probability tail
-REPETITION_PENALTY = 1.05  # Strong penalty against repetition (was 1.1, still too weak for repetitive outputs)
+REPETITION_PENALTY = 1.1  # Strong penalty against repetition (was 1.1, still too weak for repetitive outputs)
 
 # Optional: override training user prompt (None uses training default)
 USER_PROMPT_OVERRIDE: str | None = None
@@ -280,7 +280,7 @@ def parse_prediction(text: str) -> List[Dict[str, Any]]:
     if raw:
         obj = _json_loads_best_effort(raw)
         if isinstance(obj, dict):
-            # Support grouped {"图片_1": {...}} or flat {"object_1": {...}}
+            # Support legacy grouped {"图片_1": {...}} or flat {"object_1": {...}}
             if any(isinstance(k, str) and k.startswith("图片_") for k in obj.keys()):
                 try:
                     first_key = sorted(
@@ -298,11 +298,14 @@ def parse_prediction(text: str) -> List[Dict[str, Any]]:
                 return _build_objects_from_dict(obj)
 
     # Fallback: extract per-object dicts from a truncated group body
-    # Find the group body start: the '{' after the first occurrence of '图片_'
+    # Find the group body start: the '{' after the first occurrence of an object key
     try:
-        grp_idx = text.find("图片_")
-        if grp_idx == -1:
-            grp_idx = text.find("\u56fe\u7247_")  # unicode-escaped fallback
+        markers = ["object_", "图片_", "\u56fe\u7247_"]
+        grp_idx = -1
+        for marker in markers:
+            grp_idx = text.find(marker)
+            if grp_idx != -1:
+                break
         if grp_idx != -1:
             # Find the first '{' after the colon following the group key
             colon_idx = text.find(":", grp_idx)

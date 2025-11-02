@@ -33,5 +33,4 @@ data:
 
 custom:
   augment_prob: 0.0
-  images_per_user_turn: 2
   dump_conversation_text: false

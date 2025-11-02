@@ -160,7 +160,7 @@ def consistency_reward(
     Notes:
         Deferred to v2. Implementation will require:
         - Parse reasoning from line 2
-        - Check for references to 图片_i
+        - Check for references to image_i (legacy 图片_i still tolerated)
         - Verify claims against stage_a_summaries
         - Penalize hallucinations or contradictions
     """

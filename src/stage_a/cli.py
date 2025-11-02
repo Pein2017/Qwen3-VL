@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .inference import run_stage_a_inference
-from .prompts import SUPPORTED_MISSIONS, validate_mission
+from src.config.missions import SUPPORTED_MISSIONS, validate_mission
 
 
 @dataclass(frozen=True)

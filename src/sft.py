@@ -265,15 +265,6 @@ def main():
     if not custom_config.user_prompt or not custom_config.emit_norm:
         raise ValueError("custom.user_prompt and custom.emit_norm must be provided")
 
-    # Build dynamic pairing config
-    from .datasets.dynamic_pair import DynamicPairingConfig
-
-    dp_config = DynamicPairingConfig(
-        images_per_user_turn=int(custom_config.images_per_user_turn),
-        pre_tokenize=False,
-        seed=42,
-    )
-
     # Extract mode control parameters
     summary_ratio = custom_config.summary_ratio
 
@@ -300,18 +291,20 @@ def main():
     else:
         logger.info("Dense mode only (summary_ratio not set or 0)")
 
+    dataset_seed = 42
+
     dataset = DenseCaptionDataset.from_jsonl(
         train_jsonl,
         template=sft.template,
         user_prompt=custom_config.user_prompt,
         emit_norm=custom_config.emit_norm,
-        config=dp_config,
         augmenter=augmenter,
         bypass_prob=bypass_prob,
         sample_limit=train_sample_limit,
         summary_ratio=summary_ratio,
         system_prompt_dense=system_prompt_dense,
         system_prompt_summary=system_prompt_summary,
+        seed=dataset_seed,
     )
     logger.info(f"Training dataset size: {len(dataset)}")
 
@@ -457,13 +450,13 @@ def main():
             template=sft.template,
             user_prompt=custom_config.user_prompt,
             emit_norm=custom_config.emit_norm,
-            config=dp_config,
             augmenter=None,  # No augmentation for validation
             bypass_prob=0.0,  # Explicit: no bypass for validation
             sample_limit=val_sample_limit,
             summary_ratio=summary_ratio,
             system_prompt_dense=system_prompt_dense,
             system_prompt_summary=system_prompt_summary,
+            seed=dataset_seed,
         )
         logger.info(f"Validation dataset size: {len(eval_dataset)}")
 

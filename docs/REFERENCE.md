@@ -34,7 +34,6 @@ Comprehensive guide for training, inference, deployment, and advanced topics.
 
 **Dataset Components**:
 - `src/datasets/dense_caption.py` - `DenseCaptionDataset` (mode selection, augmentation config)
-- `src/datasets/dynamic_pair.py` - `DynamicPairDataset` (epoch-seeded pairing engine)
 - `src/datasets/builders/jsonlines.py` - `JSONLinesBuilder` (message formatting)
 - `src/datasets/preprocessors/` - Validation, augmentation preprocessing
 - `src/datasets/collators.py` - Tensor preparation, packing logic
@@ -63,26 +62,17 @@ Comprehensive guide for training, inference, deployment, and advanced topics.
 ```python
 # What it does:
 # 1. Wraps JSONL data with preprocessors
-# 2. Selects dense vs summary mode per pairing group (epoch-seeded)
+# 2. Selects dense vs summary mode per sample (epoch-seeded)
 # 3. Configures augmentation pipeline (bypass_prob, ops)
 # 4. Handles both train and validation splits
-```
-
-**DynamicPairDataset** (`src/datasets/dynamic_pair.py`):
-```python
-# What it does:
-# 1. Groups records by images_per_user_turn
-# 2. Epoch-seeded RNG for deterministic pairing
-# 3. Calls preprocessors → builder → returns single item
-# 4. Handles variable-length groups at dataset boundaries
 ```
 
 **JSONLinesBuilder** (`src/datasets/builders/jsonlines.py`):
 ```python
 # What it does:
-# 1. Formats multi-image groups → single-turn messages
-# 2. User message: [image1, image2, ..., prompt]
-# 3. Assistant message: {"图片_1": [...], "图片_2": [...]}
+# 1. Formats single-image records → single-turn messages
+# 2. User message: [image, prompt]
+# 3. Assistant message: {"object_1": {...}, "object_2": {...}}
 # 4. Attaches top-level "objects" with pixel coords (for template normalization)
 # 5. Handles dense/summary modes differently
 ```
@@ -465,7 +455,6 @@ messages = [{
     "role": "user",
     "content": [
         {"type": "image", "image": "img1.jpg"},
-        {"type": "image", "image": "img2.jpg"},
         {"type": "text", "text": "请描述图片中的所有物体"}
     ]
 }]
@@ -474,11 +463,8 @@ messages = [{
 **Output Format**:
 ```json
 {
-  "图片_1": [
-    {"bbox_2d": [100, 200, 300, 400], "desc": "BBU设备/品牌:华为/型号:5900"},
-    ...
-  ],
-  "图片_2": [...]
+  "object_1": {"bbox_2d": [100, 200, 300, 400], "desc": "BBU设备/品牌:华为/型号:5900"},
+  "object_2": {"line_points": 4, "line": [50, 60, 80, 120, 130, 180, 180, 220], "desc": "光纤/颜色:黄色/保护:有保护"}
 }
 ```
 
@@ -881,13 +867,13 @@ Monitoring: track bbox/quad/line metrics separately; reduce geometric ops if qua
 ## Stage‑A implementation notes (from archive)
 
 - Hybrid batching gives ~4–5× throughput vs sequential
-- Strict validation: non‑empty summaries; 图片_{1..N} coverage; deterministic ordering
+- Strict validation: non‑empty summaries; contiguous `object_{n}` indices; deterministic ordering
 - Native chat_template via HF; no custom wrapper required
 - Flat JSONL per mission enables easy downstream GRPO loading
 
 ## Dense/Summary mixed mode design (from archive)
 
-- Mode is chosen per pairing group (not per sample) to keep JSON shapes coherent
+- Mode is chosen per sample via epoch-seeded RNG (dense vs summary)
 - Summary mode requires valid `summary` on all records
 - Selection is deterministic per epoch (seeded RNG)
 - Dataset temporarily injects the appropriate system prompt per group during encoding

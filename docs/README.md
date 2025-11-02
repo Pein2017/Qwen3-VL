@@ -38,7 +38,7 @@ Status: Active — Internal Engineering
 ### End-to-End Pipeline (Config-Driven)
 
 ```
-YAML → ConfigLoader → SwiftSft → DenseCaptionDataset → DynamicPairDataset → Trainer
+YAML → ConfigLoader → SwiftSft → DenseCaptionDataset → Trainer
 ```
 
 **Key Design Principles**:

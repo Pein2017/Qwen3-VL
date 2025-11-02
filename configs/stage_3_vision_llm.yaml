@@ -85,7 +85,6 @@ deepspeed:
   config: zero2
 
 custom:
-  images_per_user_turn: 1
   dump_conversation_text: false
   # Augmentation pipeline (training only). Eval remains unchanged.
   augmentation:

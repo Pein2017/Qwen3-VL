@@ -29,7 +29,7 @@
   - `augmentation/` — operator registry, Compose pipeline, YAML builder.
   - `preprocessors/` — record-level transforms (augmentation, dense caption prep).
   - `builders/` — chat/user turn assembly (JSONLinesBuilder, etc.).
-  - `dynamic_pair.py` — dataset wrapper handling grouping and RNG seeding.
+  - `dense_caption.py` — dataset orchestrating single-image records, augmentation, and mode selection.
 - `src/utils/`, `callbacks/`, `stage_a/`, `stage_b/` — supplemental glue for training variants and callbacks.
 - `tests/augmentation/` — current unit tests; extend when touching geometry/augment code paths.
 
@@ -55,7 +55,6 @@
 - Common sections: `model`, `template`, `tuner`, `training`, `data`, `prompts`, `custom`, `deepspeed`.
 - `custom` keys commonly used:
   - `train_jsonl`, `val_jsonl`
-  - `images_per_user_turn`
   - `augmentation` → `ops` list consumed by `src/datasets/augmentation/builder.py`
   - `emit_norm` (`none|norm100|norm1000`), `user_prompt`, `summary_ratio`
   - `bypass_prob` (augmentation skip rate)

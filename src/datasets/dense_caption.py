@@ -1,209 +1,82 @@
-from typing import Any, Dict, Optional, Literal
-import random
+from __future__ import annotations
 
-from .dynamic_pair import DynamicPairDataset, DynamicPairingConfig
-from .utils import load_jsonl
+import copy
+import random
+from typing import Any, Dict, List, Literal, Optional, Sequence
+
+from torch.utils.data import Dataset, get_worker_info
+
 from .builders import JSONLinesBuilder
+from .contracts import ConversationRecord, validate_conversation_record
+from .preprocessors import AugmentationPreprocessor
+from .utils import load_jsonl
 from src.config.prompts import USER_PROMPT_SUMMARY
 
 
-class DenseCaptionDataset(DynamicPairDataset):
-    """Dense Caption dataset with dynamic mode selection per pairing group.
-    
-    This dataset wrapper enables per-group mode selection (dense or summary) by:
-    1. Randomly selecting a mode for each pairing group based on summary_ratio
-    2. Creating a builder with the selected mode
-    3. Injecting the appropriate system prompt into the template
+class DenseCaptionDataset(Dataset):
+    """Dense caption dataset without dynamic pairing.
+
+    Each sample corresponds to a single base record. The dataset supports
+    optional augmentation, summary/dense mode selection, and epoch-level shuffling
+    consistent with the legacy dynamic pairing pipeline.
     """
 
     def __init__(
         self,
-        base_records: Any,
+        base_records: Sequence[Any],
         template: Any,
         user_prompt: str,
         emit_norm: Literal["none", "norm100", "norm1000"],
-        config: Optional[DynamicPairingConfig] = None,
         augmenter: Optional[Any] = None,
+        preprocessor: Optional[Any] = None,
         summary_ratio: Optional[float] = None,
         system_prompt_dense: Optional[str] = None,
         system_prompt_summary: Optional[str] = None,
         bypass_prob: float = 0.0,
+        seed: int = 2025,
     ):
-        """Initialize dense caption dataset with dynamic mode selection.
-        
-        Args:
-            base_records: List of records or records to use
-            template: ms-swift template for encoding
-            user_prompt: User prompt text
-            emit_norm: Coordinate normalization for text output
-            config: Dynamic pairing configuration
-            augmenter: Optional augmentation config
-            summary_ratio: Probability (0..1) of selecting summary mode per group. 
-                          None or 0 = always dense; 1.0 = always summary
-            system_prompt_dense: System prompt for dense mode (fallback to template if None)
-            system_prompt_summary: System prompt for summary mode (required if summary_ratio > 0)
-            bypass_prob: Probability (0..1) of bypassing augmentation to preserve clean samples (default 0.0)
-        """
         self.summary_ratio = summary_ratio if summary_ratio is not None else 0.0
         self.system_prompt_dense = system_prompt_dense
         self.system_prompt_summary = system_prompt_summary
         self.user_prompt = user_prompt
-        self.emit_norm = emit_norm
-        
-        # Validate: if summary mode is possible, summary prompt must be provided
+        self.emit_norm: Literal["none", "norm100", "norm1000"] = emit_norm
+        self.bypass_prob = float(bypass_prob)
+        self.seed = int(seed)
+        self.template = template
+
         if not (0.0 <= float(self.summary_ratio) <= 1.0):
             raise ValueError(
-                f"summary_ratio must be within [0, 1], got {self.summary_ratio}. "
-                f"Set 0 for dense-only or 1 for summary-only."
+                f"summary_ratio must be within [0, 1], got {self.summary_ratio}."
             )
         if self.summary_ratio > 0 and self.system_prompt_summary is None:
             raise ValueError(
-                "system_prompt_summary is required when summary_ratio > 0. "
-                "Please provide the summary system prompt."
+                "system_prompt_summary is required when summary_ratio > 0."
             )
-        
-        # Create a placeholder builder; actual builder will be created per group
-        self.placeholder_builder = JSONLinesBuilder(
-            user_prompt=user_prompt,
-            emit_norm=emit_norm,
-            mode="dense",
-        )
 
-        super().__init__(
-            base_records=base_records,
-            template=template,
-            pair_message_builder=self.placeholder_builder,
-            config=config,
-            augmenter=augmenter,
-            bypass_prob=bypass_prob,
-        )
-        
-        self._rng = random.Random(self.config.seed)
-
-    def set_epoch(self, epoch: int) -> None:
-        """Ensure per-epoch determinism for mode selection consistent with base class."""
-        super().set_epoch(epoch)
-        # Re-seed local RNG for mode selection using the same epoch seed policy
-        try:
-            seed = self._seed_for_epoch(epoch)  # provided by base class
-        except Exception:
-            seed = int(getattr(self.config, 'seed', 2025)) ^ int(epoch)
-        self._rng = random.Random(seed)
-    
-    def _select_mode_for_group(self) -> Literal["dense", "summary"]:
-        """Randomly select mode for current pairing group.
-        
-        Returns:
-            "dense" or "summary" based on summary_ratio
-        """
-        if self.summary_ratio <= 0:
-            return "dense"
-        if self.summary_ratio >= 1.0:
-            return "summary"
-        # Probabilistic selection
-        return "summary" if self._rng.random() < self.summary_ratio else "dense"
-    
-    def _create_builder_for_mode(self, mode: Literal["dense", "summary"]) -> JSONLinesBuilder:
-        """Create a builder with appropriate system prompt for the selected mode.
-        
-        Args:
-            mode: The mode to build for
-            
-        Returns:
-            Configured JSONLinesBuilder
-        """
-        # Use summary-specific user prompt if in summary mode
-        user_prompt = USER_PROMPT_SUMMARY if mode == "summary" else self.user_prompt
-            
-        builder = JSONLinesBuilder(
-            user_prompt=user_prompt,
-            emit_norm=self.emit_norm,
-            mode=mode,
-        )
-        return builder
-    
-    def __getitem__(self, index: int) -> Dict[str, Any]:
-        """Get item with dynamic mode selection at pairing group level.
-        
-        This overrides DynamicPairDataset.__getitem__ to:
-        1. Select mode for this group
-        2. Create builder with appropriate system prompt
-        3. Inject system prompt into template
-        4. Build and encode with template
-        """
-        # Use strong integer seed for worker-safe local RNG
-        seed_local = self._rng.randrange(0, 2**32 - 1)
-        rng_local = random.Random(seed_local)
-        group_size = max(1, int(self.config.images_per_user_turn))
-
-        # Gather records for this group
-        if group_size <= 1:
-            partner_index = self.pair_selector(index, len(self.base_records), rng_local)
-            records = [
-                copy.deepcopy(self.base_records[index]),
-                copy.deepcopy(self.base_records[partner_index])
-            ]
-        else:
-            start = index * group_size
-            records = []
-            for i in range(start, min(start + group_size, len(self.base_records))):
-                records.append(copy.deepcopy(self.base_records[i]))
-            if not records:
-                records = [copy.deepcopy(self.base_records[-1])]
-
-        # Apply preprocessing if available (e.g., augmentation)
-        if self.preprocessor is not None:
-            if hasattr(self.preprocessor, 'rng'):
-                self.preprocessor.rng = rng_local
-            records = [self.preprocessor(r) for r in records]
-
-        # SELECT MODE FOR THIS GROUP
-        mode = self._select_mode_for_group()
-        
-        # Create builder with the selected mode
-        pair_builder = self._create_builder_for_mode(mode)
-        
-        # Build messages (this uses the builder's mode)
-        if hasattr(pair_builder, 'build_many') and callable(getattr(pair_builder, 'build_many')):
-            merged = pair_builder.build_many(records)
-        else:
-            # Fallback: only two records supported
-            while len(records) < 2:
-                records.append(records[-1])
-            merged = pair_builder(records[0], records[1])
-
-        # INJECT SYSTEM PROMPT based on mode
-        if mode == "summary" and self.system_prompt_summary:
-            # Override template system prompt for summary mode
-            system_prompt = self.system_prompt_summary
-        elif mode == "dense" and self.system_prompt_dense:
-            # Override template system prompt for dense mode
-            system_prompt = self.system_prompt_dense
-        else:
-            system_prompt = None
-        
-        # If we have an override, temporarily set it on the template
-        original_system = None
-        if system_prompt is not None:
+        validated_records: List[ConversationRecord] = []
+        for idx, record in enumerate(base_records):
             try:
-                original_system = getattr(self.template, 'system', None)
-                self.template.system = system_prompt
-            except Exception:
-                pass
-        
-        try:
-            # Encode with appropriate system prompt
-            encoded = self.template.encode(merged, return_length=True)
-        finally:
-            # Restore original system prompt
-            if original_system is not None and system_prompt is not None:
-                try:
-                    self.template.system = original_system
-                except Exception:
-                    pass
-        
-        return encoded
-    
+                validated = validate_conversation_record(record)
+            except ValueError as exc:
+                raise ValueError(f"Base record {idx} is invalid: {exc}") from exc
+            validated_records.append(copy.deepcopy(validated))
+
+        if not validated_records:
+            raise ValueError("DenseCaptionDataset requires at least one valid record")
+
+        self.base_records = validated_records
+
+        self.preprocessor = preprocessor
+        if augmenter is not None and self.preprocessor is None:
+            self.preprocessor = AugmentationPreprocessor(
+                augmenter=augmenter, bypass_prob=self.bypass_prob
+            )
+
+        self._epoch = 0
+        self._rng = random.Random(self._seed_for_epoch(self._epoch))
+        self._index_perm = list(range(len(self.base_records)))
+        self._rebuild_perm_for_epoch()
+
     @staticmethod
     def from_jsonl(
         jsonl_path: str,
@@ -216,7 +89,7 @@ class DenseCaptionDataset(DynamicPairDataset):
         if isinstance(sample_limit, int) and sample_limit > 0:
             records = records[:sample_limit]
         elif isinstance(sample_limit, str) and sample_limit.isdigit():
-            records = records[:int(sample_limit)]
+            records = records[: int(sample_limit)]
         # Backward-compatibility: drop unused arg if present
         kwargs.pop("use_detailed_caption", None)
         kwargs.pop("output_variant", None)  # Backward compat
@@ -226,8 +99,85 @@ class DenseCaptionDataset(DynamicPairDataset):
             **kwargs,
         )
 
+    def set_epoch(self, epoch: int) -> None:
+        self._epoch = int(epoch)
+        self._rng = random.Random(self._seed_for_epoch(self._epoch))
+        self._rebuild_perm_for_epoch()
 
-# Import copy for deepcopy in __getitem__
-import copy
+    def _seed_for_epoch(self, epoch: int) -> int:
+        base_seed = self.seed & 0xFFFFFFFF
+        mixed = (base_seed ^ ((int(epoch) + 1) * 0x9E3779B1)) & 0xFFFFFFFF
+        return mixed
 
+    def _rebuild_perm_for_epoch(self) -> None:
+        self._index_perm = list(range(len(self.base_records)))
+        if len(self._index_perm) > 1:
+            self._rng.shuffle(self._index_perm)
 
+    def __len__(self) -> int:
+        return len(self.base_records)
+
+    def _select_mode(self) -> Literal["dense", "summary"]:
+        if self.summary_ratio <= 0:
+            return "dense"
+        if self.summary_ratio >= 1:
+            return "summary"
+        return "summary" if self._rng.random() < self.summary_ratio else "dense"
+
+    def _create_builder(self, mode: Literal["dense", "summary"]) -> JSONLinesBuilder:
+        user_prompt = USER_PROMPT_SUMMARY if mode == "summary" else self.user_prompt
+        return JSONLinesBuilder(
+            user_prompt=user_prompt, emit_norm=self.emit_norm, mode=mode
+        )
+
+    def __getitem__(self, index: int) -> Dict[str, Any]:
+        if not self.base_records:
+            raise IndexError("DenseCaptionDataset is empty")
+
+        base_idx = self._index_perm[index % len(self._index_perm)]
+        record = copy.deepcopy(self.base_records[base_idx])
+
+        worker = get_worker_info()
+        seed_local = self._rng.randrange(0, 2**32 - 1)
+        if worker is not None:
+            seed_local ^= ((worker.id + 1) * 0xC2B2AE35) & 0xFFFFFFFF
+        rng_local = random.Random(seed_local & 0xFFFFFFFF)
+
+        if self.preprocessor is not None:
+            if hasattr(self.preprocessor, "rng"):
+                self.preprocessor.rng = rng_local
+            processed = self.preprocessor(record)
+            if processed is None:
+                raise ValueError(
+                    "Preprocessor removed the record; dataset does not duplicate samples"
+                )
+            record = processed
+
+        mode = self._select_mode()
+        builder = self._create_builder(mode)
+        merged = builder.build_many([record])
+
+        system_prompt = None
+        if mode == "summary" and self.system_prompt_summary:
+            system_prompt = self.system_prompt_summary
+        elif mode == "dense" and self.system_prompt_dense:
+            system_prompt = self.system_prompt_dense
+
+        original_system = None
+        if system_prompt is not None:
+            try:
+                original_system = getattr(self.template, "system", None)
+                self.template.system = system_prompt
+            except Exception:
+                original_system = None
+
+        try:
+            encoded = self.template.encode(merged, return_length=True)
+        finally:
+            if system_prompt is not None and original_system is not None:
+                try:
+                    self.template.system = original_system
+                except Exception:
+                    pass
+
+        return encoded

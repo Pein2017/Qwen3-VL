@@ -47,6 +47,5 @@ data:
 
 custom:
   augment_prob: 0.0
-  images_per_user_turn: 1
   dump_conversation_text: false
   trainer_variant: gkd_monitor

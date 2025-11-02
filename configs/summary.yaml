@@ -1,16 +1,16 @@
-# Example: Mixed Mode (Dynamic Per-Group Selection)
-# Output: Each pairing group randomly selects either dense or summary mode
-# - Dense groups: grouped JSON with geometry (bbox_2d, quad, line) + desc
-# - Summary groups: grouped JSON with one-line summaries per image
-# Example: Group 1 (dense): {"图片_1": {object dict}, "图片_2": {object dict}}
-#          Group 2 (summary): {"图片_3": "光纤 * 4, 标签 * 2", "图片_4": "BBU * 1"}
+# Example: Mixed Mode (Per-sample Selection)
+# Output: Each sample randomly selects dense or summary mode
+# - Dense: minimal object hierarchy JSON with geometry (bbox_2d, quad, line) + desc
+# - Summary: single-line summary string per image
+# Example: Dense sample: {"object_1": {...}, "object_2": {...}}
+#          Summary sample: "光纤×4，标签×2"
 
 extends: base.yaml
 
 model:
   # Point to stage 2 best checkpoint - will load base model + LLM LoRA
   # model: output/10-22/stage_1/best/eff_batch_32-per_image_2-resumed_lr_1e-4/checkpoint-200
-  model: output/stage_3_gkd-merged/10-30/lan_kd_0.04-vision_kd_0.3-weaker_color_aug-checkpoint-3000
+  model: output/stage_3_gkd-merged/11-01/checkpoint-3450
 
 tuner:
   train_type: lora
@@ -36,8 +36,8 @@ training:
   num_train_epochs: 5
   per_device_train_batch_size: 4
   per_device_eval_batch_size: 4
-  output_dir: output/summary/10-30/summary/
-  logging_dir: tb/summary/10-30/summary
+  output_dir: output/summary/11-01/summary/
+  logging_dir: tb/summary/11-01/summary
   run_name: last_llm_4-aug_conservative-eff_batch_32-epoch_5
 
   # Trainer/runtime additions for parity with stage_3
@@ -76,9 +76,7 @@ deepspeed:
 
 custom:
   emit_norm: norm1000
-  images_per_user_turn: 1
-  
-  # Each pairing group has a probability summary_ratio of being in summary mode
+  # Each sample has a probability summary_ratio of using summary mode
   summary_ratio: 1.0  # 100% summary mode (pure summary training)
   dump_conversation_text: false
   augmentation:

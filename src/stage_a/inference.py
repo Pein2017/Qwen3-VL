@@ -68,7 +68,7 @@ def _maybe_parse_json_object(text: str) -> Optional[Dict[str, Any]]:
 def sanitize_single_image_summary(text: str) -> str:
     """Extract and sanitize the summary for a single image.
 
-    - If `text` is a JSON object containing keys like 图片_1/图片_2, keep only 图片_1's value
+    - If `text` is a JSON object containing keys like image_1/图片_1, keep only the first image key
     - Otherwise use the raw `text`
     - Do not alter content beyond trimming outer whitespace
     """
@@ -76,17 +76,22 @@ def sanitize_single_image_summary(text: str) -> str:
 
     obj = _maybe_parse_json_object(summary_text)
     if obj is not None:
-        val = obj.get("图片_1")
-        if isinstance(val, str):
-            summary_text = val.strip()
-        else:
-            # Fallback: join all string values if 图片_1 missing
+        extracted: Optional[str] = None
+        for key in ("image_1", "图片_1"):
+            val = obj.get(key)
+            if isinstance(val, str):
+                extracted = val.strip()
+                break
+        if extracted is None:
+            # Fallback: join all string values if expected key missing
             collected: List[str] = []
-            for k, v in obj.items():
-                if isinstance(v, str):
-                    collected.append(v.strip())
+            for value in obj.values():
+                if isinstance(value, str):
+                    collected.append(value.strip())
             if collected:
-                summary_text = "，".join(collected)
+                extracted = "，".join(collected)
+        if extracted is not None:
+            summary_text = extracted
 
     # Keep raw content (no count-marker removal or dedupe). Only strip surrounding whitespace.
     summary_text = summary_text.strip()
@@ -435,7 +440,7 @@ def infer_one_image(
             "Empty summary generated (clean_text is empty after stripping)"
         )
 
-    # Sanitize single-image summary to keep only 图片_1 content and remove redundancy
+    # Sanitize single-image summary to keep only primary image content and remove redundancy
     clean_text = sanitize_single_image_summary(clean_text)
     return raw_text, clean_text
 
@@ -619,7 +624,7 @@ def infer_batch(
                 "(clean_text is empty after stripping)"
             )
 
-        # Sanitize single-image summary to keep only 图片_1 content and remove redundancy
+        # Sanitize single-image summary to keep only primary image content and remove redundancy
         clean_text = sanitize_single_image_summary(clean_text)
         outputs.append((raw_text, clean_text))
 
@@ -652,7 +657,7 @@ def process_group(
         JSONL record dict with all required fields
 
     Raises:
-        ValueError: If validation fails (empty summary or 图片_{i} mismatch)
+        ValueError: If validation fails (empty summary or per-image index mismatch)
     """
     # Build mission-dependent user prompt
     user_text = build_user_prompt(mission if include_mission_focus else None)
@@ -690,25 +695,24 @@ def process_group(
                 raw_texts.append(raw)
                 clean_texts.append(clean)
 
-    # Build per_image mapping with 图片_{i} keys
-    # Each single-image summary originally refers to 图片_1; we rewrite to 图片_{i}
+    # Build per_image mapping with deterministic image_i keys
     per_image: Dict[str, str] = {}
     for idx, clean_text in enumerate(clean_texts, start=1):
-        key = f"图片_{idx}"
+        key = f"image_{idx}"
         per_image[key] = clean_text
 
-    # Strict validation: 图片_{i} coverage
+    # Strict validation: coverage check
     if len(per_image) != num_images:
         raise ValueError(
-            f"图片_{{i}} coverage mismatch for group {group_id}: "
+            f"per_image coverage mismatch for group {group_id}: "
             f"{len(per_image)} keys vs {num_images} images"
         )
 
     # Verify all keys are present
     for idx in range(1, num_images + 1):
-        key = f"图片_{idx}"
+        key = f"image_{idx}"
         if key not in per_image:
-            raise ValueError(f"Missing 图片_{idx} in per_image for group {group_id}")
+            raise ValueError(f"Missing image_{idx} in per_image for group {group_id}")
 
     # Build record
     # Flattened record: keep only essential fields; drop raw/clean arrays to reduce redundancy

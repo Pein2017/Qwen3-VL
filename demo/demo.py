@@ -42,10 +42,10 @@ def main() -> None:
     # Configuration (edit these)
 
     # model_path = "output/summary_merged/10-25-aug_on-full_last2_llm"
-    model_path = "output/stage_3_gkd-merged/10-30/lan_kd_0.04-vision_kd_0.3-weaker_color_aug-checkpoint-1380"
+    model_path = "output/stage_3_gkd-merged/11-01/checkpoint-3450"
 
     image_paths = [
-        #     # "demo/images/QC-20230106-0000211_16517.jpeg",
+        # "demo/images/QC-20230106-0000211_16517.jpeg",
         # "demo/images/QC-20230106-0000211_16519.jpeg",
         "demo/images/test_demo.jpg",
         # ]
@@ -53,7 +53,7 @@ def main() -> None:
         # "demo/irrelevant_images/QC-TEMP-20241028-0015135_4206556.jpeg",
         # "demo/irrelevant_images/QC-TEMP-20241028-0015135_4206715.jpeg",
     ]
-    prompt = "请用自然语言描述"
+    prompt = "请描述这张图片"
     max_new_tokens = 512
     temperature = 0.0
     top_p = 0.9
@@ -61,7 +61,7 @@ def main() -> None:
     repetition_penalty = 1.06
     # prompt='Describe the image(s) briefly.'
 
-    device = "cuda:2"
+    device = "cuda:0"
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.benchmark = True
     torch.set_float32_matmul_precision("high")
@@ -69,13 +69,13 @@ def main() -> None:
 
     print(f"Loading processor from: {model_path}")
     processor = AutoProcessor.from_pretrained(model_path)
-    # Inspect template to ensure 图片_ injection is present
+    # Inspect template availability (optional informational output)
     try:
         template_str = getattr(
             getattr(processor, "tokenizer", None), "chat_template", None
         )
         if isinstance(template_str, str):
-            print(f"Template loaded. Contains '图片_': {'图片_' in template_str}")
+            print(f"Template loaded (length={len(template_str)} characters).")
         else:
             print(
                 "Template string not available on processor.tokenizer; relying on apply_chat_template output."
@@ -138,7 +138,7 @@ def main() -> None:
     messages = [
         # {
         #     "role": "system",
-        #     "content": SYSTEM_PROMPT,
+        #     "content": SYSTEM_PROMPT_SUMMARY,
         # },
         {
             "role": "user",
@@ -156,14 +156,7 @@ def main() -> None:
     print("\n--- FULL Chat text (for debugging) ---")
     print(text)
     print("--- end full text ---\n")
-    label_count = text.count("图片_")
-    print(
-        f"Occurrences of '图片_': {label_count}; has 图片_1: {'图片_1' in text}, 图片_2: {'图片_2' in text}"
-    )
-    # Show all occurrences
-    for i in range(1, 10):
-        if f"图片_{i}" in text:
-            print(f"  Found: 图片_{i}")
+    print(f"Prompt length: {len(text)} characters")
 
     print("Preprocessing inputs...")
     if images:

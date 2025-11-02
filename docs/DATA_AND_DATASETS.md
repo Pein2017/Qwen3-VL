@@ -67,20 +67,14 @@ Each record in your training data follows this structure:
 **Dense Mode** (default):
 ```json
 {
-  "图片_1": [
-    {"bbox_2d": [100, 200, 300, 400], "desc": "..."},
-    ...
-  ],
-  "图片_2": [...]
+  "object_1": {"bbox_2d": [100, 200, 300, 400], "desc": "..."},
+  "object_2": {"line_points": 4, "line": [50, 60, 80, 120, 130, 180, 180, 220], "desc": "..."}
 }
 ```
 
 **Summary Mode**:
-```json
-{
-  "图片_1": "单行汇总文本",
-  "图片_2": "另一个汇总"
-}
+```
+"单行汇总文本"
 ```
 Requires `summary` field in every record.
 
@@ -107,53 +101,35 @@ Format requirements:
 ### Architecture Overview
 
 ```
-JSONL → DenseCaptionDataset → DynamicPairDataset → Preprocessors → Builder → Collator → Trainer
+JSONL → DenseCaptionDataset → Collator → Trainer
 ```
 
 **Key Components**:
-1. **DenseCaptionDataset**: Mode selection (dense/summary), augmentation config
-2. **DynamicPairDataset**: Epoch-seeded pairing, per-item orchestration
-3. **Preprocessors**: Validation, augmentation
-4. **Builder**: Message formatting (JSONLinesBuilder)
-5. **Collator**: Tensor preparation, optional packing
+1. **DenseCaptionDataset**: Mode selection (dense/summary), augmentation config, per-item orchestration
+2. **Preprocessors**: Validation, augmentation (plugged into the dataset)
+3. **Builder**: Message formatting (JSONLinesBuilder)
+4. **Collator**: Tensor preparation, optional packing
 
 ### Visual Feature Distillation (optional)
 
 - Enable via `custom.visual_kd` when you want to lock the vision/aligner stack to a teacher while giving the language tower more room.
 - The dataset already supplies `pixel_values` and `image_grid_thw`; as long as a record contains images, the trainer captures and distills the corresponding activations automatically.
 - Batches without images (e.g., summary-only validation groups) skip the extra loss—no action required.
-- Keep `images_per_user_turn ≥ 1` so dense examples always surface at least one image for the distillation hooks.
 
 ### DenseCaptionDataset
 
-**Role**: 
-- Selects dense vs summary mode per pairing group
-- Configures augmentation pipeline
-- Attaches metadata for downstream processing
+**Role**:
+- Selects dense vs summary mode per sample
+- Applies augmentation/preprocessing
+- Attaches metadata for downstream processing and template encoding
 
 **Configuration**:
 ```yaml
 custom:
   train_jsonl: /path/to/train.jsonl
   val_jsonl: /path/to/val.jsonl
-  images_per_user_turn: 2          # Pairing group size
   summary_ratio: 0.0               # 0=dense, 1=summary, 0.3=30% summary
   emit_norm: norm1000              # Coordinate format in text
-```
-
-### DynamicPairDataset
-
-**Role**: Engine for pairing and per-item orchestration
-
-**Features**:
-- Epoch-seeded RNG for deterministic pairing
-- Handles variable-length groups
-- Respects pairing boundaries
-- Validates every record against shared contracts (`src/datasets/contracts.py`) before preprocessing.
-
-**Flow**:
-```
-Record → Group by pairing → Select mode → Preprocess → Build messages → Return item
 ```
 
 ---
@@ -162,36 +138,33 @@ Record → Group by pairing → Select mode → Preprocess → Build messages �
 
 ### JSONLinesBuilder
 
-**Purpose**: Formats multi-image groups into single-turn conversation messages
+**Purpose**: Formats single-image records into single-turn conversation messages
 
 **Dense Mode**:
 ```python
-# User message: embeds all images
-[{"type": "image", "image": "path1"}, {"type": "image", "image": "path2"}, {"type": "text", "text": prompt}]
+# User message: embed the image followed by the prompt
+[
+  {"type": "image", "image": "path"},
+  {"type": "text", "text": prompt}
+]
 
-# Assistant message: grouped JSON
+# Assistant message: minimal object hierarchy (no per-image wrapper)
 {
-  "图片_1": [
-    {"bbox_2d": [...], "desc": "..."},
-    ...
-  ],
-  "图片_2": [...]
+  "object_1": {"bbox_2d": [...], "desc": "类型/属性/..."},
+  "object_2": {"line_points": 4, "line": [...], "desc": "..."}
 }
 ```
 
 **Summary Mode**:
 ```python
-# Assistant message: one-line per image
-{
-  "图片_1": "单行汇总",
-  "图片_2": "另一个汇总"
-}
+# Assistant message: single summary string
+"标签×3，BBU设备×1，挡风板×1"
 ```
 
 **Key Behavior**:
 - Attaches top-level `objects` with pixel coords (for template normalization)
 - Geometries normalized based on `emit_norm` setting
-- Deterministic ordering (图片_1, 图片_2, ...)
+- Deterministic ordering of object indices (`object_1`, `object_2`, ...)
 - Consumes validated `ConversationRecord` objects and exposes augmentation telemetry (`pipeline.last_summary`) for downstream health checks.
 
 ---
@@ -289,9 +262,8 @@ python -m src.datasets.validate_jsonl --input train.jsonl --verbose
 ### Performance Tips
 
 1. **Image Loading**: Use relative paths from JSONL directory for portability
-2. **Pairing Size**: `images_per_user_turn: 2` is optimal for most GPUs
-3. **Augmentation**: Enable only needed ops (each adds overhead)
-4. **Packing**: Set `training.packing: true` for 20-30% speedup
+2. **Augmentation**: Enable only needed ops (each adds overhead)
+3. **Packing**: Set `training.packing: true` for 20-30% speedup
 
 ### Debugging
 

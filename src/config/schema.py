@@ -181,7 +181,6 @@ class CustomConfig:
     emit_norm: AllowedNorm
     summary_ratio: Optional[float] = None
     system_prompt_summary: Optional[str] = None
-    images_per_user_turn: int = 2
     augmentation: Optional[Mapping[str, Any]] = None
     bypass_prob: float = 0.0
     trainer_variant: Optional[str] = None
@@ -232,7 +231,10 @@ class CustomConfig:
 
         summary_ratio = data.pop("summary_ratio", None)
         system_prompt_summary = data.pop("system_prompt_summary", None)
-        images_per_user_turn = int(data.pop("images_per_user_turn", 2))
+        if "images_per_user_turn" in data:
+            raise ValueError(
+                "custom.images_per_user_turn is no longer supported; remove the field to use single-image turns."
+            )
         augmentation = data.pop("augmentation", None)
         bypass_prob = float(data.pop("bypass_prob", 0.0))
         trainer_variant = data.pop("trainer_variant", None)
@@ -263,7 +265,6 @@ class CustomConfig:
             emit_norm=cast("AllowedNorm", emit_norm_value),
             summary_ratio=summary_ratio,
             system_prompt_summary=system_prompt_summary,
-            images_per_user_turn=images_per_user_turn,
             augmentation=augmentation
             if isinstance(augmentation, Mapping)
             else augmentation,

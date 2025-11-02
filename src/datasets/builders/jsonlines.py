@@ -1,27 +1,26 @@
-"""Grouped JSON conversation builder"""
+"""JSON conversation builder for dense captioning"""
 
 import json
 import os
 import base64
-from typing import Any, Dict, List, Literal
+from typing import Any, Dict, Iterable, List, Literal, Mapping
 
 from .base import BaseBuilder
 from ..geometry import normalize_points
 from ..utils import extract_object_points
-from ..contracts import ConversationRecord
+from ..contracts import ConversationRecord, validate_conversation_record
 
 
 class JSONLinesBuilder(BaseBuilder):
-    """Builder for grouped JSON conversations.
+    """Builder for dense caption conversations.
 
-    Produces a single-round chat where the user embeds all images and the assistant
-    responds with one JSON object grouped by 图片_N keys.
+    Produces a single-round chat where the user embeds the image, followed by the
+    assistant emitting the minimal object hierarchy (no 图片_N wrapper).
 
-    Supports two output modes:
-    - dense: grouped JSON with geometry + desc (default)
-    - summary: grouped JSON with per-image summary strings (loaded from dataset)
-
-    Mode selection is determined per pairing group (at dataset level via system_prompt_summary).
+    Modes:
+    - ``dense``: assistant returns a JSON object mapping ``object_{n}`` keys to
+      geometry/description payloads.
+    - ``summary``: assistant returns the summary string stored in the record.
     """
 
     def __init__(
@@ -36,9 +35,8 @@ class JSONLinesBuilder(BaseBuilder):
         self.user_prompt = user_prompt
         self.emit_norm = emit_norm
         self.mode = mode
-        # Group key prefix is fixed by the chat template (图片_N)
 
-    def _get_summary_text(self, record: Dict[str, Any], record_index: int) -> str:
+    def _get_summary_text(self, record: ConversationRecord, record_index: int) -> str:
         """Extract and validate summary from record.
 
         Args:
@@ -60,97 +58,53 @@ class JSONLinesBuilder(BaseBuilder):
             )
         return summary
 
-    def build(
-        self, record_a: ConversationRecord, record_b: ConversationRecord
-    ) -> Dict[str, Any]:
-        """Build grouped JSON messages from two records."""
-        records = [record_a, record_b]
+    def build(self, record: ConversationRecord) -> Dict[str, Any]:
+        """Build a single-record conversation payload."""
+        return self.build_many([record])
 
-        grouped: Dict[str, Dict[str, Any]] = {}
-        user_contents: List[Dict[str, Any]] = []
-        objects_out: Dict[str, List[Any]] = {"ref": [], "bbox": [], "image_id": []}
+    def build_many(self, records: Iterable[Mapping[str, Any]]) -> Dict[str, Any]:
+        """Build conversation messages from one record.
 
-        image_slot = 0
-        record_index = 0
-        for record in records:
-            images = record.get("images", []) or []
-            objects = record.get("objects", []) or []
-
-            if not images and not objects:
-                continue
-
-            image_slot += 1
-
-            for image in images:
-                user_contents.append({"type": "image", "image": self._to_url(image)})
-
-            label = f"图片_{image_slot}"
-
-            # Branch on mode: all records in this group use the same mode
-            if self.mode == "summary":
-                # Summary mode: load and validate summary from record
-                grouped[label] = self._get_summary_text(record, record_index)
-            else:
-                # Dense mode: build full grouped entry with geometry
-                grouped[label] = self._build_group_entry(objects, record)
-                self._update_objects_metadata(objects_out, objects, image_slot - 1)
-
-            record_index += 1
-
-        user_contents.append({"type": "text", "text": self.user_prompt})
-
-        assistant_text = json.dumps(grouped, ensure_ascii=False)
-        messages = [
-            {"role": "user", "content": user_contents},
-            {
-                "role": "assistant",
-                "content": [{"type": "text", "text": assistant_text}],
-            },
-        ]
-
-        merged = {"messages": messages}
-        if objects_out["bbox"]:
-            merged["objects"] = objects_out
-
-        return merged
-
-    def build_many(self, records: List[ConversationRecord]) -> Dict[str, Any]:
-        """Build grouped JSON messages from N records.
-
-        Note: Visible labels (e.g., 图片_N) are injected by the chat template.
-        This builder only appends image blocks followed by the user prompt.
+        Dynamic pairing is no longer supported; this method fails if more than one
+        record is provided to highlight legacy call paths.
         """
-        grouped: Dict[str, Dict[str, Any]] = {}
+
+        records_list = list(records)
+        if len(records_list) != 1:
+            raise ValueError(
+                "Dynamic pairing is no longer supported; JSONLinesBuilder expects exactly one record."
+            )
+
+        record = validate_conversation_record(records_list[0])
+
         user_contents: List[Dict[str, Any]] = []
         objects_out: Dict[str, List[Any]] = {"ref": [], "bbox": [], "image_id": []}
+        objects_payload: Dict[str, Any] = {}
 
-        image_slot = 0
-        record_index = 0
-        for record in records:
-            images = record.get("images", []) or []
-            objects = record.get("objects", []) or []
-            if not images and not objects:
-                continue
-            image_slot += 1
-            for image in images:
-                user_contents.append({"type": "image", "image": self._to_url(image)})
+        images = record.get("images", []) or []
+        objects = record.get("objects", []) or []
 
-            label = f"图片_{image_slot}"
+        for image in images:
+            user_contents.append({"type": "image", "image": self._to_url(image)})
 
-            # Branch on mode: all records in this group use the same mode
-            if self.mode == "summary":
-                # Summary mode: load and validate summary from record
-                grouped[label] = self._get_summary_text(record, record_index)
-            else:
-                # Dense mode: build full grouped entry with geometry
-                grouped[label] = self._build_group_entry(objects, record)
-                self._update_objects_metadata(objects_out, objects, image_slot - 1)
-
-            record_index += 1
+        if self.mode == "summary":
+            assistant_payload: Any = self._get_summary_text(record, 0)
+        else:
+            assistant_payload = self._build_group_entry(objects, record)
+            self._update_objects_metadata(objects_out, objects, 0)
+            objects_payload = assistant_payload
 
         user_contents.append({"type": "text", "text": self.user_prompt})
 
-        assistant_text = json.dumps(grouped, ensure_ascii=False)
+        if self.mode == "summary":
+            assistant_text = (
+                assistant_payload
+                if isinstance(assistant_payload, str)
+                else json.dumps(assistant_payload, ensure_ascii=False)
+            )
+        else:
+            assistant_text = json.dumps(assistant_payload, ensure_ascii=False)
+
         messages = [
             {"role": "user", "content": user_contents},
             {
@@ -159,13 +113,15 @@ class JSONLinesBuilder(BaseBuilder):
             },
         ]
 
-        merged = {"messages": messages}
+        merged: Dict[str, Any] = {"messages": messages}
+        if objects_payload:
+            merged["assistant_payload"] = objects_payload
         if objects_out["bbox"]:
             merged["objects"] = objects_out
         return merged
 
     def _build_group_entry(
-        self, objects: List[Dict[str, Any]], record: Dict[str, Any]
+        self, objects: List[Dict[str, Any]], record: ConversationRecord
     ) -> Dict[str, Any]:
         width = float(record.get("width") or 1)
         height = float(record.get("height") or 1)

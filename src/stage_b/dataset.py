@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from datasets import Dataset
 
@@ -34,7 +35,7 @@ def load_stage_a_for_grpo(
             - group_id: str
             - task_type: str (mission name)
             - group_label: str ("通过" | "不通过")
-            - stage_a_summaries: dict {图片_i: summary_text}
+            - stage_a_summaries: dict {image_i: summary_text}
             - messages: list[dict] (system + user prompt, no assistant)
             
     Notes:
@@ -44,6 +45,26 @@ def load_stage_a_for_grpo(
         - stage_a_summaries passed to reward functions for consistency checks
     """
     records = []
+
+    index_re = re.compile(r"(\d+)$")
+
+    def normalize_stage_a(per_image: Dict[str, str]) -> Dict[str, str]:
+        def extract_index(key: str) -> int:
+            match = index_re.search(key)
+            if match:
+                try:
+                    return int(match.group(1))
+                except ValueError:
+                    return 0
+            return 0
+
+        sorted_items: List[Tuple[str, str]] = sorted(
+            per_image.items(), key=lambda item: extract_index(item[0])
+        )
+        return {
+            f"image_{idx}": text
+            for idx, (_, text) in enumerate(sorted_items, start=1)
+        }
     
     # Convert label: pass/fail → 通过/不通过
     label_map = {"pass": "通过", "fail": "不通过"}
@@ -69,7 +90,12 @@ def load_stage_a_for_grpo(
                     group_id = stage_a_record["group_id"]
                     mission = stage_a_record["mission"]
                     label = stage_a_record["label"]
-                    per_image = stage_a_record["per_image"]
+                    per_image_raw = stage_a_record["per_image"]
+                    if not isinstance(per_image_raw, dict):
+                        logger.warning(
+                            f"per_image field is not a dict in {path.name}:{line_num}, skipping"
+                        )
+                        continue
                     
                     # Validate mission
                     if mission not in MISSION_FOCUS_MAP:
@@ -88,8 +114,10 @@ def load_stage_a_for_grpo(
                     group_label = label_map[label]
                     
                     # Build messages (system + user, no assistant)
+                    normalized_per_image = normalize_stage_a(per_image_raw)
+
                     messages = build_stage_b_messages(
-                        stage_a_summaries=per_image,
+                        stage_a_summaries=normalized_per_image,
                         task_type=mission,
                     )
                     
@@ -98,7 +126,7 @@ def load_stage_a_for_grpo(
                         "group_id": group_id,
                         "task_type": mission,
                         "group_label": group_label,
-                        "stage_a_summaries": per_image,
+                        "stage_a_summaries": normalized_per_image,
                         "messages": messages,
                     }
                     

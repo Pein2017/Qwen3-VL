@@ -11,7 +11,7 @@ from src.config import TrainingConfig, CustomConfig, SaveDelayConfig
 from src.sft import resolve_trainer_cls
 from src.trainers import GKDTrainerWithMetrics
 from src.stage_a.cli import StageAConfig
-from src.stage_a.prompts import SUPPORTED_MISSIONS
+from src.config.missions import SUPPORTED_MISSIONS
 
 
 def test_load_training_config_returns_dataclasses(monkeypatch):
@@ -133,7 +133,9 @@ def test_gkd_monitor_logs_losses(monkeypatch):
 
     trainer.log({"eval/loss": 1.23})
 
-    assert pytest.approx(captured_logs["train/llm_kd_loss"], rel=1e-6) == (0.1 + 0.2) / 2
+    assert (
+        pytest.approx(captured_logs["train/llm_kd_loss"], rel=1e-6) == (0.1 + 0.2) / 2
+    )
     assert pytest.approx(captured_logs["train/sft_loss"], rel=1e-6) == (0.4 + 0.5) / 2
     assert pytest.approx(captured_logs["train/loss"], rel=1e-6) == (0.5 + 0.7) / 2
     assert (
