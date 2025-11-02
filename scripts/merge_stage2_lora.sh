@@ -1,6 +1,6 @@
 #!/bin/bash
 # Merge LoRA adapter into base model for end2end inference
-# The base model path is automatically extracted from adapter_config.json
+base_model=output/10-28/stage_4_merged/checkpoint-5000
 
 adapters=output/11-01/stage_3_gkd/v0-20251101-154916/gkd-last_12_4-epoch_50-eff_batch_32-ref_base_model-lan_kd_0.04-vision_kd_0.08-stronger_aug-from_stage_1/checkpoint-3450
 
