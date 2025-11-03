@@ -1,6 +1,6 @@
-extends: stage_2_llm_lora.yaml
+extends: base.yaml
 
-# Stage 2 overlay: enable GKD anchoring during dense-caption SFT
+# Stage 2: LoRA on LLM last-4 blocks, freeze ViT; fully train MLP aligner (TOON + GKD)
 
 rlhf:
   rlhf_type: gkd
@@ -12,10 +12,63 @@ rlhf:
   max_completion_length: 256
   temperature: 0.9
 
+model:
+  model: output/toon/11-03/stage_1_gkd/v1-20251103-015814/gkd-eff_batch_32-toon/checkpoint-340
+
+tuner:
+  train_type: lora
+  use_swift_lora: false  # Use PEFT backend for better compatibility
+  freeze_llm: false      # Enable LoRA on LLM last-4 layers (see target_regex below)
+  freeze_vit: true       # Freeze vision tower completely
+  freeze_aligner: false  # Fully tune aligner modules alongside LoRA
+  target_modules: [all-linear]
+  # Apply LoRA to last 4 LLM layers (32-35) for the 4B model
+  # This regex targets language_model.layers.{32,33,34,35}.{self_attn,mlp}.*
+  target_regex: '^(?:model\.)?language_model\.layers\.(?:32|33|34|35)\.(?:self_attn\.(?:q_proj|k_proj|v_proj|o_proj)|mlp\.(?:gate_proj|up_proj|down_proj))$'
+  # CRITICAL: modules_to_save does NOT support ModuleList - must specify individual elements
+  # Qwen3-VL has: model.visual.merger (single module) + deepstack_merger_list (ModuleList with 3 elements)
+  # These modules will be FULLY fine-tuned (not LoRA)
+  modules_to_save:
+    - model.visual.merger
+    - model.visual.deepstack_merger_list.0
+    - model.visual.deepstack_merger_list.1
+    - model.visual.deepstack_merger_list.2
+  lora_rank: 8
+  lora_alpha: 16
+  lora_dropout: 0.1
+  lora_bias: none
+
 training:
   output_dir: ./output/10-30/stage_2_llm_lora_gkd
   run_name: lora_8_16-5e-4-eff_batch_32-last_4-gkd
+  per_device_train_batch_size: 1
+
+  save_only_model: true
+  optimizer: multimodal
+  learning_rate: 5.0e-4
+  vit_lr: 2.0e-5
+  aligner_lr: 2.0e-4
+  num_train_epochs: 10
+
+  gradient_accumulation_steps: 2
+
+  eval_strategy: steps
+  save_strategy: best
+  eval_steps: 200
+  save_steps: 200
+  save_total_limit: 2
+  save_delay_steps: 200
+
+  # Verbose logging
+  logging_dir: ./tb/10-30-stage_2
+
+data:
+  dataset_num_proc: 8
+  dataloader_num_workers: 8
 
 custom:
+  emit_norm: norm1000
+  augment_prob: 0.0
+  dump_conversation_text: false
   trainer_variant: gkd_monitor
-
+  toon_mode: true

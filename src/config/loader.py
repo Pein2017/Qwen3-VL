@@ -7,7 +7,14 @@ from typing import Any, Dict, List, Optional, Set
 import yaml
 from swift.llm.argument import RLHFArguments, TrainArguments
 
-from .prompts import SYSTEM_PROMPT, SYSTEM_PROMPT_SUMMARY, USER_PROMPT
+from .prompts import (
+    SYSTEM_PROMPT_JSON,
+    SYSTEM_PROMPT_SUMMARY,
+    SYSTEM_PROMPT_TOON,
+    USER_PROMPT_JSON,
+    USER_PROMPT_SUMMARY,
+    USER_PROMPT_TOON,
+)
 from .schema import PromptOverrides, SaveDelayConfig, TrainingConfig
 
 logger = logging.getLogger(__name__)
@@ -116,6 +123,7 @@ class ConfigLoader:
             raise TypeError("prompts section must be a mapping if provided")
 
         summary_ratio = 0.0
+        toon_mode = False
         custom_section = config.get("custom")
         if custom_section is not None:
             if not isinstance(custom_section, dict):
@@ -128,15 +136,30 @@ class ConfigLoader:
                     raise ValueError(
                         "custom.summary_ratio must be numeric if provided"
                     ) from exc
+            if "toon_mode" in custom_section:
+                raw = custom_section["toon_mode"]
+                if isinstance(raw, bool):
+                    toon_mode = raw
+                elif isinstance(raw, (int, float)):
+                    toon_mode = bool(raw)
+                else:
+                    raise TypeError("custom.toon_mode must be a boolean when provided")
 
-        default_system = SYSTEM_PROMPT
         output_variant = "dense"
         if summary_ratio >= 1.0:
             default_system = SYSTEM_PROMPT_SUMMARY
+            default_user = USER_PROMPT_SUMMARY
             output_variant = "summary"
+        else:
+            if toon_mode:
+                default_system = SYSTEM_PROMPT_TOON
+                default_user = USER_PROMPT_TOON
+            else:
+                default_system = SYSTEM_PROMPT_JSON
+                default_user = USER_PROMPT_JSON
 
         system_prompt = prompts_config.get("system", default_system)
-        user_prompt = prompts_config.get("user", USER_PROMPT)
+        user_prompt = prompts_config.get("user", default_user)
 
         return PromptOverrides(
             system=str(system_prompt) if system_prompt is not None else None,

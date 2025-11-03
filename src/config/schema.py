@@ -192,6 +192,7 @@ class CustomConfig:
     val_jsonl: Optional[str] = None
     output_variant: Literal["dense", "summary"] = "dense"
     visual_kd: VisualKDConfig = field(default_factory=VisualKDConfig.disabled)
+    toon_mode: bool = False
     extra: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -246,6 +247,13 @@ class CustomConfig:
         val_jsonl = data.pop("val_jsonl", None)
         visual_kd_raw = data.pop("visual_kd", None)
         visual_kd = VisualKDConfig.from_mapping(visual_kd_raw)
+        toon_mode_raw = data.pop("toon_mode", False)
+        if isinstance(toon_mode_raw, bool):
+            toon_mode = toon_mode_raw
+        elif isinstance(toon_mode_raw, (int, float)):
+            toon_mode = bool(toon_mode_raw)
+        else:
+            raise TypeError("custom.toon_mode must be a boolean")
 
         extra = dict(data)
 
@@ -282,6 +290,7 @@ class CustomConfig:
             val_jsonl=str(val_jsonl) if val_jsonl is not None else None,
             output_variant=prompts.output_variant,
             visual_kd=visual_kd,
+            toon_mode=toon_mode,
             extra=extra,
         )
 

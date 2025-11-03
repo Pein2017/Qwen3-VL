@@ -45,7 +45,9 @@ status: draft
 
 ## Open Questions
 
-- Do we require a dedicated `design.md` to capture tokenizer measurements, or will inline proposal notes suffice?
-- How should we expose the parser externally (e.g., utility module vs. dataset builder method) so serving pipelines can opt-in later if needed?
+- ~~Do we require a dedicated `design.md` to capture tokenizer measurements, or will inline proposal notes suffice?~~
+  - Inline documentation inside the proposal/code comments is sufficient; no separate `design.md` will be produced for this change.
+- ~~How should we expose the parser externally (e.g., utility module vs. dataset builder method) so serving pipelines can opt-in later if needed?~~
+  - The parser is exported via `src/datasets/builders/__init__.py` (`decode_toon_payload`, `encode_toon_block`, etc.), making it available to training, evaluation, and serving pipelines without duplicating code.
 
 

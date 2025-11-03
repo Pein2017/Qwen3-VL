@@ -34,6 +34,7 @@ class DenseCaptionDataset(Dataset):
         system_prompt_summary: Optional[str] = None,
         bypass_prob: float = 0.0,
         seed: int = 2025,
+        toon_mode: bool = False,
     ):
         self.summary_ratio = summary_ratio if summary_ratio is not None else 0.0
         self.system_prompt_dense = system_prompt_dense
@@ -43,6 +44,7 @@ class DenseCaptionDataset(Dataset):
         self.bypass_prob = float(bypass_prob)
         self.seed = int(seed)
         self.template = template
+        self.toon_mode = bool(toon_mode)
 
         if not (0.0 <= float(self.summary_ratio) <= 1.0):
             raise ValueError(
@@ -126,8 +128,12 @@ class DenseCaptionDataset(Dataset):
 
     def _create_builder(self, mode: Literal["dense", "summary"]) -> JSONLinesBuilder:
         user_prompt = USER_PROMPT_SUMMARY if mode == "summary" else self.user_prompt
+        toon_mode = self.toon_mode if mode == "dense" else False
         return JSONLinesBuilder(
-            user_prompt=user_prompt, emit_norm=self.emit_norm, mode=mode
+            user_prompt=user_prompt,
+            emit_norm=self.emit_norm,
+            mode=mode,
+            toon_mode=toon_mode,
         )
 
     def __getitem__(self, index: int) -> Dict[str, Any]:

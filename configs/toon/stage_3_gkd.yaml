@@ -1,10 +1,18 @@
-extends: base.yaml
+extends: ../base.yaml
 
 # Stage 3: LoRA on LAST-6 Vision blocks, LoRA on LLM last-2; aligner full-tuned
 
+rlhf:
+  rlhf_type: gkd
+  teacher_model: model_cache/models/Qwen/Qwen3-VL-4B-Instruct
+  beta: 0.04  # Light KL to let LLM LoRA adapt; raise (0.1-0.2) if language drifts too far
+  sft_alpha: 1
+  seq_kd: false
+  lmbda: 0.0
+
 model:
   # Point to stage 2 best checkpoint - will load base model + LLM LoRA
-  model: output/stage_2_merged-10-30
+  model: output/toon/11-03/stage_2_gkd_merged/checkpoint-200
 
 tuner:
   train_type: lora
@@ -14,7 +22,7 @@ tuner:
   freeze_aligner: true  # ← Keep aligner frozen (already full-tuned in stage 2)
   target_modules: [all-linear]
   # LLM last-2 + Vision last-4 blocks (20-23)
-  target_regex: '^(?:model\.)?(?:language_model\.layers\.(?:34|35)\.(?:self_attn\.(?:q_proj|k_proj|v_proj|o_proj)|mlp\.(?:gate_proj|up_proj|down_proj))|visual\.blocks\.(?:20|21|22|23)\.(?:attn\.(?:qkv|proj)|mlp\.(?:linear_fc1|linear_fc2)))$'
+  target_regex: '^(?:model\.)?(?:language_model\.layers\.(?:32|33|34|35)\.(?:self_attn\.(?:q_proj|k_proj|v_proj|o_proj)|mlp\.(?:gate_proj|up_proj|down_proj))|visual\.blocks\.(?:12|13|14|15|16|17|18|19|20|21|22|23)\.(?:attn\.(?:qkv|proj)|mlp\.(?:linear_fc1|linear_fc2)))$'
   
   # --- Alternative Configurations (choose ONE and replace target_regex above) ---
   # 4B: LLM last-4 + Vision last-4 (original default):
@@ -41,8 +49,10 @@ tuner:
   lora_bias: none
 
 training:
-  output_dir: ./output/10-28/stage_3
-  run_name: last_4_2-epoch_100-aug_conservative-eff_batch_32
+  output_dir: ./output/toon/11-03/stage_3_gkd
+  run_name: gkd-last_12_4-epoch_50-eff_batch_32-lan_kd_0.04-vision_kd_0.04-from_stage_2
+
+  num_train_epochs: 50
   add_version: true
   save_safetensors: true
   per_device_train_batch_size: 2
@@ -52,25 +62,25 @@ training:
   warmup_ratio: 0.2
 
   optimizer: multimodal
-  learning_rate: 1.0e-4   # Vision LoRA learning rate
-  vit_lr: 1.0e-4          # Slightly above base LR for LoRA on LAST-6
-  aligner_lr: 3.0e-4      # Aligner continues training (if in modules_to_save)
-  num_train_epochs: 100
+  learning_rate: 8.0e-5   
+  vit_lr: 5.0e-5          
+  aligner_lr: 1.0e-4     
 
   lr_scheduler_kwargs:
     min_lr: 1.0e-6
 
-  gradient_accumulation_steps: 2
+  gradient_accumulation_steps: 4
 
   # Eval & checkpointing
   eval_strategy: steps
   save_strategy: steps
-  save_total_limit: 4
+  save_total_limit: 6
   eval_steps: 20
-  save_steps: 5
+  save_steps: 500
+  save_delay_steps: 500
 
   # Verbose logging
-  logging_dir: ./tb/10-28/stage_3
+  logging_dir: ./tb/toon/11-03/stage_3_gkd
   logging_steps: 10
   logging_first_step: true
 
@@ -85,11 +95,20 @@ deepspeed:
   config: zero2
 
 custom:
+  toon_mode: true
+
+  visual_kd:
+    enabled: true
+    weight: 0.04  # Heavier anchor on vision/aligner (0.1-0.2 typical). Lower if visuals overfit.
+    targets: [merger, deepstack]
+    distance: mse
+
+  trainer_variant: gkd_monitor
   dump_conversation_text: false
   # Augmentation pipeline (training only). Eval remains unchanged.
   augmentation:
     enabled: true
-    bypass_prob: 0.2  # 20% of training samples remain clean (no augmentation)
+    bypass_prob: 0.1  # 20% of training samples remain clean (no augmentation)
     ops:
       # Geometric ops
       - name: hflip
@@ -123,7 +142,7 @@ custom:
       # ✅ Multi-scale training: prefer medium-large sizes (no aggressive shrinking)
       - name: resize_by_scale
         params: { lo: 0.9, hi: 1.2, align_multiple: 32, prob: 0.7 }
-      # Color ops (reduced strength for less distortion)
+      # Color ops (enhanced strength for better robustness)
       - name: color_jitter
         params: { brightness: [0.85, 1.15], contrast: [0.85, 1.15], saturation: [0.85, 1.15], prob: 0.4 }
       - name: gamma

@@ -20,8 +20,8 @@ PRIOR_RULES = (
 # Prompt Schemes
 # ============================================================================
 
-"""Dense captioning system prompt - includes ordering and taxonomy hints"""
-SYSTEM_PROMPT = (
+"""Dense captioning system prompt - JSON pathway"""
+SYSTEM_PROMPT_JSON = (
     "你是图像密集标注助手。只返回一个合法 JSON 对象，不要任何解释或额外文本。\n\n"
     "输出要求：\n"
     '1) 顶层直接输出对象字典：{"object_1": {...}, "object_2": {...}}；按出现顺序从 1 开始。\n'
@@ -31,6 +31,20 @@ SYSTEM_PROMPT = (
     '   - desc 结构：类型/属性[,属性]/[条件属性]/[备注(仅最后一级，可选，前缀"备注:")]。\n'
     "4) 类型与属性采用既定中文规范词（如：BBU设备、挡风板、螺丝、光纤插头、标签、光纤、电线；可含品牌/可见性/符合性/保护/走线等）。\n"
     "5) 仅返回 JSON；不得包含示例或解释。\n\n"
+    "先验规则：\n" + PRIOR_RULES
+)
+
+
+"""Dense captioning system prompt - TOON pathway"""
+SYSTEM_PROMPT_TOON = (
+    "你是图像密集标注助手。只返回一个 TOON 表格，不要 JSON 或额外文本。\n\n"
+    "输出要求：\n"
+    "1) 首行使用 objs[N]{type,desc,xs}: 表头，N 为对象数量；对象按“自上到下、再从左到右”排序，线对象以最左端点为起点。\n"
+    "2) 每行按英文逗号分隔：type,desc,<坐标...>。type 仅允许 0/1/2，分别代表 bbox_2d、quad、line；若 desc 含空格或分隔符，需使用双引号并按 TOON 规范用反斜杠转义。\n"
+    "3) 坐标使用 norm100/norm1000 整数（由 emit_norm 决定）：bbox 行必须给出 4 个整数 [x1,y1,x2,y2]；quad 行给出 8 个整数；line 行给出偶数个整数（每 2 个为一组点）。\n"
+    "4) line 行不得输出 line_points；坐标数量自动决定线段点数。\n"
+    "5) desc 结构沿用 类型/属性[,属性]/[条件属性]/[备注(仅最后一级，前缀“备注:”)]，与 JSON 版本保持一致。\n"
+    "6) 严禁输出示例、注释或额外句子，只能返回完整的 TOON 表格。\n\n"
     "先验规则：\n" + PRIOR_RULES
 )
 
@@ -59,9 +73,14 @@ SYSTEM_PROMPT_SUMMARY = (
 )
 
 
-USER_PROMPT = (
+USER_PROMPT_JSON = (
     '基于所给图片，检测并列出所有对象：按"自上到下再从左到右"排序，'
     "坐标使用 norm1000 整数网格，严格按规范返回 JSON。"
+)
+
+USER_PROMPT_TOON = (
+    '基于所给图片，检测并列出所有对象：按"自上到下再从左到右"排序，输出 TOON 表格 `objs[N]{type,desc,xs}`。'
+    "type 列分别使用 0/1/2 对应 bbox_2d/quad/line，坐标列依次列出所有整数坐标（line 行无需额外的 line_points 字段）。"
 )
 
 USER_PROMPT_SUMMARY = (
@@ -70,9 +89,17 @@ USER_PROMPT_SUMMARY = (
 )
 
 
+SYSTEM_PROMPT = SYSTEM_PROMPT_JSON
+USER_PROMPT = USER_PROMPT_JSON
+
+
 __all__ = [
     "SYSTEM_PROMPT",
+    "SYSTEM_PROMPT_JSON",
+    "SYSTEM_PROMPT_TOON",
     "SYSTEM_PROMPT_SUMMARY",
     "USER_PROMPT",
+    "USER_PROMPT_JSON",
+    "USER_PROMPT_TOON",
     "USER_PROMPT_SUMMARY",
 ]

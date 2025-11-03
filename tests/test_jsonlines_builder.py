@@ -2,7 +2,14 @@ import json
 
 import pytest
 
-from src.datasets.builders import BaseBuilder, JSONLinesBuilder
+from src.datasets.builders import (
+    BaseBuilder,
+    JSONLinesBuilder,
+    ToonRow,
+    decode_toon_payload,
+    decode_toon_block,
+    encode_toon_block,
+)
 
 
 def _sample_dense_record():
@@ -52,6 +59,44 @@ def test_jsonlines_builder_summary_outputs_plain_string():
     assistant_text = merged["messages"][1]["content"][0]["text"]
 
     assert assistant_text == record["summary"]
+
+
+def test_jsonlines_builder_toon_outputs_table():
+    builder = JSONLinesBuilder(
+        user_prompt="列出所有对象",
+        emit_norm="norm1000",
+        mode="dense",
+        toon_mode=True,
+    )
+    record = _sample_dense_record()
+
+    merged = builder.build_many([record])
+    assistant_text = merged["messages"][1]["content"][0]["text"]
+
+    assert assistant_text.startswith("objs[")
+    assert "line_points" not in assistant_text
+
+    decoded = decode_toon_payload(assistant_text)
+    assert decoded == merged.get("assistant_payload")
+
+
+def test_encode_toon_block_handles_quoting_and_tab_delimiter():
+    rows = [
+        ToonRow(type_id=0, desc="光纤,有保护", coords=(1, 2, 3, 4)),
+        ToonRow(type_id=1, desc='含"引号"', coords=(10, 20, 30, 40, 50, 60, 70, 80)),
+    ]
+
+    block = encode_toon_block(rows)
+    assert block.startswith("objs[2]{type,desc,xs}:")
+    assert '"光纤,有保护"' in block
+    assert '含\\"引号\\"' in block
+    decoded = decode_toon_block(block)
+    assert decoded == rows
+
+    block_tab = encode_toon_block(rows, delimiter="\t")
+    assert "[2\t]" in block_tab
+    decoded_tab = decode_toon_block(block_tab)
+    assert decoded_tab == rows
 
 
 def test_base_builder_rejects_multiple_records():
