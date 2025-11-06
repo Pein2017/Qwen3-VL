@@ -103,14 +103,22 @@ class JSONLinesBuilder(BaseBuilder):
             assistant_text = (
                 assistant_payload
                 if isinstance(assistant_payload, str)
-                else json.dumps(assistant_payload, ensure_ascii=False)
+                else json.dumps(
+                    assistant_payload,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
             )
         else:
             if self.toon_mode:
                 toon_rows = self._build_toon_rows(assistant_payload)
                 assistant_text = encode_toon_block(toon_rows)
             else:
-                assistant_text = json.dumps(assistant_payload, ensure_ascii=False)
+                assistant_text = json.dumps(
+                    assistant_payload,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
 
         messages = [
             {"role": "user", "content": user_contents},
@@ -136,7 +144,7 @@ class JSONLinesBuilder(BaseBuilder):
         grouped_objects: Dict[str, Any] = {}
         for idx, obj in enumerate(objects, start=1):
             geom_type, points = extract_object_points(obj)
-            payload: Dict[str, Any] = {"desc": obj.get("desc", "")}
+            payload: Dict[str, Any] = {"desc": self._sanitize_desc(obj.get("desc"), idx)}
             if geom_type and points:
                 # For line objects, emit line_points before line for better causality
                 if geom_type == "line":
@@ -146,6 +154,34 @@ class JSONLinesBuilder(BaseBuilder):
                     payload[geom_type] = self._format_points(points, width, height)
             grouped_objects[f"object_{idx}"] = payload
         return grouped_objects
+
+    def _sanitize_desc(self, value: Any, object_index: int) -> str:
+        if not isinstance(value, str):
+            raise ValueError(
+                f"Object object_{object_index} must provide a string 'desc'; got {type(value)!r}"
+            )
+
+        desc = value.strip()
+        if not desc:
+            raise ValueError(
+                f"Object object_{object_index} has empty 'desc' after stripping whitespace"
+            )
+
+        if any(char in desc for char in "\n\r\t"):
+            raise ValueError(
+                f"Object object_{object_index} desc contains forbidden control whitespace"
+            )
+
+        disallowed_patterns = (" ,", ", ", " /", "/ ", " :", ": ", "  ")
+        for pattern in disallowed_patterns:
+            if pattern in desc:
+                raise ValueError(
+                    "Object object_{} desc contains disallowed whitespace pattern '{}'".format(
+                        object_index, pattern
+                    )
+                )
+
+        return desc
 
     def _build_toon_rows(self, grouped_objects: Dict[str, Any]) -> List[ToonRow]:
         rows: List[ToonRow] = []
@@ -173,9 +209,7 @@ class JSONLinesBuilder(BaseBuilder):
             geometry_key = geometry_keys[0]
             type_id = GEOMETRY_TO_ID.get(geometry_key)
             if type_id is None:
-                raise ValueError(
-                    f"Unsupported geometry '{geometry_key}' in TOON mode"
-                )
+                raise ValueError(f"Unsupported geometry '{geometry_key}' in TOON mode")
 
             coords_any = payload.get(geometry_key)
             if not isinstance(coords_any, Iterable):

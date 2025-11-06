@@ -32,5 +32,4 @@ data:
   dataloader_num_workers: 8
 
 custom:
-  augment_prob: 0.0
   dump_conversation_text: false

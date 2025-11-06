@@ -1,14 +1,15 @@
 """Shared utilities for dataset operations"""
+
 import json
 from typing import Any, Dict, List, Tuple
 
 
 def load_jsonl(jsonl_path: str) -> List[Dict[str, Any]]:
     """Load records from a JSONL file.
-    
+
     Args:
         jsonl_path: Path to the JSONL file
-        
+
     Returns:
         List of dictionaries, one per line
     """
@@ -24,10 +25,10 @@ def load_jsonl(jsonl_path: str) -> List[Dict[str, Any]]:
 
 def extract_object_points(obj: Dict[str, Any]) -> Tuple[str, List[float]]:
     """Extract geometry type and points from an object.
-    
+
     Args:
         obj: Object dictionary containing geometry (bbox_2d, quad, or line)
-        
+
     Returns:
         Tuple of (geometry_type, points_list)
     """
@@ -42,12 +43,12 @@ def extract_object_points(obj: Dict[str, Any]) -> Tuple[str, List[float]]:
 
 def extract_geometry(obj: Dict[str, Any]) -> Dict[str, List[float]]:
     """Extract geometry dictionary from object.
-    
+
     Useful for augmentation and processing pipelines.
-    
+
     Args:
         obj: Object dictionary
-        
+
     Returns:
         Dictionary with geometry key and points
     """
@@ -63,11 +64,11 @@ def extract_geometry(obj: Dict[str, Any]) -> Dict[str, List[float]]:
 
 def is_same_record(record_a: Dict[str, Any], record_b: Dict[str, Any]) -> bool:
     """Check if two records are the same (identity check).
-    
+
     Args:
         record_a: First record
         record_b: Second record
-        
+
     Returns:
         True if records are the same object
     """
@@ -80,4 +81,3 @@ __all__ = [
     "extract_geometry",
     "is_same_record",
 ]
-

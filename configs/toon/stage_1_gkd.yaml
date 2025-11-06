@@ -52,7 +52,6 @@ custom:
     targets: [merger]
     distance: mse
 
-  augment_prob: 0.0
   dump_conversation_text: false
   trainer_variant: gkd_monitor
   toon_mode: true

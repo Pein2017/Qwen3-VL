@@ -160,7 +160,7 @@ Index → Epoch-seeded permutation
 **Step Details**:
 1. **Record Selection**: Epoch-based permutation ensures deterministic shuffling across workers while staying single-image.
 2. **Preprocessing**: `AugmentationPreprocessor` applies affine transforms to images + geometries atomically.
-3. **Mode Selection**: `summary_ratio` controls dense vs summary per sample; summary mode switches prompts on the fly.
+3. **Mode Selection**: `custom.use_summary` toggles summary-only runs; dense mode keeps JSON object outputs per sample.
 4. **Message Building**:
    - `JSONLinesBuilder`: User prompt embeds the image; assistant returns `{ "object_1": {...}, ... }` (no per-image wrapper).
    - Summary mode yields a single formatted string. Top-level `objects` retain exact point arrays for template normalization.
@@ -367,32 +367,27 @@ tuner:
 
 Tip: keep `training.aligner_lr` (and optionally `training.vit_lr`) to control per-module learning rates via the multimodal optimizer.
 
-### Dynamic Per-Group Prompt Selection (Optional)
+### Summary Output Toggle
 
-**Feature**: Train with multiple output formats simultaneously by selecting prompts per pairing group.
+**Feature**: Switch between dense JSON captions and single-line summaries by flipping a single flag; mixed sampling is no longer supported.
 
 **Supported modes**:
-- **Dense-only (default)**: grouped JSON with geometry + description
-- **Summary-only**: `custom.summary_ratio: 1.0` → grouped JSON with one-line summaries only
-- **Mixed (dynamic)**: `custom.summary_ratio: 0.5` → randomly alternate per group (50% summary, 50% dense)
-
-**Key insight**: All samples in one pairing group see the same system prompt and produce the same output format (all dense or all summary), ensuring coherent JSON shapes.
-
-**Backward compatibility**: All existing configs work unchanged. Simply omit `summary_ratio` to stay in dense-only mode.
+- **Dense-only (default)**: grouped JSON with geometry + description (`custom.use_summary: false` or omitted)
+- **Summary-only**: single-line summaries (`custom.use_summary: true`)
 
 **Usage**:
 ```yaml
 # Dense-only (default behavior)
 custom:
   train_jsonl: data/bbu_full_768/train.jsonl
-  # No summary_ratio → always dense (default)
+  use_summary: false
 ```
 
 ```yaml
-# Mixed: 50% summary, 50% dense per group
+# Summary-only run
 custom:
   train_jsonl: data/bbu_full_768/train.jsonl
-  summary_ratio: 0.5  # Each group: 50% summary, 50% dense
+  use_summary: true
 ```
 
 For details, see `docs/DATA_FORMATS.md#dense-vs-summary-modes`.
@@ -424,7 +419,7 @@ CUDA_VISIBLE_DEVICES=0 conda run -n ms swift export \
 
 ## Dataset knobs
 
-- summary_ratio: probability of sampling summary mode (set to 0 for dense-only)
+- use_summary: toggle summary-only mode
 - augmentation.*: geometry-aware augmentation pipeline (Compose config)
 - dump_conversation_text: write one decoded conversation sample to disk for inspection
 

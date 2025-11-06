@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Stage-B: Group-level judgment inference and GRPO training."""
+"""Training-free Stage-B pipeline exports."""
 
-from .dataset import load_stage_a_for_grpo, prepare_grpo_batch
-from .prompts import MISSION_FOCUS_MAP, build_stage_b_messages
-from .rewards import label_reward, format_reward, get_reward_function
+from .config import StageBConfig, load_stage_b_config
+from .ingest import ingest_stage_a
+from .io import GuidanceRepository
+from .prompts import build_messages
+from .reflection import ReflectionEngine
+from .runner import run_all
 
 __all__ = [
-    "MISSION_FOCUS_MAP",
-    "build_stage_b_messages",
-    "load_stage_a_for_grpo",
-    "prepare_grpo_batch",
-    "label_reward",
-    "format_reward",
-    "get_reward_function",
+    "StageBConfig",
+    "load_stage_b_config",
+    "GuidanceRepository",
+    "ReflectionEngine",
+    "ingest_stage_a",
+    "build_messages",
+    "run_all",
 ]
-

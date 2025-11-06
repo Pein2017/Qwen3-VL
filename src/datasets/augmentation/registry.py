@@ -10,6 +10,7 @@ def register(name: str) -> Callable[[Any], Any]:
     def deco(obj: Any) -> Any:
         _REGISTRY[name] = obj
         return obj
+
     return deco
 
 
@@ -24,5 +25,3 @@ def available() -> Dict[str, Any]:
 
 
 __all__ = ["register", "get", "available"]
-
-

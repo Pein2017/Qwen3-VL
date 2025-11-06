@@ -24,19 +24,6 @@ tuner:
   # LLM last-2 + Vision last-4 blocks (20-23)
   target_regex: '^(?:model\.)?(?:language_model\.layers\.(?:32|33|34|35)\.(?:self_attn\.(?:q_proj|k_proj|v_proj|o_proj)|mlp\.(?:gate_proj|up_proj|down_proj))|visual\.blocks\.(?:12|13|14|15|16|17|18|19|20|21|22|23)\.(?:attn\.(?:qkv|proj)|mlp\.(?:linear_fc1|linear_fc2)))$'
   
-  # --- Alternative Configurations (choose ONE and replace target_regex above) ---
-  # 4B: LLM last-4 + Vision last-4 (original default):
-  # target_regex: '^(?:model\.)?(?:language_model\.layers\.(?:32|33|34|35)\.(?:self_attn\.(?:q_proj|k_proj|v_proj|o_proj)|mlp\.(?:gate_proj|up_proj|down_proj))|visual\.blocks\.(?:20|21|22|23)\.(?:attn\.(?:qkv|proj)|mlp\.(?:linear_fc1|linear_fc2)))$'
-  # 4B: LLM last-2 + Vision last-2:
-  # target_regex: '^(?:model\.)?(?:language_model\.layers\.(?:34|35)\.(?:self_attn\.(?:q_proj|k_proj|v_proj|o_proj)|mlp\.(?:gate_proj|up_proj|down_proj))|visual\.blocks\.(?:22|23)\.(?:attn\.(?:qkv|proj)|mlp\.(?:linear_fc1|linear_fc2)))$'
-  # 4B: LLM last-6 + Vision last-6:
-  # target_regex: '^(?:model\.)?(?:language_model\.layers\.(?:30|31|32|33|34|35)\.(?:self_attn\.(?:q_proj|k_proj|v_proj|o_proj)|mlp\.(?:gate_proj|up_proj|down_proj))|visual\.blocks\.(?:18|19|20|21|22|23)\.(?:attn\.(?:qkv|proj)|mlp\.(?:linear_fc1|linear_fc2)))$'
-  # 8B: LLM last-2 + Vision last-2 (Vision indices: 25|26):
-  # target_regex: '^(?:model\.)?(?:language_model\.layers\.(?:34|35)\.(?:self_attn\.(?:q_proj|k_proj|v_proj|o_proj)|mlp\.(?:gate_proj|up_proj|down_proj))|visual\.blocks\.(?:25|26)\.(?:attn\.(?:qkv|proj)|mlp\.(?:linear_fc1|linear_fc2)))$'
-  # 8B: LLM last-4 + Vision last-4 (Vision: 23|24|25|26):
-  # target_regex: '^(?:model\.)?(?:language_model\.layers\.(?:32|33|34|35)\.(?:self_attn\.(?:q_proj|k_proj|v_proj|o_proj)|mlp\.(?:gate_proj|up_proj|down_proj))|visual\.blocks\.(?:23|24|25|26)\.(?:attn\.(?:qkv|proj)|mlp\.(?:linear_fc1|linear_fc2)))$'
-  # 8B: LLM last-6 + Vision last-6 (Vision: 21|22|23|24|25|26):
-  # target_regex: '^(?:model\.)?(?:language_model\.layers\.(?:30|31|32|33|34|35)\.(?:self_attn\.(?:q_proj|k_proj|v_proj|o_proj)|mlp\.(?:gate_proj|up_proj|down_proj))|visual\.blocks\.(?:21|22|23|24|25|26)\.(?:attn\.(?:qkv|proj)|mlp\.(?:linear_fc1|linear_fc2)))$'
   modules_to_save:
     # Stage 3: Continue full-tuning aligner (optional - remove if you want to freeze it)
     - model.visual.merger

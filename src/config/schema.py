@@ -179,7 +179,7 @@ class CustomConfig:
     train_jsonl: str
     user_prompt: str
     emit_norm: AllowedNorm
-    summary_ratio: Optional[float] = None
+    use_summary: bool = False
     system_prompt_summary: Optional[str] = None
     augmentation: Optional[Mapping[str, Any]] = None
     bypass_prob: float = 0.0
@@ -204,13 +204,8 @@ class CustomConfig:
             raise ValueError(
                 "custom.emit_norm must be one of {'none', 'norm100', 'norm1000'}"
             )
-        if self.summary_ratio is not None:
-            try:
-                ratio = float(self.summary_ratio)
-            except (TypeError, ValueError) as exc:
-                raise ValueError("custom.summary_ratio must be numeric") from exc
-            if not 0.0 <= ratio <= 1.0:
-                raise ValueError("custom.summary_ratio must be within [0, 1]")
+        if not isinstance(self.use_summary, bool):
+            raise TypeError("custom.use_summary must be a boolean value")
 
     @classmethod
     def from_mapping(
@@ -230,7 +225,39 @@ class CustomConfig:
             if path.is_file():
                 user_prompt = path.read_text(encoding="utf-8").strip("\n")
 
-        summary_ratio = data.pop("summary_ratio", None)
+        if "summary_ratio" in data:
+            raise ValueError(
+                "custom.summary_ratio has been removed; use custom.use_summary instead."
+            )
+
+        def _parse_bool(value: Any, field_name: str) -> bool:
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, (int, float)):
+                if value in (0, 1, 0.0, 1.0):
+                    return bool(value)
+                raise ValueError(
+                    f"{field_name} must be boolean (0 or 1), got {value!r}."
+                )
+            if isinstance(value, str):
+                normalized = value.strip().lower()
+                if normalized in {"true", "1", "yes", "y", "on"}:
+                    return True
+                if normalized in {"false", "0", "no", "n", "off"}:
+                    return False
+                raise ValueError(
+                    f"{field_name} string value '{value}' is not a recognized boolean representation."
+                )
+            raise TypeError(
+                f"{field_name} must be a boolean value, got {type(value)!r}."
+            )
+
+        use_summary_raw = data.pop("use_summary", None)
+        use_summary = (
+            False
+            if use_summary_raw is None
+            else _parse_bool(use_summary_raw, "custom.use_summary")
+        )
         system_prompt_summary = data.pop("system_prompt_summary", None)
         if "images_per_user_turn" in data:
             raise ValueError(
@@ -271,7 +298,7 @@ class CustomConfig:
             train_jsonl=str(train_jsonl) if train_jsonl is not None else "",
             user_prompt=str(user_prompt) if user_prompt is not None else "",
             emit_norm=cast("AllowedNorm", emit_norm_value),
-            summary_ratio=summary_ratio,
+            use_summary=use_summary,
             system_prompt_summary=system_prompt_summary,
             augmentation=augmentation
             if isinstance(augmentation, Mapping)

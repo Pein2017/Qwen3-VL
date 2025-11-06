@@ -50,6 +50,29 @@ class ConfigLoader:
         return [str(value)]
 
     @staticmethod
+    def _coerce_bool(value: Any, field_name: str) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            if value in (0, 1, 0.0, 1.0):
+                return bool(value)
+            raise ValueError(
+                f"{field_name} must be boolean (0 or 1), got {value!r}."
+            )
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"true", "1", "yes", "y", "on"}:
+                return True
+            if normalized in {"false", "0", "no", "n", "off"}:
+                return False
+            raise ValueError(
+                f"{field_name} string value '{value}' is not a recognized boolean representation."
+            )
+        raise TypeError(
+            f"{field_name} must be a boolean value, got {type(value)!r}."
+        )
+
+    @staticmethod
     def load_yaml_with_extends(
         config_path: str, _visited: Optional[Set[str]] = None
     ) -> Dict[str, Any]:
@@ -122,20 +145,22 @@ class ConfigLoader:
         if not isinstance(prompts_config, dict):
             raise TypeError("prompts section must be a mapping if provided")
 
-        summary_ratio = 0.0
+        use_summary = False
         toon_mode = False
         custom_section = config.get("custom")
         if custom_section is not None:
             if not isinstance(custom_section, dict):
-                raise TypeError("custom section must be a mapping when resolving prompts")
+                raise TypeError(
+                    "custom section must be a mapping when resolving prompts"
+                )
             if "summary_ratio" in custom_section:
-                sr_raw = custom_section["summary_ratio"]
-                try:
-                    summary_ratio = float(sr_raw)
-                except (TypeError, ValueError) as exc:
-                    raise ValueError(
-                        "custom.summary_ratio must be numeric if provided"
-                    ) from exc
+                raise ValueError(
+                    "custom.summary_ratio has been removed; use custom.use_summary instead."
+                )
+            if "use_summary" in custom_section:
+                use_summary = ConfigLoader._coerce_bool(
+                    custom_section["use_summary"], "custom.use_summary"
+                )
             if "toon_mode" in custom_section:
                 raw = custom_section["toon_mode"]
                 if isinstance(raw, bool):
@@ -145,8 +170,7 @@ class ConfigLoader:
                 else:
                     raise TypeError("custom.toon_mode must be a boolean when provided")
 
-        output_variant = "dense"
-        if summary_ratio >= 1.0:
+        if use_summary:
             default_system = SYSTEM_PROMPT_SUMMARY
             default_user = USER_PROMPT_SUMMARY
             output_variant = "summary"
@@ -157,6 +181,7 @@ class ConfigLoader:
             else:
                 default_system = SYSTEM_PROMPT_JSON
                 default_user = USER_PROMPT_JSON
+            output_variant = "dense"
 
         system_prompt = prompts_config.get("system", default_system)
         user_prompt = prompts_config.get("user", default_user)

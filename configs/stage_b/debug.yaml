@@ -1,0 +1,63 @@
+stage_a_paths:
+  - output_post/stage_a/挡风板安装检查_stage_a.jsonl
+  # /output_post/stage_a/BBU接地线检查_stage_a.jsonl
+
+seed: 17
+
+model:
+  model_name_or_path: output/summary_merged/10-31
+  torch_dtype: bfloat16
+  device_map: auto
+
+guidance:
+  path: output_post/stage_b/initial_guidance.json
+  retention: 5
+
+output:
+  root: output_post/stage_b
+  run_name: debug  
+
+sampler:
+  samples_per_decode: 1  # Debug: reduced from 2 to 1 for faster iteration
+  format_filter: true
+  grid:
+    # Debug: only one sampler config for faster testing
+    - temperature: 0.7
+      top_p: 0.95
+      max_new_tokens: 256  # Debug: reduced from 512 for faster generation
+      seed: 42
+      stop: []
+
+signals:
+  store_confidence: true
+  enable_consistency: true
+  weights:
+    label_match: 1.0
+    self_consistency: 0.5
+    candidate_agreement: 0.25
+    confidence: 0.25
+
+reflection:
+  prompt_path: configs/prompts/stage_b_reflection_prompt.txt
+  batch_size: 4  # Debug: reduced from 8 to 2 for faster processing
+  apply_if_delta: 0.05
+  allow_uncertain: true
+  temperature: 0.3  # Higher temperature for more diverse guidance entries
+  top_p: 0.9  # Higher top_p for more diverse sampling
+  max_new_tokens: 1024  # Debug: reduced from 2048 for faster generation
+  max_reflection_length: 8192  # Debug: reduced from 8192 for faster processing
+
+selection:
+  policy: top_label
+  tie_break: confidence
+
+runner:
+  epochs: 1
+
+
+evaluation:
+  holdout_size: 1  # Debug: smaller holdout for faster evaluation
+  metrics:
+    - label_match_rate
+    - mean_semantic_advantage
+

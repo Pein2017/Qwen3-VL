@@ -56,7 +56,7 @@
 - `custom` keys commonly used:
   - `train_jsonl`, `val_jsonl`
   - `augmentation` → `ops` list consumed by `src/datasets/augmentation/builder.py`
-  - `emit_norm` (`none|norm100|norm1000`), `user_prompt`, `summary_ratio`
+  - `emit_norm` (`none|norm100|norm1000`), `user_prompt`, `use_summary`
   - `bypass_prob` (augmentation skip rate)
 - DeepSpeed config JSON lives under `configs/` when needed.
 

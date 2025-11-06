@@ -10,5 +10,3 @@ class IdentityCollator:
 
 
 __all__ = ["IdentityCollator"]
-
-

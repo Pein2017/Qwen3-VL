@@ -90,13 +90,11 @@ def toon_rows_to_payload(rows: Iterable[ToonRow]) -> dict[str, dict[str, object]
         coords = list(row.coords)
         if geometry == "bbox_2d" and len(coords) != 4:
             raise ToonFormatError(
-                "bbox rows must contain exactly 4 coordinates; "
-                f"received {len(coords)}"
+                f"bbox rows must contain exactly 4 coordinates; received {len(coords)}"
             )
         if geometry == "quad" and len(coords) != 8:
             raise ToonFormatError(
-                "quad rows must contain exactly 8 coordinates; "
-                f"received {len(coords)}"
+                f"quad rows must contain exactly 8 coordinates; received {len(coords)}"
             )
         if geometry == "line":
             if len(coords) % 2 != 0:
@@ -121,13 +119,11 @@ def _encode_row(row: ToonRow, delimiter: str) -> str:
     coords = _coerce_coords(row.coords)
     if geometry == "bbox_2d" and len(coords) != 4:
         raise ToonFormatError(
-            "bbox objects must emit exactly 4 coordinates; "
-            f"received {len(coords)}"
+            f"bbox objects must emit exactly 4 coordinates; received {len(coords)}"
         )
     if geometry == "quad" and len(coords) != 8:
         raise ToonFormatError(
-            "quad objects must emit exactly 8 coordinates; "
-            f"received {len(coords)}"
+            f"quad objects must emit exactly 8 coordinates; received {len(coords)}"
         )
     if geometry == "line":
         if len(coords) % 2 != 0:
@@ -167,18 +163,14 @@ def _decode_row(line: str, delimiter: str) -> ToonRow:
     geometry = GEOMETRY_FROM_ID[type_id]
     if geometry == "bbox_2d" and len(coords) != 4:
         raise ToonFormatError(
-            "bbox rows must contain exactly 4 coordinates; "
-            f"received {len(coords)}"
+            f"bbox rows must contain exactly 4 coordinates; received {len(coords)}"
         )
     if geometry == "quad" and len(coords) != 8:
         raise ToonFormatError(
-            "quad rows must contain exactly 8 coordinates; "
-            f"received {len(coords)}"
+            f"quad rows must contain exactly 8 coordinates; received {len(coords)}"
         )
     if geometry == "line" and len(coords) % 2 != 0:
-        raise ToonFormatError(
-            "line rows must contain an even number of coordinates"
-        )
+        raise ToonFormatError("line rows must contain an even number of coordinates")
 
     return ToonRow(type_id=type_id, desc=desc, coords=tuple(coords))
 
@@ -457,4 +449,3 @@ __all__ = [
     "encode_toon_block",
     "toon_rows_to_payload",
 ]
-

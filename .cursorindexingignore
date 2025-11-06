@@ -15,6 +15,7 @@
 !**/*.bash
 !**/Makefile
 !**/.gitignore
+!references/**/*.py
 
 # Block heavy assets and datasets (never index these file types)
 **/*.jsonl

@@ -47,3 +47,36 @@ conda run -n ms python -m src.sft --config /abs/path/to/config.yaml [--base_conf
 - Keep augmentations and data handling geometry-aware; run `vis_tools/vis_augment_compare.py` for spot checks when touching `src/datasets/augmentation/`.
 - Update documentation in `docs/` when behavior or workflows change; stage config examples in `configs/` should remain runnable.
 - For feature or spec work, consult `openspec/AGENTS.md` and follow the change process there.
+
+## Stage-A Inference
+- Entry point `python -m src.stage_a.cli` wraps `run_stage_a_inference` and enforces typed config + validation.
+- Inputs: mission-scoped image tree `<root>/<mission>/{审核通过|审核不通过}/<group_id>/*.jpg`; checkpoints must be on disk.
+- Outputs: one JSONL per mission at `<output_dir>/<mission>_stage_a.jsonl` with `group_id`, `mission`, `label`, ordered `per_image` summaries.
+- Generation stack: `AutoProcessor` + `Qwen3VLForConditionalGeneration`, batched with optional verification logs; `max_pixels` defaults to `786432` for throughput.
+- Prompt alignment: prompts import from `src.config.prompts`; mission focus text comes from `src.config.missions.STAGE_A_MISSION_FOCUS`.
+- CLI flags expose device, batch size, generation params, prompt focus, and verification mode; all numeric inputs validated before model load.
+
+## Stage-B Reflection Pipeline
+- Run via `python -m src.stage_b.runner --config /abs/path/to/config.yaml [--log-level {debug|logging|warning}]`; the pipeline currently executes the full loop (`--step all`).
+- Config schema lives in `src.stage_b.config` (frozen dataclasses); values come from YAML under `configs/stage_b/`.
+- High-level flow per mission:
+  1. `ingest_stage_a` normalizes Stage-A JSONL into `GroupTicket` objects and ensures mission guidance exists.
+  2. `RolloutSampler` builds prompts with mission guidance, decodes multiple samples per ticket using the configured grid.
+  3. `attach_signals` annotates candidates with deterministic metrics (label match, consistency, confidence heuristics).
+  4. `select_for_group` chooses the winner using semantic advantage + tie-break policy, exporting trajectories/selections incrementally.
+  5. `ReflectionEngine` batches experience records, calls the in-process model with `reflection.prompt_path`, and writes guidance updates through `GuidanceRepository` snapshots.
+  6. Optional holdout split + `evaluate_holdout` report label-match uplift around each reflection cycle.
+- Outputs are written under `{output.root}/{output.run_name}/{mission}/` with `trajectories.jsonl`, `selections.jsonl`, per-mission parquet, `guidance.json`, and `reflection.jsonl` logs. Guidance snapshots rotate in `snapshots/` respecting retention.
+- Guidance lifecycle: `GuidanceRepository` lazily initializes empty guidance, enforces non-empty experience dicts, and snapshots previous files before each write. Reflection proposals require structured `[Gx].` entries; parsing failures fall back to noop without mutating guidance.
+- Sampling prompts live in `src.stage_b.prompts` (pipeline) and `src.stage_b.sampling.prompts` (LLM bundle rendering); both expect ordered `per_image` maps from Stage-A.
+- Deterministic judge + metrics helpers are in `src.stage_b.signals`, `src.stage_b.selection`, and `src.stage_b.scoring` for reuse in GRPO-style evaluation.
+
+### Stage-B Config Highlights
+- `stage_a_paths`: absolute or relative JSONL files from Stage-A; multiple paths allowed.
+- `model`: `model_name_or_path`, `torch_dtype`, `device_map` forwarded to `Qwen3VLForConditionalGeneration` and tokenizer.
+- `sampler`: `grid` of decode configs (`temperature`, `top_p`, `max_new_tokens`, optional `seed`, `stop`), `samples_per_decode`, and `format_filter` toggle.
+- `signals`: enable/disable confidence/self-consistency and override semantic weights.
+- `reflection`: prompt template path, batch size, delta threshold, change cap per epoch, diversity parameters, and `max_reflection_length` guard.
+- `selection`: policy (`top_label` or `top_semantic`) and tie-break (`confidence` or `temperature`).
+- `output`: root directory + run name; mission folders created automatically; parquet path optional override.
+- `runner`: epoch count; `evaluation`: holdout size + metrics list.

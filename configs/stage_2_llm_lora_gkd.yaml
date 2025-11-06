@@ -4,16 +4,14 @@ extends: base.yaml
 
 rlhf:
   rlhf_type: gkd
-  teacher_model: model_cache/models/Qwen/Qwen3-VL-4B-Instruct
-  beta: 0.5
-  sft_alpha: 0.3
-  seq_kd: true
-  lmbda: 0.5
-  max_completion_length: 256
-  temperature: 0.9
+  teacher_model: model_cache/models/Qwen/Qwen3-VL-8B-Instruct
+  beta: 0.01
+  sft_alpha: 1
+  seq_kd: false
+  lmbda: 0.0
 
 model:
-  model: output/toon/11-03/stage_1_gkd/v1-20251103-015814/gkd-eff_batch_32-toon/checkpoint-340
+  model: output/11-05/stage_1-gkd/v1-20251106-051325/gkd-eff_batch_32-epoch_6-less_weights/checkpoint-260
 
 tuner:
   train_type: lora
@@ -22,7 +20,7 @@ tuner:
   freeze_vit: true       # Freeze vision tower completely
   freeze_aligner: false  # Fully tune aligner modules alongside LoRA
   target_modules: [all-linear]
-  # Apply LoRA to last 4 LLM layers (32-35) for the 4B model
+  # Apply LoRA to last 4 LLM layers (32-35) for the 8B model (which has 36 layers total, 0-35)
   # This regex targets language_model.layers.{32,33,34,35}.{self_attn,mlp}.*
   target_regex: '^(?:model\.)?language_model\.layers\.(?:32|33|34|35)\.(?:self_attn\.(?:q_proj|k_proj|v_proj|o_proj)|mlp\.(?:gate_proj|up_proj|down_proj))$'
   # CRITICAL: modules_to_save does NOT support ModuleList - must specify individual elements
@@ -33,42 +31,47 @@ tuner:
     - model.visual.deepstack_merger_list.0
     - model.visual.deepstack_merger_list.1
     - model.visual.deepstack_merger_list.2
-  lora_rank: 8
-  lora_alpha: 16
+  lora_rank: 16
+  lora_alpha: 32
   lora_dropout: 0.1
   lora_bias: none
 
 training:
-  output_dir: ./output/10-30/stage_2_llm_lora_gkd
-  run_name: lora_8_16-5e-4-eff_batch_32-last_4-gkd
+  output_dir: ./output/11-05/stage_2_llm_lora_gkd
+  run_name: lora_16_32-5e-4-eff_batch_32-last_4-gkd-epoch_8
   per_device_train_batch_size: 1
+  per_device_eval_batch_size: 2
 
   save_only_model: true
   optimizer: multimodal
-  learning_rate: 5.0e-4
+  learning_rate: 1.0e-4
   vit_lr: 2.0e-5
   aligner_lr: 2.0e-4
-  num_train_epochs: 10
+  num_train_epochs: 8
 
-  gradient_accumulation_steps: 2
+  gradient_accumulation_steps: 4
 
   eval_strategy: steps
   save_strategy: best
-  eval_steps: 200
-  save_steps: 200
-  save_total_limit: 2
-  save_delay_steps: 200
+  eval_steps: 20
+  save_steps: 100
+  save_total_limit: 4
+  save_delay_steps: 100
 
   # Verbose logging
-  logging_dir: ./tb/10-30-stage_2
+  logging_dir: ./tb/11-05/stage_2
 
 data:
   dataset_num_proc: 8
   dataloader_num_workers: 8
 
 custom:
+  visual_kd:
+    enabled: true
+    weight: 0.08  # Heavier anchor on vision/aligner (0.1-0.2 typical). Lower if visuals overfit.
+    targets: [merger, deepstack]
+    distance: mse
   emit_norm: norm1000
-  augment_prob: 0.0
   dump_conversation_text: false
   trainer_variant: gkd_monitor
   toon_mode: true

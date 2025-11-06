@@ -88,11 +88,7 @@ objs[2]{type,desc,xs}:
 "单行汇总文本"
 ```
 Requires `summary` field in every record.
-
-**Mixed Mode**:
-- Set `summary_ratio` (e.g., 0.3 = 30% summary mode)
-- Deterministic per epoch (seeded by epoch number)
-- Useful for balancing detailed annotation and overview
+Enable by setting `custom.use_summary: true` in the training config.
 
 ### Summary Field Standard
 
@@ -141,7 +137,7 @@ JSONL → DenseCaptionDataset → Collator → Trainer
 custom:
   train_jsonl: /path/to/train.jsonl
   val_jsonl: /path/to/val.jsonl
-  summary_ratio: 0.0               # 0=dense, 1=summary, 0.3=30% summary
+  use_summary: false                # true → summary-only mode
   emit_norm: norm1000              # Coordinate format in text
   toon_mode: false                 # true → emit TOON table instead of JSON (dense mode only)
 ```

@@ -1,13 +1,13 @@
 #!/bin/bash
 # Merge LoRA adapter into base model for end2end inference
 
-adapters=output/toon/11-03/stage_2_gkd/v0-20251103-052522/toon-lora_4-eff_batch_32-epoch_5-small_gkd_weights/checkpoint-200
+adapters=output/11-05/stage_2_llm_lora_gkd/v0-20251106-020908/lora_16_32-5e-4-eff_batch_32-last_4-gkd-epoch_4/checkpoint-276
 
 # Extract base model path from adapter_config.json
 base_model=$(python3 -c "import json; print(json.load(open('$adapters/adapter_config.json'))['base_model_name_or_path'])")
 
 
-output_dir=output/toon/11-03/stage_2_gkd_merged/checkpoint-200
+output_dir=output/stage_2_gkd_merged/11-05/checkpoint-276
 
 echo "Detected base model: $base_model"
 echo "Adapters: $adapters"

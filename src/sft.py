@@ -9,6 +9,11 @@ from dataclasses import asdict
 
 from swift.llm.train.rlhf import SwiftRLHF
 from swift.llm.train.sft import SwiftSft
+from swift.trainers import TrainerFactory
+
+from .config import ConfigLoader, SaveDelayConfig
+from .datasets import DenseCaptionDataset
+from .utils import enable_verbose_logging, get_logger, set_log_level
 
 
 def resolve_trainer_cls(train_args):
@@ -22,12 +27,6 @@ def resolve_trainer_cls(train_args):
         return GKDTrainerWithMetrics
     return TrainerFactory.get_trainer_cls(train_args)
 
-
-from swift.trainers import TrainerFactory
-
-from .datasets import DenseCaptionDataset
-from .config import ConfigLoader, SaveDelayConfig
-from .utils import get_logger, enable_verbose_logging, set_log_level
 
 # Use the model's native chat_template (JSON/Jinja) shipped with the tokenizer
 
@@ -190,19 +189,20 @@ def main():
 
     # Initialize SwiftSft with TrainArguments object directly
     logger.info("Initializing ms-swift pipeline...")
-    pipeline_cls = SwiftRLHF if getattr(train_args, "rlhf_type", None) else SwiftSft
+    rlhf_type = getattr(train_args, "rlhf_type", None)
+    pipeline_cls = SwiftRLHF if rlhf_type else SwiftSft
     sft = pipeline_cls(train_args)
     logger.info(f"Model: {train_args.model}")
     logger.info(f"Training type: {train_args.train_type}")
-    if getattr(train_args, "rlhf_type", None):
-        logger.info(f"RLHF mode: {train_args.rlhf_type}")
+    if rlhf_type:
+        logger.info(f"RLHF mode: {rlhf_type}")
     if train_args.train_type == "lora":
         logger.info(
             f"LoRA rank: {train_args.lora_rank}, alpha: {train_args.lora_alpha}"
         )
 
     # Early validation: ensure teacher/student vocabulary compatibility in GKD mode
-    if getattr(train_args, "rlhf_type", None) == "gkd":
+    if rlhf_type == "gkd":
         teacher_model = getattr(sft, "teacher_model", None)
         if teacher_model is None:
             raise ValueError(
@@ -229,10 +229,9 @@ def main():
     aug_cfg = custom_config.augmentation
     if isinstance(aug_cfg, dict) and aug_cfg.get("enabled", True):
         try:
-            from .datasets.augmentation.builder import build_compose_from_config
-
             # Ensure ops are registered by importing ops module
             from .datasets.augmentation import ops as _register_ops  # noqa: F401
+            from .datasets.augmentation.builder import build_compose_from_config
 
             augmenter = build_compose_from_config(aug_cfg)
             bypass_prob = float(aug_cfg.get("bypass_prob", custom_config.bypass_prob))
@@ -266,30 +265,30 @@ def main():
         raise ValueError("custom.user_prompt and custom.emit_norm must be provided")
 
     # Extract mode control parameters
-    summary_ratio = custom_config.summary_ratio
+    use_summary = bool(custom_config.use_summary)
 
-    # Prepare system prompts for dynamic mode selection
+    # Prepare system prompts for the selected mode
     # The system prompt is set on the template by ConfigLoader.resolve_prompts
     system_prompt_dense = getattr(sft.template, "system", None)
     system_prompt_summary = custom_config.system_prompt_summary
 
-    # Log configuration
-    if summary_ratio is not None and summary_ratio > 0:
-        logger.info(f"Dynamic mode selection enabled: summary_ratio={summary_ratio}")
+    if use_summary:
+        logger.info("Summary mode enabled (custom.use_summary=true)")
         if system_prompt_summary is None:
-            # Try to load from prompts module
+            system_prompt_summary = getattr(sft.template, "system", None)
+        if system_prompt_summary is None:
             try:
                 from .config.prompts import SYSTEM_PROMPT_SUMMARY
 
                 system_prompt_summary = SYSTEM_PROMPT_SUMMARY
                 logger.info("Loaded default SYSTEM_PROMPT_SUMMARY")
-            except ImportError:
+            except ImportError as exc:
                 raise ValueError(
-                    "summary_ratio > 0 but system_prompt_summary not found. "
-                    "Please set custom.system_prompt_summary in YAML or ensure SYSTEM_PROMPT_SUMMARY is defined."
-                )
+                    "custom.use_summary is true but no summary system prompt was provided."
+                ) from exc
+        system_prompt_dense = None
     else:
-        logger.info("Dense mode only (summary_ratio not set or 0)")
+        logger.info("Dense mode only (custom.use_summary=false)")
 
     dataset_seed = 42
 
@@ -301,7 +300,7 @@ def main():
         augmenter=augmenter,
         bypass_prob=bypass_prob,
         sample_limit=train_sample_limit,
-        summary_ratio=summary_ratio,
+        use_summary=use_summary,
         system_prompt_dense=system_prompt_dense,
         system_prompt_summary=system_prompt_summary,
         seed=dataset_seed,
@@ -398,9 +397,9 @@ def main():
 
             assistant_gt = None
             try:
-                rec_a = copy.deepcopy(dataset.base_records[0])
-                rec_b = copy.deepcopy(dataset.base_records[0])
-                merged = dataset.pair_message_builder(rec_a, rec_b)
+                record_clone = copy.deepcopy(dataset.base_records[0])
+                builder = dataset._create_builder(dataset.mode)
+                merged = builder.build_many([record_clone])
                 assistant_turn = next(
                     (
                         turn
@@ -424,8 +423,13 @@ def main():
 
             dump_path = custom_config.dump_conversation_path or "conversation_text.txt"
             if not os.path.isabs(dump_path):
-                dump_path = os.path.join(train_args.output_dir, dump_path)
-            os.makedirs(os.path.dirname(dump_path), exist_ok=True)
+                base_output_dir = getattr(train_args, "output_dir", None)
+                base_dir = (
+                    base_output_dir if isinstance(base_output_dir, str) else os.getcwd()
+                )
+                dump_path = os.path.join(base_dir, dump_path)
+            dump_dir = os.path.dirname(dump_path) or "."
+            os.makedirs(dump_dir, exist_ok=True)
             with open(dump_path, "w", encoding="utf-8") as f:
                 f.write(raw_text)
                 if not raw_text.endswith("\n"):
@@ -454,7 +458,7 @@ def main():
             augmenter=None,  # No augmentation for validation
             bypass_prob=0.0,  # Explicit: no bypass for validation
             sample_limit=val_sample_limit,
-            summary_ratio=summary_ratio,
+            use_summary=use_summary,
             system_prompt_dense=system_prompt_dense,
             system_prompt_summary=system_prompt_summary,
             seed=dataset_seed,
@@ -527,9 +531,14 @@ def main():
     logger.info("=" * 70)
     logger.info(f"  Output directory: {train_args.output_dir}")
     logger.info(f"  Epochs: {train_args.num_train_epochs}")
-    logger.info(
-        f"  Effective batch size: {train_args.per_device_train_batch_size * train_args.gradient_accumulation_steps}"
-    )
+    per_device_batch = getattr(train_args, "per_device_train_batch_size", None)
+    grad_accum_steps = getattr(train_args, "gradient_accumulation_steps", None)
+    if isinstance(per_device_batch, int) and isinstance(grad_accum_steps, int):
+        logger.info(f"  Effective batch size: {per_device_batch * grad_accum_steps}")
+    else:
+        logger.info(
+            "  Effective batch size: unavailable (missing batch or accumulation settings)"
+        )
     logger.info("=" * 70)
 
     sft.train(trainer)

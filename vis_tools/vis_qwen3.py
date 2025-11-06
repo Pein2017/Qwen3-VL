@@ -34,13 +34,13 @@ from vis_tools.vis_helper import (
 # ==============================
 
 # Required paths
-CKPT_PATH = "output/toon/11-03/stage_2_gkd_merged/checkpoint-200"  # HF dir or merged checkpoint  # HF dir or merged checkpoint
+CKPT_PATH = "output/11-05/stage_1-gkd/v1-20251106-051325/gkd-eff_batch_32-epoch_6-less_weights/checkpoint-260"  # HF dir or merged checkpoint  # HF dir or merged checkpoint
 JSONL_PATH = "data/bbu_full_768/val.jsonl"
 
 # Runtime settings
 LIMIT = 10
 DEVICE = "cuda:1"
-SAVE_DIR = "vis_out/toon/11-03/stage_2_gkd_merged/checkpoint-200"
+SAVE_DIR = "vis_output/stage_1_gkd/11-05/checkpoint-260"
 MAX_NEW_TOKENS = 2048
 TEMPERATURE = 0.001  # Balanced randomness to avoid loops while maintaining quality
 TOP_P = 0.9  # Nucleus sampling - cuts off low-probability tail
@@ -50,7 +50,7 @@ REPETITION_PENALTY = 1.1  # Strong penalty against repetition (was 1.1, still to
 USER_PROMPT_OVERRIDE: str | None = None
 
 # Toggle between JSON vs TOON prompts when running inference
-USE_TOON_PROMPT: bool = True
+USE_TOON_PROMPT: bool = False
 
 # Dump/Plot settings
 SAVE_JSONL = True

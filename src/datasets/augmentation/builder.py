@@ -31,7 +31,9 @@ def build_compose_from_config(cfg: Dict[str, Any]) -> Compose:
     ops: List[ImageAugmenter] = []
     for op in ops_cfg:
         if not isinstance(op, dict):
-            raise TypeError("each augmentation op must be a dict with 'name' and optional 'params'")
+            raise TypeError(
+                "each augmentation op must be a dict with 'name' and optional 'params'"
+            )
         name = op.get("name")
         params = op.get("params") or {}
         if not name:
@@ -44,5 +46,3 @@ def build_compose_from_config(cfg: Dict[str, Any]) -> Compose:
 
 
 __all__ = ["build_compose_from_config"]
-
-

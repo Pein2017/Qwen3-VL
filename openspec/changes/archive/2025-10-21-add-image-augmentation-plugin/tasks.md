@@ -6,7 +6,7 @@
 - [ ] 1.5 Add unit tests for transform correctness and geometry updates
 - [ ] 1.6 Add docs in `docs/qwen3vl.md` and config examples under `configs/`
 - [ ] 1.7 Wire feature flag into `src/sft.py` loading path
-- [ ] 1.8 Run smoke training with `augment_prob>0` and verify logs/vis outputs
+- [ ] 1.8 Run smoke training with augmentation enabled and verify logs/vis outputs
 
 ## 2. Validation
 - [ ] 2.1 `openspec validate add-image-augmentation-plugin --strict`

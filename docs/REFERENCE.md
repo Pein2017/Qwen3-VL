@@ -493,21 +493,54 @@ Output format:
 {"image_id": "img1", "summary": "BBU设备×1，光模块×3，线缆×2"}
 ```
 
-**Stage-B: Group-Level Verdict**
+**Stage-B: Group-Level Verdict (Training-Free Loop)**
 
-Purpose: Multi-image scene-level pass/fail judgment
+Purpose: Multi-image scene-level pass/fail judgment using the frozen Stage-B checkpoint plus deterministic judging.
+
+1. Prepare a Stage-B config (see `configs/stage_b_training_free.yaml`).
+2. Run the end-to-end loop:
 
 ```bash
-python -m src.stage_b.run \
-  --input summaries.jsonl \
-  --output verdicts.jsonl
+bash scripts/stage_b_run.sh $(pwd)/configs/stage_b_training_free.yaml --log-level debug
 ```
 
-Output format (two lines):
-```
-通过
-理由: 所有设备安装规范，无明显问题
-```
+This performs ingest → rollout → judge → selection in one pass and stores artifacts under `output/stage_b/`:
+
+- `guidance.json`: mission guidance (focus plus optional rules/preferences, seeded from `STAGE_B_MISSION_FOCUS` if absent) with rolling snapshots under `output/stage_b/snapshots/`.
+- `trajectories.jsonl`: hierarchical records per candidate rollout. Each entry now looks like:
+  ```json
+  {
+    "group_id": "QC-0001",
+    "mission": "挡风板安装检查",
+    "epoch": 1,
+    "result": {
+      "candidate_index": 3,
+      "temperature": 0.6,
+      "top_p": 0.95,
+      "max_new_tokens": 512,
+      "seed": 43,
+      "text": "不通过\n理由: 挡风板缺失",
+      "verdict": "不通过",
+      "reason": "挡风板缺失",
+      "format_ok": true,
+      "created_at": "2025-11-03T08:55:12.483920Z",
+      "scores": {
+        "label_match": false,
+        "focus_consistency": 1.0,
+        "heuristic_score": 0.6,
+        "summary_confidence": "needs_review",
+        "semantic_advantage": 0.822,
+        "label_contradiction": true,
+        "needs_recheck": true,
+        "rationale_quality": 1.0
+      }
+    }
+  }
+  ```
+- `selections.jsonl`/`selections.parquet`: final verdicts with the same `{"group_id", "mission", "result": {...}}` shape (result includes `verdict`, `reason`, `summary_confidence`, `selected_candidate`, etc.).
+
+> **Tip:** Set `sampler.samples_per_decode` > 1 when you need multiple attempts per ticket under the same temperature; keep it at `1` for deterministic sweeps.
+> Configure multi-epoch runs via the `runner` block in `configs/stage_b_training_free.yaml` (e.g., `epochs: 5`) and set the top-level `seed` to lock randomness. Stage-B shuffles Stage-A tickets deterministically each epoch using this seed.
 
 ### Deployment Tips
 

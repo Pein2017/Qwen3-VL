@@ -30,7 +30,9 @@ def scale_points(points: Sequence[float], sx: float, sy: float) -> List[float]:
     return out
 
 
-def normalize_points(points: Sequence[float], width: float, height: float, space: str) -> List[int]:
+def normalize_points(
+    points: Sequence[float], width: float, height: float, space: str
+) -> List[int]:
     """Normalize to integer grid (norm100 or norm1000) from pixel coords.
 
     space: "norm100" or "norm1000"
@@ -169,7 +171,12 @@ from typing import Callable, Literal
 
 def _rect_bounds(width: float, height: float) -> Tuple[float, float, float, float]:
     # left, top, right, bottom in float space
-    return 0.0, 0.0, float(max(0, int(round(width)) - 1)), float(max(0, int(round(height)) - 1))
+    return (
+        0.0,
+        0.0,
+        float(max(0, int(round(width)) - 1)),
+        float(max(0, int(round(height)) - 1)),
+    )
 
 
 def is_clockwise(points: Sequence[float]) -> bool:
@@ -195,7 +202,9 @@ def to_clockwise(points: Sequence[float]) -> List[float]:
     return out
 
 
-def _inside(px: float, py: float, edge: str, bounds: Tuple[float, float, float, float]) -> bool:
+def _inside(
+    px: float, py: float, edge: str, bounds: Tuple[float, float, float, float]
+) -> bool:
     l, t, r, b = bounds
     if edge == "left":
         return px >= l
@@ -238,7 +247,9 @@ def _intersect(
     return x2, y2
 
 
-def sutherland_hodgman_clip(points: Sequence[float], width: float, height: float) -> List[float]:
+def sutherland_hodgman_clip(
+    points: Sequence[float], width: float, height: float
+) -> List[float]:
     """Clip polygon to image rectangle [0..W-1]x[0..H-1] in float.
 
     Returns a flat list of points (may be empty). Assumes input polygon is simple/convex.
@@ -275,7 +286,9 @@ def _dist2(ax: float, ay: float, bx: float, by: float) -> float:
     return dx * dx + dy * dy
 
 
-def simplify_polygon(points: Sequence[float], *, eps_collinear: float = 1e-6, eps_dup: float = 1e-9) -> List[float]:
+def simplify_polygon(
+    points: Sequence[float], *, eps_collinear: float = 1e-6, eps_dup: float = 1e-9
+) -> List[float]:
     """Remove duplicate and nearly-collinear consecutive vertices from a polygon.
 
     This keeps the polygon shape but drops redundant points that often appear
@@ -291,7 +304,10 @@ def simplify_polygon(points: Sequence[float], *, eps_collinear: float = 1e-6, ep
         if not dedup or _dist2(dedup[-1][0], dedup[-1][1], x, y) > eps_dup:
             dedup.append((x, y))
     # Close polygon handling: if last equals first, drop last
-    if len(dedup) >= 2 and _dist2(dedup[0][0], dedup[0][1], dedup[-1][0], dedup[-1][1]) <= eps_dup:
+    if (
+        len(dedup) >= 2
+        and _dist2(dedup[0][0], dedup[0][1], dedup[-1][0], dedup[-1][1]) <= eps_dup
+    ):
         dedup.pop()
 
     if len(dedup) <= 2:
@@ -305,7 +321,9 @@ def simplify_polygon(points: Sequence[float], *, eps_collinear: float = 1e-6, ep
         x_cur, y_cur = dedup[i]
         x_next, y_next = dedup[(i + 1) % n]
         # Cross product magnitude for collinearity
-        cross = abs((x_cur - x_prev) * (y_next - y_prev) - (y_cur - y_prev) * (x_next - x_prev))
+        cross = abs(
+            (x_cur - x_prev) * (y_next - y_prev) - (y_cur - y_prev) * (x_next - x_prev)
+        )
         if cross > eps_collinear:
             out.append((x_cur, y_cur))
     if len(out) < 3:
@@ -366,8 +384,10 @@ def choose_four_corners(points: Sequence[float]) -> List[float]:
         return []
     # Order clockwise around centroid
     cx, cy = _polygon_centroid([v for p in sel for v in p])
+
     def angle(p: Tuple[float, float]) -> float:
         return math.atan2(p[1] - cy, p[0] - cx)
+
     sel.sort(key=angle)
     flat: List[float] = []
     for x, y in sel:
@@ -375,7 +395,9 @@ def choose_four_corners(points: Sequence[float]) -> List[float]:
     return to_clockwise(flat)
 
 
-def _orientation(a: Tuple[float, float], b: Tuple[float, float], c: Tuple[float, float]) -> float:
+def _orientation(
+    a: Tuple[float, float], b: Tuple[float, float], c: Tuple[float, float]
+) -> float:
     return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
 
 
@@ -467,7 +489,9 @@ def classify_affine_kind(M: List[List[float]], tol: float = 1e-6) -> str:
     return "general"
 
 
-def _cohen_sutherland_code(x: float, y: float, bounds: Tuple[float, float, float, float]) -> int:
+def _cohen_sutherland_code(
+    x: float, y: float, bounds: Tuple[float, float, float, float]
+) -> int:
     l, t, r, b = bounds
     code = 0
     if x < l:
@@ -520,7 +544,9 @@ def _clip_segment_cs(
     return accept, x1, y1, x2, y2
 
 
-def clip_polyline_to_rect(points: Sequence[float], width: float, height: float) -> List[float]:
+def clip_polyline_to_rect(
+    points: Sequence[float], width: float, height: float
+) -> List[float]:
     bounds = _rect_bounds(width, height)
     pts = _pair_points(points)
     if len(pts) < 2:
@@ -610,11 +636,11 @@ def geometry_from_dict(g: Dict[str, Any]) -> Union[BBox, Quad, Polyline]:
 def get_aabb(geom: Dict[str, Any]) -> List[float]:
     """
     Get axis-aligned bounding box [x1, y1, x2, y2] from any geometry type.
-    
+
     For bbox_2d: returns the bbox directly
     For quad: computes min/max from quad points
     For line: computes min/max from line points
-    
+
     Returns:
         [x1, y1, x2, y2] where x1 <= x2 and y1 <= y2
     """
@@ -637,11 +663,11 @@ def get_aabb(geom: Dict[str, Any]) -> List[float]:
 def intersect_aabb(bbox_a: List[float], bbox_b: List[float]) -> List[float]:
     """
     Compute intersection of two axis-aligned bounding boxes.
-    
+
     Args:
         bbox_a: [x1, y1, x2, y2]
         bbox_b: [x1, y1, x2, y2]
-    
+
     Returns:
         [x1, y1, x2, y2] of intersection, or [0, 0, 0, 0] if no overlap
     """
@@ -649,21 +675,21 @@ def intersect_aabb(bbox_a: List[float], bbox_b: List[float]) -> List[float]:
     y1 = max(bbox_a[1], bbox_b[1])
     x2 = min(bbox_a[2], bbox_b[2])
     y2 = min(bbox_a[3], bbox_b[3])
-    
+
     # No intersection
     if x2 <= x1 or y2 <= y1:
         return [0.0, 0.0, 0.0, 0.0]
-    
+
     return [x1, y1, x2, y2]
 
 
 def aabb_area(bbox: List[float]) -> float:
     """
     Compute area of an axis-aligned bounding box.
-    
+
     Args:
         bbox: [x1, y1, x2, y2]
-    
+
     Returns:
         Area (>= 0.0)
     """
@@ -746,28 +772,28 @@ def compute_polygon_coverage(
 def compute_coverage(geom: Dict[str, Any], crop_bbox: List[float]) -> float:
     """
     Compute fraction of geometry that falls inside crop region.
-    
+
     Uses axis-aligned bounding box approximation for efficiency.
     For quads, this may overestimate the actual geometry area (since rotated
     quads have larger AABBs), making the coverage estimate conservative.
-    
+
     Args:
         geom: Geometry dict with bbox_2d, quad, or line field
         crop_bbox: Crop region [x1, y1, x2, y2]
-    
+
     Returns:
         Coverage ratio in [0.0, 1.0]
         - 0.0: completely outside crop
         - 1.0: completely inside crop
         - (0.0, 1.0): partially inside crop
-    
+
     Used for two purposes:
     1. Filtering: Drop objects if coverage < min_coverage (e.g., 0.3)
     2. Completeness tracking: Mark "只显示部分" if coverage < completeness_threshold (e.g., 0.95)
     """
     geom_bbox = get_aabb(geom)
     geom_area = aabb_area(geom_bbox)
-    
+
     # Degenerate geometry (collapsed to line or point)
     if geom_area <= 0.0:
         # Check if any point is inside crop
@@ -777,10 +803,10 @@ def compute_coverage(geom: Dict[str, Any], crop_bbox: List[float]) -> float:
         if x1 <= gx1 <= x2 and y1 <= gy1 <= y2:
             return 1.0
         return 0.0
-    
+
     intersection = intersect_aabb(geom_bbox, crop_bbox)
     intersection_area = aabb_area(intersection)
-    
+
     coverage = intersection_area / geom_area
     # Clamp to [0, 1] to handle floating point errors
     return max(0.0, min(1.0, coverage))
@@ -789,15 +815,15 @@ def compute_coverage(geom: Dict[str, Any], crop_bbox: List[float]) -> float:
 def translate_geometry(geom: Dict[str, Any], dx: float, dy: float) -> Dict[str, Any]:
     """
     Translate geometry by offset (dx, dy).
-    
+
     Used after cropping to shift geometries from image coordinates
     to crop-relative coordinates.
-    
+
     Args:
         geom: Geometry dict with bbox_2d, quad, or line field
         dx: X offset (typically negative crop x)
         dy: Y offset (typically negative crop y)
-    
+
     Returns:
         New geometry dict with translated coordinates
     """
@@ -850,7 +876,7 @@ def transform_geometry(
         # Use small epsilon tolerance for floating-point precision
         eps = 0.5
         all_inside = all(
-            -eps <= t[i] < width + eps and -eps <= t[i+1] < height + eps
+            -eps <= t[i] < width + eps and -eps <= t[i + 1] < height + eps
             for i in range(0, 8, 2)
         )
         if all_inside:
@@ -874,7 +900,7 @@ def transform_geometry(
         # Use small epsilon tolerance for floating-point precision
         eps = 0.5
         all_inside = all(
-            -eps <= t[i] < width + eps and -eps <= t[i+1] < height + eps
+            -eps <= t[i] < width + eps and -eps <= t[i + 1] < height + eps
             for i in range(0, 8, 2)
         )
         if all_inside:
@@ -910,4 +936,3 @@ def transform_geometry(
 
 
 __all_typed__ = ["BBox", "Quad", "Polyline", "geometry_from_dict", "transform_geometry"]
-

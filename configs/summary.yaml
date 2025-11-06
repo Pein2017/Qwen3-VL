@@ -76,8 +76,8 @@ deepspeed:
 
 custom:
   emit_norm: norm1000
-  # Each sample has a probability summary_ratio of using summary mode
-  summary_ratio: 1.0  # 100% summary mode (pure summary training)
+  # Toggle summary-only mode (no mixed sampling)
+  use_summary: true
   dump_conversation_text: false
   augmentation:
     # ✅ ENABLED for summary mode - safe because no geometric coordinates to misalign

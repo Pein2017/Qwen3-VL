@@ -7,6 +7,7 @@ Status: Active — Internal Engineering
 - **Data & Datasets** → `DATA_AND_DATASETS.md` - Schema, builders, preprocessing
 - **Augmentation** → `AUGMENTATION.md` - Geometry transforms, smart cropping
 - **Training & Inference** → `REFERENCE.md` - Full guide, recipes, FAQ
+- **Stage-A & Stage-B** → `STAGE_A_STAGE_B.md` - Quality control pipeline, reflection loop
 - **Upstream Dependencies** → `UPSTREAM_DEPENDENCIES.md` - HF Qwen3-VL + ms-swift context
 - **Experiments** → `experiments/` - Training comparisons, ablations
 
@@ -84,6 +85,7 @@ Vision Encoder (ViT) → Aligner (Projector) → LLM
 | Data & Datasets | `src/datasets/`, `src/datasets/data_details.md` |
 | Augmentation | `src/datasets/augmentation/`, `src/datasets/geometry.py` |
 | Training & Inference | `src/sft.py`, `src/stage_a/`, `src/stage_b/`, `configs/` |
+| Stage-A & Stage-B | `src/stage_a/`, `src/stage_b/`, `configs/stage_b/` |
 | Utils & Logging | `src/utils/`, `src/callbacks/` |
 
 ---

@@ -29,14 +29,14 @@ class DenseCaptionDataset(Dataset):
         emit_norm: Literal["none", "norm100", "norm1000"],
         augmenter: Optional[Any] = None,
         preprocessor: Optional[Any] = None,
-        summary_ratio: Optional[float] = None,
+        use_summary: bool = False,
         system_prompt_dense: Optional[str] = None,
         system_prompt_summary: Optional[str] = None,
         bypass_prob: float = 0.0,
         seed: int = 2025,
         toon_mode: bool = False,
     ):
-        self.summary_ratio = summary_ratio if summary_ratio is not None else 0.0
+        self.use_summary = bool(use_summary)
         self.system_prompt_dense = system_prompt_dense
         self.system_prompt_summary = system_prompt_summary
         self.user_prompt = user_prompt
@@ -45,15 +45,29 @@ class DenseCaptionDataset(Dataset):
         self.seed = int(seed)
         self.template = template
         self.toon_mode = bool(toon_mode)
+        self.mode: Literal["dense", "summary"] = (
+            "summary" if self.use_summary else "dense"
+        )
 
-        if not (0.0 <= float(self.summary_ratio) <= 1.0):
-            raise ValueError(
-                f"summary_ratio must be within [0, 1], got {self.summary_ratio}."
-            )
-        if self.summary_ratio > 0 and self.system_prompt_summary is None:
-            raise ValueError(
-                "system_prompt_summary is required when summary_ratio > 0."
-            )
+        if self.use_summary:
+            if self.system_prompt_summary is None:
+                self.system_prompt_summary = getattr(self.template, "system", None)
+            if self.system_prompt_summary is None:
+                raise ValueError(
+                    "system_prompt_summary is required when use_summary is true."
+                )
+            try:
+                setattr(self.template, "system", self.system_prompt_summary)
+            except Exception:
+                pass
+        else:
+            if self.system_prompt_dense is None:
+                self.system_prompt_dense = getattr(self.template, "system", None)
+            if self.system_prompt_dense is not None:
+                try:
+                    setattr(self.template, "system", self.system_prompt_dense)
+                except Exception:
+                    pass
 
         validated_records: List[ConversationRecord] = []
         for idx, record in enumerate(base_records):
@@ -93,6 +107,10 @@ class DenseCaptionDataset(Dataset):
         elif isinstance(sample_limit, str) and sample_limit.isdigit():
             records = records[: int(sample_limit)]
         # Backward-compatibility: drop unused arg if present
+        if "summary_ratio" in kwargs:
+            raise TypeError(
+                "summary_ratio is no longer supported; use use_summary instead."
+            )
         kwargs.pop("use_detailed_caption", None)
         kwargs.pop("output_variant", None)  # Backward compat
         return DenseCaptionDataset(
@@ -118,13 +136,6 @@ class DenseCaptionDataset(Dataset):
 
     def __len__(self) -> int:
         return len(self.base_records)
-
-    def _select_mode(self) -> Literal["dense", "summary"]:
-        if self.summary_ratio <= 0:
-            return "dense"
-        if self.summary_ratio >= 1:
-            return "summary"
-        return "summary" if self._rng.random() < self.summary_ratio else "dense"
 
     def _create_builder(self, mode: Literal["dense", "summary"]) -> JSONLinesBuilder:
         user_prompt = USER_PROMPT_SUMMARY if mode == "summary" else self.user_prompt
@@ -159,7 +170,7 @@ class DenseCaptionDataset(Dataset):
                 )
             record = processed
 
-        mode = self._select_mode()
+        mode = self.mode
         builder = self._create_builder(mode)
         merged = builder.build_many([record])
 
