@@ -36,6 +36,7 @@ training:
   save_strategy: best
   save_steps: 40
   save_total_limit: 2
+  save_last_epoch: true
   metric_for_best_model: eval_loss
   greater_is_better: false
   save_delay_steps: 100  # Prevent checkpoint saves during first 100 steps (warmup protection)

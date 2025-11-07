@@ -56,9 +56,7 @@ class ConfigLoader:
         if isinstance(value, (int, float)):
             if value in (0, 1, 0.0, 1.0):
                 return bool(value)
-            raise ValueError(
-                f"{field_name} must be boolean (0 or 1), got {value!r}."
-            )
+            raise ValueError(f"{field_name} must be boolean (0 or 1), got {value!r}.")
         if isinstance(value, str):
             normalized = value.strip().lower()
             if normalized in {"true", "1", "yes", "y", "on"}:
@@ -68,9 +66,7 @@ class ConfigLoader:
             raise ValueError(
                 f"{field_name} string value '{value}' is not a recognized boolean representation."
             )
-        raise TypeError(
-            f"{field_name} must be a boolean value, got {type(value)!r}."
-        )
+        raise TypeError(f"{field_name} must be a boolean value, got {type(value)!r}.")
 
     @staticmethod
     def load_yaml_with_extends(
@@ -224,6 +220,13 @@ class ConfigLoader:
 
         raw_save_delay_steps = training_section.pop("save_delay_steps", None)
         raw_save_delay_epochs = training_section.pop("save_delay_epochs", None)
+        save_last_epoch_raw = training_section.pop("save_last_epoch", None)
+        if save_last_epoch_raw is None:
+            save_last_epoch = True
+        else:
+            save_last_epoch = ConfigLoader._coerce_bool(
+                save_last_epoch_raw, "training.save_last_epoch"
+            )
 
         if config.global_max_length is not None:
             model_section.setdefault("max_model_len", config.global_max_length)
@@ -255,6 +258,13 @@ class ConfigLoader:
         args_cls = RLHFArguments if args_dict.get("rlhf_type") else TrainArguments
         train_args = args_cls(**args_dict)
 
+        try:
+            setattr(train_args, "save_last_epoch", save_last_epoch)
+        except Exception as exc:  # pragma: no cover - defensive
+            raise RuntimeError(
+                "Unable to attach save_last_epoch to TrainArguments; ensure ms-swift exposes this attribute."
+            ) from exc
+
         if config.custom.trainer_variant:
             try:
                 setattr(train_args, "trainer_variant", config.custom.trainer_variant)
@@ -281,6 +291,13 @@ class ConfigLoader:
             raise RuntimeError(
                 "TrainArguments missing nested training_args; ms-swift interface may have changed."
             )
+
+        try:
+            setattr(inner_args, "save_last_epoch", save_last_epoch)
+        except Exception as exc:  # pragma: no cover
+            raise RuntimeError(
+                "Unable to attach save_last_epoch to inner training arguments; ensure ms-swift exposes this attribute."
+            ) from exc
 
         try:
             setattr(inner_args, "visual_kd_config", config.custom.visual_kd)

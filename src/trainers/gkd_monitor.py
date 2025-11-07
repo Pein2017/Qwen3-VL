@@ -124,13 +124,12 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
         llm_kd_loss: Optional[torch.Tensor] = None
 
         teacher_available = self._has_teacher_model()
-        llm_kd_active = teacher_available and bool(getattr(self, "beta", 0.0))
-        need_teacher = teacher_available and (llm_kd_active or self._visual_kd_enabled)
+        llm_kd_active = teacher_available
 
-        if need_teacher:
+        if teacher_available:
             teacher_outputs = self._run_teacher_forward(model_inputs, student_logits)
 
-        if teacher_outputs is not None and (llm_kd_active or self._visual_kd_enabled):
+        if teacher_outputs is not None:
             teacher_logits = teacher_outputs.logits.to(dtype)
             teacher_logits_next = teacher_logits[:, :-1, :]
             teacher_vocab_size = teacher_logits_next.shape[-1]
@@ -159,7 +158,11 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
                     )
                 else:
                     llm_kd_loss = student_logits.new_zeros(())
-        elif llm_kd_active and not self._missing_teacher_warned:
+        elif (
+            not teacher_available
+            and bool(getattr(self, "beta", 0.0))
+            and not self._missing_teacher_warned
+        ):
             logger.warning(
                 "beta=%.4f but no teacher model is attached; skipping llm KD term.",
                 float(self.beta),

@@ -1,0 +1,44 @@
+extends: base.yaml
+
+# Stage 1: Full training on Aligner only (freeze LLM+ViT)
+
+model:
+  model: model_cache/models/Qwen/Qwen3-VL-8B-Instruct
+  # model: output/stage_1_full_aligner_only/best/eff_batch_32-lr_1e-4/checkpoint-200
+
+tuner:
+  train_type: full
+  freeze_llm: true
+  freeze_vit: true
+  freeze_aligner: false
+
+training:
+  output_dir: ./output/11-07/stage_1-sft/
+  run_name: eff_batch_64-epoch_10
+  per_device_train_batch_size: 1
+
+  learning_rate: 1.0e-4
+  vit_lr: 2.0e-5
+  aligner_lr: 1.0e-4
+  num_train_epochs: 10
+
+  gradient_accumulation_steps: 8
+
+  eval_strategy: steps
+  save_strategy: best
+  eval_steps: 20
+  save_steps: 100
+  save_total_limit: 3
+  save_delay_steps: 200
+
+  # Verbose logging
+  logging_dir: ./tb/11-07/stage_1-sft
+
+data:
+  dataset_num_proc: 8
+  dataloader_num_workers: 8
+
+custom:
+  augment_prob: 0.0
+  dump_conversation_text: false
+

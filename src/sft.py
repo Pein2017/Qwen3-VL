@@ -13,6 +13,7 @@ from swift.trainers import TrainerFactory
 
 from .config import ConfigLoader, SaveDelayConfig
 from .datasets import DenseCaptionDataset
+from .trainers import with_final_checkpoint
 from .utils import enable_verbose_logging, get_logger, set_log_level
 
 
@@ -24,8 +25,14 @@ def resolve_trainer_cls(train_args):
     ):
         from .trainers import GKDTrainerWithMetrics
 
-        return GKDTrainerWithMetrics
-    return TrainerFactory.get_trainer_cls(train_args)
+        trainer_cls = GKDTrainerWithMetrics
+    else:
+        trainer_cls = TrainerFactory.get_trainer_cls(train_args)
+
+    save_last_epoch = getattr(train_args, "save_last_epoch", True)
+    if save_last_epoch:
+        return with_final_checkpoint(trainer_cls)
+    return trainer_cls
 
 
 # Use the model's native chat_template (JSON/Jinja) shipped with the tokenizer
