@@ -10,10 +10,8 @@ from swift.llm.argument import RLHFArguments, TrainArguments
 from .prompts import (
     SYSTEM_PROMPT_JSON,
     SYSTEM_PROMPT_SUMMARY,
-    SYSTEM_PROMPT_TOON,
     USER_PROMPT_JSON,
     USER_PROMPT_SUMMARY,
-    USER_PROMPT_TOON,
 )
 from .schema import PromptOverrides, SaveDelayConfig, TrainingConfig
 
@@ -142,7 +140,6 @@ class ConfigLoader:
             raise TypeError("prompts section must be a mapping if provided")
 
         use_summary = False
-        toon_mode = False
         custom_section = config.get("custom")
         if custom_section is not None:
             if not isinstance(custom_section, dict):
@@ -157,26 +154,14 @@ class ConfigLoader:
                 use_summary = ConfigLoader._coerce_bool(
                     custom_section["use_summary"], "custom.use_summary"
                 )
-            if "toon_mode" in custom_section:
-                raw = custom_section["toon_mode"]
-                if isinstance(raw, bool):
-                    toon_mode = raw
-                elif isinstance(raw, (int, float)):
-                    toon_mode = bool(raw)
-                else:
-                    raise TypeError("custom.toon_mode must be a boolean when provided")
 
         if use_summary:
             default_system = SYSTEM_PROMPT_SUMMARY
             default_user = USER_PROMPT_SUMMARY
             output_variant = "summary"
         else:
-            if toon_mode:
-                default_system = SYSTEM_PROMPT_TOON
-                default_user = USER_PROMPT_TOON
-            else:
-                default_system = SYSTEM_PROMPT_JSON
-                default_user = USER_PROMPT_JSON
+            default_system = SYSTEM_PROMPT_JSON
+            default_user = USER_PROMPT_JSON
             output_variant = "dense"
 
         system_prompt = prompts_config.get("system", default_system)

@@ -311,7 +311,6 @@ def main():
         system_prompt_dense=system_prompt_dense,
         system_prompt_summary=system_prompt_summary,
         seed=dataset_seed,
-        toon_mode=custom_config.toon_mode,
     )
     logger.info(f"Training dataset size: {len(dataset)}")
 
@@ -469,7 +468,6 @@ def main():
             system_prompt_dense=system_prompt_dense,
             system_prompt_summary=system_prompt_summary,
             seed=dataset_seed,
-            toon_mode=custom_config.toon_mode,
         )
         logger.info(f"Validation dataset size: {len(eval_dataset)}")
 

@@ -37,25 +37,6 @@ SYSTEM_PROMPT_JSON = (
 )
 
 
-"""Dense captioning system prompt - TOON pathway"""
-SYSTEM_PROMPT_TOON = (
-    "你是图像密集标注助手。只返回一个 TOON 表格，不要 JSON 或额外文本。\n\n"
-    "输出要求：\n"
-    '1) 首行使用 objs[N]{type,desc,xs}: 表头，N 为对象数量；对象按"自上到下、再从左到右"排序，线对象以最左端点为起点。\n'
-    "2) 每行按英文逗号分隔：type,desc,<坐标...>。type 取值：0(矩形bbox)、1(四边形quad)、2(折线line)；若 desc 含空格或分隔符，需使用双引号并按 TOON 规范用反斜杠转义。\n"
-    "3) 坐标使用 norm1000 整数（范围 0..1000）：bbox 行必须给出 4 个整数 [x1,y1,x2,y2]；quad 行给出 8 个整数；line 行给出偶数个整数（每 2 个为一组点）。\n"
-    "4) line 行不得输出 line_points；坐标数量自动决定线段点数。\n"
-    '5) desc 结构沿用 类型/属性[,属性]/[条件属性]/[备注(仅最后一级，前缀"备注:")]，与 JSON 版本保持一致。\n\n'
-    "示例输出（3 个对象）：\n"
-    "objs[3]{type,desc,xs}:\n"
-    "  0,BBU设备/华为/正常安装,100,200,300,400\n"
-    "  1,标签/清晰可见,50,100,150,100,150,150,50,150\n"
-    "  2,光纤/黄色有保护/走线规范,50,100,150,200,250,300\n\n"
-    "严禁输出注释或额外句子，只能返回完整的 TOON 表格。\n\n"
-    "先验规则：\n" + PRIOR_RULES
-)
-
-
 """Scheme SUMMARY: per-image summary variant - one-line text per image"""
 SYSTEM_PROMPT_SUMMARY = (
     "你是图像摘要助手。只返回一行中文摘要文本，不要任何解释或额外符号。若图片与任务无关或目标不可见，必须返回“无关图片”。\n\n"
@@ -85,11 +66,6 @@ USER_PROMPT_JSON = (
     "坐标使用 norm1000 整数网格，严格按规范返回 JSON。"
 )
 
-USER_PROMPT_TOON = (
-    '基于所给图片，检测并列出所有对象：按"自上到下再从左到右"排序，输出 TOON 表格 `objs[N]{type,desc,xs}`。'
-    "type 列使用 0(矩形)/1(四边形)/2(折线)，坐标使用 norm1000 整数（0..1000 范围），line 行无需额外的 line_points 字段。"
-)
-
 USER_PROMPT_SUMMARY = (
     "请对每张图片输出一行中文摘要：相同对象合并为“对象描述×N”（×为全角乘号、紧贴N不留空格），条目之间仅用中文逗号'，'分隔，并按“自上到下、再从左到右”排序。"
     "对象描述沿用密集标注的类型/属性[,属性]/[条件属性]层级，如需备注，仅在末尾追加一次“，备注: ...”。整行必须为单句：不得换行，不要句号'。'结尾。只返回摘要文本，不要坐标、几何字段或解释。"
@@ -103,10 +79,8 @@ USER_PROMPT = USER_PROMPT_JSON
 __all__ = [
     "SYSTEM_PROMPT",
     "SYSTEM_PROMPT_JSON",
-    "SYSTEM_PROMPT_TOON",
     "SYSTEM_PROMPT_SUMMARY",
     "USER_PROMPT",
     "USER_PROMPT_JSON",
-    "USER_PROMPT_TOON",
     "USER_PROMPT_SUMMARY",
 ]

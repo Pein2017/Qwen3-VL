@@ -74,4 +74,3 @@ custom:
   emit_norm: norm1000
   dump_conversation_text: false
   trainer_variant: gkd_monitor
-  toon_mode: true

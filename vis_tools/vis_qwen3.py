@@ -49,9 +49,6 @@ REPETITION_PENALTY = 1.1  # Strong penalty against repetition (was 1.1, still to
 # Optional: override training user prompt (None uses training default)
 USER_PROMPT_OVERRIDE: str | None = None
 
-# Toggle between JSON vs TOON prompts when running inference
-USE_TOON_PROMPT: bool = False
-
 # Dump/Plot settings
 SAVE_JSONL = True
 DUMP_JSONL_PATH = os.path.join(SAVE_DIR, "gt_vs_pred.jsonl")
@@ -70,20 +67,13 @@ if str(SRC_DIR) not in sys.path:
 try:
     from src.config.prompts import (  # type: ignore
         SYSTEM_PROMPT_JSON,
-        SYSTEM_PROMPT_TOON,
         USER_PROMPT_JSON,
-        USER_PROMPT_TOON,
     )
-    from src.datasets.builders import ToonFormatError, decode_toon_payload
 except Exception:
     raise Exception("Failed to import prompts")
 
-if USE_TOON_PROMPT:
-    SYSTEM_PROMPT_TEXT = SYSTEM_PROMPT_TOON
-    default_user_prompt = USER_PROMPT_TOON
-else:
-    SYSTEM_PROMPT_TEXT = SYSTEM_PROMPT_JSON
-    default_user_prompt = USER_PROMPT_JSON
+SYSTEM_PROMPT_TEXT = SYSTEM_PROMPT_JSON
+default_user_prompt = USER_PROMPT_JSON
 
 USER_PROMPT_TEXT = USER_PROMPT_OVERRIDE or default_user_prompt
 
@@ -211,30 +201,6 @@ def run_infer_one(pil_img: Image.Image, prompt: str) -> tuple[str, str]:
 GEOM_KEYS = ("bbox_2d", "quad", "line")
 
 
-def _extract_toon_block(text: str) -> str | None:
-    """Locate a TOON-formatted block within the assistant response."""
-
-    lines = text.splitlines()
-    total = len(lines)
-    for idx, line in enumerate(lines):
-        stripped = line.strip()
-        if not stripped:
-            continue
-        if stripped.startswith("objs[") and "{" in stripped and stripped.endswith(":"):
-            block: List[str] = [stripped]
-            tail_idx = idx + 1
-            while tail_idx < total:
-                tail_line = lines[tail_idx].strip()
-                if not tail_line:
-                    break
-                if not tail_line[0].isdigit():
-                    break
-                block.append(tail_line)
-                tail_idx += 1
-            return "\n".join(block)
-    return None
-
-
 def _extract_outer_json(text: str) -> str | None:
     """Return the largest balanced JSON block by curly braces.
 
@@ -312,16 +278,6 @@ def parse_prediction(text: str) -> List[Dict[str, Any]]:
                 continue
             parsed_local.append({"desc": desc, "type": gtype, "points": pts})
         return parsed_local
-
-    # Fast path: detect TOON block first
-    toon_block = _extract_toon_block(text)
-    if toon_block:
-        try:
-            toon_payload = decode_toon_payload(toon_block)
-        except ToonFormatError:
-            toon_payload = None
-        if isinstance(toon_payload, dict) and toon_payload:
-            return _build_objects_from_dict(toon_payload)
 
     # First try: parse as full JSON (balanced root)
     raw = _extract_outer_json(text)

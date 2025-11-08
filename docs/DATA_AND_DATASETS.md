@@ -72,17 +72,6 @@ Each record in your training data follows this structure:
 }
 ```
 
-**TOON Mode** (`toon_mode: true`):
-```
-objs[2]{type,desc,xs}:
-  0,"bbox 示例",100,200,300,400
-  2,"线示例",50,60,80,120,130,180,180,220
-```
-- `type` column maps `0 → bbox_2d`, `1 → quad`, `2 → line`.
-- `desc` 保持类型/属性层级不变；若包含逗号或特殊字符，按 TOON 规范使用双引号并用反斜杠转义。
-- `xs` 展开为所有坐标整数；`line` 行不再显式携带 `line_points`，点数由坐标个数推断。
-- 内部解码使用 `src.datasets.builders.decode_toon_payload()` 还原为 `object_n` 字典，同时补回 `line_points` 以保持与 JSON 流一致。
-
 **Summary Mode**:
 ```
 "单行汇总文本"
@@ -139,9 +128,7 @@ custom:
   val_jsonl: /path/to/val.jsonl
   use_summary: false                # true → summary-only mode
   emit_norm: norm1000              # Coordinate format in text
-  toon_mode: false                 # true → emit TOON table instead of JSON (dense mode only)
 ```
-Set `toon_mode: true` to opt into the compact TOON formatter while keeping the same geometry metadata inside `assistant_payload` for downstream evaluation/visualization.
 
 ---
 
@@ -177,7 +164,6 @@ Set `toon_mode: true` to opt into the compact TOON formatter while keeping the s
 - Geometries normalized based on `emit_norm` setting
 - Deterministic ordering of object indices (`object_1`, `object_2`, ...)
 - Consumes validated `ConversationRecord` objects and exposes augmentation telemetry (`pipeline.last_summary`) for downstream health checks.
-- Honors `toon_mode`: emits TOON tables in assistant text while keeping the canonical `object_n` mapping in `assistant_payload` for evaluation/visualization via `decode_toon_payload()`.
 
 ---
 
