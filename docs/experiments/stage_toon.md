@@ -1,0 +1,1 @@
+toon expression is significantly worse in generation, hence need to be deprecated. The gap of prior knowledge between json format and the other format is unignorable.
