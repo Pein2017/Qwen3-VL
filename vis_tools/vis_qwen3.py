@@ -34,17 +34,17 @@ from vis_tools.vis_helper import (
 # ==============================
 
 # Required paths
-CKPT_PATH = "output/11-07/stage_1-sft/v1-20251107-124559/eff_batch_64-epoch_10-per_device_2/checkpoint-200"  # HF dir or merged checkpoint  # HF dir or merged checkpoint
+CKPT_PATH = "output/stage_2_gkd_merged/11-08/checkpoint-690"  # HF dir or merged checkpoint  # HF dir or merged checkpoint
 JSONL_PATH = "data/bbu_full_768/val.jsonl"
 
 # Runtime settings
 LIMIT = 10
 DEVICE = "cuda:0"
-SAVE_DIR = "vis_output/stage_1-sft/per_device_2/checkpoint-200"
+SAVE_DIR = "vis_output/stage_2_gkd_merged/11-08/checkpoint-690"
 MAX_NEW_TOKENS = 2048
-TEMPERATURE = 0.0  # Balanced randomness to avoid loops while maintaining quality
+TEMPERATURE = 0.001  # Balanced randomness to avoid loops while maintaining quality
 TOP_P = 1  # Nucleus sampling - cuts off low-probability tail
-REPETITION_PENALTY = 1.1  # Strong penalty against repetition (was 1.1, still too weak for repetitive outputs)
+REPETITION_PENALTY = 1.05  # Strong penalty against repetition (was 1.1, still too weak for repetitive outputs)
 
 # Optional: override training user prompt (None uses training default)
 USER_PROMPT_OVERRIDE: str | None = None

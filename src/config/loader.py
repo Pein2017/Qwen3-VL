@@ -1,6 +1,7 @@
 """Pure YAML config loader - directly instantiates ms-swift objects"""
 
 import logging
+import math
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
@@ -201,7 +202,26 @@ class ConfigLoader:
         template_section = dict(config.template)
         tuner_section = dict(config.tuner)
         training_section = dict(config.training)
-        rlhf_section = dict(config.rlhf)
+        rlhf_section_original = dict(config.rlhf)
+        rlhf_section = dict(rlhf_section_original)
+        llm_kd_weight_raw = rlhf_section.pop("llm_kd_weight", None)
+        if llm_kd_weight_raw is None:
+            llm_kd_weight = 1.0
+        else:
+            try:
+                llm_kd_weight = float(llm_kd_weight_raw)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    "rlhf.llm_kd_weight must be a numeric value"
+                ) from exc
+            if not math.isfinite(llm_kd_weight):
+                raise ValueError(
+                    f"rlhf.llm_kd_weight must be finite, got {llm_kd_weight_raw!r}"
+                )
+            if llm_kd_weight < 0:
+                raise ValueError(
+                    f"rlhf.llm_kd_weight must be >= 0, got {llm_kd_weight_raw!r}"
+                )
 
         raw_save_delay_steps = training_section.pop("save_delay_steps", None)
         raw_save_delay_epochs = training_section.pop("save_delay_epochs", None)
@@ -219,6 +239,16 @@ class ConfigLoader:
 
         if "system" not in template_section and config.prompts.system:
             template_section["system"] = config.prompts.system
+
+        teacher_model_path = rlhf_section_original.get("teacher_model")
+        rlhf_type = rlhf_section_original.get("rlhf_type")
+        llm_kd_active = rlhf_type == "gkd" and llm_kd_weight > 0
+        kd_requested = llm_kd_active or config.custom.visual_kd.enabled
+        if kd_requested and not teacher_model_path:
+            raise ValueError(
+                "rlhf.teacher_model must be provided when llm KD or visual KD is enabled. "
+                "Set rlhf.llm_kd_weight to 0 and disable custom.visual_kd to run without a teacher."
+            )
 
         args_dict: Dict[str, Any] = {}
         for section in (
@@ -271,6 +301,13 @@ class ConfigLoader:
                 "Unable to attach visual_kd_config to TrainArguments; ensure ms-swift exposes this attribute."
             ) from exc
 
+        try:
+            setattr(train_args, "llm_kd_weight", llm_kd_weight)
+        except Exception as exc:  # pragma: no cover
+            raise RuntimeError(
+                "Unable to attach llm_kd_weight to TrainArguments; ensure ms-swift exposes this attribute."
+            ) from exc
+
         inner_args = getattr(train_args, "training_args", None)
         if inner_args is None:
             raise RuntimeError(
@@ -289,6 +326,13 @@ class ConfigLoader:
         except Exception as exc:  # pragma: no cover
             raise RuntimeError(
                 "Unable to attach visual_kd_config to inner training arguments; ensure ms-swift exposes this attribute."
+            ) from exc
+
+        try:
+            setattr(inner_args, "llm_kd_weight", llm_kd_weight)
+        except Exception as exc:  # pragma: no cover
+            raise RuntimeError(
+                "Unable to attach llm_kd_weight to inner training arguments; ensure ms-swift exposes this attribute."
             ) from exc
 
         return train_args

@@ -19,7 +19,7 @@
    - No upstream ms-swift edits; our wrapper subclasses the ms-swift GKD trainer.
 
 3. **Telemetry**
-  - Wrapper logs `train/loss`, `train/llm_kd_loss`, `train/vision_kd_loss`, `train/sft_loss`, `train/token_accuracy` plus `eval/*` counterparts, with prefixes emitted exactly once.
+  - Wrapper logs `train/loss`, `train/llm_kd_loss`, `train/vision_kd_loss`, `train/sft_loss`, `train/token_acc` plus `eval/*` counterparts, with prefixes emitted exactly once.
    - Evaluation skips the teacher forward (CE only) to keep validation inexpensive; document keys so monitoring can alert on KL spikes and CE regressions.
 
 4. **Docs & Recipes**

@@ -1,0 +1,12 @@
+- [x] Update config dataclasses/loader to accept `rlhf.llm_kd_weight`, defaulting to `1.0` and rejecting negatives.
+- [x] Surface `llm_kd_weight` on both `TrainArguments` and nested `training_args`; ensure ms-swift constructors see the same kwargs set as before.
+- [x] Teach `GKDTrainerWithMetrics` to read the weight, bypass the JSD branch when it is `0`, and multiply the LM KD contribution (loss + metrics) by the configured weight.
+- [x] Keep visual KD compatible by running teacher forwards/hooks whenever `visual_kd.enabled` is `true`, even if LM KD is disabled.
+- [x] Extend `tests/test_gkd_monitor_integration.py` (and any helper fixtures) to cover positive/zero weight cases plus validation errors.
+- [x] Document the new knob in configs/docs (e.g., `stage_1_gkd.yaml`, `docs/` reference) and note updated telemetry fields.
+- [x] Validation: `pytest tests/test_gkd_monitor_integration.py` (entire module) and any impacted Stage config linting.
+
+- [x] Add loader unit tests for default/positive/negative `llm_kd_weight` handling.
+- [x] Add `rlhf.llm_kd_weight` examples to `configs/stage_1_gkd.yaml` and `configs/stage_2_llm_lora_gkd.yaml`.
+- [x] Update `docs/REFERENCE.md` to list `llm_kd_weight` under TrainArguments toggles and confirm metrics reflect weighting.
+- [x] Fail fast when KD is requested without a teacher: loader validation must raise immediately; add regression coverage to prevent reintroducing silent fallbacks.

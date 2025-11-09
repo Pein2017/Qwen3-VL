@@ -317,7 +317,25 @@ Use Generalized Knowledge Distillation (GKD) when dense-caption SFT starts hallu
     trainer_variant: gkd_monitor  # enable KL+CE logging wrapper
   ```
 - **Launch**: run the usual entrypoint (`python -m src.sft --config <gkd-config.yaml>`). The loader instantiates `SwiftRLHF` behind the scenes, loads the frozen teacher, and routes training through ms-swift’s `GKDTrainer`.
-- **Telemetry**: the wrapper keeps the huggingface `loss` scalar and emits `train/loss`, `train/sft_loss`, `train/llm_kd_loss`, `train/vision_kd_loss`, `train/token_accuracy`, plus the same `eval/*` counterparts. Metrics are prefixed exactly once (`train/*`, `eval/*`) to avoid TensorBoard duplication. Watch for `train/llm_kd_loss` spikes to catch drift early; compare `train/sft_loss` against your vanilla SFT runs to ensure language quality is intact.
+- **Telemetry**: the wrapper keeps the huggingface `loss` scalar and emits `train/loss`, `train/sft_loss`, `train/llm_kd_loss`, `train/vision_kd_loss`, `train/token_acc`, plus the same `eval/*` counterparts. Metrics are prefixed exactly once (`train/*`, `eval/*`) to avoid TensorBoard duplication. `train/llm_kd_loss` reflects the **weighted** JSD term (`rlhf.llm_kd_weight * jsd`); when the weight is `0`, the metric is omitted entirely. Watch for `train/llm_kd_loss` spikes to catch drift early; compare `train/sft_loss` against your vanilla SFT runs to ensure language quality is intact.
+
+#### LM-head KD Weight
+
+- `rlhf.llm_kd_weight` defaults to `1.0` and scales the LM-head JSD term without modifying other losses.
+- Set it below `1.0` to lighten logits anchoring, or `0.0` to disable LM KD while keeping visual KD active.
+- The loader attaches the knob to both `TrainArguments` and nested `training_args`, so downstream tooling can introspect the runtime value.
+- Example overlay to disable LM KD while preserving visual KD hooks:
+
+```yaml
+rlhf:
+  llm_kd_weight: 0.0
+
+custom:
+  visual_kd:
+    enabled: true
+    weight: 0.1
+    targets: [merger, deepstack]
+```
 
 #### Vision/Aligner Feature KD (optional)
 

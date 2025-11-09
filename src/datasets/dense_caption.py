@@ -176,6 +176,13 @@ class DenseCaptionDataset(Dataset):
         elif mode == "dense" and self.system_prompt_dense:
             system_prompt = self.system_prompt_dense
 
+        conversation_messages = copy.deepcopy(merged.get("messages", []) or [])
+        if system_prompt is not None:
+            conversation_messages = [
+                {"role": "system", "content": system_prompt},
+                *conversation_messages,
+            ]
+
         original_system = None
         if system_prompt is not None:
             try:
@@ -192,5 +199,11 @@ class DenseCaptionDataset(Dataset):
                     self.template.system = original_system
                 except Exception:
                     pass
+
+        # Attach the original conversation so RLHF/GKD trainers can re-encode.
+        encoded["messages"] = conversation_messages
+        for key in ("assistant_payload", "objects", "metadata"):
+            if key in merged:
+                encoded[key] = copy.deepcopy(merged[key])
 
         return encoded

@@ -43,7 +43,7 @@
 ---
 
 ### Requirement: KD/CE telemetry
-- Training logs SHALL expose `train/llm_kd_loss`, `train/vision_kd_loss`, `train/sft_loss`, total `train/loss`, and `train/token_accuracy` every logging step, and emit matching `eval/*` metrics without duplicating prefixes (e.g., no `train/eval/*`).
+- Training logs SHALL expose `train/llm_kd_loss`, `train/vision_kd_loss`, `train/sft_loss`, total `train/loss`, and `train/token_acc` every logging step, and emit matching `eval/*` metrics without duplicating prefixes (e.g., no `train/eval/*`).
 - `logging.jsonl` SHALL include these fields; tensorboard curves SHALL be emitted when enabled.
 - Evaluation mode SHALL include the teacher forward when a teacher model is configured so the same KD breakdown (`eval/llm_kd_loss`, `eval/vision_kd_loss`, `eval/sft_loss`) is reported.
 - Teacher forwards MUST run without enabling `torch.autocast` when DeepSpeed is active unless the DeepSpeed config explicitly turns on autocast; otherwise dtype mismatches SHALL be avoided by casting teacher logits to the student dtype.

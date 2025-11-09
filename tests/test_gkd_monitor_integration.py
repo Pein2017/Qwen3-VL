@@ -6,12 +6,17 @@ import pytest
 import torch
 import torch.nn as nn
 
+from src.config import (
+    CustomConfig,
+    PromptOverrides,
+    SaveDelayConfig,
+    TrainingConfig,
+)
 from src.config.loader import ConfigLoader
-from src.config import TrainingConfig, CustomConfig, SaveDelayConfig
-from src.sft import resolve_trainer_cls
-from src.trainers import GKDTrainerWithMetrics
-from src.stage_a.cli import StageAConfig
 from src.config.missions import SUPPORTED_MISSIONS
+from src.sft import resolve_trainer_cls
+from src.stage_a.cli import StageAConfig
+from src.trainers import GKDTrainerWithMetrics
 
 
 def test_load_training_config_returns_dataclasses(monkeypatch):
@@ -31,6 +36,10 @@ def test_load_training_config_returns_dataclasses(monkeypatch):
         "accelerate.utils.dataclasses.DeepSpeedPlugin.__post_init__",
         lambda self: None,
     )
+    monkeypatch.setattr(
+        "transformers.training_args.is_torch_bf16_gpu_available",
+        lambda: True,
+    )
 
     train_args, training_config = ConfigLoader.load_training_config(
         "configs/debug.yaml"
@@ -45,6 +54,133 @@ def test_load_training_config_returns_dataclasses(monkeypatch):
         assert getattr(train_args, "save_delay_steps") == save_delay_cfg.steps
     if save_delay_cfg.epochs is not None:
         assert getattr(train_args, "save_delay_epochs") == save_delay_cfg.epochs
+
+
+class _DummyTrainArguments:
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+        self.training_args = SimpleNamespace()
+
+
+class _DummyRLHFArguments(_DummyTrainArguments):
+    pass
+
+
+def _build_minimal_training_config(
+    *,
+    llm_kd_weight=None,
+    teacher_model="teacher",
+    visual_enabled=False,
+) -> TrainingConfig:
+    prompts = PromptOverrides(system=None, user="user prompt", output_variant="dense")
+    rlhf_section = {
+        "rlhf_type": "gkd",
+        "beta": 0.1,
+    }
+    if teacher_model is not None:
+        rlhf_section["teacher_model"] = teacher_model
+    if llm_kd_weight is not None:
+        rlhf_section["llm_kd_weight"] = llm_kd_weight
+
+    visual_kd_section = {"enabled": visual_enabled}
+    if visual_enabled:
+        visual_kd_section.update(
+            {"weight": 0.1, "targets": ["merger"], "distance": "mse"}
+        )
+
+    payload = {
+        "template": {"template": "qwen3_vl"},
+        "custom": {
+            "train_jsonl": "data/train.jsonl",
+            "user_prompt": "user prompt",
+            "emit_norm": "norm1000",
+            "visual_kd": visual_kd_section,
+        },
+        "model": {},
+        "quantization": {},
+        "data": {},
+        "tuner": {},
+        "training": {"output_dir": "./out"},
+        "rlhf": rlhf_section,
+    }
+    return TrainingConfig.from_mapping(payload, prompts)
+
+
+def test_config_loader_attaches_default_llm_kd_weight(monkeypatch):
+    monkeypatch.setattr(
+        "src.config.loader.TrainArguments", _DummyTrainArguments, raising=False
+    )
+    monkeypatch.setattr(
+        "src.config.loader.RLHFArguments", _DummyRLHFArguments, raising=False
+    )
+
+    config = _build_minimal_training_config()
+    train_args = ConfigLoader.build_train_arguments(config)
+
+    assert isinstance(train_args, _DummyRLHFArguments)
+    assert "llm_kd_weight" not in train_args.kwargs
+    assert getattr(train_args, "llm_kd_weight") == pytest.approx(1.0)
+    assert getattr(train_args.training_args, "llm_kd_weight") == pytest.approx(1.0)
+
+
+def test_config_loader_respects_custom_llm_kd_weight(monkeypatch):
+    monkeypatch.setattr(
+        "src.config.loader.TrainArguments", _DummyTrainArguments, raising=False
+    )
+    monkeypatch.setattr(
+        "src.config.loader.RLHFArguments", _DummyRLHFArguments, raising=False
+    )
+
+    config = _build_minimal_training_config(llm_kd_weight=0.25)
+    train_args = ConfigLoader.build_train_arguments(config)
+
+    assert getattr(train_args, "llm_kd_weight") == pytest.approx(0.25)
+    assert getattr(train_args.training_args, "llm_kd_weight") == pytest.approx(0.25)
+    assert "llm_kd_weight" not in train_args.kwargs
+
+
+def test_config_loader_rejects_negative_llm_kd_weight(monkeypatch):
+    monkeypatch.setattr(
+        "src.config.loader.TrainArguments", _DummyTrainArguments, raising=False
+    )
+    monkeypatch.setattr(
+        "src.config.loader.RLHFArguments", _DummyRLHFArguments, raising=False
+    )
+
+    config = _build_minimal_training_config(llm_kd_weight=-0.2)
+
+    with pytest.raises(ValueError):
+        ConfigLoader.build_train_arguments(config)
+
+
+def test_config_loader_requires_teacher_for_llm_kd(monkeypatch):
+    monkeypatch.setattr(
+        "src.config.loader.TrainArguments", _DummyTrainArguments, raising=False
+    )
+    monkeypatch.setattr(
+        "src.config.loader.RLHFArguments", _DummyRLHFArguments, raising=False
+    )
+
+    config = _build_minimal_training_config(llm_kd_weight=0.5, teacher_model=None)
+
+    with pytest.raises(ValueError):
+        ConfigLoader.build_train_arguments(config)
+
+
+def test_config_loader_requires_teacher_for_visual_kd(monkeypatch):
+    monkeypatch.setattr(
+        "src.config.loader.TrainArguments", _DummyTrainArguments, raising=False
+    )
+    monkeypatch.setattr(
+        "src.config.loader.RLHFArguments", _DummyRLHFArguments, raising=False
+    )
+
+    config = _build_minimal_training_config(
+        llm_kd_weight=0.0, teacher_model=None, visual_enabled=True
+    )
+
+    with pytest.raises(ValueError):
+        ConfigLoader.build_train_arguments(config)
 
 
 def test_stage_a_config_validation(tmp_path):
@@ -93,16 +229,17 @@ def test_resolve_trainer_cls_returns_monitor():
 
     trainer_cls = resolve_trainer_cls(args)
 
-    assert trainer_cls is GKDTrainerWithMetrics
+    assert issubclass(trainer_cls, GKDTrainerWithMetrics)
 
 
 def test_resolve_trainer_cls_falls_back(monkeypatch):
-    sentinel = object()
+    class DummyTrainer:
+        pass
 
     class DummyFactory:
         @staticmethod
         def get_trainer_cls(_):
-            return sentinel
+            return DummyTrainer
 
     monkeypatch.setattr("src.sft.TrainerFactory", DummyFactory)
 
@@ -110,7 +247,7 @@ def test_resolve_trainer_cls_falls_back(monkeypatch):
 
     trainer_cls = resolve_trainer_cls(args)
 
-    assert trainer_cls is sentinel
+    assert issubclass(trainer_cls, DummyTrainer)
 
 
 def test_gkd_monitor_logs_losses(monkeypatch):
@@ -125,39 +262,45 @@ def test_gkd_monitor_logs_losses(monkeypatch):
 
     trainer = object.__new__(GKDTrainerWithMetrics)
     trainer._metrics = {"train": defaultdict(list), "eval": defaultdict(list)}
+    trainer._llm_kd_weight = 1.0
     trainer._metrics["train"]["llm_kd_loss"].extend([0.1, 0.2])
     trainer._metrics["train"]["sft_loss"].extend([0.4, 0.5])
     trainer._metrics["train"]["loss"].extend([0.5, 0.7])
-    trainer._metrics["train"]["token_accuracy"].extend([0.8, 0.9])
+    trainer._metrics["train"]["token_acc"].extend([0.8, 0.9])
     trainer.model = SimpleNamespace(training=True)
 
     trainer.log({"eval/loss": 1.23})
 
+    train_loss_avg = (0.5 + 0.7) / 2
     assert (
-        pytest.approx(captured_logs["train/llm_kd_loss"], rel=1e-6) == (0.1 + 0.2) / 2
+        pytest.approx(captured_logs["train/llm_kd_loss"], rel=1e-6)
+        == (0.1 + 0.2) / 2
     )
-    assert pytest.approx(captured_logs["train/sft_loss"], rel=1e-6) == (0.4 + 0.5) / 2
-    assert pytest.approx(captured_logs["train/loss"], rel=1e-6) == (0.5 + 0.7) / 2
     assert (
-        pytest.approx(captured_logs["train/token_accuracy"], rel=1e-6)
+        pytest.approx(captured_logs["train/sft_loss"], rel=1e-6)
+        == (0.4 + 0.5) / 2
+    )
+    assert pytest.approx(captured_logs["train/loss"], rel=1e-6) == train_loss_avg
+    assert (
+        pytest.approx(captured_logs["train/token_acc"], rel=1e-6)
         == (0.8 + 0.9) / 2
     )
-    assert captured_logs["loss"] == pytest.approx(captured_logs["train/loss"])
-    assert captured_logs["eval/loss"] == pytest.approx(1.23)
+    assert pytest.approx(captured_logs["loss"], rel=1e-6) == train_loss_avg
+    assert pytest.approx(captured_logs["eval/loss"], rel=1e-6) == 1.23
     assert "train/eval/loss" not in captured_logs
     assert not trainer._metrics["train"]
 
     trainer._metrics["eval"]["llm_kd_loss"].extend([0.3])
     trainer._metrics["eval"]["sft_loss"].extend([0.6])
     trainer._metrics["eval"]["loss"].extend([0.9])
-    trainer._metrics["eval"]["token_accuracy"].extend([0.4])
+    trainer._metrics["eval"]["token_acc"].extend([0.4])
 
     trainer.log({})
 
     assert pytest.approx(captured_logs["eval/llm_kd_loss"], rel=1e-6) == 0.3
     assert pytest.approx(captured_logs["eval/sft_loss"], rel=1e-6) == 0.6
     assert pytest.approx(captured_logs["eval/loss"], rel=1e-6) == 0.9
-    assert pytest.approx(captured_logs["eval/token_accuracy"], rel=1e-6) == 0.4
+    assert pytest.approx(captured_logs["eval/token_acc"], rel=1e-6) == 0.4
     assert not trainer._metrics["eval"]
 
 
@@ -181,6 +324,7 @@ def test_gkd_compute_loss_aligns_tokens():
 
     trainer = object.__new__(GKDTrainerWithMetrics)
     trainer._metrics = {"train": defaultdict(list), "eval": defaultdict(list)}
+    trainer._llm_kd_weight = 1.0
     trainer.teacher_model = teacher_model  # type: ignore[assignment]
     trainer.beta = 0.25
     trainer.args = SimpleNamespace(sft_alpha=0.0)  # type: ignore[assignment]
@@ -226,7 +370,7 @@ def test_gkd_compute_loss_aligns_tokens():
     torch.testing.assert_close(captured["teacher"], expected_teacher)
     assert captured["beta"] == pytest.approx(0.25)
     assert trainer._metrics["train"]["llm_kd_loss"][0].item() == pytest.approx(0.5)
-    assert trainer._metrics["train"]["token_accuracy"][0].item() == pytest.approx(1.0)
+    assert trainer._metrics["train"]["token_acc"][0].item() == pytest.approx(1.0)
 
 
 def test_gkd_compute_loss_raises_on_vocab_mismatch():
@@ -244,6 +388,7 @@ def test_gkd_compute_loss_raises_on_vocab_mismatch():
 
     trainer = object.__new__(GKDTrainerWithMetrics)
     trainer._metrics = {"train": defaultdict(list), "eval": defaultdict(list)}
+    trainer._llm_kd_weight = 1.0
     trainer.teacher_model = teacher_model  # type: ignore[assignment]
     trainer.beta = 0.1
     trainer.args = SimpleNamespace(sft_alpha=0.0)  # type: ignore[assignment]
@@ -345,6 +490,7 @@ def test_visual_kd_adds_weighted_loss():
 
     trainer = object.__new__(GKDTrainerWithMetrics)
     trainer._metrics = {"train": defaultdict(list), "eval": defaultdict(list)}
+    trainer._llm_kd_weight = 0.0
     trainer.teacher_model = teacher_model  # type: ignore[assignment]
     trainer.beta = 0.5
     trainer.args = SimpleNamespace(sft_alpha=0.0)  # type: ignore[assignment]
@@ -379,6 +525,41 @@ def test_visual_kd_adds_weighted_loss():
     assert pytest.approx(logged_total.item(), rel=1e-6) == expected_weighted_loss.item()
 
 
+def test_ce_loss_unscaled_when_llm_kd_disabled():
+    labels = torch.tensor([[1, 2, -100]])
+    vocab_size = 4
+
+    student_logits = torch.zeros((1, 3, vocab_size), requires_grad=True)
+    ce_loss = torch.tensor(0.2, requires_grad=True)
+    student_outputs = SimpleNamespace(logits=student_logits, loss=ce_loss)
+
+    student_model = _StaticOutputModel(student_outputs)
+    student_model.train()
+
+    trainer = object.__new__(GKDTrainerWithMetrics)
+    trainer._metrics = {"train": defaultdict(list), "eval": defaultdict(list)}
+    trainer._llm_kd_weight = 0.0
+    trainer.beta = 0.5
+    trainer.args = SimpleNamespace(sft_alpha=3.0)  # type: ignore[assignment]
+    trainer.get_use_logits_to_keep = lambda default_value=True: False  # type: ignore[method-assign]
+    trainer.prepare_logits_to_keep = lambda inputs: None  # type: ignore[method-assign]
+    trainer._visual_kd_enabled = False
+    trainer._visual_kd_weight = 0.0
+    trainer._visual_kd_targets = []
+    trainer._visual_kd_distance = "mse"
+
+    loss = trainer.compute_loss(student_model, {"labels": labels})
+    assert isinstance(loss, torch.Tensor)
+
+    expected_loss = ce_loss.detach().item()
+    assert pytest.approx(loss.item(), rel=1e-6) == expected_loss
+
+    logged_sft = trainer._metrics["train"]["sft_loss"][0]
+    logged_total = trainer._metrics["train"]["loss"][0]
+    assert pytest.approx(logged_sft.item(), rel=1e-6) == expected_loss
+    assert pytest.approx(logged_total.item(), rel=1e-6) == expected_loss
+
+
 def test_visual_kd_skips_when_disabled():
     labels = torch.tensor([[1, -100]])
     vocab_size = 2
@@ -404,6 +585,7 @@ def test_visual_kd_skips_when_disabled():
 
     trainer = object.__new__(GKDTrainerWithMetrics)
     trainer._metrics = {"train": defaultdict(list), "eval": defaultdict(list)}
+    trainer._llm_kd_weight = 0.0
     trainer.teacher_model = teacher_model  # type: ignore[assignment]
     trainer.beta = 0.5
     trainer.args = SimpleNamespace(sft_alpha=0.0)  # type: ignore[assignment]
@@ -455,6 +637,7 @@ def test_gkd_eval_logs_llm_kd_loss():
 
     trainer = object.__new__(GKDTrainerWithMetrics)
     trainer._metrics = {"train": defaultdict(list), "eval": defaultdict(list)}
+    trainer._llm_kd_weight = 1.0
     trainer.teacher_model = teacher_model  # type: ignore[assignment]
     trainer.beta = 0.5
     trainer.args = SimpleNamespace(sft_alpha=0.0)  # type: ignore[assignment]

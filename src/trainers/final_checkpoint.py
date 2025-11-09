@@ -72,11 +72,18 @@ class FinalCheckpointMixin:
             logger.debug("Final checkpoint skipped because save_strategy is 'no'.")
             return
 
-        if not getattr(args, "should_save", False):
+        should_save_rank = bool(getattr(args, "should_save", False))
+        world_size = getattr(args, "world_size", 1)
+
+        if not should_save_rank:
+            if world_size <= 1:
+                logger.debug(
+                    "Final checkpoint skipped because no process is permitted to save checkpoints."
+                )
+                return
             logger.debug(
-                "Final checkpoint skipped because this process should not save."
+                "Final checkpoint: this rank will participate in the distributed save without writing to disk."
             )
-            return
 
         global_step = getattr(state, "global_step", 0)
         if not isinstance(global_step, int) or global_step <= 0:
@@ -89,17 +96,46 @@ class FinalCheckpointMixin:
             return
 
         if self._final_checkpoint_exists(output_dir, global_step):
-            logger.debug("Final checkpoint already present for step %s", global_step)
+            if should_save_rank:
+                logger.debug("Final checkpoint already present for step %s", global_step)
             return
 
         checkpoint_dir = self._format_checkpoint_dir(output_dir, global_step)
-        logger.info("No checkpoint found at %s; forcing a final save.", checkpoint_dir)
+        if should_save_rank:
+            logger.info("No checkpoint found at %s; forcing a final save.", checkpoint_dir)
+
+        # Keep the forced checkpoint independent from Trainer-managed rotation so
+        # save_total_limit continues to govern only the regular save cadence.
+        original_limit = getattr(args, "save_total_limit", None)
+        limit_suspended = (
+            should_save_rank
+            and isinstance(original_limit, int)
+            and original_limit > 0
+        )
+        if limit_suspended:
+            try:
+                setattr(args, "save_total_limit", None)
+                logger.info(
+                    "Temporarily disabling save_total_limit=%s while writing the final checkpoint.",
+                    original_limit,
+                )
+            except Exception:  # pragma: no cover - defensive, log + continue
+                limit_suspended = False
 
         try:
-            trainer._save_checkpoint(trainer.model, None)  # type: ignore[misc,arg-type]
-        except TypeError:
-            # Some trainer overrides accept metrics; fall back to keyword form.
-            trainer._save_checkpoint(trainer.model, None, metrics=None)  # type: ignore[misc,call-arg]
+            try:
+                trainer._save_checkpoint(trainer.model, None)  # type: ignore[misc,arg-type]
+            except TypeError:
+                # Some trainer overrides accept metrics; fall back to keyword form.
+                trainer._save_checkpoint(trainer.model, None, metrics=None)  # type: ignore[misc,call-arg]
+        finally:
+            if limit_suspended:
+                try:
+                    setattr(args, "save_total_limit", original_limit)
+                except Exception:  # pragma: no cover - defensive
+                    logger.warning(
+                        "Unable to restore save_total_limit after final checkpoint save; current value may remain unset."
+                    )
 
         # Mirror Trainer.train() behaviour so callbacks observe the save event.
         try:

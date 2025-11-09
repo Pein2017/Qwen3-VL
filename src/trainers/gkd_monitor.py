@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections import defaultdict
 from typing import Any, Dict, Mapping, Optional, Union
 
@@ -27,7 +28,6 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
         self._visual_hooks = []
         self._student_visual_cache: Dict[str, torch.Tensor] = {}
         self._teacher_visual_cache: Dict[str, torch.Tensor] = {}
-        self._missing_teacher_warned = False
 
         cfg_raw = getattr(self.args, "visual_kd_config", VisualKDConfig.disabled())
         if isinstance(cfg_raw, Mapping):
@@ -43,6 +43,23 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
         self._visual_kd_targets = list(cfg.targets)
         self._visual_kd_distance = cfg.distance
 
+        raw_llm_kd_weight = getattr(self.args, "llm_kd_weight", 1.0)
+        try:
+            llm_kd_weight = float(raw_llm_kd_weight)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"llm_kd_weight must be numeric; received {raw_llm_kd_weight!r}"
+            ) from exc
+        if not math.isfinite(llm_kd_weight):
+            raise ValueError(
+                f"llm_kd_weight must be finite; received {raw_llm_kd_weight!r}"
+            )
+        if llm_kd_weight < 0:
+            raise ValueError(
+                f"llm_kd_weight must be non-negative; received {raw_llm_kd_weight!r}"
+            )
+        self._llm_kd_weight = float(llm_kd_weight)
+
         if self._visual_kd_enabled:
             if self._visual_kd_weight <= 0:
                 raise ValueError(
@@ -54,6 +71,10 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
                 )
 
         teacher_available = self._has_teacher_model()
+        if self._llm_kd_weight > 0 and not teacher_available:
+            raise RuntimeError(
+                "llm_kd_weight > 0 requires a teacher model. Provide rlhf.teacher_model or set llm_kd_weight to 0."
+            )
         if self._visual_kd_enabled and not teacher_available:
             raise RuntimeError(
                 "visual_kd is enabled but no teacher model is attached. Attach a teacher_model or disable visual_kd in the configuration."
@@ -121,12 +142,19 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
         mode = "train" if model.training else "eval"
 
         teacher_outputs = None
-        llm_kd_loss: Optional[torch.Tensor] = None
+        weighted_llm_kd_loss: Optional[torch.Tensor] = None
 
         teacher_available = self._has_teacher_model()
-        llm_kd_active = teacher_available
+        llm_kd_requested = self._llm_kd_weight > 0.0
+        if llm_kd_requested and not teacher_available:
+            raise RuntimeError(
+                "llm_kd_weight > 0 requires a teacher model. Verify rlhf.teacher_model in the configuration."
+            )
+        run_teacher_forward = teacher_available and (
+            llm_kd_requested or self._visual_kd_enabled
+        )
 
-        if teacher_available:
+        if run_teacher_forward:
             teacher_outputs = self._run_teacher_forward(model_inputs, student_logits)
 
         if teacher_outputs is not None:
@@ -141,7 +169,7 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
                     "Ensure both models share the same tokenizer and vocabulary."
                 )
 
-            if llm_kd_active:
+            if llm_kd_requested:
                 if valid_count > 0:
                     masked_teacher_logits = teacher_logits_next.masked_select(
                         mask.unsqueeze(-1)
@@ -158,32 +186,24 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
                     )
                 else:
                     llm_kd_loss = student_logits.new_zeros(())
-        elif (
-            not teacher_available
-            and bool(getattr(self, "beta", 0.0))
-            and not self._missing_teacher_warned
-        ):
-            logger.warning(
-                "beta=%.4f but no teacher model is attached; skipping llm KD term.",
-                float(self.beta),
-            )
-            self._missing_teacher_warned = True
+                weighted_llm_kd_loss = llm_kd_loss * self._llm_kd_weight
 
         ce_loss = outputs_student.loss
-        sft_alpha = float(getattr(self.args, "sft_alpha", 0.0))
-        if not teacher_available:
-            # Fallback to CE-only weighting when no teacher is wired (pure SFT mode).
+        if not teacher_available or not llm_kd_requested:
+            # When LM KD is disabled (weight == 0) or we have no teacher, default to CE-only.
             sft_weight = 1.0
         else:
-            sft_weight = sft_alpha
+            sft_weight = float(getattr(self.args, "sft_alpha", 0.0))
 
         total_loss = student_logits.new_zeros(
             (), dtype=dtype, device=student_logits.device
         )
 
-        if llm_kd_loss is not None:
-            total_loss = total_loss + llm_kd_loss
-            self._metrics[mode]["llm_kd_loss"].append(llm_kd_loss.detach().cpu())
+        if weighted_llm_kd_loss is not None:
+            total_loss = total_loss + weighted_llm_kd_loss
+            self._metrics[mode]["llm_kd_loss"].append(
+                weighted_llm_kd_loss.detach().cpu()
+            )
 
         if ce_loss is not None:
             weighted_sft_loss = ce_loss * sft_weight
@@ -209,7 +229,7 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
             accuracy = (preds == masked_labels).float().mean()
         else:
             accuracy = student_logits.new_zeros(())
-        self._metrics[mode]["token_accuracy"].append(accuracy.detach().cpu())
+        self._metrics[mode]["token_acc"].append(accuracy.detach().cpu())
 
         return (total_loss, outputs_student) if return_outputs else total_loss
 
