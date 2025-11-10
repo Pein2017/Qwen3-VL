@@ -15,18 +15,18 @@ rlhf:
   rlhf_type: gkd
   teacher_model: model_cache/models/Qwen/Qwen3-VL-8B-Instruct
   beta: 0.9
-  sft_alpha: 10
-  llm_kd_weight: 1.0  # Scale LM-head KD; set to 0.0 to disable logits distillation.
+  sft_alpha: 1
+  llm_kd_weight: 0.01  # Scale LM-head KD; set to 0.0 to disable logits distillation.
   seq_kd: false
   lmbda: 0.0
 
 training:
   # Paths and naming
-  output_dir: ./output/11-07/stage_1-gkd
-  run_name: gkd-eff_batch_64-epoch_10-sft_alpha_10
+  output_dir: ./output/11-10/stage_1
+  run_name: eff_batch_32-epoch_6
   
   # Epochs and batch sizes
-  num_train_epochs: 10
+  num_train_epochs: 6
   per_device_train_batch_size: 1
   per_device_eval_batch_size: 2
   gradient_accumulation_steps: 4
@@ -35,18 +35,18 @@ training:
   optimizer: multimodal
   learning_rate: 1.0e-4
   vit_lr: 2.0e-5
-  aligner_lr: 1.0e-4
+  aligner_lr: 2.0e-4
   
   # Eval and checkpointing
   eval_strategy: steps
   save_strategy: best
   eval_steps: 20
-  save_steps: 100
+  save_steps: 60
   save_total_limit: 3
-  save_delay_steps: 200
+  save_delay_steps: 300
   
   # Logging
-  logging_dir: ./tb/11-07/stage_1-gkd
+  logging_dir: ./tb/11-10/stage_1
   logging_steps: 10
   logging_first_step: true
 
@@ -59,10 +59,11 @@ data:
   eval_dataset: [placeholder]
 
 custom:
+  json_format: standard
   trainer_variant: gkd_monitor
   visual_kd:
-    enabled: false
-    weight: 0  # Heavier anchor on vision/aligner (0.1-0.2 typical). Lower if visuals overfit.
+    enabled: true
+    weight: 0.01  # Heavier anchor on vision/aligner (0.1-0.2 typical). Lower if visuals overfit.
     targets: [merger]
     distance: mse
   emit_norm: norm1000

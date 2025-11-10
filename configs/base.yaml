@@ -12,7 +12,7 @@ template:
 
 deepspeed:
   enabled: true
-  config: zero3
+  config: zero2
 
 training:
   # defaults, can be overridden per-environment
@@ -58,6 +58,7 @@ data:
   eval_dataset: [placeholder]
 
 custom:
+  json_format: standard
   emit_norm: norm1000
   train_jsonl: data/bbu_full_768/train.jsonl
   val_jsonl: data/bbu_full_768/val.jsonl

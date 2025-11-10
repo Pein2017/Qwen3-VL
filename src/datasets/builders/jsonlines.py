@@ -3,21 +3,12 @@
 import base64
 import json
 import os
-import re
 from typing import Any, Dict, Iterable, List, Literal, Mapping, Optional, Tuple
 
 from ..contracts import ConversationRecord, validate_conversation_record
 from ..geometry import normalize_points
 from ..utils import extract_object_points
 from .base import BaseBuilder
-
-
-_POINT_PAIR_BLOCK_RE = re.compile(
-    r"(\n\s*)\[\s*\n\s*([-0-9.eE]+)\s*,\s*\n\s*([-0-9.eE]+)\s*\n\s*\]"
-)
-_XY_OBJECT_BLOCK_RE = re.compile(
-    r"(\n\s*)\{\s*\n\s*\"x\":\s*([-0-9.eE]+)\s*,\s*\n\s*\"y\":\s*([-0-9.eE]+)\s*\n\s*\}"
-)
 
 
 class JSONLinesBuilder(BaseBuilder):
@@ -38,7 +29,7 @@ class JSONLinesBuilder(BaseBuilder):
         user_prompt: str,
         emit_norm: Literal["none", "norm100", "norm1000"],
         mode: Literal["dense", "summary"] = "dense",
-        json_format: Literal["type_a", "type_b", "type_c", "type_d"] = "type_b",
+        json_format: Literal["standard"] = "standard",
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -214,10 +205,6 @@ class JSONLinesBuilder(BaseBuilder):
             indent=indent,
             separators=separators,
         )
-        if self.json_format == "type_c":
-            assistant_text = self._format_type_c_pairs(assistant_text)
-        elif self.json_format == "type_d":
-            assistant_text = self._format_type_d_points(assistant_text)
         return assistant_text
 
     def _prepare_text_payload(self, payload: Mapping[str, Any]) -> Dict[str, Any]:
@@ -245,38 +232,15 @@ class JSONLinesBuilder(BaseBuilder):
             return []
         if len(values) % 2 != 0:
             return list(values)
-        emit_objects = self.json_format == "type_d"
         grouped: List[Any] = []
         for idx in range(0, len(values), 2):
             x = values[idx]
             y = values[idx + 1]
-            if emit_objects:
-                grouped.append({"x": x, "y": y})
-            else:
-                grouped.append([x, y])
+            grouped.append([x, y])
         return grouped
 
     def _json_style(self) -> Tuple[Optional[int], Tuple[str, str]]:
-        if self.json_format == "type_a":
-            return None, (",", ":")
-        if self.json_format == "type_b":
-            return None, (", ", ": ")
-        # Type C and D share the same indentation defaults
-        return 2, (", ", ": ")
-
-    def _format_type_c_pairs(self, text: str) -> str:
-        def _repl(match: re.Match[str]) -> str:
-            indent, x, y = match.groups()
-            return f"{indent}[{x}, {y}]"
-
-        return _POINT_PAIR_BLOCK_RE.sub(_repl, text)
-
-    def _format_type_d_points(self, text: str) -> str:
-        def _repl(match: re.Match[str]) -> str:
-            indent, x, y = match.groups()
-            return f'{indent}{{ "x": {x}, "y": {y} }}'
-
-        return _XY_OBJECT_BLOCK_RE.sub(_repl, text)
+        return None, (", ", ": ")
 
     def _to_url(self, image: Any) -> str:
         """Canonicalize an image entry to a URL string for the template.

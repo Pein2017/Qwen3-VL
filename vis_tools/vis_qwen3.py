@@ -54,20 +54,24 @@ args = parser.parse_args()
 # ==============================
 
 # Required paths
-CKPT_PATH = "output_4b/stage_3_gkd-merged/best/lan_kd_0.04-vision_kd_0.3-weaker_color_aug-checkpoint-1380"  # HF dir or merged checkpoint  # HF dir or merged checkpoint
+CKPT_PATH = "output/11-10/stage_1_json_types/v2-20251110-035753/eff_batch_16-epoch_4-json_format_standard-4b/checkpoint-552"  # HF dir or merged checkpoint  # HF dir or merged checkpoint
 JSONL_PATH = "data/bbu_full_768/val.jsonl"
 
 # Runtime settings
 LIMIT = 10
 DEVICE = f"cuda:{args.device_id}"
-SAVE_DIR = "vis_out_4b/stage_3_gkd-merged/best/checkpoint-1380"
+SAVE_DIR = "vis_out/stage_1_json_types/standard/checkpoint-552"
 MAX_NEW_TOKENS = 2048
 TEMPERATURE = 0.01  # Moderate temperature for diversity without excessive randomness
 TOP_P = 0.95  # Nucleus sampling - cuts off low-probability tail for better diversity
 REPETITION_PENALTY = (
     1.05  # Minimal global penalty to preserve recall (only prevents token-level loops)
 )
-NO_REPEAT_NGRAM_SIZE = 5  # Prevent repeating 5-grams (catches entire object structures without shifting distribution much)
+NO_REPEAT_NGRAM_SIZE = 0  # Prevent repeating 5-grams (catches entire object structures without shifting distribution much)
+
+# JSON format: must match training format ("standard")
+# If None, will try to infer from checkpoint path (looks for "json_format_standard")
+JSON_FORMAT: str | None = None  # Set to "standard" to override auto-detection
 
 # Optional: override training user prompt (None uses training default)
 USER_PROMPT_OVERRIDE: str | None = None
@@ -89,16 +93,33 @@ if str(SRC_DIR) not in sys.path:
     sys.path.append(str(SRC_DIR))
 try:
     from src.config.prompts import (  # type: ignore
-        SYSTEM_PROMPT_JSON,
         USER_PROMPT_JSON,
+        build_dense_system_prompt,
     )
 except Exception:
     raise Exception("Failed to import prompts")
 
-SYSTEM_PROMPT_TEXT = SYSTEM_PROMPT_JSON
+# Infer json_format from checkpoint path if not explicitly set
+_inferred_format: str | None = None
+if JSON_FORMAT is None:
+    # Try to infer from checkpoint path (looks for "json_format_standard")
+    if "json_format_standard" in CKPT_PATH or "json_format-standard" in CKPT_PATH:
+        _inferred_format = "standard"
+
+# Use explicit format or inferred, fallback to "standard"
+json_format = JSON_FORMAT or _inferred_format or "standard"
+if json_format not in ("standard",):
+    print(f"[WARNING] Unknown json_format '{json_format}', defaulting to 'standard'")
+    json_format = "standard"
+
+# Build system prompt with the correct format hint (matches training)
+SYSTEM_PROMPT_TEXT = build_dense_system_prompt(json_format)
 default_user_prompt = USER_PROMPT_JSON
 
 USER_PROMPT_TEXT = USER_PROMPT_OVERRIDE or default_user_prompt
+
+print(f"[INFO] Using JSON format: {json_format}")
+print("[INFO] System prompt format hint: standard")
 
 
 # ======================
@@ -252,21 +273,52 @@ def _extract_outer_json(text: str) -> str | None:
 
 
 def _json_loads_best_effort(s: str):
+    """Parse JSON with multiple fallback strategies."""
     try:
         return json.loads(s)
     except Exception:
         try:
+            # Remove trailing commas before } and ]
             s2 = re.sub(r",\s*\}", "}", re.sub(r",\s*\]", "]", s))
             s2 = s2.replace("'", '"')
             return json.loads(s2)
         except Exception:
             try:
-                return ast.literal_eval(s)
+                # Try json_repair for malformed JSON (handles trailing commas, etc.)
+                import json_repair
+
+                repaired = json_repair.repair_json(s)
+                return json.loads(repaired)
             except Exception:
-                return None
+                try:
+                    return ast.literal_eval(s)
+                except Exception:
+                    return None
 
 
 def parse_prediction(text: str) -> List[Dict[str, Any]]:
+    """Parse prediction text into list of objects. Handles standard JSON format."""
+    if not text or not text.strip():
+        return []
+
+    def _flatten_coords(pts: Any) -> List[float] | None:
+        """Flatten nested coordinate arrays like [[x1, y1], [x2, y2]] -> [x1, y1, x2, y2]."""
+        if not isinstance(pts, (list, tuple)):
+            return None
+        if not pts:
+            return []
+        # Check if it's nested (first element is a list/tuple)
+        if isinstance(pts[0], (list, tuple)):
+            flattened = []
+            for item in pts:
+                if isinstance(item, (list, tuple)) and len(item) == 2:
+                    flattened.extend([float(item[0]), float(item[1])])
+                else:
+                    return None  # Invalid nested format
+            return flattened
+        # Already flat, return as-is
+        return [float(x) for x in pts]
+
     def _build_objects_from_dict(obj_dict: Dict[str, Any]) -> List[Dict[str, Any]]:
         parsed_local: List[Dict[str, Any]] = []
         for _, val in sorted(
@@ -280,7 +332,9 @@ def parse_prediction(text: str) -> List[Dict[str, Any]]:
             if gtype is None:
                 continue
             pts = val.get(gtype)
-            if not isinstance(pts, (list, tuple)) or len(pts) % 2 != 0:
+            # Flatten nested coordinate arrays (handles standard format)
+            pts = _flatten_coords(pts)
+            if pts is None or len(pts) % 2 != 0:
                 # Skip objects with incomplete coordinates (e.g., truncated tail)
                 continue
             # If the model provided line_points, enforce expected count for line objects
@@ -323,7 +377,9 @@ def parse_prediction(text: str) -> List[Dict[str, Any]]:
                 except Exception:
                     obj = {}
             if isinstance(obj, dict) and obj:
-                return _build_objects_from_dict(obj)
+                parsed = _build_objects_from_dict(obj)
+                if parsed:
+                    return parsed
 
     # Fallback: extract per-object dicts from a truncated group body
     # Find the group body start: the '{' after the first occurrence of an object key
@@ -757,10 +813,16 @@ def main() -> None:
                 print(raw_text)
             except Exception:
                 pass
+            # Try parsing with clean_text first, fallback to raw_text if needed
             pred_objs = parse_prediction(clean_text)
+            if not pred_objs:
+                # If clean_text parsing failed, try raw_text (might preserve formatting better)
+                print("[WARNING] Parsing with clean_text failed, trying raw_text...")
+                pred_objs = parse_prediction(raw_text)
             # Deduplicate predictions to remove identical objects
             pred_objs, _ = deduplicate_predictions(pred_objs, verbose=True)
-        except Exception:
+        except Exception as e:
+            print(f"[ERROR] Failed to parse prediction: {e}")
             pred_objs = []
 
         # Accumulate JSONL entries for later plotting

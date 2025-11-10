@@ -17,27 +17,17 @@ from typing import (
 
 AllowedNorm = Literal["none", "norm100", "norm1000"]
 AllowedVisualDistance = Literal["mse", "cosine"]
-AllowedJsonFormat = Literal["type_a", "type_b", "type_c", "type_d"]
+AllowedJsonFormat = Literal["standard"]
 
-ALLOWED_JSON_FORMATS: set[str] = {"type_a", "type_b", "type_c", "type_d"}
+ALLOWED_JSON_FORMATS: set[str] = {"standard"}
 
 
 def _normalize_json_format(value: Any) -> AllowedJsonFormat:
     if not isinstance(value, str):
         raise TypeError("custom.json_format must be a string")
     normalized = value.strip().lower().replace("-", "_").replace(" ", "_")
-    if normalized in {"a", "typea"}:
-        normalized = "type_a"
-    elif normalized in {"b", "typeb"}:
-        normalized = "type_b"
-    elif normalized in {"c", "typec"}:
-        normalized = "type_c"
-    elif normalized in {"d", "typed"}:
-        normalized = "type_d"
     if normalized not in ALLOWED_JSON_FORMATS:
-        raise ValueError(
-            "custom.json_format must be one of {'type_a','type_b','type_c','type_d'}"
-        )
+        raise ValueError("custom.json_format must be 'standard'")
     return cast(AllowedJsonFormat, normalized)
 
 
@@ -229,9 +219,7 @@ class CustomConfig:
         if not isinstance(self.use_summary, bool):
             raise TypeError("custom.use_summary must be a boolean value")
         if self.json_format not in ALLOWED_JSON_FORMATS:
-            raise ValueError(
-                "custom.json_format must be one of {'type_a','type_b','type_c','type_d'}"
-            )
+            raise ValueError("custom.json_format must be 'standard'")
 
     @classmethod
     def from_mapping(

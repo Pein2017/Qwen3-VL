@@ -6,11 +6,12 @@ from typing import Any, Dict, List, Literal, Optional, Sequence
 
 from torch.utils.data import Dataset, get_worker_info
 
+from src.config.prompts import USER_PROMPT_SUMMARY
+
 from .builders import JSONLinesBuilder
 from .contracts import ConversationRecord, validate_conversation_record
 from .preprocessors import AugmentationPreprocessor
 from .utils import load_jsonl
-from src.config.prompts import USER_PROMPT_SUMMARY
 
 
 class DenseCaptionDataset(Dataset):
@@ -27,7 +28,7 @@ class DenseCaptionDataset(Dataset):
         template: Any,
         user_prompt: str,
         emit_norm: Literal["none", "norm100", "norm1000"],
-        json_format: Literal["type_a", "type_b", "type_c", "type_d"],
+        json_format: Literal["standard"],
         augmenter: Optional[Any] = None,
         preprocessor: Optional[Any] = None,
         use_summary: bool = False,

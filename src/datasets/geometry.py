@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import math
-from typing import List, Sequence, Tuple
 from dataclasses import dataclass
-from typing import Dict, Any, Optional, Union
+from typing import Any, Dict, List, Literal, Sequence, Tuple, Union
 
 
 def _pair_points(points: Sequence[float]) -> List[Tuple[float, float]]:
@@ -166,8 +165,6 @@ def round_points(points: Sequence[float]) -> List[int]:
 
 # --- Robust geometry helpers for augmentation ---
 
-from typing import Callable, Literal
-
 
 def _rect_bounds(width: float, height: float) -> Tuple[float, float, float, float]:
     # left, top, right, bottom in float space
@@ -205,9 +202,9 @@ def to_clockwise(points: Sequence[float]) -> List[float]:
 def _inside(
     px: float, py: float, edge: str, bounds: Tuple[float, float, float, float]
 ) -> bool:
-    l, t, r, b = bounds
+    left, t, r, b = bounds
     if edge == "left":
-        return px >= l
+        return px >= left
     if edge == "right":
         return px <= r
     if edge == "top":
@@ -225,12 +222,12 @@ def _intersect(
     edge: str,
     bounds: Tuple[float, float, float, float],
 ) -> Tuple[float, float]:
-    l, t, r, b = bounds
+    left, t, r, b = bounds
     dx = x2 - x1
     dy = y2 - y1
     if edge == "left":
-        x = l
-        y = y1 + dy * (l - x1) / (dx if dx != 0 else 1e-12)
+        x = left
+        y = y1 + dy * (left - x1) / (dx if dx != 0 else 1e-12)
         return x, y
     if edge == "right":
         x = r
@@ -492,9 +489,9 @@ def classify_affine_kind(M: List[List[float]], tol: float = 1e-6) -> str:
 def _cohen_sutherland_code(
     x: float, y: float, bounds: Tuple[float, float, float, float]
 ) -> int:
-    l, t, r, b = bounds
+    left, t, r, b = bounds
     code = 0
-    if x < l:
+    if x < left:
         code |= 1  # left
     elif x > r:
         code |= 2  # right
@@ -512,7 +509,7 @@ def _clip_segment_cs(
     y2: float,
     bounds: Tuple[float, float, float, float],
 ) -> Tuple[bool, float, float, float, float]:
-    l, t, r, b = bounds
+    left, t, r, b = bounds
     c1 = _cohen_sutherland_code(x1, y1, bounds)
     c2 = _cohen_sutherland_code(x2, y2, bounds)
     accept = False
@@ -533,8 +530,8 @@ def _clip_segment_cs(
             y = y1 + (y2 - y1) * (r - x1) / ((x2 - x1) if x2 != x1 else 1e-12)
             x = r
         else:  # left
-            y = y1 + (y2 - y1) * (l - x1) / ((x2 - x1) if x2 != x1 else 1e-12)
-            x = l
+            y = y1 + (y2 - y1) * (left - x1) / ((x2 - x1) if x2 != x1 else 1e-12)
+            x = left
         if out_code == c1:
             x1, y1 = x, y
             c1 = _cohen_sutherland_code(x1, y1, bounds)
@@ -592,16 +589,18 @@ class BBox:
             xs = pts[0::2]
             ys = pts[1::2]
             return BBox(min(xs), min(ys), max(xs), max(ys))
-        return Quad(tuple(pts))
+        assert len(pts) == 8, f"Quad must have 8 points, got {len(pts)}"
+        return Quad(tuple(pts))  # type: ignore[arg-type]
 
 
 @dataclass(frozen=True)
-class Quad: 
+class Quad:
     points: Tuple[float, float, float, float, float, float, float, float]
 
     def apply_affine(self, M: List[List[float]]) -> "Quad":
         pts = apply_affine(self.points, M)
-        return Quad(tuple(pts))
+        assert len(pts) == 8, f"Quad must have 8 points, got {len(pts)}"
+        return Quad(tuple(pts))  # type: ignore[arg-type]
 
 
 @dataclass(frozen=True)
@@ -920,9 +919,9 @@ def transform_geometry(
     # Polyline
     pl = obj.apply_affine(M)
     clipped = clip_polyline_to_rect(list(pl.points), width, height)
-    l = clamp_points(clipped, width, height)
-    l = dedupe_consecutive_points(l)
-    if len(l) < 4:
+    line_points = clamp_points(clipped, width, height)
+    line_points = dedupe_consecutive_points(line_points)
+    if len(line_points) < 4:
         # preserve by collapsing to minimal 2-point line on clamped endpoints
         raw = clamp_points(list(pl.points), width, height)
         raw = dedupe_consecutive_points(raw)
@@ -932,7 +931,7 @@ def transform_geometry(
         if len(raw) >= 2:
             return {"line": [raw[0], raw[1], raw[0], raw[1]]}
         return {"line": [0, 0, 0, 0]}
-    return {"line": l}
+    return {"line": line_points}
 
 
 __all_typed__ = ["BBox", "Quad", "Polyline", "geometry_from_dict", "transform_geometry"]

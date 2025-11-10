@@ -21,35 +21,21 @@ PRIOR_RULES = (
 # ============================================================================
 
 FORMAT_HINTS = {
-    "type_a": "- JSON 排布：整段单行、冒号与逗号后禁止空格，禁止任何换行或制表符。\n",
-    "type_b": "- JSON 排布：整段单行，逗号和冒号后各保留一个空格，禁止换行。\n",
-    "type_c": "- JSON 排布：可换行缩进；坐标点需独立成行，逗号保留。\n",
-    "type_d": "- JSON 排布：quad/line 需改写为 {\"x\":...,\"y\":...} 对象列表，可缩进换行。\n",
+    "standard": "- JSON 排布：整段单行，逗号和冒号后各保留一个空格，禁止换行。\n",
 }
 
-_DEFAULT_JSON_FORMAT = "type_c"
+_DEFAULT_JSON_FORMAT = "standard"
 
 
 def _normalize_format_key(value: str | None) -> str:
     if not value:
         return _DEFAULT_JSON_FORMAT
     normalized = str(value).strip().lower().replace("-", "_").replace(" ", "_")
-    alias = {
-        "a": "type_a",
-        "b": "type_b",
-        "c": "type_c",
-        "d": "type_d",
-        "typea": "type_a",
-        "typeb": "type_b",
-        "typec": "type_c",
-        "typed": "type_d",
-    }
-    normalized = alias.get(normalized, normalized)
     return normalized if normalized in FORMAT_HINTS else _DEFAULT_JSON_FORMAT
 
 
 DENSE_SYSTEM_PROMPT_CORE = (
-    "你是图像密集标注助手。只输出一个 JSON 对象 {\"object_1\":{...}}，不要额外文字。\n"
+    '你是图像密集标注助手。只输出一个 JSON 对象 {"object_1":{...}}，不要额外文字。\n'
     "- 对象按“自上到下 → 左到右”排序（线以最左端点为起点），编号从 1 递增。\n"
     "- 每个对象仅包含 desc + 单个几何键（bbox_2d/quad/line）；线对象额外提供整数 line_points。\n"
     "- desc 采用“类型/属性[,属性]/[条件属性]”层级，不得包含多余空格或换行。\n"
