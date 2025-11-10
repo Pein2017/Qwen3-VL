@@ -3,7 +3,7 @@ extends: ../base.yaml
 # Stage 1: Full training on Aligner only (freeze LLM+ViT) - WITH GKD TRAINER
 
 model:
-  model: model_cache/models/Qwen/Qwen3-VL-8B-Instruct
+  model: model_cache/models/Qwen/Qwen3-VL-4B-Instruct
 
 tuner:
   train_type: full
@@ -13,7 +13,7 @@ tuner:
 
 rlhf:
   rlhf_type: gkd
-  teacher_model: model_cache/models/Qwen/Qwen3-VL-8B-Instruct
+  teacher_model: model_cache/models/Qwen/Qwen3-VL-4B-Instruct
   beta: 0.9
   sft_alpha: 1
   llm_kd_weight: 0.0  # Scale LM-head KD; set to 0.0 to disable logits distillation.
@@ -23,7 +23,7 @@ rlhf:
 training:
   # Paths and naming
   output_dir: ./output/11-10/stage_1_json_types
-  run_name: type_c-eff_batch_16-epoch_6-aligner_lr_2e-4-8b
+  run_name: type_c-eff_batch_16-epoch_6-aligner_lr_2e-4-4b
   
   # Epochs and batch sizes
   num_train_epochs: 6

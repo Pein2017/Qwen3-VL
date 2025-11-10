@@ -12,7 +12,7 @@ template:
 
 deepspeed:
   enabled: true
-  config: zero2
+  config: zero3
 
 training:
   # defaults, can be overridden per-environment
@@ -56,10 +56,6 @@ data:
   dataloader_pin_memory: true
   dataloader_prefetch_factor: 4
   eval_dataset: [placeholder]
-
-deepspeed:
-  enabled: true
-  config: zero2
 
 custom:
   emit_norm: norm1000
