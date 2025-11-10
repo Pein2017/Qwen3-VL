@@ -44,6 +44,7 @@ def _make_dataset():
         template=template,
         user_prompt="Describe the scene.",
         emit_norm="none",
+        json_format="type_b",
     )
     return dataset, template
 

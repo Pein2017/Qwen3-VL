@@ -20,21 +20,51 @@ PRIOR_RULES = (
 # Prompt Schemes
 # ============================================================================
 
-"""Dense captioning system prompt - JSON pathway"""
-SYSTEM_PROMPT_JSON = (
-    "你是图像密集标注助手。只返回一个合法 JSON 对象，不要任何解释或额外文本。\n\n"
-    "输出要求：\n"
-    '1) 顶层必须是单个对象字典：{"object_1":{...}}，按出现顺序从 1 递增，不得输出列表或额外键。\n'
-    '2) 对象按"自上到下、再从左到右"排序；线对象起点为最左端点。\n'
-    '3) 每个对象仅包含一个几何键（bbox_2d/quad/line）与 "desc"；线对象须额外包含整数键 line_points（线段的长度，点对数量）；坐标使用 norm1000 整数（0..1000）：\n'
-    "   - bbox_2d: [x1,y1,x2,y2]；quad: [x1,y1,x2,y2,x3,y3,x4,y4]；line: [x1,y1,...,xn,yn]，且 line 必含 2×line_points 个整数。\n"
-    '   - desc 结构：类型/属性[,属性]/[条件属性]/[备注(仅最后一级，可选，前缀"备注:")]，不得包含多余空格或换行。\n'
-    "4) JSON 必须采用最紧凑格式：冒号和逗号后禁止空格，禁止换行、制表符或其他多余空白。\n"
-    "5) 类型与属性采用既定中文规范词（如：BBU设备、挡风板、螺丝、光纤插头、标签、光纤、电线；可含品牌/可见性/符合性/保护/走线等）。\n"
-    '示例：{"object_1":{"desc":"BBU设备/华为/显示完整","bbox_2d":[100,200,300,400]},"object_2":{"desc":"光纤/有保护措施/蛇形管","line":[0,0,0,100],"line_points":2}}\n\n'
-    "6) 仅返回 JSON；不得包含示例或解释。\n\n"
-    "先验规则：\n" + PRIOR_RULES
+FORMAT_HINTS = {
+    "type_a": "- JSON 排布：整段单行、冒号与逗号后禁止空格，禁止任何换行或制表符。\n",
+    "type_b": "- JSON 排布：整段单行，逗号和冒号后各保留一个空格，禁止换行。\n",
+    "type_c": "- JSON 排布：可换行缩进；坐标点需独立成行，逗号保留。\n",
+    "type_d": "- JSON 排布：quad/line 需改写为 {\"x\":...,\"y\":...} 对象列表，可缩进换行。\n",
+}
+
+_DEFAULT_JSON_FORMAT = "type_c"
+
+
+def _normalize_format_key(value: str | None) -> str:
+    if not value:
+        return _DEFAULT_JSON_FORMAT
+    normalized = str(value).strip().lower().replace("-", "_").replace(" ", "_")
+    alias = {
+        "a": "type_a",
+        "b": "type_b",
+        "c": "type_c",
+        "d": "type_d",
+        "typea": "type_a",
+        "typeb": "type_b",
+        "typec": "type_c",
+        "typed": "type_d",
+    }
+    normalized = alias.get(normalized, normalized)
+    return normalized if normalized in FORMAT_HINTS else _DEFAULT_JSON_FORMAT
+
+
+DENSE_SYSTEM_PROMPT_CORE = (
+    "你是图像密集标注助手。只输出一个 JSON 对象 {\"object_1\":{...}}，不要额外文字。\n"
+    "- 对象按“自上到下 → 左到右”排序（线以最左端点为起点），编号从 1 递增。\n"
+    "- 每个对象仅包含 desc + 单个几何键（bbox_2d/quad/line）；线对象额外提供整数 line_points。\n"
+    "- desc 采用“类型/属性[,属性]/[条件属性]”层级，不得包含多余空格或换行。\n"
+    "- 坐标使用 norm1000 整数（0..1000）。\n"
 )
+
+
+def build_dense_system_prompt(json_format: str | None) -> str:
+    fmt = _normalize_format_key(json_format)
+    format_hint = FORMAT_HINTS[fmt]
+    return DENSE_SYSTEM_PROMPT_CORE + format_hint + "先验规则：\n" + PRIOR_RULES
+
+
+"""Dense captioning system prompt - JSON pathway"""
+SYSTEM_PROMPT_JSON = build_dense_system_prompt(_DEFAULT_JSON_FORMAT)
 
 
 """Scheme SUMMARY: per-image summary variant - one-line text per image"""
@@ -83,4 +113,5 @@ __all__ = [
     "USER_PROMPT",
     "USER_PROMPT_JSON",
     "USER_PROMPT_SUMMARY",
+    "build_dense_system_prompt",
 ]

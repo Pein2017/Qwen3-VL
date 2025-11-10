@@ -304,6 +304,7 @@ def main():
         template=sft.template,
         user_prompt=custom_config.user_prompt,
         emit_norm=custom_config.emit_norm,
+        json_format=custom_config.json_format,
         augmenter=augmenter,
         bypass_prob=bypass_prob,
         sample_limit=train_sample_limit,
@@ -311,7 +312,6 @@ def main():
         system_prompt_dense=system_prompt_dense,
         system_prompt_summary=system_prompt_summary,
         seed=dataset_seed,
-        json_indent=custom_config.json_indent,
     )
     logger.info(f"Training dataset size: {len(dataset)}")
 
@@ -462,6 +462,7 @@ def main():
             template=sft.template,
             user_prompt=custom_config.user_prompt,
             emit_norm=custom_config.emit_norm,
+            json_format=custom_config.json_format,
             augmenter=None,  # No augmentation for validation
             bypass_prob=0.0,  # Explicit: no bypass for validation
             sample_limit=val_sample_limit,
@@ -469,7 +470,6 @@ def main():
             system_prompt_dense=system_prompt_dense,
             system_prompt_summary=system_prompt_summary,
             seed=dataset_seed,
-            json_indent=custom_config.json_indent,
         )
         logger.info(f"Validation dataset size: {len(eval_dataset)}")
 

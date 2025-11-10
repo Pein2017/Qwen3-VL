@@ -69,4 +69,3 @@ custom:
 
 template:
   max_pixels: 1572864999  # an extremely large value so that never `do_resize`
-

@@ -13,6 +13,7 @@ from .prompts import (
     SYSTEM_PROMPT_SUMMARY,
     USER_PROMPT_JSON,
     USER_PROMPT_SUMMARY,
+    build_dense_system_prompt,
 )
 from .schema import PromptOverrides, SaveDelayConfig, TrainingConfig
 
@@ -142,6 +143,7 @@ class ConfigLoader:
 
         use_summary = False
         custom_section = config.get("custom")
+        json_format_hint: Optional[str] = None
         if custom_section is not None:
             if not isinstance(custom_section, dict):
                 raise TypeError(
@@ -155,13 +157,16 @@ class ConfigLoader:
                 use_summary = ConfigLoader._coerce_bool(
                     custom_section["use_summary"], "custom.use_summary"
                 )
+            json_format_hint_raw = custom_section.get("json_format")
+            if json_format_hint_raw is not None:
+                json_format_hint = str(json_format_hint_raw)
 
         if use_summary:
             default_system = SYSTEM_PROMPT_SUMMARY
             default_user = USER_PROMPT_SUMMARY
             output_variant = "summary"
         else:
-            default_system = SYSTEM_PROMPT_JSON
+            default_system = build_dense_system_prompt(json_format_hint)
             default_user = USER_PROMPT_JSON
             output_variant = "dense"
 

@@ -17,6 +17,28 @@ from typing import (
 
 AllowedNorm = Literal["none", "norm100", "norm1000"]
 AllowedVisualDistance = Literal["mse", "cosine"]
+AllowedJsonFormat = Literal["type_a", "type_b", "type_c", "type_d"]
+
+ALLOWED_JSON_FORMATS: set[str] = {"type_a", "type_b", "type_c", "type_d"}
+
+
+def _normalize_json_format(value: Any) -> AllowedJsonFormat:
+    if not isinstance(value, str):
+        raise TypeError("custom.json_format must be a string")
+    normalized = value.strip().lower().replace("-", "_").replace(" ", "_")
+    if normalized in {"a", "typea"}:
+        normalized = "type_a"
+    elif normalized in {"b", "typeb"}:
+        normalized = "type_b"
+    elif normalized in {"c", "typec"}:
+        normalized = "type_c"
+    elif normalized in {"d", "typed"}:
+        normalized = "type_d"
+    if normalized not in ALLOWED_JSON_FORMATS:
+        raise ValueError(
+            "custom.json_format must be one of {'type_a','type_b','type_c','type_d'}"
+        )
+    return cast(AllowedJsonFormat, normalized)
 
 
 def _as_dict(value: Optional[Mapping[str, Any]]) -> Mapping[str, Any]:
@@ -179,6 +201,7 @@ class CustomConfig:
     train_jsonl: str
     user_prompt: str
     emit_norm: AllowedNorm
+    json_format: AllowedJsonFormat
     use_summary: bool = False
     system_prompt_summary: Optional[str] = None
     augmentation: Optional[Mapping[str, Any]] = None
@@ -192,7 +215,6 @@ class CustomConfig:
     val_jsonl: Optional[str] = None
     output_variant: Literal["dense", "summary"] = "dense"
     visual_kd: VisualKDConfig = field(default_factory=VisualKDConfig.disabled)
-    json_indent: Optional[int] = None
     extra: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -206,6 +228,10 @@ class CustomConfig:
             )
         if not isinstance(self.use_summary, bool):
             raise TypeError("custom.use_summary must be a boolean value")
+        if self.json_format not in ALLOWED_JSON_FORMATS:
+            raise ValueError(
+                "custom.json_format must be one of {'type_a','type_b','type_c','type_d'}"
+            )
 
     @classmethod
     def from_mapping(
@@ -274,16 +300,10 @@ class CustomConfig:
         val_jsonl = data.pop("val_jsonl", None)
         visual_kd_raw = data.pop("visual_kd", None)
         visual_kd = VisualKDConfig.from_mapping(visual_kd_raw)
-        json_indent = data.pop("json_indent", None)
-        if json_indent is not None:
-            try:
-                json_indent = int(json_indent)
-                if json_indent < 0:
-                    raise ValueError("custom.json_indent must be non-negative")
-            except (TypeError, ValueError) as exc:
-                raise ValueError(
-                    f"custom.json_indent must be a non-negative integer, got {json_indent!r}"
-                ) from exc
+        json_format_raw = data.pop("json_format", None)
+        if json_format_raw is None:
+            raise ValueError("custom.json_format must be provided")
+        json_format = _normalize_json_format(json_format_raw)
 
         extra = dict(data)
 
@@ -301,9 +321,9 @@ class CustomConfig:
             train_jsonl=str(train_jsonl) if train_jsonl is not None else "",
             user_prompt=str(user_prompt) if user_prompt is not None else "",
             emit_norm=cast("AllowedNorm", emit_norm_value),
+            json_format=json_format,
             use_summary=use_summary,
             system_prompt_summary=system_prompt_summary,
-            json_indent=json_indent,
             augmentation=augmentation
             if isinstance(augmentation, Mapping)
             else augmentation,

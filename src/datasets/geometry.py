@@ -596,7 +596,7 @@ class BBox:
 
 
 @dataclass(frozen=True)
-class Quad:
+class Quad: 
     points: Tuple[float, float, float, float, float, float, float, float]
 
     def apply_affine(self, M: List[List[float]]) -> "Quad":
