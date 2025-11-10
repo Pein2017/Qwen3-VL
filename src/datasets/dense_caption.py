@@ -34,6 +34,7 @@ class DenseCaptionDataset(Dataset):
         system_prompt_summary: Optional[str] = None,
         bypass_prob: float = 0.0,
         seed: int = 2025,
+        json_indent: Optional[int] = None,
     ):
         self.use_summary = bool(use_summary)
         self.system_prompt_dense = system_prompt_dense
@@ -43,6 +44,7 @@ class DenseCaptionDataset(Dataset):
         self.bypass_prob = float(bypass_prob)
         self.seed = int(seed)
         self.template = template
+        self.json_indent = json_indent
         self.mode: Literal["dense", "summary"] = (
             "summary" if self.use_summary else "dense"
         )
@@ -141,6 +143,7 @@ class DenseCaptionDataset(Dataset):
             user_prompt=user_prompt,
             emit_norm=self.emit_norm,
             mode=mode,
+            json_indent=self.json_indent,
         )
 
     def __getitem__(self, index: int) -> Dict[str, Any]:

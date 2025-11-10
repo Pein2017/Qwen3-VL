@@ -1,15 +1,21 @@
 """
-Qwen3-VL visualization script (no CLI):
+Qwen3-VL visualization script:
   - Define configs at top
   - Load model/processor
   - Read JSONL
   - Inference with training user prompt
   - Parse norm1000 predictions; inverse-scale to pixels
   - Plot GT (left) vs Pred (middle) vs Legend (right) in a 1×3 layout and save
+
+Usage:
+  python vis_qwen3.py [device_id]
+  python vis_qwen3.py 1  # Use cuda:1
+  python vis_qwen3.py    # Use cuda:0 (default)
 """
 
 from __future__ import annotations
 
+import argparse
 import ast
 import json
 import os
@@ -30,21 +36,38 @@ from vis_tools.vis_helper import (
 )
 
 # ==============================
+# Parse CLI arguments
+# ==============================
+
+parser = argparse.ArgumentParser(description="Qwen3-VL visualization script")
+parser.add_argument(
+    "device_id",
+    type=int,
+    nargs="?",
+    default=0,
+    help="CUDA device ID (default: 0, i.e., cuda:0)",
+)
+args = parser.parse_args()
+
+# ==============================
 # Configs (edit these directly)
 # ==============================
 
 # Required paths
-CKPT_PATH = "output/stage_2_gkd_merged/11-08/checkpoint-690"  # HF dir or merged checkpoint  # HF dir or merged checkpoint
+CKPT_PATH = "output_4b/stage_3_gkd-merged/best/lan_kd_0.04-vision_kd_0.3-weaker_color_aug-checkpoint-1380"  # HF dir or merged checkpoint  # HF dir or merged checkpoint
 JSONL_PATH = "data/bbu_full_768/val.jsonl"
 
 # Runtime settings
 LIMIT = 10
-DEVICE = "cuda:0"
-SAVE_DIR = "vis_output/stage_2_gkd_merged/11-08/checkpoint-690"
+DEVICE = f"cuda:{args.device_id}"
+SAVE_DIR = "vis_out_4b/stage_3_gkd-merged/best/checkpoint-1380"
 MAX_NEW_TOKENS = 2048
-TEMPERATURE = 0.001  # Balanced randomness to avoid loops while maintaining quality
-TOP_P = 1  # Nucleus sampling - cuts off low-probability tail
-REPETITION_PENALTY = 1.05  # Strong penalty against repetition (was 1.1, still too weak for repetitive outputs)
+TEMPERATURE = 0.01  # Moderate temperature for diversity without excessive randomness
+TOP_P = 0.95  # Nucleus sampling - cuts off low-probability tail for better diversity
+REPETITION_PENALTY = (
+    1.05  # Minimal global penalty to preserve recall (only prevents token-level loops)
+)
+NO_REPEAT_NGRAM_SIZE = 5  # Prevent repeating 5-grams (catches entire object structures without shifting distribution much)
 
 # Optional: override training user prompt (None uses training default)
 USER_PROMPT_OVERRIDE: str | None = None
@@ -168,6 +191,7 @@ def run_infer_one(pil_img: Image.Image, prompt: str) -> tuple[str, str]:
             temperature=TEMPERATURE,
             top_p=TOP_P,
             repetition_penalty=REPETITION_PENALTY,
+            no_repeat_ngram_size=NO_REPEAT_NGRAM_SIZE,  # Prevents repeating object structures without global distribution shift
             use_cache=True,
         )
     # Strip prompt tokens from the front

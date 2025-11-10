@@ -192,6 +192,7 @@ class CustomConfig:
     val_jsonl: Optional[str] = None
     output_variant: Literal["dense", "summary"] = "dense"
     visual_kd: VisualKDConfig = field(default_factory=VisualKDConfig.disabled)
+    json_indent: Optional[int] = None
     extra: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -273,6 +274,16 @@ class CustomConfig:
         val_jsonl = data.pop("val_jsonl", None)
         visual_kd_raw = data.pop("visual_kd", None)
         visual_kd = VisualKDConfig.from_mapping(visual_kd_raw)
+        json_indent = data.pop("json_indent", None)
+        if json_indent is not None:
+            try:
+                json_indent = int(json_indent)
+                if json_indent < 0:
+                    raise ValueError("custom.json_indent must be non-negative")
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"custom.json_indent must be a non-negative integer, got {json_indent!r}"
+                ) from exc
 
         extra = dict(data)
 
@@ -292,6 +303,7 @@ class CustomConfig:
             emit_norm=cast("AllowedNorm", emit_norm_value),
             use_summary=use_summary,
             system_prompt_summary=system_prompt_summary,
+            json_indent=json_indent,
             augmentation=augmentation
             if isinstance(augmentation, Mapping)
             else augmentation,

@@ -3,12 +3,13 @@
 import base64
 import json
 import os
-from typing import Any, Dict, Iterable, List, Literal, Mapping
+import re
+from typing import Any, Dict, Iterable, List, Literal, Mapping, Optional
 
-from .base import BaseBuilder
+from ..contracts import ConversationRecord, validate_conversation_record
 from ..geometry import normalize_points
 from ..utils import extract_object_points
-from ..contracts import ConversationRecord, validate_conversation_record
+from .base import BaseBuilder
 
 
 class JSONLinesBuilder(BaseBuilder):
@@ -29,12 +30,14 @@ class JSONLinesBuilder(BaseBuilder):
         user_prompt: str,
         emit_norm: Literal["none", "norm100", "norm1000"],
         mode: Literal["dense", "summary"] = "dense",
+        json_indent: Optional[int] = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
         self.user_prompt = user_prompt
         self.emit_norm = emit_norm
         self.mode = mode
+        self.json_indent = json_indent
 
     def _get_summary_text(self, record: ConversationRecord, record_index: int) -> str:
         """Extract and validate summary from record.
@@ -96,6 +99,11 @@ class JSONLinesBuilder(BaseBuilder):
 
         user_contents.append({"type": "text", "text": self.user_prompt})
 
+        # Determine if we want compact format (None or 0) vs formatted (positive int)
+        use_compact = self.json_indent is None or self.json_indent == 0
+        indent_value = None if use_compact else self.json_indent
+        separators = (",", ":") if use_compact else (",", ": ")
+
         if self.mode == "summary":
             assistant_text = (
                 assistant_payload
@@ -103,14 +111,20 @@ class JSONLinesBuilder(BaseBuilder):
                 else json.dumps(
                     assistant_payload,
                     ensure_ascii=False,
-                    separators=(",", ":"),
+                    indent=indent_value,
+                    separators=separators,
                 )
             )
         else:
             assistant_text = json.dumps(
                 assistant_payload,
                 ensure_ascii=False,
-                separators=(",", ":"),
+                indent=indent_value,
+                separators=separators,
+            )
+            # Format coordinate arrays with newlines between coordinate pairs
+            assistant_text = self._format_coordinate_arrays(
+                assistant_text, indent_value
             )
 
         messages = [
@@ -137,7 +151,9 @@ class JSONLinesBuilder(BaseBuilder):
         grouped_objects: Dict[str, Any] = {}
         for idx, obj in enumerate(objects, start=1):
             geom_type, points = extract_object_points(obj)
-            payload: Dict[str, Any] = {"desc": self._sanitize_desc(obj.get("desc"), idx)}
+            payload: Dict[str, Any] = {
+                "desc": self._sanitize_desc(obj.get("desc"), idx)
+            }
             if geom_type and points:
                 # For line objects, emit line_points before line for better causality
                 if geom_type == "line":
@@ -199,6 +215,65 @@ class JSONLinesBuilder(BaseBuilder):
             return [float(v) for v in points]
         normalized = normalize_points(points, width, height, self.emit_norm)
         return [int(v) for v in normalized]
+
+    def _format_coordinate_arrays(self, json_str: str, indent: Optional[int]) -> str:
+        """Add newlines between coordinate pairs in bbox_2d, quad, and line arrays.
+
+        Transforms arrays like [x1, y1, x2, y2, ...] to:
+        [x1, y1,
+         x2, y2,
+         ...]
+
+        This helps the model distinguish that two values form one point.
+        """
+        # Coordinate array keys to format
+        coord_keys = ["bbox_2d", "quad", "line"]
+
+        # Determine indentation for array content
+        # Use consistent 2-space indentation for coordinate pairs
+        pair_indent = "  "  # 2 spaces for coordinate pairs inside arrays
+
+        # Pattern to match coordinate arrays: "key": [numbers...]
+        # This handles both compact [1,2,3,4] and formatted [\n  1,\n  2,\n  ...] cases
+        for key in coord_keys:
+            # Match: "key": [ followed by content (with possible newlines), ending with ]
+            # Use non-greedy match with DOTALL to handle newlines
+            pattern = rf'("{re.escape(key)}"\s*:\s*)\[(.*?)\]'
+
+            def replace_array(match):
+                key_part = match.group(1)  # "key":
+                array_content = match.group(2)  # numbers inside []
+
+                # Normalize: remove all whitespace and split by comma
+                # This handles both compact and formatted input
+                normalized = re.sub(r"\s+", "", array_content)
+                values = [v for v in normalized.split(",") if v]
+
+                # Group into coordinate pairs (x, y)
+                if len(values) % 2 != 0:
+                    # Odd number of values - shouldn't happen, but fallback to original
+                    return match.group(0)
+
+                # Format pairs with newlines between each pair
+                formatted_pairs = []
+                for i in range(0, len(values), 2):
+                    x, y = values[i], values[i + 1]
+                    if i == 0:
+                        # First pair: on same line as opening bracket
+                        formatted_pairs.append(f"{x}, {y}")
+                    else:
+                        # Subsequent pairs: on new line with indentation
+                        formatted_pairs.append(f"{pair_indent}{x}, {y}")
+
+                # Join pairs with newlines
+                formatted_content = ",\n".join(formatted_pairs)
+
+                # Return formatted array with closing bracket on new line
+                return f"{key_part}[\n{formatted_content}\n]"
+
+            json_str = re.sub(pattern, replace_array, json_str, flags=re.DOTALL)
+
+        return json_str
 
     def _to_url(self, image: Any) -> str:
         """Canonicalize an image entry to a URL string for the template.
