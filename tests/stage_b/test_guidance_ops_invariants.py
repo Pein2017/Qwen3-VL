@@ -1,11 +1,12 @@
+import json
+from datetime import datetime, timezone
+
 from src.stage_b.io.guidance import GuidanceRepository
 from src.stage_b.types import ReflectionProposal, ExperienceOperation
-from datetime import datetime
 
 
 def seed_repo(tmp_path):
-    path = tmp_path / "guidance.json"
-    guidance_path = path / "guidance.json"
+    guidance_path = tmp_path / "guidance.json"
     guidance_path.write_text(json.dumps({
         "M1": {
             "focus": "M1任务要点",

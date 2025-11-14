@@ -80,8 +80,6 @@ def test_verdict_normalisation_mixed_language_trajectories(tmp_path):
                 self_consistency=None,
                 confidence=0.9,
             ),
-            summary=None,
-            critique=None,
         ),
         TrajectoryWithSignals(
             candidate_index=1,
@@ -93,15 +91,12 @@ def test_verdict_normalisation_mixed_language_trajectories(tmp_path):
                 self_consistency=None,
                 confidence=0.8,
             ),
-            summary=None,
-            critique=None,
         ),
     ]
     
     config = SignalsConfig(
         store_confidence=True,
         enable_consistency=True,
-        weights=None,
     )
     
     scored = attach_signals(ticket, candidates, config)
@@ -278,7 +273,6 @@ def test_json_parse_failure_fatal_with_debug_info(tmp_path):
     config = ReflectionConfig(
         prompt_path=prompt_file,
         batch_size=2,
-        apply_if_delta=0.05,
         allow_uncertain=True,
         max_operations=3,
     )

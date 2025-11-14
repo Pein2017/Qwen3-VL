@@ -102,7 +102,6 @@ def _engine_with_budget(budget: int) -> ReflectionEngine:
     cfg = ReflectionConfig(
         prompt_path=__import__("pathlib").Path("configs/prompts/stage_b_critic.txt"),
         batch_size=8,
-        apply_if_delta=None,
         allow_uncertain=True,
         token_budget=budget,
         temperature=1.0,

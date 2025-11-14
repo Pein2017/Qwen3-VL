@@ -44,8 +44,7 @@ def test_label_match_and_confidence_signals():
         confidence=0.9,
     )  # type: ignore[arg-type]
     config = SignalsConfig(
-        store_confidence=True, enable_consistency=False, weights=None
-    )
+        store_confidence=True, enable_consistency=False,     )
     results = attach_signals(ticket, [candidate1], config)
     assert len(results) == 1
     assert results[0].signals.label_match is True  # "不通过" == "fail" (converted)
@@ -102,8 +101,7 @@ def test_signals_without_confidence():
     )
 
     config = SignalsConfig(
-        store_confidence=False, enable_consistency=False, weights=None
-    )
+        store_confidence=False, enable_consistency=False,     )
 
     # Test case 1: Label matches, no confidence
     candidate1 = ParsedTrajectory(
@@ -156,8 +154,7 @@ def test_signals_without_label_match():
     )
 
     config = SignalsConfig(
-        store_confidence=True, enable_consistency=False, weights=None
-    )
+        store_confidence=True, enable_consistency=False,     )
 
     # Test case: Verdict is None (cannot determine label_match)
     candidate = ParsedTrajectory(
@@ -238,7 +235,7 @@ def test_attach_signals_mixed_language_verdicts():
         ),  # type: ignore[arg-type]
     ]
 
-    config = SignalsConfig(store_confidence=True, enable_consistency=True, weights=None)
+    config = SignalsConfig(store_confidence=True, enable_consistency=True, )
     annotated = attach_signals(ticket, candidates, config)
 
     assert len(annotated) == 3

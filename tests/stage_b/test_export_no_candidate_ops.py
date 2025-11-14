@@ -24,7 +24,7 @@ def make_item(include_critic: bool) -> TrajectoryWithSignals:
     critic = None
     if include_critic:
         critic = CriticOutput(summary="s", critique="c")
-    return TrajectoryWithSignals(parsed=parsed, signals=signals, summary=None, critique=None, critic=critic)
+    return TrajectoryWithSignals(parsed=parsed, signals=signals, critic=critic)
 
 
 def test_serialize_trajectory_no_candidate_ops():

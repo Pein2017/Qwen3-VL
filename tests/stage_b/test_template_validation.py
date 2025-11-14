@@ -36,7 +36,6 @@ def test_template_validation_missing_allowed_ops_canonical_name(tmp_path):
     config = ReflectionConfig(
         prompt_path=prompt_file,
         batch_size=2,
-        apply_if_delta=0.05,
         allow_uncertain=True,
         max_operations=3,
     )
@@ -64,7 +63,6 @@ def test_template_validation_missing_allowed_ops_custom_name(tmp_path, caplog):
     config = ReflectionConfig(
         prompt_path=prompt_file,
         batch_size=2,
-        apply_if_delta=0.05,
         allow_uncertain=True,
         max_operations=3,
     )
@@ -93,7 +91,6 @@ def test_template_validation_missing_k_budget_canonical_name(tmp_path):
     config = ReflectionConfig(
         prompt_path=prompt_file,
         batch_size=2,
-        apply_if_delta=0.05,
         allow_uncertain=True,
         max_operations=3,  # Budget is set, so K must be mentioned
     )
@@ -120,7 +117,6 @@ def test_template_validation_missing_k_budget_custom_name(tmp_path, caplog):
     config = ReflectionConfig(
         prompt_path=prompt_file,
         batch_size=2,
-        apply_if_delta=0.05,
         allow_uncertain=True,
         max_operations=3,  # Budget is set, so K must be mentioned
     )
@@ -149,7 +145,6 @@ def test_template_validation_no_k_required_when_no_budget(tmp_path):
     config = ReflectionConfig(
         prompt_path=prompt_file,
         batch_size=2,
-        apply_if_delta=0.05,
         allow_uncertain=True,
         max_operations=None,  # No budget set, so K is not required
     )
@@ -178,7 +173,6 @@ def test_template_validation_valid_template(tmp_path):
     config = ReflectionConfig(
         prompt_path=prompt_file,
         batch_size=2,
-        apply_if_delta=0.05,
         allow_uncertain=True,
         max_operations=3,
     )

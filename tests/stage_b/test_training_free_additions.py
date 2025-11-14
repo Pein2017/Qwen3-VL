@@ -145,7 +145,6 @@ def test_merge_operation_with_provenance(tmp_path: Path, prompt_file: Path):
         config=ReflectionConfig(
             prompt_path=prompt_file,
             batch_size=2,
-            apply_if_delta=0.0,
             allow_uncertain=True,
         ),
         guidance_repo=repo,
@@ -219,7 +218,6 @@ def test_budget_enforcement_max_ops_and_epoch_cap(tmp_path: Path, prompt_file: P
         config=ReflectionConfig(
             prompt_path=prompt_file,
             batch_size=2,
-            apply_if_delta=0.0,
             allow_uncertain=True,
             max_operations=1,
         ),
@@ -262,7 +260,6 @@ def test_budget_enforcement_max_ops_and_epoch_cap(tmp_path: Path, prompt_file: P
         config=ReflectionConfig(
             prompt_path=prompt_file,
             batch_size=2,
-            apply_if_delta=0.0,
             allow_uncertain=True,
             change_cap_per_epoch=1,
         ),
@@ -327,7 +324,6 @@ def test_eligibility_policy_contradictions_only(tmp_path: Path, prompt_file: Pat
         config=ReflectionConfig(
             prompt_path=prompt_file,
             batch_size=2,
-            apply_if_delta=0.0,
             allow_uncertain=True,
             eligibility_policy="contradictions_only",
         ),
@@ -405,7 +401,6 @@ def test_eligibility_policy_contradictions_or_all_wrong(tmp_path: Path, prompt_f
         config=ReflectionConfig(
             prompt_path=prompt_file,
             batch_size=2,
-            apply_if_delta=0.0,
             allow_uncertain=True,
             eligibility_policy="contradictions_or_all_wrong",
         ),
@@ -515,7 +510,6 @@ def test_all_wrong_strategy_manual_review(tmp_path: Path, prompt_file: Path):
         config=ReflectionConfig(
             prompt_path=prompt_file,
             batch_size=2,
-            apply_if_delta=0.0,
             allow_uncertain=True,
             eligibility_policy="contradictions_or_all_wrong",
             all_wrong_strategy="manual_review",
@@ -584,7 +578,6 @@ def test_reflection_prompt_includes_ops_budget_and_summaries(tmp_path: Path, pro
         config=ReflectionConfig(
             prompt_path=prompt_file,
             batch_size=2,
-            apply_if_delta=0.0,
             allow_uncertain=True,
             max_operations=3,
         ),

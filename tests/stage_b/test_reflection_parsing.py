@@ -30,7 +30,6 @@ def test_parse_reflection_response_refine(tmp_path):
     config = ReflectionConfig(
         prompt_path=prompt_file,
         batch_size=2,
-        apply_if_delta=0.05,
         allow_uncertain=True,
     )
 

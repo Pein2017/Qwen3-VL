@@ -42,7 +42,7 @@ def test_label_match_uses_normalize_verdict_pass_case():
     candidates = [
         _mk_candidate("g1", "m1", verdict="通过"),
     ]
-    cfg = SignalsConfig(store_confidence=True, enable_consistency=True, weights=None)
+    cfg = SignalsConfig(store_confidence=True, enable_consistency=True, )
 
     annotated = attach_signals(ticket, candidates, cfg)
 
@@ -59,7 +59,7 @@ def test_label_match_uses_normalize_verdict_fail_case():
     candidates = [
         _mk_candidate("g2", "m1", verdict="不通过"),
     ]
-    cfg = SignalsConfig(store_confidence=False, enable_consistency=False, weights=None)
+    cfg = SignalsConfig(store_confidence=False, enable_consistency=False, )
 
     annotated = attach_signals(ticket, candidates, cfg)
 

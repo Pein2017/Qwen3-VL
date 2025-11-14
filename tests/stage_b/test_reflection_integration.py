@@ -105,7 +105,6 @@ def test_reflection_refine_action_accepted(tmp_path):
         config=ReflectionConfig(
             prompt_path=tmp_path / "prompt.txt",
             batch_size=2,
-            apply_if_delta=0.05,
             allow_uncertain=True,
         ),
         guidance_repo=repo,
@@ -262,7 +261,6 @@ def test_reflection_noop_action_not_applied(tmp_path):
         config=ReflectionConfig(
             prompt_path=tmp_path / "prompt.txt",
             batch_size=2,
-            apply_if_delta=0.05,
             allow_uncertain=True,
         ),
         guidance_repo=repo,
