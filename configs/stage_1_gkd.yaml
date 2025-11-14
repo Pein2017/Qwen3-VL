@@ -51,12 +51,10 @@ training:
   logging_first_step: true
 
 data:
-  dataset: [placeholder]
   dataset_num_proc: 8
   dataloader_num_workers: 8
   dataloader_pin_memory: true
   dataloader_prefetch_factor: 4
-  eval_dataset: [placeholder]
 
 custom:
   json_format: standard

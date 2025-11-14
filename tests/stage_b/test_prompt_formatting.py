@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from src.stage_b.prompts import (
+from src.stage_b.sampling.prompts import (
     _render_guidance_snippets,
     build_messages,
     build_user_prompt,
@@ -77,7 +77,7 @@ def test_build_user_prompt_with_experiences():
     assert "补充提示：" in prompt
 
     # Verify Stage-A summaries are included
-    assert "图像 1: 摘要内容" in prompt
+    assert "1. 摘要内容" in prompt
     assert "任务: 挡风板安装检查" in prompt
 
 

@@ -920,6 +920,8 @@ class RandomCrop(ImageAugmenter):
         self.last_object_coverages: List[float] | None = None
         self.allows_geometry_drops = True  # Signal to validation
         self.last_skip_reason: str | None = None
+        # Compose looks for `last_crop_skip_reason`; keep both names in sync.
+        self.last_crop_skip_reason: str | None = None
         self.last_skip_counters: Dict[str, int] = {}
 
     def apply(
@@ -937,6 +939,7 @@ class RandomCrop(ImageAugmenter):
         self.last_kept_indices = None
         self.last_object_coverages = None
         self.last_skip_reason = None
+        self.last_crop_skip_reason = None
         self.last_skip_counters = {}
 
         if rng.random() >= self.prob:
@@ -987,6 +990,7 @@ class RandomCrop(ImageAugmenter):
                 f"Crop would filter to {len(filtered_geoms)} < {self.min_objects} objects. Skipping crop."
             )
             self.last_skip_reason = reason
+            self.last_crop_skip_reason = reason
             self.last_skip_counters[reason] = self.last_skip_counters.get(reason, 0) + 1
             return images, geoms
 
@@ -998,6 +1002,7 @@ class RandomCrop(ImageAugmenter):
                     "Crop region contains line object. Skipping crop to preserve cable/fiber integrity."
                 )
                 self.last_skip_reason = reason
+                self.last_crop_skip_reason = reason
                 self.last_skip_counters[reason] = (
                     self.last_skip_counters.get(reason, 0) + 1
                 )

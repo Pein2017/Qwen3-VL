@@ -42,7 +42,7 @@ def main() -> None:
     # Configuration (edit these)
 
     # model_path = "output/summary_merged/10-25-aug_on-full_last2_llm"
-    model_path = "output/stage_3_gkd_merged/11-08/checkpoint-7500"
+    model_path = "output/11-10/stage_3_gkd_merged_small_lrs-good/checkpoint-690"
 
     image_paths = [
         # "demo/images/QC-20230106-0000211_16517.jpeg",
@@ -53,12 +53,12 @@ def main() -> None:
         # "demo/irrelevant_images/QC-TEMP-20241028-0015135_4206556.jpeg",
         # "demo/irrelevant_images/QC-TEMP-20241028-0015135_4206715.jpeg",
     ]
-    prompt = "请描述这张图片"
-    max_new_tokens = 512
+    prompt = "请介绍图片的内容，提取出所有文字"
+    max_new_tokens = 1024
     temperature = 0.01
     top_p = 0.9
     top_k = None
-    repetition_penalty = 1.05
+    repetition_penalty = 1.1
     # prompt='Describe the image(s) briefly.'
 
     device = "cuda:0"

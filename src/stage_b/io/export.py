@@ -50,13 +50,29 @@ def serialize_trajectory(
             "signals": {
                 "label_match": signals.label_match,
                 "self_consistency": signals.self_consistency,
-                "candidate_agreement": signals.candidate_agreement,
                 "confidence": signals.confidence,
-                "label_trust": signals.label_trust,
-                "semantic_advantage": signals.semantic_advantage,
             },
-            "summary": item.summary,
-            "critique": item.critique,
+            "critic": (
+                {
+                    "summary": item.critic.summary,
+                    "critique": item.critic.critique,
+                    "root_cause": item.critic.root_cause,
+                    "issues": list(item.critic.issues) if item.critic.issues else None,
+                    "uncertainty_note": item.critic.uncertainty_note,
+                    # P1.11 fields for operator risk awareness
+                    "verdict": item.critic.verdict,
+                    "needs_recheck": item.critic.needs_recheck,
+                    "uncertainty_reason": item.critic.uncertainty_reason,
+                    "evidence_quality_level": item.critic.evidence_quality_level,
+                    "evidence_sufficiency": item.critic.evidence_sufficiency,
+                    "label_consistency": item.critic.label_consistency,
+                    "suspected_label_noise": item.critic.suspected_label_noise,
+                    "recommended_action": item.critic.recommended_action,
+                }
+                if item.critic
+                else None
+            ),
+            "warnings": list(item.warnings),
         },
     }
 
@@ -70,13 +86,13 @@ def serialize_selection(item: SelectionResult) -> Dict[str, object]:
             "reason": item.reason,
             "confidence": item.confidence,
             "label_match": item.label_match,
-            "semantic_advantage": item.semantic_advantage,
             "selected_candidate": item.selected_candidate,
             "guidance_step": item.guidance_step,
             "reflection_change": item.reflection_change,
             "reflection_cycle": item.reflection_cycle,
-            "summary": item.summary,
-            "critique": item.critique,
+            "eligible": item.eligible,
+            "ineligible_reason": item.ineligible_reason,
+            "warnings": list(item.warnings),
         },
     }
 
@@ -85,7 +101,6 @@ def export_selections(
     selections: Iterable[SelectionResult],
     *,
     jsonl_path: str | Path,
-    parquet_path: str | Path | None = None,
 ) -> Path:
     items: List[SelectionResult] = list(selections)
     if not items:
@@ -98,15 +113,7 @@ def export_selections(
             fh.write(json.dumps(serialize_selection(item), ensure_ascii=False))
             fh.write("\n")
 
-    if parquet_path is not None:
-        import pandas as pd
-
-        frame = pd.json_normalize([serialize_selection(item) for item in items])
-        parquet_target = Path(parquet_path)
-        _ensure_parent(parquet_target)
-        frame.to_parquet(parquet_target, index=False)
-
-    logger.info("Exported %d selections to %s", len(items), jsonl_target)
+    logger.info(f"Exported {len(items)} selections to {jsonl_target}")
     return jsonl_target
 
 
@@ -129,7 +136,7 @@ def export_trajectories(
             )
             fh.write(json.dumps(payload, ensure_ascii=False))
             fh.write("\n")
-    logger.info("Saved %d trajectories to %s", len(items), target)
+    logger.info(f"Saved {len(items)} trajectories to {target}")
     return target
 
 

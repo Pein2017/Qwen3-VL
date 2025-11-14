@@ -60,16 +60,18 @@ conda run -n ms python -m src.sft --config /abs/path/to/config.yaml [--base_conf
 - Run via `python -m src.stage_b.runner --config /abs/path/to/config.yaml [--log-level {debug|logging|warning}]`; the pipeline currently executes the full loop (`--step all`).
 - Config schema lives in `src.stage_b.config` (frozen dataclasses); values come from YAML under `configs/stage_b/`.
 - High-level flow per mission:
-  1. `ingest_stage_a` normalizes Stage-A JSONL into `GroupTicket` objects and ensures mission guidance exists.
+  1. `ingest_stage_a` normalizes Stage-A JSONL into `GroupTicket` objects; missions are validated against the global guidance file during seeding.
   2. `RolloutSampler` builds prompts with mission guidance, decodes multiple samples per ticket using the configured grid.
-  3. `attach_signals` annotates candidates with deterministic metrics (label match, consistency, confidence heuristics).
-  4. `select_for_group` chooses the winner using semantic advantage + tie-break policy, exporting trajectories/selections incrementally.
-  5. `ReflectionEngine` batches experience records, calls the in-process model with `reflection.prompt_path`, and writes guidance updates through `GuidanceRepository` snapshots.
-  6. Optional holdout split + `evaluate_holdout` report label-match uplift around each reflection cycle.
-- Outputs are written under `{output.root}/{output.run_name}/{mission}/` with `trajectories.jsonl`, `selections.jsonl`, per-mission parquet, `guidance.json`, and `reflection.jsonl` logs. Guidance snapshots rotate in `snapshots/` respecting retention.
-- Guidance lifecycle: `GuidanceRepository` lazily initializes empty guidance, enforces non-empty experience dicts, and snapshots previous files before each write. Reflection proposals require structured `[Gx].` entries; parsing failures fall back to noop without mutating guidance.
-- Sampling prompts live in `src.stage_b.prompts` (pipeline) and `src.stage_b.sampling.prompts` (LLM bundle rendering); both expect ordered `per_image` maps from Stage-A.
-- Deterministic judge + metrics helpers are in `src.stage_b.signals`, `src.stage_b.selection`, and `src.stage_b.scoring` for reuse in GRPO-style evaluation.
+  3. `attach_signals` annotates candidates with deterministic metrics; `CriticEngine` augments with structured LLM outputs when enabled.
+  4. `select_for_group` chooses the winner using a label-first policy with tie-breakers; conservative override applies when critic signals uncertainty（例如：需要复核、证据不足、建议“人工复核”）。
+  5. `ReflectionEngine` batches experience records (including critic summaries/critiques), calls the in-process model with `reflection.prompt_path`, and writes guidance updates through `GuidanceRepository` snapshots.
+  6. Holdout is currently disabled by default; the runner logs “holdout: skipped (deferred)”. Preview evaluation can be enabled via `apply_if_delta` when configured.
+- Outputs are written under `{output.root}/{output.run_name}/{mission}/` with `trajectories.jsonl`, `selections.jsonl`, `guidance.json`, and `reflection.jsonl` logs. Guidance snapshots rotate in `snapshots/` respecting retention.
+- Guidance lifecycle: `GuidanceRepository` seeds each mission from the global guidance file; missing missions raise an error. Writes use atomic file replacement and per-mission snapshot rotation; non-empty `experiences` are enforced.
+- Sampling prompts live in `src.stage_b.sampling.prompts` and expect ordered `per_image` maps from Stage-A.
+- Deterministic signals and selection live in `src.stage_b.signals` and `src.stage_b.scoring.selection`; legacy judge/summarizer modules were removed.
+- Critic constraints: temperature in [0.1, 0.3], max_candidates ≤ 6; `critic.prompt_path` must exist.
+- Config notes: `critic.prefilter` removed; `reflection.rapid_mode` remains a debug flag; `apply_if_delta` is deferred (not currently implemented).
 
 ### Stage-B Config Highlights
 - `stage_a_paths`: absolute or relative JSONL files from Stage-A; multiple paths allowed.
@@ -78,5 +80,5 @@ conda run -n ms python -m src.sft --config /abs/path/to/config.yaml [--base_conf
 - `signals`: enable/disable confidence/self-consistency and override semantic weights.
 - `reflection`: prompt template path, batch size, delta threshold, change cap per epoch, diversity parameters, and `max_reflection_length` guard.
 - `selection`: policy (`top_label` or `top_semantic`) and tie-break (`confidence` or `temperature`).
-- `output`: root directory + run name; mission folders created automatically; parquet path optional override.
+- `output`: root directory + run name; mission folders created automatically.
 - `runner`: epoch count; `evaluation`: holdout size + metrics list.

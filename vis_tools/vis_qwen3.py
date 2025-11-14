@@ -28,46 +28,70 @@ import matplotlib.patches as patches
 import matplotlib.pyplot as plt
 import torch
 from PIL import Image
-from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
+from transformers import (
+    AutoProcessor,
+    Qwen3VLForConditionalGeneration,
+    StoppingCriteria,
+    StoppingCriteriaList,
+)
+from transformers.generation.logits_process import (
+    LogitsProcessor,
+    LogitsProcessorList,
+)
 
 from vis_tools.vis_helper import (
     canonicalize_quad,
     draw_objects,
 )
 
+
 # ==============================
-# Parse CLI arguments
+# Parse CLI arguments (deferred to main)
 # ==============================
 
-parser = argparse.ArgumentParser(description="Qwen3-VL visualization script")
-parser.add_argument(
-    "device_id",
-    type=int,
-    nargs="?",
-    default=0,
-    help="CUDA device ID (default: 0, i.e., cuda:0)",
-)
-args = parser.parse_args()
+
+def _parse_args():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(description="Qwen3-VL visualization script")
+    parser.add_argument(
+        "device_id",
+        type=int,
+        nargs="?",
+        default=0,
+        help="CUDA device ID (default: 0, i.e., cuda:0)",
+    )
+    return parser.parse_args()
+
 
 # ==============================
 # Configs (edit these directly)
 # ==============================
 
 # Required paths
-CKPT_PATH = "output/11-10/stage_1_json_types/v2-20251110-035753/eff_batch_16-epoch_4-json_format_standard-4b/checkpoint-552"  # HF dir or merged checkpoint  # HF dir or merged checkpoint
+CKPT_PATH = "output/11-10/stage_3_gkd_merged/temp"  # HF dir or merged checkpoint  # HF dir or merged checkpoint
 JSONL_PATH = "data/bbu_full_768/val.jsonl"
 
 # Runtime settings
 LIMIT = 10
-DEVICE = f"cuda:{args.device_id}"
-SAVE_DIR = "vis_out/stage_1_json_types/standard/checkpoint-552"
+DEVICE = "cuda:0"  # Will be overridden by args in main()
+SAVE_DIR = "vis_out/stage_3_gkd_merged/temp"
 MAX_NEW_TOKENS = 2048
-TEMPERATURE = 0.01  # Moderate temperature for diversity without excessive randomness
+TEMPERATURE = 0.1  # Moderate temperature for diversity without excessive randomness
 TOP_P = 0.95  # Nucleus sampling - cuts off low-probability tail for better diversity
 REPETITION_PENALTY = (
     1.05  # Minimal global penalty to preserve recall (only prevents token-level loops)
 )
 NO_REPEAT_NGRAM_SIZE = 0  # Prevent repeating 5-grams (catches entire object structures without shifting distribution much)
+
+# Optional stopping/duplicate controls
+# - Set True to stop once the root JSON '}' closes (does not limit object count)
+STOP_AT_BALANCED_JSON = False
+# - Optional safety cap on number of objects the model may emit (None disables)
+MAX_OBJECTS_CAP: int | None = None
+# Dedup aggressiveness: require at least this many matched tokens and presence of geometry marker
+DEDUP_MIN_PREFIX_TOKENS = 24
+GEOMETRY_MARKERS = ('"line"', '"bbox_2d"', '"quad"')
+DEDUP_MAX_MATCH_WINDOW_TOKENS = 256
 
 # JSON format: must match training format ("standard")
 # If None, will try to infer from checkpoint path (looks for "json_format_standard")
@@ -204,6 +228,198 @@ def run_infer_one(pil_img: Image.Image, prompt: str) -> tuple[str, str]:
         k: (v.to(model.device) if hasattr(v, "to") else v) for k, v in inputs.items()
     }
 
+    # Build optional stopping criteria (balanced JSON and/or object cap)
+    prompt_len = int(inputs.get("input_ids").shape[-1])  # type: ignore[union-attr]
+
+    stopping: StoppingCriteriaList | None = None
+
+    if STOP_AT_BALANCED_JSON or (MAX_OBJECTS_CAP is not None and MAX_OBJECTS_CAP > 0):
+
+        class _BalancedJsonStopper(StoppingCriteria):
+            def __init__(self, prompt_len: int, max_objects: int | None) -> None:
+                self.prompt_len = prompt_len
+                self.max_objects = max_objects
+
+            def _decode(self, ids: torch.Tensor) -> str:
+                try:
+                    return processor.tokenizer.decode(
+                        ids,
+                        skip_special_tokens=False,
+                        clean_up_tokenization_spaces=False,
+                    )  # type: ignore[attr-defined]
+                except Exception:
+                    return ""
+
+            def __call__(
+                self, input_ids: torch.LongTensor, scores: torch.FloatTensor
+            ) -> bool:  # type: ignore[override]
+                if input_ids is None or input_ids.size(0) == 0:
+                    return False
+                seq = input_ids[0]
+                gen_ids = seq[self.prompt_len :]
+                if gen_ids.numel() == 0:
+                    return False
+                text = self._decode(gen_ids)
+                if not text:
+                    return False
+                if self.max_objects is not None and self.max_objects > 0:
+                    try:
+                        if text.count('"object_') >= self.max_objects:
+                            return True
+                    except Exception:
+                        pass
+                if not STOP_AT_BALANCED_JSON:
+                    return False
+                depth = 0
+                started = False
+                in_str = False
+                esc = False
+                for ch in text:
+                    if in_str:
+                        if esc:
+                            esc = False
+                        elif ch == "\\":
+                            esc = True
+                        elif ch == '"':
+                            in_str = False
+                        continue
+                    else:
+                        if ch == '"':
+                            in_str = True
+                            continue
+                        if ch == "{":
+                            depth += 1
+                            started = True
+                        elif ch == "}":
+                            if depth > 0:
+                                depth -= 1
+                                if started and depth == 0:
+                                    return True
+                return False
+
+        stopping = StoppingCriteriaList(
+            [_BalancedJsonStopper(prompt_len, MAX_OBJECTS_CAP)]
+        )
+
+    # Build logits processor to block exact duplicate object values (e.g., identical line arrays)
+    class _DedupObjectValueProcessor(LogitsProcessor):
+        def __init__(self, prompt_len: int) -> None:
+            self.prompt_len = prompt_len
+            self.seen_values: set[str] = set()
+            self.bad_token_sequences: list[list[int]] = []
+
+        def _decode(self, ids: torch.Tensor) -> str:
+            try:
+                return processor.tokenizer.decode(
+                    ids, skip_special_tokens=False, clean_up_tokenization_spaces=False
+                )  # type: ignore[attr-defined]
+            except Exception:
+                return ""
+
+        def _encode(self, s: str) -> list[int]:
+            try:
+                return processor.tokenizer.encode(s, add_special_tokens=False)  # type: ignore[attr-defined]
+            except Exception:
+                return []
+
+        def _extract_closed_object_values(self, text: str) -> list[str]:
+            out: list[str] = []
+            i = 0
+            while True:
+                key_idx = text.find('"object_', i)
+                if key_idx == -1:
+                    break
+                val_colon = text.find(":", key_idx)
+                lbrace = text.find("{", val_colon)
+                if lbrace == -1:
+                    break
+                depth = 0
+                j = lbrace
+                end_found = None
+                in_str = False
+                esc = False
+                while j < len(text):
+                    ch = text[j]
+                    if in_str:
+                        if esc:
+                            esc = False
+                        elif ch == "\\":
+                            esc = True
+                        elif ch == '"':
+                            in_str = False
+                    else:
+                        if ch == '"':
+                            in_str = True
+                        elif ch == "{":
+                            depth += 1
+                        elif ch == "}":
+                            if depth > 0:
+                                depth -= 1
+                                if depth == 0:
+                                    end_found = j
+                                    break
+                    j += 1
+                if end_found is None:
+                    break
+                val_str = text[lbrace : end_found + 1]
+                out.append(val_str)
+                i = end_found + 1
+            return out
+
+        def _update_seen(self, gen_ids: torch.Tensor) -> None:
+            text = self._decode(gen_ids)
+            if not text:
+                return
+            for val in self._extract_closed_object_values(text):
+                if val in self.seen_values:
+                    continue
+                self.seen_values.add(val)
+                ids = self._encode(val)
+                if ids:
+                    self.bad_token_sequences.append(ids)
+
+        def __call__(
+            self, input_ids: torch.LongTensor, scores: torch.FloatTensor
+        ) -> torch.FloatTensor:  # type: ignore[override]
+            if input_ids is None or input_ids.size(0) == 0:
+                return scores
+            seq = input_ids[0]
+            gen_ids = seq[self.prompt_len :]
+            if gen_ids.numel() == 0:
+                return scores
+            # Learn newly completed object values
+            self._update_seen(gen_ids)
+            # Block continuing any exact duplicate of a completed object value
+            for bad in self.bad_token_sequences:
+                m = len(bad)
+                if m == 0:
+                    continue
+                k = min(m - 1, gen_ids.numel())
+                if k <= 0:
+                    continue
+                # Decode a small tail window and require geometry presence to reduce early interference
+                win = min(k, DEDUP_MAX_MATCH_WINDOW_TOKENS)
+                try:
+                    tail_str = self._decode(gen_ids[-win:])
+                except Exception:
+                    tail_str = ""
+                if not tail_str or not any(
+                    marker in tail_str for marker in GEOMETRY_MARKERS
+                ):
+                    continue
+                if k < DEDUP_MIN_PREFIX_TOKENS:
+                    continue
+                if torch.equal(
+                    gen_ids[-k:],
+                    torch.tensor(bad[:k], device=gen_ids.device, dtype=gen_ids.dtype),
+                ):
+                    next_id = bad[k]
+                    if 0 <= next_id < scores.size(-1):
+                        scores[..., int(next_id)] = -float("inf")
+            return scores
+
+    logits_processor = LogitsProcessorList([_DedupObjectValueProcessor(prompt_len)])
+
     with torch.inference_mode():
         gen = model.generate(
             **inputs,
@@ -213,6 +429,8 @@ def run_infer_one(pil_img: Image.Image, prompt: str) -> tuple[str, str]:
             top_p=TOP_P,
             repetition_penalty=REPETITION_PENALTY,
             no_repeat_ngram_size=NO_REPEAT_NGRAM_SIZE,  # Prevents repeating object structures without global distribution shift
+            logits_processor=logits_processor,
+            stopping_criteria=stopping,
             use_cache=True,
         )
     # Strip prompt tokens from the front
@@ -328,30 +546,35 @@ def parse_prediction(text: str) -> List[Dict[str, Any]]:
             if not isinstance(val, dict):
                 continue
             desc = val.get("desc", "")
-            gtype = next((g for g in GEOM_KEYS if g in val), None)
-            if gtype is None:
+
+            # Enforce exactly one geometry key (strict validation)
+            geom_keys_present = [g for g in GEOM_KEYS if g in val]
+            if len(geom_keys_present) != 1:
+                # Skip objects with zero or multiple geometry keys
                 continue
+            gtype = geom_keys_present[0]
+
             pts = val.get(gtype)
             # Flatten nested coordinate arrays (handles standard format)
             pts = _flatten_coords(pts)
             if pts is None or len(pts) % 2 != 0:
                 # Skip objects with incomplete coordinates (e.g., truncated tail)
                 continue
-            # If the model provided line_points, enforce expected count for line objects
+
+            # For line objects, line_points is required and must match coordinate count
             if gtype == "line":
                 lp = val.get("line_points")
-                if isinstance(lp, int):
-                    if lp < 2:
-                        # Require at least two points to form a segment
-                        continue
-                    expected = 2 * lp
-                    if len(pts) > expected:
-                        pts = list(pts)[:expected]
-                    elif len(pts) < expected:
-                        # Incomplete line; drop it to avoid plotting garbage
-                        continue
+                if not isinstance(lp, int) or lp < 2:
+                    # line_points is required and must be >= 2
+                    continue
+                expected = 2 * lp
+                if len(pts) != expected:
+                    # Coordinate count must exactly match 2 * line_points
+                    continue
+
+            # Clamp coordinates to norm1000 range [0, 1000]
             try:
-                pts = [int(round(float(x))) for x in pts]
+                pts = [max(0, min(1000, int(round(float(x))))) for x in pts]
             except Exception:
                 continue
             parsed_local.append({"desc": desc, "type": gtype, "points": pts})
@@ -716,6 +939,11 @@ def extract_gt_objects(rec: Dict[str, Any], image_index: int) -> List[Dict[str, 
 
 
 def main() -> None:
+    # Parse command line arguments
+    args = _parse_args()
+    global DEVICE
+    DEVICE = f"cuda:{args.device_id}"
+
     os.makedirs(SAVE_DIR, exist_ok=True)
     root = Path(JSONL_PATH).resolve().parent
     # Provide a consistent default for image path resolving in downstream libs

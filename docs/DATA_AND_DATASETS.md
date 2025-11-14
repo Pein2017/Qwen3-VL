@@ -96,6 +96,23 @@ Format requirements (aligned with training/inference prompts):
 
 ## Dataset Pipeline
 
+### Critical Configuration Requirement
+
+**REQUIRED in all config files**:
+```yaml
+data:
+  dataset: ["dummy"]  # NEVER REMOVE - required for ms-swift TrainArguments validation
+```
+
+**Why this is needed**:
+- ms-swift's `TrainArguments.__post_init__()` validates that `dataset` or `cached_dataset` is non-empty
+- This check happens during config initialization, before custom dataset loading
+- Even though we load actual datasets via `custom.train_jsonl` and pass them directly to the trainer, the validation must pass first
+- The `["dummy"]` placeholder satisfies the validation but is never actually used
+- Removing this will cause: `ValueError: self.dataset: [], self.cached_dataset: []. Please input the training dataset.`
+
+**Source**: `/data/ms-swift/swift/llm/argument/train_args.py:162-164`
+
 ### Architecture Overview
 
 ```
@@ -221,7 +238,7 @@ This corpus covers telecom cabinet inspections, focused on **BBU (Baseband Unit)
   - Stage-A generates per-image summaries (requires every record to carry a `summary`).
   - Stage-B consumes multiple images per site to emit a final deployment verdict.
   - Keep taxonomies in sync so Stage pipelines and dense training stay compatible.
-- **Hierarchy semantics**: Attribute templates are slash-delimited (`brand/completeness/...`). Conditional levels (e.g., windshield conformity) only appear when parent attributes require them. Free-text `special_situation` fields append at the end.
+- **Hierarchy semantics**: Attribute templates are slash-delimited (`brand/completeness/...`). Conditional levels (e.g., windshield conformity) only appear when parent attributes require them. Free-text `备注` fields append at the end.
 
 When adding new inspection criteria, update both conversion JSON files and regenerate summaries before training to avoid drift between dense captions and production outputs.
 

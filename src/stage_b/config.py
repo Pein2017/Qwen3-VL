@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Mapping, MutableMapping, Optional, Sequence, Tuple
+from typing import Any, Mapping, MutableMapping, Optional, Sequence, Tuple
 
 import yaml
 
@@ -31,7 +31,6 @@ class OutputConfig:
     run_name: str  # All outputs go under {root}/{run_name}/
     trajectories_path: Path
     selections_jsonl: Path
-    selections_parquet: Optional[Path]
 
 
 @dataclass(frozen=True)
@@ -50,21 +49,48 @@ class SamplerConfig:
 
 @dataclass(frozen=True)
 class SignalsConfig:
-    store_confidence: bool
-    enable_consistency: bool
-    weights: Optional[Dict[str, float]]
+    store_confidence: bool = False
+    enable_consistency: bool = False
+
+
+@dataclass(frozen=True)
+class CriticConfig:
+    """Configuration for the CriticEngine LLM-based evaluation component."""
+
+    enabled: bool
+    prompt_path: Path
+    temperature: float
+    top_p: float
+    max_new_tokens: int
+    max_candidates: int
+    summary_max_chars: int
+    critique_max_chars: int
 
 
 @dataclass(frozen=True)
 class ReflectionConfig:
     prompt_path: Path
     batch_size: int
-    apply_if_delta: float
+    # apply_if_delta: Optional[float]  # DEFERRED: Holdout uplift gating not yet implemented
     allow_uncertain: bool
-    temperature: float = 1.0  # Higher temperature for more diverse guidance entries
-    top_p: float = 0.95  # Higher top_p for more diverse sampling
-    max_new_tokens: int = 1024  # Allow longer responses for multiple guidance entries
-    max_reflection_length: int = 4096  # Max input length for reflection prompts
+    rapid_mode: bool = False  # Debug flag to disable guardrails
+    # Eligibility and budget controls
+    eligibility_policy: str = (
+        "selected_mismatch_or_all_wrong"  # or "contradictions_only" or "contradictions_or_all_wrong"
+    )
+    max_operations: Optional[int] = None  # Per reflection cycle cap; None = unlimited
+    change_cap_per_epoch: Optional[int] = (
+        None  # Per mission per-epoch cap; None = unlimited
+    )
+    # Generation parameters (keep defaults for diversity)
+    temperature: float = 1.0
+    top_p: float = 0.95
+    max_new_tokens: int = 1024
+    max_reflection_length: int = 4096
+    # P2.13: Token-budget for prompt packing (cap the prompt, not the generated tokens)
+    token_budget: int = 1536
+    # Optional safety valve for deployments
+    all_wrong_strategy: str = "reflect_diagnose"
 
 
 @dataclass(frozen=True)
@@ -79,15 +105,6 @@ class RunnerConfig:
 
 
 @dataclass(frozen=True)
-class EvaluationConfig:
-    holdout_size: int = 200
-    metrics: Tuple[str, ...] = (
-        "label_match_rate",
-        "mean_semantic_advantage",
-    )
-
-
-@dataclass(frozen=True)
 class StageBConfig:
     seed: int
     stage_a_paths: Tuple[Path, ...]
@@ -99,7 +116,7 @@ class StageBConfig:
     selection: SelectionConfig
     model: ModelConfig
     runner: RunnerConfig
-    evaluation: EvaluationConfig
+    critic: CriticConfig
 
 
 def _decode_config(section: Mapping[str, Any]) -> DecodeConfig:
@@ -181,21 +198,12 @@ def _load_output(section: Mapping[str, Any]) -> OutputConfig:
     selections_jsonl = (
         base_dir / "selections.jsonl"
     )  # Placeholder, will be mission-specific
-    parquet_raw = section.get("selections_parquet")
-    # If parquet path is provided, use it; otherwise default to {base_dir}/selections.parquet
-    if parquet_raw:
-        parquet_path = Path(parquet_raw)
-    else:
-        parquet_path = (
-            base_dir / "selections.parquet"
-        )  # Placeholder, will be mission-specific
 
     return OutputConfig(
         root=root,
         run_name=run_name,
         trajectories_path=trajectories_path,
         selections_jsonl=selections_jsonl,
-        selections_parquet=parquet_path,
     )
 
 
@@ -217,16 +225,56 @@ def _load_signals(section: Mapping[str, Any]) -> SignalsConfig:
     enable_consistency = bool(
         _require(section, "enable_consistency", "signals section")
     )
-    weights_raw = section.get("weights")
-    weights: Optional[Dict[str, float]] = None
-    if weights_raw is not None:
-        if not isinstance(weights_raw, Mapping):
-            raise TypeError("signals.weights must be a mapping if provided")
-        weights = {str(key): float(value) for key, value in weights_raw.items()}
     return SignalsConfig(
         store_confidence=store_confidence,
         enable_consistency=enable_consistency,
-        weights=weights,
+    )
+
+
+def _load_critic(section: Optional[Mapping[str, Any]]) -> CriticConfig:
+    """Load CriticConfig with sensible defaults."""
+    if section is None:
+        # Default: critic disabled
+        return CriticConfig(
+            enabled=False,
+            prompt_path=Path("configs/prompts/stage_b_critic.txt"),
+            temperature=0.2,
+            top_p=0.9,
+            max_new_tokens=512,
+            max_candidates=6,
+            summary_max_chars=200,
+            critique_max_chars=200,
+        )
+
+    enabled = bool(section.get("enabled", True))
+    prompt_path = Path(_require(section, "prompt_path", "critic section"))
+
+    temperature = float(section.get("temperature", 0.2))
+    if not (0.1 <= temperature <= 0.3):
+        raise ValueError("critic.temperature must be in range [0.1, 0.3]")
+
+    top_p = float(section.get("top_p", 0.9))
+    max_new_tokens = int(section.get("max_new_tokens", 512))
+    max_candidates = int(section.get("max_candidates", 6))
+    if max_candidates > 6:
+        raise ValueError("critic.max_candidates must be <= 6")
+
+    summary_max_chars = int(section.get("summary_max_chars", 200))
+    critique_max_chars = int(section.get("critique_max_chars", 200))
+
+    # Validate prompt_path exists if critic is enabled
+    if enabled and not prompt_path.exists():
+        raise FileNotFoundError(f"critic.prompt_path does not exist: {prompt_path}")
+
+    return CriticConfig(
+        enabled=enabled,
+        prompt_path=prompt_path,
+        temperature=temperature,
+        top_p=top_p,
+        max_new_tokens=max_new_tokens,
+        max_candidates=max_candidates,
+        summary_max_chars=summary_max_chars,
+        critique_max_chars=critique_max_chars,
     )
 
 
@@ -236,9 +284,48 @@ def _load_reflection(section: Mapping[str, Any]) -> ReflectionConfig:
     if batch_size <= 0:
         raise ValueError("reflection.batch_size must be > 0")
 
-    apply_if_delta = float(_require(section, "apply_if_delta", "reflection section"))
+    # DEFERRED: apply_if_delta and holdout uplift gating not yet implemented
+    # Ignore apply_if_delta in config if present
+    # apply_if_delta_raw = section.get("apply_if_delta")
+    # apply_if_delta_val: Optional[float]
+    # if apply_if_delta_raw is None:
+    #     apply_if_delta_val = None
+    # else:
+    #     apply_if_delta_val = float(apply_if_delta_raw)
 
     allow_uncertain = bool(_require(section, "allow_uncertain", "reflection section"))
+
+    # rapid_mode flag for disabling guardrails
+    rapid_mode = bool(section.get("rapid_mode", False))
+
+    # Eligibility & budgets
+    eligibility_policy = str(
+        section.get("eligibility_policy", "selected_mismatch_or_all_wrong")
+    )
+    if eligibility_policy not in {
+        "selected_mismatch_or_all_wrong",
+        "contradictions_only",
+        "contradictions_or_all_wrong",
+    }:
+        raise ValueError(
+            "reflection.eligibility_policy must be 'selected_mismatch_or_all_wrong', 'contradictions_only', or 'contradictions_or_all_wrong'"
+        )
+    max_operations_raw = section.get("max_operations")
+    max_operations_val: Optional[int]
+    if max_operations_raw is None:
+        max_operations_val = None
+    else:
+        max_operations_val = int(max_operations_raw)
+        if max_operations_val <= 0:
+            raise ValueError("reflection.max_operations must be > 0 if set")
+    change_cap_raw = section.get("change_cap_per_epoch")
+    change_cap_val: Optional[int]
+    if change_cap_raw is None:
+        change_cap_val = None
+    else:
+        change_cap_val = int(change_cap_raw)
+        if change_cap_val <= 0:
+            raise ValueError("reflection.change_cap_per_epoch must be > 0 if set")
 
     # Generation parameters with defaults for diversity
     temperature = float(section.get("temperature", 1.0))
@@ -248,15 +335,31 @@ def _load_reflection(section: Mapping[str, Any]) -> ReflectionConfig:
     if max_reflection_length <= 0:
         raise ValueError("reflection.max_reflection_length must be > 0")
 
+    # P2.13: token budget for prompt packing
+    token_budget = int(section.get("token_budget", 1536))
+    if token_budget <= 0:
+        raise ValueError("reflection.token_budget must be > 0")
+
+    # Optional strategy for all-wrong handling
+    all_wrong_strategy = str(section.get("all_wrong_strategy", "reflect_diagnose"))
+    if all_wrong_strategy not in {"reflect_diagnose", "manual_review"}:
+        raise ValueError("reflection.all_wrong_strategy must be 'reflect_diagnose' or 'manual_review'")
+
     return ReflectionConfig(
         prompt_path=prompt_path,
         batch_size=batch_size,
-        apply_if_delta=apply_if_delta,
+        # apply_if_delta=apply_if_delta_val,  # DEFERRED: not in schema
         allow_uncertain=allow_uncertain,
+        rapid_mode=rapid_mode,
+        eligibility_policy=eligibility_policy,
+        max_operations=max_operations_val,
+        change_cap_per_epoch=change_cap_val,
         temperature=temperature,
         top_p=top_p,
         max_new_tokens=max_new_tokens,
         max_reflection_length=max_reflection_length,
+        token_budget=token_budget,
+        all_wrong_strategy=all_wrong_strategy,
     )
 
 
@@ -271,29 +374,6 @@ def _load_selection(section: Mapping[str, Any]) -> SelectionConfig:
 
     return SelectionConfig(policy=policy, tie_break=tie_break)
 
-
-def _load_evaluation(section: Optional[Mapping[str, Any]]) -> EvaluationConfig:
-    if section is None:
-        return EvaluationConfig()
-
-    holdout_size = int(section.get("holdout_size", EvaluationConfig.holdout_size))
-    if holdout_size <= 0:
-        raise ValueError("evaluation.holdout_size must be > 0")
-
-    metrics_raw = section.get("metrics", EvaluationConfig.metrics)
-    if metrics_raw is None:
-        metrics = ()
-    elif isinstance(metrics_raw, Sequence) and not isinstance(
-        metrics_raw, (str, bytes)
-    ):
-        metrics = tuple(str(item) for item in metrics_raw)
-    else:
-        raise TypeError("evaluation.metrics must be a sequence of strings or null")
-
-    return EvaluationConfig(
-        holdout_size=holdout_size,
-        metrics=metrics,
-    )
 
 
 def _load_seed(raw_config: Mapping[str, Any]) -> int:
@@ -328,7 +408,7 @@ def load_stage_b_config(path: str | Path) -> StageBConfig:
     selection = _load_selection(_require(raw_config, "selection", "Stage-B config"))
     model = _load_model(_require(raw_config, "model", "Stage-B config"))
     runner = _load_runner(_require(raw_config, "runner", "Stage-B config"))
-    evaluation = _load_evaluation(raw_config.get("evaluation"))
+    critic = _load_critic(raw_config.get("critic"))
     seed_value = _load_seed(raw_config)
 
     return StageBConfig(
@@ -342,13 +422,13 @@ def load_stage_b_config(path: str | Path) -> StageBConfig:
         selection=selection,
         model=model,
         runner=runner,
-        evaluation=evaluation,
+        critic=critic,
     )
 
 
 __all__ = [
+    "CriticConfig",
     "GuidanceConfig",
-    "EvaluationConfig",
     "RunnerConfig",
     "ModelConfig",
     "OutputConfig",

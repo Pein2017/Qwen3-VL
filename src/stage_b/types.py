@@ -7,7 +7,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, Literal, Mapping, Optional, Sequence, Tuple
-ExperienceOperationKind = Literal["upsert", "remove"]
+
+ExperienceOperationKind = Literal["upsert", "remove", "merge"]
 
 
 @dataclass(frozen=True)
@@ -38,10 +39,14 @@ class ExperienceMetadata:
 
         reflection_raw = payload.get("reflection_id")
         if not isinstance(reflection_raw, str) or not reflection_raw.strip():
-            raise ValueError("experience metadata reflection_id must be non-empty string")
+            raise ValueError(
+                "experience metadata reflection_id must be non-empty string"
+            )
 
         sources_raw = payload.get("sources", [])
-        if isinstance(sources_raw, Sequence) and not isinstance(sources_raw, (str, bytes)):
+        if isinstance(sources_raw, Sequence) and not isinstance(
+            sources_raw, (str, bytes)
+        ):
             sources = tuple(str(item) for item in sources_raw)
         else:
             sources = ()
@@ -70,10 +75,14 @@ class ExperienceOperation:
     text: Optional[str]
     rationale: Optional[str]
     evidence: Tuple[str, ...] = field(default_factory=tuple)
+    merged_from: Optional[Tuple[str, ...]] = None
+
 
 GroupLabel = Literal["pass", "fail"]
 ChineseVerdict = Literal["通过", "不通过"]
-ReflectionAction = Literal["refine", "noop"]
+class ReflectionAction(str):
+    """String subclass for reflection actions ('refine' or 'noop')."""
+    pass
 
 
 @dataclass(frozen=True)
@@ -168,24 +177,64 @@ class ParsedTrajectory:
 
 @dataclass(frozen=True)
 class DeterministicSignals:
-    """Deterministic sidecar metrics used for reflection context."""
+    """Deterministic sidecar metrics used for reflection context.
+
+    These are minimal signals used for selection tie-breaking only.
+    The CriticEngine provides LLM-based evaluation.
+    """
 
     label_match: Optional[bool]
     self_consistency: Optional[float]
-    candidate_agreement: Optional[bool]
     confidence: Optional[float]
-    label_trust: Optional[float]
-    semantic_advantage: float
+
+
+@dataclass(frozen=True)
+class CriticOutput:
+    """LLM-generated per-candidate evaluation from CriticEngine.
+
+    Keys are English; string values are Chinese per project policy.
+    """
+
+    summary: str
+    critique: str
+    root_cause: Optional[str] = None
+    issues: Optional[Tuple[str, ...]] = None
+    # Deprecated in exports; may be present internally for transition
+    candidate_ops: Optional[Tuple[Dict[str, object], ...]] = None
+    uncertainty_note: Optional[str] = None
+    # P1.11 schema fields (LLM-only signals for conservative selection)
+    verdict: Optional[ChineseVerdict] = None  # "通过" | "不通过"
+    needs_recheck: Optional[bool] = None
+    uncertainty_reason: Optional[str] = None
+    evidence_quality_level: Optional[Literal["高", "中", "低"]] = None
+    evidence_sufficiency: Optional[bool] = None
+    label_consistency: Optional[Literal["一致", "矛盾", "不确定"]] = None
+    suspected_label_noise: Optional[bool] = None
+    recommended_action: Optional[Literal["通过", "不通过", "人工复核"]] = None
 
 
 @dataclass(frozen=True)
 class TrajectoryWithSignals:
-    """Parsed trajectory bundled with deterministic signals."""
+    """Parsed trajectory bundled with deterministic signals.
 
-    parsed: ParsedTrajectory
-    signals: DeterministicSignals
-    summary: Optional[str] = None
-    critique: Optional[str] = None
+    Supports two initialization styles:
+    1) parsed-style: provide 'parsed=ParsedTrajectory(...)' and 'signals=...'
+    2) flat-style: provide 'candidate_index', 'verdict', 'reason', 'confidence', and 'signals'
+       (used in some tests/utilities that don't need the full base trajectory)
+    """
+
+    # Parsed style
+    parsed: Optional[ParsedTrajectory] = None
+    # Common signals
+    signals: Optional[DeterministicSignals] = None
+    # Optional critic artifacts
+    critic: Optional[CriticOutput] = None
+    warnings: Tuple[str, ...] = field(default_factory=tuple)
+    # Flat style (lightweight view used in some tests)
+    candidate_index: Optional[int] = None
+    verdict: Optional[str] = None
+    reason: Optional[str] = None
+    confidence: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -198,13 +247,14 @@ class SelectionResult:
     reason: str
     confidence: Optional[float]
     label_match: Optional[bool]
-    semantic_advantage: float
     selected_candidate: int
     guidance_step: int
     reflection_change: Optional[str]
     reflection_cycle: int
-    summary: Optional[str] = None
-    critique: Optional[str] = None
+    # Extended export fields
+    eligible: Optional[bool] = None
+    ineligible_reason: Optional[str] = None
+    warnings: Tuple[str, ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)
@@ -216,6 +266,9 @@ class ExperienceCandidate:
     reason: Optional[str]
     confidence: Optional[float]
     signals: DeterministicSignals
+    # Critic insights (populated from CriticOutput when available)
+    summary: Optional[str] = None
+    critique: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -259,17 +312,18 @@ class ReflectionOutcome:
     mission: str
     proposal: ReflectionProposal
     applied: bool
-    pre_uplift: float
-    post_uplift: float
     guidance_step_before: int
     guidance_step_after: int
     operations: Tuple[ExperienceOperation, ...]
     eligible: bool
+    applied_epoch: Optional[int] = None
     ineligible_reason: Optional[str] = None
+    warnings: Tuple[str, ...] = field(default_factory=tuple)
 
 
 __all__ = [
     "ChineseVerdict",
+    "CriticOutput",
     "DecodeConfig",
     "DeterministicSignals",
     "ExperienceMetadata",

@@ -1,6 +1,6 @@
 # Base Configuration - Shared defaults for Qwen3-VL SFT
 
-global_max_length: 20000
+global_max_length: 15000
 
 model:
   torch_dtype: bfloat16
@@ -9,6 +9,7 @@ model:
 template:
   template: qwen3_vl
   truncation_strategy: right
+  max_pixels: 1572864999  # an extremely large value so that never `do_resize`
 
 deepspeed:
   enabled: true
@@ -50,12 +51,13 @@ training:
     min_lr: 1.0e-6
 
 data:
-  dataset: [placeholder]
+  # Required by ms-swift TrainArguments validation (actual datasets loaded via custom.train_jsonl/val_jsonl)
+  dataset: ["dummy"]
+  val_dataset: ["dummy"]  # Prevent eval_strategy from being overridden to 'no'
   dataset_num_proc: 8
   dataloader_num_workers: 8
   dataloader_pin_memory: true
   dataloader_prefetch_factor: 4
-  eval_dataset: [placeholder]
 
 custom:
   json_format: standard
@@ -64,5 +66,3 @@ custom:
   val_jsonl: data/bbu_full_768/val.jsonl
   dump_conversation_path: output/conversation_text.txt
 
-template:
-  max_pixels: 1572864999  # an extremely large value so that never `do_resize`

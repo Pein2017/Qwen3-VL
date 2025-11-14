@@ -139,10 +139,7 @@ def test_reflection_refine_action_accepted(tmp_path):
     signals = DeterministicSignals(
         label_match=False,
         self_consistency=0.8,
-        candidate_agreement=True,
         confidence=0.8,
-        label_trust=0.5,
-        semantic_advantage=0.5,
     )
 
     candidate = TrajectoryWithSignals(parsed=trajectory, signals=signals)
@@ -214,8 +211,7 @@ def test_reflection_refine_action_accepted(tmp_path):
     updated_guidance = guidance_map["挡风板安装检查"]
     assert updated_guidance.step == 2
     assert (
-        updated_guidance.experiences["G0"]
-        == "[G0]. 若挡风板缺失则判定不通过并提示复检"
+        updated_guidance.experiences["G0"] == "[G0]. 若挡风板缺失则判定不通过并提示复检"
     )
     assert updated_guidance.metadata["G0"].reflection_id == outcome.reflection_id
     assert updated_guidance.metadata["G0"].sources == ("QC-001",)
@@ -228,9 +224,7 @@ def test_reflection_refine_action_accepted(tmp_path):
     assert final_log_entry["reflection"]["applied"] is True
     assert final_log_entry["reflection"]["guidance_step_before"] == 1
     assert final_log_entry["reflection"]["guidance_step_after"] == 2
-    assert (
-        final_log_entry["reflection"]["proposal"]["summary"] == "挡板缺失仍被放行"
-    )
+    assert final_log_entry["reflection"]["proposal"]["summary"] == "挡板缺失仍被放行"
 
 
 def test_reflection_noop_action_not_applied(tmp_path):

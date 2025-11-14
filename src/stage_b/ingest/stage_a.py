@@ -11,7 +11,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Mapping, MutableMapping, Optional, Sequence, Tuple
 
-from ..io.guidance import GuidanceRepository
 from ..types import GroupLabel, GroupTicket, LabelProvenance, StageASummaries
 
 logger = logging.getLogger(__name__)
@@ -76,17 +75,14 @@ def _parse_timestamp(raw: Optional[str]) -> Optional[datetime]:
 
 def ingest_stage_a(
     stage_a_paths: Sequence[str | Path],
-    guidance_repo: GuidanceRepository,
 ) -> Sequence[GroupTicket]:
     """Load Stage-A JSONL outputs into ticket objects for Stage-B."""
-
-    guidance_repo.ensure_initialized()
     records: list[GroupTicket] = []
 
     for path_like in stage_a_paths:
         path = Path(path_like)
         if not path.exists():
-            logger.warning("Skipping missing Stage-A file: %s", path)
+            logger.warning(f"Skipping missing Stage-A file: {path}")
             continue
 
         with path.open("r", encoding="utf-8") as fh:
@@ -98,7 +94,7 @@ def ingest_stage_a(
                     payload: MutableMapping[str, object] = json.loads(stripped)
                 except json.JSONDecodeError as exc:
                     logger.error(
-                        "Invalid JSON at %s:%d: %s", path.name, line_number, exc
+                        f"Invalid JSON at {path.name}:{line_number}: {exc}"
                     )
                     continue
 
@@ -124,7 +120,6 @@ def ingest_stage_a(
                         metadata=None,
                     )
 
-                    guidance_repo.ensure_mission(mission)
 
                     ticket = GroupTicket(
                         group_id=group_id,
@@ -136,10 +131,7 @@ def ingest_stage_a(
                     records.append(ticket)
                 except Exception as exc:  # noqa: BLE001 - contextual logging
                     logger.error(
-                        "Failed to parse Stage-A record at %s:%d (%s)",
-                        path.name,
-                        line_number,
-                        exc,
+                        f"Failed to parse Stage-A record at {path.name}:{line_number} ({exc})"
                     )
 
     if not records:

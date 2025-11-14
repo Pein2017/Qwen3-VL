@@ -4,15 +4,15 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import logging
-from typing import Dict, List, Mapping, Sequence
+from datetime import datetime, timezone
+from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
 import torch
 from transformers import PreTrainedModel, PreTrainedTokenizerBase
 
 from .config import SamplerConfig
-from .prompts import build_messages
+from .sampling.prompts import build_messages
 from .types import (
     DecodeConfig,
     GroupLabel,
@@ -48,7 +48,7 @@ def _trim_assistant_prefix(text: str) -> str:
     return text[last_index + marker_length :]
 
 
-def _normalize_verdict(text: str) -> GroupLabel | None:
+def _normalize_verdict(text: str) -> Optional[GroupLabel]:
     cleaned = text.strip().replace(" ", "").lower()
     if cleaned in {"通过", "pass", "通过。"}:
         return "pass"
@@ -57,7 +57,7 @@ def _normalize_verdict(text: str) -> GroupLabel | None:
     return None
 
 
-def _parse_confidence(text: str) -> float | None:
+def _parse_confidence(text: str) -> Optional[float]:
     stripped = text.strip()
     if not stripped:
         return None
@@ -86,7 +86,7 @@ def _parse_confidence(text: str) -> float | None:
 
 def _parse_three_line_response(
     response: str,
-) -> tuple[bool, GroupLabel | None, str | None, float | None]:
+) -> Tuple[bool, Optional[GroupLabel], Optional[str], Optional[float]]:
     stripped = _trim_assistant_prefix(response).strip()
     lines = [line.strip() for line in stripped.splitlines() if line.strip()]
     if len(lines) < 3:
@@ -127,7 +127,7 @@ class RolloutSampler:
         tokenizer: PreTrainedTokenizerBase,
         config: SamplerConfig,
         *,
-        device: str | None = None,
+        device: Optional[str] = None,
     ) -> None:
         self.model = model
         self.tokenizer = tokenizer
@@ -271,9 +271,7 @@ class RolloutSampler:
 
                     if not format_ok and self.config.format_filter:
                         logger.debug(
-                            "Discarding candidate %s for %s due to format violation",
-                            candidate_index,
-                            ticket.group_id,
+                            f"Discarding candidate {candidate_index} for {ticket.group_id} due to format violation"
                         )
                         continue
 

@@ -18,7 +18,7 @@
 # Track files in the tracked folders
 !src/**
 !configs/**
-!docs/**
+!docs/**/*
 !demo/**
 !scripts/**
 !openspec/**
@@ -30,7 +30,9 @@
 !AGENTS.md
 !compare/**
 .cursor/**
-references/**
+!references/**/*.md
+!references/**/*.py
+
 
 # Ignore common Python cache folders
 **/__pycache__/

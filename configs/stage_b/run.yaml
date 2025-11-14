@@ -5,7 +5,7 @@ stage_a_paths:
 seed: 17
 
 model:
-  model_name_or_path: output/summary_merged/10-31
+  model_name_or_path: output_4b/summary_merged/10-31
   torch_dtype: bfloat16
   device_map: auto
 
@@ -15,7 +15,7 @@ guidance:
 
 output:
   root: output_post/stage_b
-  run_name: debug  
+  run_name: debug
 
 sampler:
   samples_per_decode: 2
@@ -40,17 +40,26 @@ sampler:
 signals:
   store_confidence: true
   enable_consistency: true
-  weights:
-    label_match: 1.0
-    self_consistency: 0.5
-    candidate_agreement: 0.25
-    confidence: 0.25
+
+critic:
+  enabled: true
+  prompt_path: configs/prompts/stage_b_critic.txt
+  temperature: 0.2
+  top_p: 0.9
+  max_new_tokens: 512
+  max_candidates: 6
+  summary_max_chars: 200
+  critique_max_chars: 300
 
 reflection:
   prompt_path: configs/prompts/stage_b_reflection_prompt.txt
   batch_size: 8
   apply_if_delta: 0.05
   allow_uncertain: true
+  eligibility_policy: selected_mismatch_or_all_wrong
+  max_operations: 3
+  change_cap_per_epoch: 10
+
   temperature: 0.3  # Higher temperature for more diverse guidance entries
   top_p: 0.9  # Higher top_p for more diverse sampling
   max_new_tokens: 2048  # Allow longer responses for multiple guidance entries
@@ -62,10 +71,3 @@ selection:
 
 runner:
   epochs: 1
-
-evaluation:
-  holdout_size: 200
-  metrics:
-    - label_match_rate
-    - mean_semantic_advantage
-

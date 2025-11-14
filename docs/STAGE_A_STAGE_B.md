@@ -60,17 +60,18 @@ The Stage-A/Stage-B stack addresses these by standardizing summaries, orchestrat
 | ---- | ---------------------- |
 | Input | Stage-A summaries + ground-truth labels + current mission guidance. |
 | Process | Samples multiple verdict drafts, scores them with deterministic signals, convenes an LLM “reflection” to propose guidance edits, and applies approved changes. |
-| Output | Final verdicts (JSONL/Parquet), trajectories for audit, reflection log summarizing guidance shifts, updated guidance repository. |
+| Output | Final verdicts (JSONL), trajectories for audit, reflection log summarizing guidance shifts, updated mission-specific guidance repository. |
 
 **Experiences = living policy**
 - Guidance entries (`[G0]`, `[G1]`, …) are policy snippets the model reads before making a decision.
 - Reflection analyzes recent wins/losses and requests incremental edits (add, revise, retire rules).
 - Each applied change records rationale, evidence group ids, and reflection id for traceability.
+- Guidance updates are applied to mission-specific files; promotion to global guidance requires manual review and deployment.
 
 **Business value**
 - Enables weekly policy refresh without model retraining.
 - Ensures decisions remain aligned with latest defect definitions and customer commitments.
-- Produces a clear chain of responsibility: which batch triggered the change, who approved deployment, and the measured uplift.
+- Produces a clear chain of responsibility: which batch triggered the change, who approved deployment, and the rationale for each guidance update.
 
 ---
 
@@ -83,7 +84,7 @@ The Stage-A/Stage-B stack addresses these by standardizing summaries, orchestrat
 3. **Pre-Flight Checks (Quality PM)**
    - Review Stage-A quality spot-check, confirm guidance file is populated, sign off on batch release.
 4. **Stage-B Loop (Reflection Steward)**
-   - Start run, monitor per-batch dashboards (label match, semantic uplift, holdout results).
+   - Start run, monitor per-batch dashboards (label match, semantic consistency).
    - Approve or veto reflection proposals flagged as “uncertain” before they are applied (configurable).
 5. **Verdict Handoff (Business Owner)**
    - Consume selections feed; annotate exceptions needing human escalation.
@@ -106,7 +107,7 @@ The Stage-A/Stage-B stack addresses these by standardizing summaries, orchestrat
 - **Confidence Distribution**: Monitor for drift—sustained low confidence may indicate prompt or data issues.
 - **Supplier Impact**: Number of adverse decisions per supplier; feed into commercial scorecards.
 
-Each KPI is reported via `reflection.jsonl` and `selections.parquet` exports. Analytics teams tie these into Tableau/Looker dashboards.
+Each KPI is reported via `reflection.jsonl` and `selections.jsonl` exports. Analytics teams tie these into Tableau/Looker dashboards.
 
 ---
 
@@ -147,7 +148,7 @@ Each KPI is reported via `reflection.jsonl` and `selections.parquet` exports. An
 
 ## 9. Integration Touchpoints
 
-- **MES / Production Systems**: Consume `selections.parquet` for automated stop/go decisions.
+- **MES / Production Systems**: Consume `selections.jsonl` for automated stop/go decisions.
 - **Supplier Portals**: Render Stage-A summaries and final verdict reasons in dispute workflows.
 - **Audit Archive**: Store guidance snapshots + trajectories for quarterly compliance testing.
 - **Analytics Warehouse**: Load JSONL outputs into structured tables for KPI dashboards.
@@ -172,8 +173,8 @@ For hands-on runbooks (CLI flags, YAML examples), refer to the technical documen
 - **Mission**: A production-quality inspection program with clearly defined pass/fail policy.
 - **Experience**: A numbered guidance entry read by the model; represents codified business rules.
 - **Reflection**: Automated review that proposes experience edits based on recent performance.
-- **Holdout**: Reserved subset used to verify uplift before applying new guidance.
 - **Verdict**: Final pass/fail decision plus supporting rationale text.
+- **Guidance Repository**: Mission-specific policy file that evolves through reflection cycles; changes are auditable and reversible via snapshots.
 
 ---
 

@@ -99,7 +99,7 @@ Comprehensive guide for training, inference, deployment, and advanced topics.
 
 **Vision Token Insertion**:
 ```
-Image (PIL) 
+Image (PIL)
   → Processor (resizes to multiple of patch_size)
   → Vision Encoder (ViT) → [batch, num_patches, hidden_dim]
   → Aligner (MLP projector) → [batch, num_tokens, llm_dim]
@@ -220,6 +220,12 @@ template:
 
 # Set global_max_length as the single length knob
 global_max_length: 4096      # Proxies both model.max_model_len and template.max_length
+
+# REQUIRED: ms-swift validation placeholder
+# Even with custom dataset loading, ms-swift's TrainArguments.__post_init__
+# validates that dataset is non-empty. Keep this dummy value.
+data:
+  dataset: ["dummy"]         # Never remove - required for ms-swift initialization
 ```
 
 **Adapter Preparation** (Critical!):
@@ -555,7 +561,7 @@ This performs ingest → rollout → judge → selection in one pass and stores 
     }
   }
   ```
-- `selections.jsonl`/`selections.parquet`: final verdicts with the same `{"group_id", "mission", "result": {...}}` shape (result includes `verdict`, `reason`, `summary_confidence`, `selected_candidate`, etc.).
+- `selections.jsonl`: final verdicts with the same `{"group_id", "mission", "result": {...}}` shape (result includes `verdict`, `reason`, `summary_confidence`, `selected_candidate`, etc.).
 
 > **Tip:** Set `sampler.samples_per_decode` > 1 when you need multiple attempts per ticket under the same temperature; keep it at `1` for deterministic sweeps.
 > Configure multi-epoch runs via the `runner` block in `configs/stage_b_training_free.yaml` (e.g., `epochs: 5`) and set the top-level `seed` to lock randomness. Stage-B shuffles Stage-A tickets deterministically each epoch using this seed.
@@ -808,6 +814,120 @@ if pixel_values is not None:
 
 See also: Training Guide → LoRA Adapter Preparation, and Data Formats → Coordinate Normalization.
 
+
+### Image content payload contract (verified)
+
+- Content shape for images in user turns:
+  - Preferred: `{ "type": "image", "image": <value> }`
+  - Also accepted: `{ "type": "image_url", "image_url": {"url": <value>} }` or `{ "type": "image_url", "image_url": <value> }` — ms‑swift normalizes the `_url` suffix and extracts the `url` field when a dict is provided.
+- Supported `<value>` types (per ms‑swift and HF Qwen3‑VL):
+  - String path (absolute or relative). Relative paths are resolved via `ROOT_IMAGE_DIR` (we set this to the JSONL directory in `src/sft.py`).
+  - Fully‑qualified URL (`http(s)://...`).
+  - Data URL (`data:image/<fmt>;base64,...`). Our builder emits this automatically when the record contains bytes.
+  - `PIL.Image.Image` objects are accepted by ms‑swift internals (images list is typed as `List[Union[str, Image.Image]]`).
+- What the builder emits:
+  - It always uses the `image` key and returns strings. If the input image is `{"bytes": ...}`, it converts to a PNG data‑URL.
+
+References (repo code):
+- Builder uses `{"type": "image", "image": ...}`:
+
+  ````python
+  # src/datasets/builders/jsonlines.py
+  user_contents.append({"type": "image", "image": self._to_url(image)})
+  ````
+- ms‑swift extracts media and normalizes `_url` suffix:
+
+  ````python
+  # swift/llm/template/template_inputs.py
+  key: str = item['type']
+  value = item.get(key)
+  if key.endswith('_url'):
+      key = key[:-len('_url')]
+  if isinstance(value, dict):
+      value = value['url']
+  if value:
+      res[f'{key}s'].append(value)
+  ````
+
+### Dataset config: data.dataset placeholder vs custom.train_jsonl (CRITICAL)
+
+**IMPORTANT: `data.dataset` is NOT optional in ms-swift's standard flow, but our pipeline bypasses it entirely.**
+
+#### ms-swift's standard dataset loading (NOT used by us)
+
+When you call `SwiftSft(train_args).main()`, ms-swift's `_prepare_dataset()` method is invoked:
+
+````python
+# swift/llm/train/sft.py, lines 123-143
+@RayHelper.function(group='default')
+def _prepare_dataset(self):
+    args = self.args
+    if args.cached_dataset:
+        train_datasets, val_datasets = self._get_cached_dataset()
+    else:
+        train_datasets, val_datasets = [], []
+    if args.dataset:  # ← CRITICAL: only loads if args.dataset is non-empty
+        train_dataset, val_dataset = self._get_dataset()
+        train_dataset, val_dataset = self._encode_dataset(train_dataset, val_dataset, pre_process=pre_process)
+        train_datasets.append(train_dataset)
+        val_datasets.append(val_dataset)
+    train_dataset = DatasetLoader._concat_datasets(train_datasets)
+    val_dataset = DatasetLoader._concat_datasets(val_datasets)
+    return [train_dataset, val_dataset]
+````
+
+If `args.dataset` is empty (or `[placeholder]`), the conditional `if args.dataset:` evaluates to `False`, and `_get_dataset()` is never called. The result is `train_datasets = []`, which gets concatenated to `None`:
+
+````python
+# swift/llm/dataset/loader.py, lines 181-186
+@staticmethod
+def _concat_datasets(datasets: List[HfDataset]) -> Optional[HfDataset]:
+    if len(datasets) == 0:
+        return  # Returns None
+    if len(datasets) == 1:
+        return datasets[0]
+    return concatenate_datasets(datasets)
+````
+
+**Result**: If `data.dataset` is empty or a placeholder, ms-swift's `_prepare_dataset()` returns `[None, None]`, and the trainer receives `train_dataset=None`.
+
+#### Our pipeline: complete bypass of ms-swift's dataset loading
+
+Our `src/sft.py` **never calls** `sft.main()` or `sft.run()`. Instead, we:
+
+1. Initialize `SwiftSft(train_args)` — this only prepares model, template, and callbacks (lines 28-34 of sft.py)
+2. **Skip** `_prepare_dataset()` entirely
+3. Construct our own dataset in-process:
+   ````python
+   # src/sft.py, lines 302-315
+   dataset = DenseCaptionDataset.from_jsonl(
+       train_jsonl,
+       template=sft.template,
+       user_prompt=custom_config.user_prompt,
+       emit_norm=custom_config.emit_norm,
+       ...
+   )
+   ````
+4. Pass it directly to the trainer:
+   ````python
+   # src/sft.py, lines 524-533
+   trainer = trainer_cls(
+       model=sft.model,
+       args=train_args.training_args,
+       data_collator=data_collator,
+       train_dataset=dataset,  # ← Our dataset, not ms-swift's
+       eval_dataset=eval_dataset,
+       ...
+   )
+   ````
+
+#### Conclusion
+
+- **`data.dataset` is NOT required** for our dense captioning pipeline because we bypass ms-swift's dataset loading entirely.
+- **`data.dataset: [placeholder]` has NO effect** on our training; it is never read or used.
+- **`custom.train_jsonl` is the authoritative dataset source** for our pipeline.
+- **Recommendation**: You may safely omit `data.dataset` from configs, or keep it as `[placeholder]` for compatibility with ms-swift's CLI tools (if used separately). Either way, it does not affect our training.
+
 ## Performance Tips (FAQ)
 
 ### Memory Optimization
@@ -853,6 +973,18 @@ See also: Training Guide → LoRA Adapter Preparation, and Data Formats → Coor
    ```
 
 ## Common Issues (FAQ)
+
+### Issue: "ValueError: self.dataset: [], self.cached_dataset: []. Please input the training dataset."
+
+**Cause:** Missing required `dataset: ["dummy"]` in config's `data:` section
+
+**Solution:**
+```yaml
+data:
+  dataset: ["dummy"]  # Required by ms-swift TrainArguments validation
+```
+
+**Why needed:** ms-swift validates non-empty dataset during `TrainArguments.__post_init__()` before our custom dataset loading. The placeholder satisfies validation but is never used. See `DATA_AND_DATASETS.md` for details.
 
 ### Issue: "Expected all tensors to be on the same device"
 

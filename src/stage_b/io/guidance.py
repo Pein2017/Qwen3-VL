@@ -5,9 +5,11 @@
 from __future__ import annotations
 
 import json
+import logging
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Mapping, MutableMapping, Optional, Sequence, cast
+from typing import Dict, Mapping, MutableMapping, Optional, Sequence, Union, cast
 
 from ..types import (
     ExperienceMetadata,
@@ -15,6 +17,9 @@ from ..types import (
     MissionGuidance,
     ReflectionProposal,
 )
+
+logger = logging.getLogger(__name__)
+
 
 
 class MissionGuidanceError(RuntimeError):
@@ -104,12 +109,12 @@ def _parse_mission_section(
         else None
     )
 
-    # Handle migration from old schema: "version" -> "step"
-    step_raw = payload.get("step") or payload.get("version")
+    # Current schema only: require explicit 'step' and 'experiences'
+    step_raw = payload.get("step")
     if isinstance(step_raw, bool) or step_raw is None:
         raise MissionGuidanceError(f"Mission {mission} step must be an integer")
     try:
-        step = int(cast(int | str | float, step_raw))
+        step = int(cast(Union[int, str, float], step_raw))
     except (TypeError, ValueError) as exc:  # pragma: no cover - defensive
         raise MissionGuidanceError(
             f"Mission {mission} step must be an integer, got {step_raw!r}"
@@ -117,24 +122,8 @@ def _parse_mission_section(
 
     updated_at = _parse_datetime(payload.get("updated_at"))
 
-    # Handle migration from old schema: "guidance" -> "experiences"
-    experiences_raw = payload.get("experiences")
-    if experiences_raw is None:
-        guidance_raw = payload.get("guidance")
-        if isinstance(guidance_raw, Sequence) and guidance_raw:
-            experiences = {
-                f"G{i}": str(entry.get("text", ""))
-                if isinstance(entry, Mapping)
-                else str(entry)
-                for i, entry in enumerate(guidance_raw)
-            }
-            experiences = {k: v for k, v in experiences.items() if v.strip()}
-            if not experiences:
-                experiences = {"G0": "Initial guidance placeholder"}
-        else:
-            experiences = {"G0": "Initial guidance placeholder"}
-    else:
-        experiences = _parse_experiences_dict(mission, payload)
+    # Require 'experiences' mapping; no legacy 'guidance' fallback
+    experiences = _parse_experiences_dict(mission, payload)
 
     metadata = _parse_metadata_dict(mission, payload)
 
@@ -160,9 +149,10 @@ class GuidanceRepository:
         if retention <= 0:
             raise ValueError("retention must be > 0")
 
-        self.path = Path(path)
-        self.retention = retention
-        self._cache: Dict[str, MissionGuidance] | None = None
+        # Use object.__setattr__ to be compatible with frozen dataclass subclasses in tests
+        object.__setattr__(self, "path", Path(path))
+        object.__setattr__(self, "retention", retention)
+        object.__setattr__(self, "_cache", None)
 
     # ------------------------------------------------------------------
     # Lifecycle helpers
@@ -175,20 +165,6 @@ class GuidanceRepository:
             json.dump({}, fh, ensure_ascii=False, indent=2)
         self._cache = {}
 
-    def ensure_mission(self, mission: str) -> None:
-        guidance_map = self.load()
-        if mission in guidance_map:
-            return
-        timestamp = _now()
-        guidance_map[mission] = MissionGuidance(
-            mission=mission,
-            focus=None,
-            experiences={"G0": "Initial guidance placeholder"},
-            step=1,
-            updated_at=timestamp,
-            metadata={},
-        )
-        self._write(guidance_map)
 
     # ------------------------------------------------------------------
     # Accessors
@@ -291,7 +267,7 @@ class GuidanceRepository:
 
         for op in operations:
             normalized_op = op.op
-            if normalized_op not in {"upsert", "remove"}:
+            if normalized_op not in {"upsert", "remove", "merge"}:
                 raise MissionGuidanceError(
                     f"Unsupported experience operation '{normalized_op}'"
                 )
@@ -305,6 +281,10 @@ class GuidanceRepository:
                     del experiences[key]
                     metadata.pop(key, None)
                     applied_any = True
+                else:
+                    logger.warning(
+                        f"remove operation skipped for missing key '{key}' in mission {current.mission}"
+                    )
                 continue
 
             text = (op.text or "").strip()
@@ -318,6 +298,7 @@ class GuidanceRepository:
 
             experiences[key] = text
 
+            # Build combined sources (proposal evidence + fallback group ids)
             combined_sources = []
             seen_sources = set()
             for source in list(op.evidence or ()) + list(source_fallback):
@@ -327,6 +308,27 @@ class GuidanceRepository:
                     seen_sources.add(source_str)
 
             rationale = (op.rationale or "").strip() or None
+
+            # If this is a merge, remove merged_from keys without reindexing
+            if normalized_op == "merge" and op.merged_from:
+                for mkey in op.merged_from:
+                    mkey_str = (mkey or "").strip()
+                    if not mkey_str or mkey_str == key:
+                        if mkey_str == key:
+                            logger.warning(
+                                f"merge operation includes target key '{key}' in merged_from for mission {current.mission}; skipping"
+                            )
+                        continue
+                    if mkey_str in experiences:
+                        try:
+                            del experiences[mkey_str]
+                        except KeyError:  # pragma: no cover - defensive
+                            pass
+                        metadata.pop(mkey_str, None)
+                    else:
+                        logger.warning(
+                            f"merge operation skipped missing source key '{mkey_str}' in mission {current.mission}"
+                        )
 
             metadata[key] = ExperienceMetadata(
                 updated_at=now,
@@ -338,7 +340,7 @@ class GuidanceRepository:
 
         if not applied_any:
             raise MissionGuidanceError("Reflection refine proposal did not modify guidance")
-        
+
         # Enforce non-empty experiences dict
         if not experiences:
             raise MissionGuidanceError(
@@ -366,6 +368,8 @@ class GuidanceRepository:
     ) -> Sequence[ExperienceOperation]:
         if operations is not None:
             return operations
+        if getattr(proposal, "operations", None):
+            return tuple(proposal.operations)
         if parsed_experiences is not None:
             return [
                 ExperienceOperation(
@@ -476,22 +480,17 @@ class GuidanceRepository:
         }
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Create snapshot before writing if file exists
-        if self.path.exists():
-            snapshot_dir = self.path.parent / "snapshots"
-            snapshot_dir.mkdir(parents=True, exist_ok=True)
-            timestamp = _format_timestamp_microsecond(_now())
-            snapshot_path = snapshot_dir / f"guidance-{timestamp}.json"
-            # Use replace for atomic snapshot creation
-            self.path.replace(snapshot_path)
-            self._prune_snapshots(snapshot_dir)
+        # Prepare snapshot directory
+        snapshot_dir = self.path.parent / "snapshots"
+        snapshot_dir.mkdir(parents=True, exist_ok=True)
 
         # Atomic write via temp file + rename
         temp_path = self.path.with_suffix(self.path.suffix + ".tmp")
         try:
-            with temp_path.open("w", encoding="utf-8") as fh:
+            # Use builtins.open to align with tests that patch open()
+            with open(temp_path, "w", encoding="utf-8") as fh:  # type: ignore[arg-type]
                 json.dump(serializable, fh, ensure_ascii=False, indent=2)
-            # Atomic rename
+            # Atomic rename to live path
             temp_path.replace(self.path)
         except Exception:
             # Clean up temp file on error
@@ -501,6 +500,18 @@ class GuidanceRepository:
                 except OSError:  # pragma: no cover - best effort cleanup
                     pass
             raise
+
+        # Create snapshot of the NEW live file (after atomic rename)
+        timestamp = _format_timestamp_microsecond(_now())
+        snapshot_path = snapshot_dir / f"guidance-{timestamp}.json"
+        try:
+            shutil.copy2(self.path, snapshot_path)
+        except Exception:
+            # Snapshot best-effort; do not block on failure
+            pass
+
+        # Prune old snapshots after write
+        self._prune_snapshots(snapshot_dir)
 
         self._cache = dict(payload)
 

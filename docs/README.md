@@ -47,6 +47,7 @@ YAML → ConfigLoader → SwiftSft → DenseCaptionDataset → Trainer
 - Adapters applied before trainer: `sft.prepare_model(...)`
 - Config-only surface (avoid CLI flags beyond `--config`)
 - Typed configuration contracts (`src/config/schema.py`) validate YAML before training launches.
+- **Required**: `data.dataset: ["dummy"]` in all configs (ms-swift validation requirement; see `DATA_AND_DATASETS.md`)
 
 ### Model Components & Token Flow
 

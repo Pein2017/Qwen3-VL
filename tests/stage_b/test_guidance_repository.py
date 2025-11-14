@@ -103,7 +103,7 @@ def test_guidance_repository_apply_reflection_with_operations(tmp_path):
     repo = GuidanceRepository(guidance_path, retention=1)
 
     proposal = ReflectionProposal(
-        action="refine",
+        action="refine",  # type: ignore[arg-type]
         summary="挡板缺失仍被放行",
         critique="需要补充挡板缺失规则",
         operations=(
@@ -214,14 +214,20 @@ def test_guidance_repository_remove_all_experiences_raises(tmp_path):
 
     guidance_path = tmp_path / "guidance.json"
     repo = GuidanceRepository(guidance_path, retention=2)
-    repo.ensure_initialized()
-    repo.ensure_mission("挡风板安装检查")
+    guidance_path.write_text(json.dumps({
+        "挡风板安装检查": {
+            "focus": "挡风板安装检查任务要点",
+            "step": 1,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "experiences": {"G0": "初始经验"}
+        }
+    }, ensure_ascii=False, indent=2), encoding="utf-8")
 
     original_guidance = repo.get("挡风板安装检查")
     assert original_guidance.experiences
 
     proposal = ReflectionProposal(
-        action="refine",
+        action="refine",  # type: ignore[arg-type]
         summary=None,
         critique=None,
         operations=(
@@ -253,8 +259,14 @@ def test_guidance_repository_creates_snapshot_atomic_write(tmp_path):
 
     guidance_path = tmp_path / "guidance.json"
     repo = GuidanceRepository(guidance_path, retention=2)
-    repo.ensure_initialized()
-    repo.ensure_mission("挡风板安装检查")
+    guidance_path.write_text(json.dumps({
+        "挡风板安装检查": {
+            "focus": "挡风板安装检查任务要点",
+            "step": 1,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "experiences": {"G0": "初始经验"}
+        }
+    }, ensure_ascii=False, indent=2), encoding="utf-8")
 
     with guidance_path.open("r", encoding="utf-8") as fh:
         original_payload = json.load(fh)
@@ -265,7 +277,7 @@ def test_guidance_repository_creates_snapshot_atomic_write(tmp_path):
             path.unlink()
 
     proposal = ReflectionProposal(
-        action="refine",
+        action="refine",  # type: ignore[arg-type]
         summary="新增挡板缺失提醒",
         critique="原有经验未覆盖挡板缺失场景",
         operations=(

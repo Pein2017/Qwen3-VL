@@ -5,7 +5,7 @@
 from .config import StageBConfig, load_stage_b_config
 from .ingest import ingest_stage_a
 from .io import GuidanceRepository
-from .prompts import build_messages
+from .sampling.prompts import build_messages
 from .reflection import ReflectionEngine
 from .runner import run_all
 

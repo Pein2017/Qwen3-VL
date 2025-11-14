@@ -1,4 +1,8 @@
-"""Unit tests for label_trust signal computation."""
+"""Unit tests for minimal signal extraction.
+
+Tests verify that the minimal signal set (label_match, confidence, optional self_consistency)
+works correctly per training-free Stage-B design.
+"""
 
 from datetime import datetime, timezone
 
@@ -15,8 +19,8 @@ from src.stage_b.types import (
 )
 
 
-def test_label_trust_with_confidence_and_label_match():
-    """Test label_trust computation when both confidence and label_match are available."""
+def test_label_match_and_confidence_signals():
+    """Test that label_match and confidence signals are computed correctly."""
     ticket = GroupTicket(
         group_id="QC-001",
         mission="挡风板安装检查",
@@ -24,7 +28,7 @@ def test_label_trust_with_confidence_and_label_match():
         summaries=StageASummaries(per_image={"image_1": "test"}),
     )
 
-    # Test case 1: Label matches, high confidence -> high trust
+    # Test case 1: Label matches, high confidence
     candidate1 = ParsedTrajectory(
         base=Trajectory(
             group_id="QC-001",
@@ -46,11 +50,8 @@ def test_label_trust_with_confidence_and_label_match():
     assert len(results) == 1
     assert results[0].signals.label_match is True  # "不通过" == "fail" (converted)
     assert results[0].signals.confidence == 0.9
-    assert (
-        results[0].signals.label_trust == 0.9
-    )  # label_match=True, so trust = confidence
 
-    # Test case 2: Label doesn't match, high confidence -> lower trust
+    # Test case 2: Label doesn't match, high confidence
     candidate2 = ParsedTrajectory(
         base=Trajectory(
             group_id="QC-001",
@@ -69,12 +70,8 @@ def test_label_trust_with_confidence_and_label_match():
     assert len(results2) == 1
     assert results2[0].signals.label_match is False  # "通过" != "fail"
     assert results2[0].signals.confidence == 0.9
-    assert results2[0].signals.label_trust is not None
-    assert (
-        abs(results2[0].signals.label_trust - 0.6) < 1e-6
-    )  # confidence - 0.3 = 0.9 - 0.3 = 0.6
 
-    # Test case 3: Label doesn't match, low confidence -> very low trust
+    # Test case 3: Label doesn't match, low confidence
     candidate3 = ParsedTrajectory(
         base=Trajectory(
             group_id="QC-001",
@@ -93,11 +90,10 @@ def test_label_trust_with_confidence_and_label_match():
     assert len(results3) == 1
     assert results3[0].signals.label_match is False
     assert results3[0].signals.confidence == 0.2
-    assert results3[0].signals.label_trust == 0.0  # max(0.0, 0.2 - 0.3) = 0.0
 
 
-def test_label_trust_without_confidence():
-    """Test label_trust computation when confidence is not available."""
+def test_signals_without_confidence():
+    """Test signal extraction when confidence is not available."""
     ticket = GroupTicket(
         group_id="QC-001",
         mission="挡风板安装检查",
@@ -109,7 +105,7 @@ def test_label_trust_without_confidence():
         store_confidence=False, enable_consistency=False, weights=None
     )
 
-    # Test case 1: Label matches, no confidence -> trust = 1.0
+    # Test case 1: Label matches, no confidence
     candidate1 = ParsedTrajectory(
         base=Trajectory(
             group_id="QC-001",
@@ -128,9 +124,8 @@ def test_label_trust_without_confidence():
     assert len(results1) == 1
     assert results1[0].signals.label_match is True
     assert results1[0].signals.confidence is None
-    assert results1[0].signals.label_trust == 1.0  # label_match=True -> trust = 1.0
 
-    # Test case 2: Label doesn't match, no confidence -> trust = 0.3
+    # Test case 2: Label doesn't match, no confidence
     candidate2 = ParsedTrajectory(
         base=Trajectory(
             group_id="QC-001",
@@ -149,11 +144,10 @@ def test_label_trust_without_confidence():
     assert len(results2) == 1
     assert results2[0].signals.label_match is False
     assert results2[0].signals.confidence is None
-    assert results2[0].signals.label_trust == 0.3  # label_match=False -> trust = 0.3
 
 
-def test_label_trust_without_label_match():
-    """Test label_trust computation when label_match cannot be determined."""
+def test_signals_without_label_match():
+    """Test signal extraction when label_match cannot be determined."""
     ticket = GroupTicket(
         group_id="QC-001",
         mission="挡风板安装检查",
@@ -184,7 +178,6 @@ def test_label_trust_without_label_match():
     assert len(results) == 1
     assert results[0].signals.label_match is None
     assert results[0].signals.confidence == 0.8
-    assert results[0].signals.label_trust is None  # Cannot compute without label_match
 
 
 def test_attach_signals_mixed_language_verdicts():
@@ -262,6 +255,3 @@ def test_attach_signals_mixed_language_verdicts():
         second.signals.self_consistency
     )
     assert third.signals.self_consistency == pytest.approx(1 / 3)
-
-    # Majority vote should align with at least one fail variant
-    assert first.signals.candidate_agreement is True

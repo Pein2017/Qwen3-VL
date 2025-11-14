@@ -1,10 +1,11 @@
-"""Scoring utilities for Stage-B (signals, selection, judge)."""
+"""Scoring utilities for Stage-B (selection only).
+
+Legacy modules (judge, signals) were removed; attach_signals lives at stage_b.signals.
+"""
 
 from .selection import select_for_group
-from .signals import attach_signals
 
 __all__ = [
-    "attach_signals",
     "select_for_group",
 ]
 

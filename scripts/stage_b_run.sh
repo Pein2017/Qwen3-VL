@@ -56,13 +56,10 @@ echo "Log level:    ${LOG_LEVEL}"
 echo "=================================="
 echo ""
 
-# Initialize conda and run the command from repo root
-source /root/miniconda3/etc/profile.d/conda.sh
-conda activate "${CONDA_ENV}"
+# Run from repo root using conda run
 cd "${REPO_DIR}"
-
 export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}
 # Run with any additional arguments (e.g., --step all)
 # Note: Additional args can override defaults (e.g., --log-level warning)
-exec python -m src.stage_b.runner "${ARGS[@]}" "$@"
+exec conda run -n "${CONDA_ENV}" python -m src.stage_b.runner "${ARGS[@]}" "$@"
 

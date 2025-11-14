@@ -4,10 +4,12 @@
 
 from __future__ import annotations
 
+from typing import Optional, Union
+
 from ..types import GroupLabel
 
 
-def normalize_verdict(verdict: str | GroupLabel | None) -> GroupLabel | None:
+def normalize_verdict(verdict: Union[str, GroupLabel, None]) -> Optional[GroupLabel]:
     """
     Normalize verdict strings to canonical GroupLabel format.
 
