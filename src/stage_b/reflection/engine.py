@@ -9,9 +9,8 @@ import logging
 import re
 import uuid
 from collections import Counter
-from dataclasses import replace
 from pathlib import Path
-from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import torch
 from transformers import PreTrainedModel, PreTrainedTokenizerBase
@@ -183,17 +182,18 @@ class ReflectionEngine:
                 summary_text = item.critic.summary
                 critique_text = item.critic.critique
 
-            experience_candidates.append(
-                ExperienceCandidate(
-                    candidate_index=item.parsed.base.candidate_index,
-                    verdict=item.parsed.verdict,
-                    reason=item.parsed.reason,
-                    confidence=item.signals.confidence,
-                    signals=item.signals,
-                    summary=summary_text,
-                    critique=critique_text,
+            if item.parsed is not None and item.signals is not None:
+                experience_candidates.append(
+                    ExperienceCandidate(
+                        candidate_index=item.parsed.base.candidate_index,
+                        verdict=item.parsed.verdict,
+                        reason=item.parsed.reason,
+                        confidence=item.signals.confidence,
+                        signals=item.signals,
+                        summary=summary_text,
+                        critique=critique_text,
+                    )
                 )
-            )
         return ExperienceRecord(
             ticket=ticket,
             candidates=tuple(experience_candidates),
@@ -231,6 +231,7 @@ class ReflectionEngine:
         operations: Tuple[ExperienceOperation, ...] = ()
         ineligible_reason: Optional[str] = None
         warnings: List[str] = []
+        proposal: Optional[ReflectionProposal] = None
 
         # Check eligibility using configured policy
         eligible_for_reflection, eligibility_reason = self._check_eligibility(bundle)
@@ -238,7 +239,7 @@ class ReflectionEngine:
         if not eligible_for_reflection:
             evidence_ids = tuple(record.ticket.group_id for record in bundle.records)
             proposal = ReflectionProposal(
-                action="noop",
+                action=ReflectionAction("noop"),
                 summary="Skipped ineligible batch",
                 critique=f"Bundle not eligible for reflection: {eligibility_reason}",
                 operations=(),
@@ -262,7 +263,7 @@ class ReflectionEngine:
                     eligible = False
                     operations = tuple()
                     proposal = ReflectionProposal(
-                        action="noop",
+                        action=ReflectionAction("noop"),
                         summary="Epoch cap exhausted",
                         critique=None,
                         operations=tuple(),
@@ -282,7 +283,7 @@ class ReflectionEngine:
                         eligible = False
                         operations = tuple()
                         proposal = ReflectionProposal(  # type: ignore[call-arg]
-                            action="noop",
+                            action=ReflectionAction("noop"),
                             summary="All-wrong manual review",
                             critique="Flagged for 人工复核",
                             operations=tuple(),
@@ -291,92 +292,94 @@ class ReflectionEngine:
                             text=None,
                         )
                 # Otherwise, run reflection to propose operations
-                gen_error: Optional[str] = None
-                try:
-                    proposal = self._generate_reflection(bundle)
-                    operations = proposal.operations
-                    eligible = (
-                        proposal.action == "refine"
-                        and bool(operations)
-                        and (
-                            self.config.allow_uncertain or not proposal.uncertainty_note
+                if eligible:
+                    gen_error: Optional[str] = None
+                    try:
+                        proposal = self._generate_reflection(bundle)
+                        operations = proposal.operations
+                        eligible = (
+                            proposal.action == "refine"
+                            and bool(operations)
+                            and (
+                                self.config.allow_uncertain or not proposal.uncertainty_note
+                            )
                         )
-                    )
-                    if not eligible and proposal.action == "refine":
-                        if not operations:
-                            ineligible_reason = "No operations in proposal"
-                        elif (
-                            proposal.uncertainty_note
+                        if not eligible and proposal.action == "refine":
+                            if not operations:
+                                ineligible_reason = "No operations in proposal"
+                            elif (
+                                proposal.uncertainty_note
+                                and not self.config.allow_uncertain
+                            ):
+                                ineligible_reason = (
+                                    f"Uncertainty gating: {proposal.uncertainty_note}"
+                                )
+                            else:
+                                ineligible_reason = "Proposal validation failed"
+
+                        if proposal.action == "refine" and not operations:
+                            logger.warning(
+                                f"Reflection for mission {bundle.mission} produced no operations; treating as noop"
+                            )
+                            eligible = False
+
+                        if (
+                            proposal.action == "refine"
+                            and proposal.uncertainty_note
                             and not self.config.allow_uncertain
                         ):
-                            ineligible_reason = (
-                                f"Uncertainty gating: {proposal.uncertainty_note}"
+                            logger.info(
+                                f"Skipping reflection for mission {bundle.mission} due to uncertainty gating"
                             )
-                        else:
-                            ineligible_reason = "Proposal validation failed"
 
-                    if proposal.action == "refine" and not operations:
-                        logger.warning(
-                            f"Reflection for mission {bundle.mission} produced no operations; treating as noop"
-                        )
-                        eligible = False
-
-                    if (
-                        proposal.action == "refine"
-                        and proposal.uncertainty_note
-                        and not self.config.allow_uncertain
-                    ):
-                        logger.info(
-                            f"Skipping reflection for mission {bundle.mission} due to uncertainty gating"
-                        )
-
-                    # Budget enforcement
-                    if proposal.action == "refine" and eligible and operations:
-                        # Per-cycle max operations
-                        if (
-                            self.config.max_operations is not None
-                            and len(operations) > self.config.max_operations
-                        ):
-                            warnings.append(
-                                f"truncated_by_max_operations: {len(operations)} -> {self.config.max_operations}"
-                            )
-                            operations = tuple(operations[: self.config.max_operations])
-                        # Per-epoch change cap per mission
-                        if self.config.change_cap_per_epoch is not None:
-                            used_so_far = self._epoch_change_counts.get(
-                                (bundle.mission, epoch), 0
-                            )
-                            remaining = self.config.change_cap_per_epoch - used_so_far
-                            if remaining <= 0:
-                                eligible = False
-                                ineligible_reason = "Epoch change cap reached"
-                                operations = ()
+                        # Budget enforcement
+                        if proposal.action == "refine" and eligible and operations:
+                            # Per-cycle max operations
+                            if (
+                                self.config.max_operations is not None
+                                and len(operations) > self.config.max_operations
+                            ):
                                 warnings.append(
-                                    f"epoch_cap_exhausted: used={used_so_far} cap={self.config.change_cap_per_epoch}"
+                                    f"truncated_by_max_operations: {len(operations)} -> {self.config.max_operations}"
                                 )
-                            elif len(operations) > remaining:
-                                warnings.append(
-                                    f"truncated_by_epoch_cap: {len(operations)} -> {remaining} (used={used_so_far}, cap={self.config.change_cap_per_epoch})"
+                                operations = tuple(operations[: self.config.max_operations])
+                            # Per-epoch change cap per mission
+                            if self.config.change_cap_per_epoch is not None:
+                                used_so_far = self._epoch_change_counts.get(
+                                    (bundle.mission, epoch), 0
                                 )
-                                operations = tuple(operations[:remaining])
-                except Exception as exc:
-                    # Generation failed (likely due to test-time mocks). Create a noop proposal and mark ineligible.
-                    gen_error = str(exc)
-                    evidence_ids = tuple(r.ticket.group_id for r in bundle.records)
-                    proposal = ReflectionProposal(
-                        action="noop",
-                        summary="Generation error",
-                        critique=gen_error,
-                        operations=tuple(),
-                        evidence_group_ids=evidence_ids,
-                        uncertainty_note="generation_error",
-                        text=None,
-                    )  # type: ignore
-                    operations = tuple()
-                    eligible = False
-                    ineligible_reason = "Generation error"
-                    warnings.append("generation_error")
+                                remaining = self.config.change_cap_per_epoch - used_so_far
+                                if remaining <= 0:
+                                    eligible = False
+                                    ineligible_reason = "Epoch change cap reached"
+                                    operations = ()
+                                    warnings.append(
+                                        f"epoch_cap_exhausted: used={used_so_far} cap={self.config.change_cap_per_epoch}"
+                                    )
+                                elif len(operations) > remaining:
+                                    warnings.append(
+                                        f"truncated_by_epoch_cap: {len(operations)} -> {remaining} (used={used_so_far}, cap={self.config.change_cap_per_epoch})"
+                                    )
+                                    operations = tuple(operations[:remaining])
+                    except Exception as exc:
+                            # Generation failed (likely due to test-time mocks). Create a noop proposal and mark ineligible.
+                            gen_error = str(exc)
+                            evidence_ids = tuple(r.ticket.group_id for r in bundle.records)
+                            proposal = ReflectionProposal(
+                                action=ReflectionAction("noop"),
+                                summary="Generation error",
+                                critique=gen_error,
+                                operations=tuple(),
+                                evidence_group_ids=evidence_ids,
+                                uncertainty_note="generation_error",
+                                text=None,
+                            )  # type: ignore
+                            operations = tuple()
+                            eligible = False
+                            ineligible_reason = "Generation error"
+                            warnings.append("generation_error")
 
+        assert proposal is not None, "proposal should be set by this point"
         if proposal.action != "noop":
                 logger.info(
                     f"Reflection proposal for mission {bundle.mission}: action={proposal.action}, eligible={eligible}, ops={len(operations)}"
@@ -411,6 +414,7 @@ class ReflectionEngine:
             prev = self._epoch_change_counts.get(key, 0)
             self._epoch_change_counts[key] = prev + len(operations)
 
+        assert proposal is not None, "proposal should always be set"
         outcome = ReflectionOutcome(
             reflection_id=reflection_id,
             mission=bundle.mission,
@@ -608,10 +612,10 @@ class ReflectionEngine:
                         selected_mismatch = True
                         break
             if has_true and has_false:
-                return 2
+                return 3  # Mixed contradiction has highest priority
             all_wrong = all(c.signals.label_match is False for c in rec.candidates)
             if all_wrong:
-                return 2
+                return 2  # All-wrong has lower priority than mixed contradiction
             if selected_mismatch:
                 return 1
             return 0

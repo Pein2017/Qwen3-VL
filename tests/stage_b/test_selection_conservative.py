@@ -9,7 +9,7 @@ from src.stage_b.types import (
     TrajectoryWithSignals,
     CriticOutput,
 )
-from src.stage_b.config import SelectionConfig
+from src.stage_b.config import SelectionConfig, ManualReviewConfig
 from datetime import datetime
 
 
@@ -37,6 +37,7 @@ def test_conservative_override_to_fail_on_needs_recheck():
         reflection_cycle=0,
         reflection_change=None,
         config=SelectionConfig(policy="top_label", tie_break="confidence"),
+        manual_review=ManualReviewConfig(),
     )
     assert selection.verdict == "fail"
     assert any("needs_recheck=true" in w for w in selection.warnings)

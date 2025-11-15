@@ -59,7 +59,10 @@ echo ""
 # Run from repo root using conda run
 cd "${REPO_DIR}"
 export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}
+# Force unbuffered Python output so tqdm/logging flush progressively
+PYTHONUNBUFFERED=1
+export PYTHONUNBUFFERED
 # Run with any additional arguments (e.g., --step all)
 # Note: Additional args can override defaults (e.g., --log-level warning)
-exec conda run -n "${CONDA_ENV}" python -m src.stage_b.runner "${ARGS[@]}" "$@"
+exec conda run -n "${CONDA_ENV}" python -u -m src.stage_b.runner "${ARGS[@]}" "$@"
 

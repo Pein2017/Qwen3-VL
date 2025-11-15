@@ -197,19 +197,10 @@ class CriticOutput:
 
     summary: str
     critique: str
-    root_cause: Optional[str] = None
-    issues: Optional[Tuple[str, ...]] = None
-    # Deprecated in exports; may be present internally for transition
-    candidate_ops: Optional[Tuple[Dict[str, object], ...]] = None
-    uncertainty_note: Optional[str] = None
-    # P1.11 schema fields (LLM-only signals for conservative selection)
+    # Minimal P1.11 schema fields actually used by selection.
     verdict: Optional[ChineseVerdict] = None  # "通过" | "不通过"
     needs_recheck: Optional[bool] = None
-    uncertainty_reason: Optional[str] = None
-    evidence_quality_level: Optional[Literal["高", "中", "低"]] = None
     evidence_sufficiency: Optional[bool] = None
-    label_consistency: Optional[Literal["一致", "矛盾", "不确定"]] = None
-    suspected_label_noise: Optional[bool] = None
     recommended_action: Optional[Literal["通过", "不通过", "人工复核"]] = None
 
 
@@ -252,6 +243,7 @@ class SelectionResult:
     reflection_change: Optional[str]
     reflection_cycle: int
     # Extended export fields
+    manual_review_recommended: bool = False
     eligible: Optional[bool] = None
     ineligible_reason: Optional[str] = None
     warnings: Tuple[str, ...] = field(default_factory=tuple)

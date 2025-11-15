@@ -298,17 +298,9 @@ class CriticEngine:
         return CriticOutput(
             summary=str(data["summary"]),
             critique=str(data["critique"]),
-            root_cause=str(root_cause) if _str_or_none(root_cause) else None,
-            issues=issues,
-            candidate_ops=candidate_ops,
-            uncertainty_note=_str_or_none(uncertainty_note),
             verdict=verdict_value,
             needs_recheck=_bool_or_none(needs_recheck),
-            uncertainty_reason=_str_or_none(uncertainty_reason),
-            evidence_quality_level=eq_level_value,
             evidence_sufficiency=_bool_or_none(evidence_sufficiency),
-            label_consistency=label_cons_value,
-            suspected_label_noise=_bool_or_none(suspected_label_noise),
             recommended_action=rec_action_value,
         )
 
@@ -344,17 +336,9 @@ class CriticEngine:
         return CriticOutput(
             summary=summary,
             critique=critique,
-            root_cause=critic.root_cause,
-            issues=critic.issues,
-            candidate_ops=critic.candidate_ops,
-            uncertainty_note=critic.uncertainty_note,
             verdict=critic.verdict,
             needs_recheck=critic.needs_recheck,
-            uncertainty_reason=critic.uncertainty_reason,
-            evidence_quality_level=critic.evidence_quality_level,
             evidence_sufficiency=critic.evidence_sufficiency,
-            label_consistency=critic.label_consistency,
-            suspected_label_noise=critic.suspected_label_noise,
             recommended_action=critic.recommended_action,
         )
 

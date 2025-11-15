@@ -1,6 +1,6 @@
 import re
 from dataclasses import dataclass
-from typing import Dict, Tuple
+from typing import Dict, Optional
 
 from src.stage_b.reflection.engine import ReflectionEngine
 from src.stage_b.config import ReflectionConfig
@@ -46,7 +46,7 @@ class _FakeModel:
 
 @dataclass
 class _FakeGuidanceRepo:
-    experiences: Dict[str, str] = None
+    experiences: Optional[Dict[str, str]] = None
 
     def load(self) -> Dict:
         # No existing guidance by default
@@ -111,10 +111,10 @@ def _engine_with_budget(budget: int) -> ReflectionEngine:
         eligibility_policy="selected_mismatch_or_all_wrong",
     )
     return ReflectionEngine(
-        model=_FakeModel(),
-        tokenizer=_FakeTokenizer(),
+        model=_FakeModel(),  # type: ignore[arg-type]
+        tokenizer=_FakeTokenizer(),  # type: ignore[arg-type]
         config=cfg,
-        guidance_repo=_FakeGuidanceRepo(),
+        guidance_repo=_FakeGuidanceRepo(),  # type: ignore[arg-type]
     )
 
 

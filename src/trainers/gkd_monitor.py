@@ -468,12 +468,15 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
     def _has_teacher_model(self) -> bool:
         return hasattr(self, "teacher_model") and self.teacher_model is not None
 
-    def log(self, logs: Dict[str, float], start_time: Optional[float] = None) -> None:
+    def log(self, logs: Optional[Dict[str, float]], start_time: Optional[float] = None) -> None:
+        if logs is None:
+            logs = {}
+
         sanitized_logs: Dict[str, float] = dict(logs)
         aggregated_logs: Dict[str, float] = {}
         keys_to_remove: set[str] = set()
 
-        for mode, prefix in (("train", "train/"), ("eval", "eval/")):
+        for mode in ("train", "eval"):
             if not self._metrics[mode]:
                 continue
 
@@ -512,19 +515,18 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
                     continue
 
                 aggregated = float(finite_values.mean().item())
-                metric_key = f"{prefix}{key}"
+                metric_key = key if mode == "train" else f"eval_{key}"
                 aggregated_logs[metric_key] = aggregated
                 keys_to_remove.add(metric_key)
-                if mode == "train" and key == "loss":
-                    aggregated_logs["loss"] = aggregated
-                    keys_to_remove.add("loss")
 
             self._metrics[mode].clear()
 
         for key in keys_to_remove:
+            logs.pop(key, None)
             sanitized_logs.pop(key, None)
 
         sanitized_logs.update(aggregated_logs)
+        logs.update(aggregated_logs)
 
         if version.parse(transformers.__version__) >= version.parse("4.47.0.dev0"):
             super().log(sanitized_logs, start_time)

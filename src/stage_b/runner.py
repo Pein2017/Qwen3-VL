@@ -348,6 +348,7 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                     reflection_cycle=reflection_cycle,
                     reflection_change=last_reflection_id,
                     config=config.selection,
+                    manual_review=config.manual_review,
                 )
 
                 # Write trajectories with critic outputs (already attached above)
@@ -365,13 +366,14 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                 _append_jsonl(selections_path, selection_payload)
                 mission_selection_count += 1
 
-                record = reflection_engine.build_record(
-                    ticket,
-                    scored_candidates,
-                    selection.selected_candidate,
-                    guidance.step,
-                )
-                pending_records.append(record)
+                if not selection.manual_review_recommended:
+                    record = reflection_engine.build_record(
+                        ticket,
+                        scored_candidates,
+                        selection.selected_candidate,
+                        guidance.step,
+                    )
+                    pending_records.append(record)
 
                 # Trigger reflection when batch is full
                 if len(pending_records) >= config.reflection.batch_size:

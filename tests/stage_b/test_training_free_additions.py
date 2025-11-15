@@ -172,14 +172,14 @@ def test_merge_operation_with_provenance(tmp_path: Path, prompt_file: Path):
         }
     )
 
-    # Bypass model by directly parsing the response
+    # Bypass model by mocking _generate_reflection to return parsed proposal
     parsed = engine._parse_reflection_response(proposal, bundle)
-    outcome = engine.reflect(bundle, epoch=1, log=True)
-    # Patch proposal/ops into outcome (since we bypassed generation)
-    outcome = outcome.__class__(
-        **{**outcome.__dict__, "proposal": parsed, "operations": parsed.operations, "eligible": True}
-    )
-    outcome = engine.reflect(bundle, epoch=1, log=False)
+    original_generate = engine._generate_reflection
+    engine._generate_reflection = lambda bundle: parsed
+    try:
+        outcome = engine.reflect(bundle, epoch=1, log=True)
+    finally:
+        engine._generate_reflection = original_generate
 
     # Verify guidance: G1 removed, G0 updated
     updated = repo.load()[bundle.mission]
@@ -241,13 +241,13 @@ def test_budget_enforcement_max_ops_and_epoch_cap(tmp_path: Path, prompt_file: P
     )
     parsed = engine._parse_reflection_response(proposal_json, bundle)
 
-    # Reflect; inject parsed proposal
-    outcome = engine.reflect(bundle, epoch=1, log=True)
-    outcome = outcome.__class__(
-        **{**outcome.__dict__, "proposal": parsed, "operations": parsed.operations, "eligible": True}
-    )
-    # finalize should apply only 1 op due to max_operations
-    outcome = engine.reflect(bundle, epoch=1, log=False)
+    # Reflect; inject parsed proposal by mocking _generate_reflection
+    original_generate = engine._generate_reflection
+    engine._generate_reflection = lambda bundle: parsed
+    try:
+        outcome = engine.reflect(bundle, epoch=1, log=True)
+    finally:
+        engine._generate_reflection = original_generate
 
     assert outcome.applied is True
     assert len(outcome.operations) == 1
@@ -280,9 +280,12 @@ def test_budget_enforcement_max_ops_and_epoch_cap(tmp_path: Path, prompt_file: P
         ),
         bundle,
     )
-    o1 = engine2.reflect(bundle, epoch=1, log=True)
-    o1 = o1.__class__(**{**o1.__dict__, "proposal": parsed_single, "operations": parsed_single.operations, "eligible": True})
-    o1 = engine2.reflect(bundle, epoch=1, log=False)
+    original_generate2 = engine2._generate_reflection
+    engine2._generate_reflection = lambda bundle: parsed_single
+    try:
+        o1 = engine2.reflect(bundle, epoch=1, log=True)
+    finally:
+        engine2._generate_reflection = original_generate2
     assert o1.applied is True
 
     # Second reflect within same epoch should be ineligible due to cap

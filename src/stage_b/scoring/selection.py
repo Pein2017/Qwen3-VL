@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Iterable, List, Optional, Protocol, Sequence, Tuple
 
-from ..config import SelectionConfig
+from ..config import ManualReviewConfig, SelectionConfig
 from ..types import (
     ExperienceCandidate,
     GroupTicket,
@@ -64,6 +64,77 @@ def _sort_candidates(
     return ordered
 
 
+def _should_recommend_manual_review(
+    pool: Sequence[TrajectoryWithSignals],
+    config: ManualReviewConfig,
+) -> bool:
+    """Heuristic gating for high-confidence, self-consistent label mismatches.
+
+    If all candidates disagree with the ticket label but are highly self-consistent
+    and confident about a shared verdict, we recommend deferring to manual review
+    instead of forcing reflection to fit a potentially noisy label.
+    """
+
+    if not config.enabled:
+        return False
+
+    signals = [c.signals for c in pool if c.signals is not None]
+    if not signals:
+        return False
+
+    any_true = any(s.label_match is True for s in signals)
+    any_false = any(s.label_match is False for s in signals)
+    # Only trigger when we have evidence that *all* known candidates disagree
+    # with the label (no True, at least one False).
+    if not any_false or any_true:
+        return False
+
+    # Compute majority verdict agreement across the pool.
+    verdicts = [
+        c.parsed.verdict
+        for c in pool
+        if c.parsed is not None and c.parsed.verdict is not None
+    ]
+    if not verdicts:
+        return False
+
+    from collections import Counter
+
+    counts = Counter(verdicts)
+    majority_verdict, majority_count = counts.most_common(1)[0]
+    majority_fraction = majority_count / len(verdicts)
+    if majority_fraction < config.min_verdict_agreement:
+        return False
+
+    majority_candidates = [
+        c
+        for c in pool
+        if c.parsed is not None and c.parsed.verdict == majority_verdict
+    ]
+    majority_signals = [c.signals for c in majority_candidates if c.signals is not None]
+    if not majority_signals:
+        return False
+
+    conf_values = [s.confidence for s in majority_signals if s.confidence is not None]
+    if not conf_values:
+        return False
+    avg_conf = sum(conf_values) / len(conf_values)
+    if avg_conf < config.min_confidence:
+        return False
+
+    sc_values = [
+        s.self_consistency
+        for s in majority_signals
+        if s.self_consistency is not None
+    ]
+    if sc_values:
+        avg_sc = sum(sc_values) / len(sc_values)
+        if avg_sc < config.min_self_consistency:
+            return False
+
+    return True
+
+
 def select_for_group(
     ticket: GroupTicket,
     candidates: Iterable[TrajectoryWithSignals],
@@ -72,6 +143,7 @@ def select_for_group(
     reflection_cycle: int,
     reflection_change: Optional[str],
     config: SelectionConfig,
+    manual_review: ManualReviewConfig,
 ) -> SelectionResult:
     pool = [candidate for candidate in candidates if candidate.parsed.format_ok]
     if not pool:
@@ -91,6 +163,9 @@ def select_for_group(
     # Conservative override: rely on LLM-only critic signals when available
     final_verdict = parsed.verdict
     warnings: List[str] = []
+    manual_review_recommended = _should_recommend_manual_review(pool, manual_review)
+    if manual_review_recommended:
+        warnings.append("manual_review: high_consistency_label_mismatch")
     eligible = True
     ineligible_reason: Optional[str] = None
     critic = getattr(chosen, "critic", None)
@@ -119,6 +194,7 @@ def select_for_group(
         guidance_step=guidance_step,
         reflection_change=reflection_change,
         reflection_cycle=reflection_cycle,
+        manual_review_recommended=manual_review_recommended,
         eligible=eligible,
         ineligible_reason=ineligible_reason,
         warnings=tuple(warnings),

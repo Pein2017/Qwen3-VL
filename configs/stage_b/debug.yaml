@@ -18,14 +18,24 @@ output:
   run_name: debug
 
 sampler:
-  samples_per_decode: 1  # Debug: reduced from 2 to 1 for faster iteration
+  samples_per_decode: 3  # Debug: 每个 decode 配置采样 3 个候选，增加多样性
   format_filter: true
   grid:
-    # Debug: only one sampler config for faster testing
+    # Debug: 多个温度配置，用于观察不同随机性下的行为
+    - temperature: 0.3
+      top_p: 0.9
+      max_new_tokens: 256  # 保持较短以加快调试
+      seed: 41
+      stop: []
     - temperature: 0.7
       top_p: 0.95
-      max_new_tokens: 256  # Debug: reduced from 512 for faster generation
+      max_new_tokens: 256
       seed: 42
+      stop: []
+    - temperature: 1.0
+      top_p: 1.0
+      max_new_tokens: 256
+      seed: 43
       stop: []
 
 signals:
@@ -44,21 +54,28 @@ critic:
 
 reflection:
   prompt_path: configs/prompts/stage_b_reflection_prompt.txt
-  batch_size: 4  # Debug: reduced from 8 to 2 for faster processing
-  apply_if_delta: 0.05
+  batch_size: 4  # Debug: 保持较小批次，便于观察每次反思
+  apply_if_delta: 0.0  # Debug: 关闭 uplift 门限，便于快速探索经验更新
   allow_uncertain: true
-  eligibility_policy: selected_mismatch_or_all_wrong
-  max_operations: 3
-  change_cap_per_epoch: 10
+  eligibility_policy: contradictions_or_all_wrong  # Debug: 更偏向利用矛盾样本和全错样本
+  max_operations: 5  # Debug: 略微放宽，每次最多 5 条经验修改
+  change_cap_per_epoch: 30  # Debug: 提高每个 epoch 的修改上限以观察指导演化
 
   temperature: 0.3  # Higher temperature for more diverse guidance entries
   top_p: 0.9  # Higher top_p for more diverse sampling
   max_new_tokens: 1024  # Debug: reduced from 2048 for faster generation
-  max_reflection_length: 8192  # Debug: reduced from 8192 for faster processing
+  max_reflection_length: 10000  # Debug: reduced from 8192 for faster processing
 
 selection:
   policy: top_label
   tie_break: confidence
 
+
+manual_review:
+  enabled: true
+  min_verdict_agreement: 0.8  # fraction of candidates sharing the same verdict
+  min_confidence: 0.85        # average confidence for majority verdict
+  min_self_consistency: 0.8   # average self_consistency for majority verdict
+
 runner:
-  epochs: 1
+  epochs: 2  # Debug: 多轮迭代以观察指导规则收敛趋势

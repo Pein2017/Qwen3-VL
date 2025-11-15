@@ -140,6 +140,10 @@ def _parse_mission_section(
 class GuidanceRepository:
     """Persistence helper for mission guidance files and snapshots."""
 
+    path: Path
+    retention: int
+    _cache: Optional[Dict[str, MissionGuidance]]
+
     def __init__(
         self,
         path: str | Path,
@@ -426,6 +430,9 @@ class GuidanceRepository:
             operations=ops,
         )
 
+        # Create snapshot of current state before applying changes
+        self._create_snapshot()
+
         guidance_map = dict(guidance_map)
         guidance_map[mission] = updated
         self._write(guidance_map)
@@ -474,6 +481,24 @@ class GuidanceRepository:
     # ------------------------------------------------------------------
     # Persistence helpers
     # ------------------------------------------------------------------
+    def _create_snapshot(self) -> None:
+        """Create snapshot of current guidance file before changes."""
+        if not self.path.exists():
+            return  # No file to snapshot
+
+        snapshot_dir = self.path.parent / "snapshots"
+        snapshot_dir.mkdir(parents=True, exist_ok=True)
+
+        timestamp = _format_timestamp_microsecond(_now())
+        snapshot_path = snapshot_dir / f"guidance-{timestamp}.json"
+        try:
+            shutil.copy2(self.path, snapshot_path)
+            # Prune old snapshots
+            self._prune_snapshots(snapshot_dir)
+        except Exception:
+            # Snapshot best-effort; do not block on failure
+            pass
+
     def _write(self, payload: Mapping[str, MissionGuidance]) -> None:
         serializable: Dict[str, object] = {
             mission: guidance.to_payload() for mission, guidance in payload.items()
@@ -501,17 +526,6 @@ class GuidanceRepository:
                     pass
             raise
 
-        # Create snapshot of the NEW live file (after atomic rename)
-        timestamp = _format_timestamp_microsecond(_now())
-        snapshot_path = snapshot_dir / f"guidance-{timestamp}.json"
-        try:
-            shutil.copy2(self.path, snapshot_path)
-        except Exception:
-            # Snapshot best-effort; do not block on failure
-            pass
-
-        # Prune old snapshots after write
-        self._prune_snapshots(snapshot_dir)
 
         self._cache = dict(payload)
 

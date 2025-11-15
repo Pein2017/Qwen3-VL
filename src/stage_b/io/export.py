@@ -56,17 +56,9 @@ def serialize_trajectory(
                 {
                     "summary": item.critic.summary,
                     "critique": item.critic.critique,
-                    "root_cause": item.critic.root_cause,
-                    "issues": list(item.critic.issues) if item.critic.issues else None,
-                    "uncertainty_note": item.critic.uncertainty_note,
-                    # P1.11 fields for operator risk awareness
                     "verdict": item.critic.verdict,
                     "needs_recheck": item.critic.needs_recheck,
-                    "uncertainty_reason": item.critic.uncertainty_reason,
-                    "evidence_quality_level": item.critic.evidence_quality_level,
                     "evidence_sufficiency": item.critic.evidence_sufficiency,
-                    "label_consistency": item.critic.label_consistency,
-                    "suspected_label_noise": item.critic.suspected_label_noise,
                     "recommended_action": item.critic.recommended_action,
                 }
                 if item.critic
@@ -90,6 +82,7 @@ def serialize_selection(item: SelectionResult) -> Dict[str, object]:
             "guidance_step": item.guidance_step,
             "reflection_change": item.reflection_change,
             "reflection_cycle": item.reflection_cycle,
+            "manual_review_recommended": item.manual_review_recommended,
             "eligible": item.eligible,
             "ineligible_reason": item.ineligible_reason,
             "warnings": list(item.warnings),

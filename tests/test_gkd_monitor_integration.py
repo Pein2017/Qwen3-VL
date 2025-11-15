@@ -273,19 +273,18 @@ def test_gkd_monitor_logs_losses(monkeypatch):
 
     train_loss_avg = (0.5 + 0.7) / 2
     assert (
-        pytest.approx(captured_logs["train/llm_kd_loss"], rel=1e-6)
+        pytest.approx(captured_logs["llm_kd_loss"], rel=1e-6)
         == (0.1 + 0.2) / 2
     )
     assert (
-        pytest.approx(captured_logs["train/sft_loss"], rel=1e-6)
+        pytest.approx(captured_logs["sft_loss"], rel=1e-6)
         == (0.4 + 0.5) / 2
     )
-    assert pytest.approx(captured_logs["train/loss"], rel=1e-6) == train_loss_avg
+    assert pytest.approx(captured_logs["loss"], rel=1e-6) == train_loss_avg
     assert (
-        pytest.approx(captured_logs["train/token_acc"], rel=1e-6)
+        pytest.approx(captured_logs["token_acc"], rel=1e-6)
         == (0.8 + 0.9) / 2
     )
-    assert pytest.approx(captured_logs["loss"], rel=1e-6) == train_loss_avg
     assert pytest.approx(captured_logs["eval/loss"], rel=1e-6) == 1.23
     assert "train/eval/loss" not in captured_logs
     assert not trainer._metrics["train"]
@@ -295,12 +294,15 @@ def test_gkd_monitor_logs_losses(monkeypatch):
     trainer._metrics["eval"]["loss"].extend([0.9])
     trainer._metrics["eval"]["token_acc"].extend([0.4])
 
-    trainer.log({})
+    eval_metrics_payload: dict[str, float] = {}
+    trainer.log(eval_metrics_payload)
 
-    assert pytest.approx(captured_logs["eval/llm_kd_loss"], rel=1e-6) == 0.3
-    assert pytest.approx(captured_logs["eval/sft_loss"], rel=1e-6) == 0.6
-    assert pytest.approx(captured_logs["eval/loss"], rel=1e-6) == 0.9
-    assert pytest.approx(captured_logs["eval/token_acc"], rel=1e-6) == 0.4
+    assert pytest.approx(captured_logs["eval_llm_kd_loss"], rel=1e-6) == 0.3
+    assert pytest.approx(captured_logs["eval_sft_loss"], rel=1e-6) == 0.6
+    assert pytest.approx(captured_logs["eval_loss"], rel=1e-6) == 0.9
+    assert pytest.approx(captured_logs["eval_token_acc"], rel=1e-6) == 0.4
+    assert pytest.approx(eval_metrics_payload["eval_token_acc"], rel=1e-6) == 0.4
+    assert pytest.approx(eval_metrics_payload["eval_loss"], rel=1e-6) == 0.9
     assert not trainer._metrics["eval"]
 
 

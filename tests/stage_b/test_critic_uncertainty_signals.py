@@ -25,11 +25,7 @@ def test_export_includes_uncertainty_fields():
         summary="s",
         critique="c",
         needs_recheck=True,
-        uncertainty_reason="角度不足",
-        evidence_quality_level="中",
         evidence_sufficiency=False,
-        label_consistency="不确定",
-        suspected_label_noise=False,
         recommended_action="人工复核",
     )
     item = TrajectoryWithSignals(parsed=parsed, signals=signals, critic=critic)

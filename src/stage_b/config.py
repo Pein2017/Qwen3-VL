@@ -94,6 +94,19 @@ class ReflectionConfig:
 
 
 @dataclass(frozen=True)
+class ManualReviewConfig:
+    """Gating thresholds for deferring to manual review in high-confidence mismatches."""
+
+    enabled: bool = True
+    # Minimum fraction of candidates sharing the majority verdict (0.0–1.0).
+    min_verdict_agreement: float = 0.8
+    # Minimum average confidence for majority verdict candidates (0.0–1.0).
+    min_confidence: float = 0.85
+    # Optional minimum average self-consistency for majority verdict candidates (0.0–1.0).
+    min_self_consistency: float = 0.8
+
+
+@dataclass(frozen=True)
 class SelectionConfig:
     policy: str
     tie_break: str
@@ -117,6 +130,7 @@ class StageBConfig:
     model: ModelConfig
     runner: RunnerConfig
     critic: CriticConfig
+    manual_review: ManualReviewConfig
 
 
 def _decode_config(section: Mapping[str, Any]) -> DecodeConfig:
@@ -363,6 +377,35 @@ def _load_reflection(section: Mapping[str, Any]) -> ReflectionConfig:
     )
 
 
+def _load_manual_review(
+    section: Optional[Mapping[str, Any]],
+) -> ManualReviewConfig:
+    """Load ManualReviewConfig controlling high-confidence manual-review gating."""
+
+    if section is None:
+        return ManualReviewConfig()
+
+    enabled = bool(section.get("enabled", True))
+    min_verdict_agreement = float(section.get("min_verdict_agreement", 0.8))
+    min_confidence = float(section.get("min_confidence", 0.85))
+    min_self_consistency = float(section.get("min_self_consistency", 0.8))
+
+    for name, value in (
+        ("min_verdict_agreement", min_verdict_agreement),
+        ("min_confidence", min_confidence),
+        ("min_self_consistency", min_self_consistency),
+    ):
+        if not (0.0 <= value <= 1.0):
+            raise ValueError(f"manual_review.{name} must be in [0.0, 1.0]")
+
+    return ManualReviewConfig(
+        enabled=enabled,
+        min_verdict_agreement=min_verdict_agreement,
+        min_confidence=min_confidence,
+        min_self_consistency=min_self_consistency,
+    )
+
+
 def _load_selection(section: Mapping[str, Any]) -> SelectionConfig:
     policy = str(_require(section, "policy", "selection section"))
     if policy not in {"top_label", "top_semantic"}:
@@ -406,6 +449,7 @@ def load_stage_b_config(path: str | Path) -> StageBConfig:
     signals = _load_signals(_require(raw_config, "signals", "Stage-B config"))
     reflection = _load_reflection(_require(raw_config, "reflection", "Stage-B config"))
     selection = _load_selection(_require(raw_config, "selection", "Stage-B config"))
+    manual_review = _load_manual_review(raw_config.get("manual_review"))
     model = _load_model(_require(raw_config, "model", "Stage-B config"))
     runner = _load_runner(_require(raw_config, "runner", "Stage-B config"))
     critic = _load_critic(raw_config.get("critic"))
@@ -423,6 +467,7 @@ def load_stage_b_config(path: str | Path) -> StageBConfig:
         model=model,
         runner=runner,
         critic=critic,
+        manual_review=manual_review,
     )
 
 
@@ -433,6 +478,7 @@ __all__ = [
     "ModelConfig",
     "OutputConfig",
     "ReflectionConfig",
+    "ManualReviewConfig",
     "SamplerConfig",
     "SelectionConfig",
     "SignalsConfig",

@@ -209,7 +209,6 @@ def test_critic_engine_evaluate_success(
     assert isinstance(results[0], CriticOutput)
     assert results[0].summary == "候选判定正确"
     assert results[0].critique == "理由充分"
-    assert results[0].root_cause == "检查完整"
 
 
 @patch("src.stage_b.critic.engine.CriticEngine._generate_critic_response")

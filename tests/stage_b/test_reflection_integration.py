@@ -190,12 +190,6 @@ def test_reflection_refine_action_accepted(tmp_path):
 
     # Execute reflection
     outcome = engine.reflect(bundle, epoch=1)
-    outcome = engine.finalize_outcome(
-        outcome,
-        epoch=1,
-        pre_uplift=0.0,
-        post_uplift=0.1,
-    )
 
     # Verify outcome
     assert outcome.applied is True
@@ -218,7 +212,7 @@ def test_reflection_refine_action_accepted(tmp_path):
     # Verify reflection log was written
     assert reflection_log_path.exists()
     log_lines = reflection_log_path.read_text(encoding="utf-8").strip().split("\n")
-    assert len(log_lines) == 2
+    assert len(log_lines) == 1
     final_log_entry = json.loads(log_lines[-1])
     assert final_log_entry["reflection"]["applied"] is True
     assert final_log_entry["reflection"]["guidance_step_before"] == 1
