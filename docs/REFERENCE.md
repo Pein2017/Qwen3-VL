@@ -339,21 +339,38 @@ rlhf:
 custom:
   visual_kd:
     enabled: true
-    weight: 0.1
-    targets: [merger, deepstack]
+    vit:
+      enabled: false
+    aligner:
+      enabled: true
+      weight: 0.1
+      distance: mse
+    deepstack:
+      enabled: true
+      weight: 0.1
+      distance: mse
 ```
 
 #### Vision/Aligner Feature KD (optional)
 
-When the vision encoder or aligner drifts while the language tower needs freedom to adapt (e.g., new coordinate formats), enable the feature distillation block:
+When the vision encoder or aligner drifts while the language tower needs freedom to adapt (e.g., new coordinate formats), enable the feature distillation block with per-component control:
 
 ```yaml
 custom:
   visual_kd:
     enabled: true
-    weight: 0.1              # scalar multiplied into the loss term
-    targets: [merger, deepstack]  # final merged tokens and deepstack adapters
-    distance: mse            # or `cosine`
+    vit:
+      enabled: true           # ViT output before aligner (pre-merger)
+      weight: 0.1
+      distance: mse           # or `cosine`
+    aligner:
+      enabled: true           # Aligner/merger output (post-merger)
+      weight: 0.1
+      distance: mse
+    deepstack:
+      enabled: true           # Intermediate vision layer outputs
+      weight: 0.1
+      distance: mse
 ```
 
 - **Effect**: anchors student vision/aligner activations to the frozen teacher while leaving KL + CE to supervise the language tower.
@@ -434,6 +451,7 @@ python -m src.sft --config config.yaml --debug
 | OOM | Batch size / length too large | Lower batch size, enable gradient checkpointing, use ZeRO |
 | Slow convergence | Learning rate mismatch | Try 1e-4 for LoRA, 5e-5 for full |
 | NaN loss | LR too high or bad data | Lower LR, check data validation |
+| NCCL monitoredBarrier after best checkpoint | Token accuracy aggregated per rank → only some processes call `_save_checkpoint`, others block in collectives | Upgrade to the 2025‑11‑16 trainer (`src/trainers/gkd_monitor.py`) which reduces `{token_acc_correct, token_acc_total}` across ranks before logging so every process makes the same best-model decision. Older builds should stick to `metric_for_best_model=eval_loss`. |
 
 ---
 

@@ -5,7 +5,11 @@
 
 set -euo pipefail
 
-export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+# CUDA / NCCL runtime defaults (can be overridden by caller)
+export PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
+export NCCL_DEBUG=${NCCL_DEBUG:-INFO}
+export NCCL_ASYNC_ERROR_HANDLING=${NCCL_ASYNC_ERROR_HANDLING:-1}
+export TORCH_NCCL_TRACE_BUFFER_SIZE=${TORCH_NCCL_TRACE_BUFFER_SIZE:-67108864}
 
 # Resolve repository root from this script's location and set PYTHONPATH
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -88,4 +92,3 @@ source /root/miniconda3/etc/profile.d/conda.sh
 conda activate "${CONDA_ENV}"
 cd "${REPO_DIR}"
 eval "${CMD}"
-

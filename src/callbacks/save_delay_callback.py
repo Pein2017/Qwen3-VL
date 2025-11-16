@@ -147,14 +147,15 @@ class SaveDelayCallback(TrainerCallback):
         if args.save_strategy != SaveStrategy.BEST:
             return
 
-        metrics: Mapping[str, Any] | None = kwargs.get("metrics")
-        if metrics is None:
-            return
-
         in_delay_period = self._in_delay_period(state)
 
         if in_delay_period:
             control.should_save = False
+
+            metrics: Mapping[str, Any] | None = kwargs.get("metrics")
+            if metrics is None:
+                # Worker ranks do not receive metrics but must still block saving.
+                return
 
             metric_key = self._resolve_metric_key(args)
             if metric_key is None:

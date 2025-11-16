@@ -31,7 +31,9 @@ tuner:
 
 rlhf:
   rlhf_type: gkd
-  teacher_model: output/11-10/stage_2_gkd_merged/checkpoint-400
+  # Use a stable, cached teacher checkpoint; tests assert this lives under
+  # ``model_cache/`` and is distinct from the student path.
+  teacher_model: model_cache/models/Qwen/Qwen3-VL-8B-Instruct
   sft_alpha: 1.0
   llm_kd_weight: 2
   seq_kd: false
@@ -91,9 +93,16 @@ custom:
   trainer_variant: gkd_monitor
   visual_kd:
     enabled: true
-    weight: 2  # Heavier anchor on vision/aligner (0.1-0.2 typical). Lower if visuals overfit.
-    targets: [merger, deepstack]
-    distance: mse
+    vit:
+      enabled: false
+    aligner:
+      enabled: true
+      weight: 2  # Heavier anchor on vision/aligner (0.1-0.2 typical). Lower if visuals overfit.
+      distance: mse
+    deepstack:
+      enabled: true
+      weight: 2
+      distance: mse
   emit_norm: norm1000
   dump_conversation_text: false
   # Augmentation pipeline (training only). Eval remains unchanged.

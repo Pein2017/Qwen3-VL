@@ -7,13 +7,14 @@ from collections import defaultdict
 from typing import Any, Dict, Mapping, Optional, Union
 
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
 import transformers
 from packaging import version
 from swift.trainers.rlhf_trainer.gkd_trainer import GKDTrainer as _MsSwiftGKDTrainer
 
-from ..config import VisualKDConfig
+from ..config import VisualKDConfig, VisualKDTargetConfig
 
 logger = transformers.utils.logging.get_logger(__name__)
 
@@ -39,9 +40,18 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
 
         self._visual_kd_config: VisualKDConfig = cfg
         self._visual_kd_enabled = cfg.enabled
-        self._visual_kd_weight = cfg.weight
-        self._visual_kd_targets = list(cfg.targets)
-        self._visual_kd_distance = cfg.distance
+        self._visual_kd_vit_cfg: VisualKDTargetConfig = cfg.vit
+        self._visual_kd_aligner_cfg: VisualKDTargetConfig = cfg.aligner
+        self._visual_kd_deepstack_cfg: VisualKDTargetConfig = cfg.deepstack
+        self._visual_kd_targets = [
+            name
+            for name, target_cfg in (
+                ("vit", cfg.vit),
+                ("aligner", cfg.aligner),
+                ("deepstack", cfg.deepstack),
+            )
+            if target_cfg.enabled
+        ]
 
         raw_llm_kd_weight = getattr(self.args, "llm_kd_weight", 1.0)
         try:
@@ -60,15 +70,11 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
             )
         self._llm_kd_weight = float(llm_kd_weight)
 
-        if self._visual_kd_enabled:
-            if self._visual_kd_weight <= 0:
-                raise ValueError(
-                    "visual_kd enabled but weight<=0; disable visual_kd or set a positive weight"
-                )
-            elif not self._visual_kd_targets:
-                raise ValueError(
-                    "visual_kd enabled but no targets provided; specify at least one target or disable visual_kd"
-                )
+        if self._visual_kd_enabled and not self._visual_kd_targets:
+            raise ValueError(
+                "visual_kd enabled but no per-target configs are enabled; "
+                "enable at least one of vit/aligner/deepstack or disable visual_kd"
+            )
 
         teacher_available = self._has_teacher_model()
         if self._llm_kd_weight > 0 and not teacher_available:
@@ -215,11 +221,17 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
         if self._visual_kd_enabled:
             vision_loss = self._compute_visual_kd_loss()
             if vision_loss is not None:
-                weighted_vision_loss = self._visual_kd_weight * vision_loss
-                total_loss = total_loss + weighted_vision_loss
+                total_loss = total_loss + vision_loss
                 self._metrics[mode]["vision_kd_loss"].append(
-                    weighted_vision_loss.detach().cpu()
+                    vision_loss.detach().cpu()
                 )
+                breakdown = getattr(self, "_last_visual_kd_breakdown", None)
+                if isinstance(breakdown, dict):
+                    for target_name, loss_value in breakdown.items():
+                        metric_name = f"vision_kd_loss_{target_name}"
+                        self._metrics[mode][metric_name].append(
+                            loss_value.detach().cpu()
+                        )
 
         self._metrics[mode]["loss"].append(total_loss.detach().cpu())
 
@@ -227,9 +239,16 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
             logits_flat = masked_student_logits.squeeze(0)
             preds = logits_flat.argmax(dim=-1)
             accuracy = (preds == masked_labels).float().mean()
+            correct_tokens = (preds == masked_labels).sum()
         else:
             accuracy = student_logits.new_zeros(())
-        self._metrics[mode]["token_acc"].append(accuracy.detach().cpu())
+            correct_tokens = student_logits.new_zeros(())
+
+        total_tokens = torch.tensor(
+            float(valid_count), device=student_logits.device, dtype=torch.float32
+        )
+        self._metrics[mode]["token_acc_correct"].append(correct_tokens.detach().cpu())
+        self._metrics[mode]["token_acc_total"].append(total_tokens.detach().cpu())
 
         return (total_loss, outputs_student) if return_outputs else total_loss
 
@@ -261,6 +280,9 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
         return outputs_teacher
 
     def _register_visual_hooks(self) -> None:
+        # Ensure internal visual KD state and caches are initialized.
+        self._ensure_visual_kd_state()
+
         student_unwrapped = self.accelerator.unwrap_model(self.model)
         teacher_model = getattr(self, "teacher_model", None)
         if teacher_model is None:
@@ -273,21 +295,66 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
         if student_visual is None or teacher_visual is None:
             raise RuntimeError("Failed to resolve visual modules for visual KD")
 
-        if "merger" in self._visual_kd_targets:
+        vit_cfg = self._visual_kd_vit_cfg
+        aligner_cfg = self._visual_kd_aligner_cfg
+        deepstack_cfg = self._visual_kd_deepstack_cfg
+
+        # Shared merger module for ViT (pre-aligner) and aligner (post-merger) targets.
+        if vit_cfg.enabled or aligner_cfg.enabled:
             student_merger = getattr(student_visual, "merger", None)
             teacher_merger = getattr(teacher_visual, "merger", None)
             if not isinstance(student_merger, nn.Module) or not isinstance(
                 teacher_merger, nn.Module
             ):
                 raise RuntimeError("merger not available for visual KD")
-            self._visual_hooks.append(
-                student_merger.register_forward_hook(self._make_student_hook("merger"))
-            )
-            self._visual_hooks.append(
-                teacher_merger.register_forward_hook(self._make_teacher_hook("merger"))
-            )
 
-        if "deepstack" in self._visual_kd_targets:
+            if vit_cfg.enabled:
+                def student_vit_hook(_module: nn.Module, inputs, _output):
+                    if not inputs:
+                        raise RuntimeError(
+                            "ViT visual KD hook received no inputs for merger module"
+                        )
+                    hidden_states = inputs[0]
+                    if not isinstance(hidden_states, torch.Tensor):
+                        raise TypeError(
+                            "Expected tensor input for ViT visual KD hook, "
+                            f"got {type(hidden_states)}"
+                        )
+                    self._student_visual_cache["vit"] = hidden_states
+
+                def teacher_vit_hook(_module: nn.Module, inputs, _output):
+                    if not inputs:
+                        raise RuntimeError(
+                            "ViT visual KD hook received no inputs for merger module"
+                        )
+                    hidden_states = inputs[0]
+                    if not isinstance(hidden_states, torch.Tensor):
+                        raise TypeError(
+                            "Expected tensor input for ViT visual KD hook, "
+                            f"got {type(hidden_states)}"
+                        )
+                    self._teacher_visual_cache["vit"] = hidden_states.detach()
+
+                self._visual_hooks.append(
+                    student_merger.register_forward_hook(student_vit_hook)
+                )
+                self._visual_hooks.append(
+                    teacher_merger.register_forward_hook(teacher_vit_hook)
+                )
+
+            if aligner_cfg.enabled:
+                self._visual_hooks.append(
+                    student_merger.register_forward_hook(
+                        self._make_student_hook("aligner")
+                    )
+                )
+                self._visual_hooks.append(
+                    teacher_merger.register_forward_hook(
+                        self._make_teacher_hook("aligner")
+                    )
+                )
+
+        if deepstack_cfg.enabled:
             student_list = getattr(student_visual, "deepstack_merger_list", None)
             teacher_list = getattr(teacher_visual, "deepstack_merger_list", None)
             if not isinstance(student_list, nn.ModuleList) or not isinstance(
@@ -368,51 +435,89 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
         hooks.clear()
 
     def _compute_visual_kd_loss(self) -> Optional[torch.Tensor]:
-        def compute_distance(student_feat: torch.Tensor, teacher_feat: torch.Tensor):
+        # Ensure visual KD configs and caches are initialized before computing loss.
+        self._ensure_visual_kd_state()
+
+        def compute_distance(
+            student_feat: torch.Tensor,
+            teacher_feat: torch.Tensor,
+            distance: str,
+        ) -> torch.Tensor:
             teacher_feat = teacher_feat.to(student_feat.device, student_feat.dtype)
             if student_feat.shape != teacher_feat.shape:
                 raise ValueError(
                     "Visual KD feature shape mismatch: "
                     f"student={student_feat.shape}, teacher={teacher_feat.shape}"
                 )
-            if self._visual_kd_distance == "mse":
+            if distance == "mse":
                 return F.mse_loss(student_feat, teacher_feat)
-            if self._visual_kd_distance == "cosine":
+            if distance == "cosine":
                 s_flat = student_feat.view(-1, student_feat.shape[-1])
                 t_flat = teacher_feat.view(-1, teacher_feat.shape[-1])
                 cosine = F.cosine_similarity(s_flat, t_flat, dim=-1)
                 return (1 - cosine).mean()
-            raise ValueError(
-                f"Unsupported visual KD distance: {self._visual_kd_distance}"
-            )
+            raise ValueError(f"Unsupported visual KD distance: {distance}")
 
-        contributions = []
+        vit_cfg = self._visual_kd_vit_cfg
+        aligner_cfg = self._visual_kd_aligner_cfg
+        deepstack_cfg = self._visual_kd_deepstack_cfg
+
+        contributions: list[torch.Tensor] = []
         missing_targets: list[str] = []
-        for name in self._visual_kd_targets:
-            if name == "deepstack":
-                keys = sorted(
-                    key
-                    for key in self._student_visual_cache.keys()
-                    if key.startswith("deepstack_")
+        breakdown: Dict[str, torch.Tensor] = {}
+
+        if vit_cfg.enabled:
+            student_feat = self._student_visual_cache.get("vit")
+            teacher_feat = self._teacher_visual_cache.get("vit")
+            if student_feat is None or teacher_feat is None:
+                missing_targets.append("vit")
+            else:
+                base = compute_distance(student_feat, teacher_feat, vit_cfg.distance)
+                component = vit_cfg.weight * base
+                contributions.append(component)
+                breakdown["vit"] = component
+
+        if aligner_cfg.enabled:
+            student_feat = self._student_visual_cache.get("aligner")
+            teacher_feat = self._teacher_visual_cache.get("aligner")
+            if student_feat is None or teacher_feat is None:
+                missing_targets.append("aligner")
+            else:
+                base = compute_distance(
+                    student_feat, teacher_feat, aligner_cfg.distance
                 )
-                if not keys:
-                    missing_targets.append("deepstack (no hooks fired)")
-                    continue
-                layer_losses = []
-                missing_layers = []
+                component = aligner_cfg.weight * base
+                contributions.append(component)
+                breakdown["aligner"] = component
+
+        if deepstack_cfg.enabled:
+            keys = sorted(
+                key
+                for key in self._student_visual_cache.keys()
+                if key.startswith("deepstack_")
+            )
+            if not keys:
+                missing_targets.append("deepstack (no hooks fired)")
+            else:
+                layer_losses: list[torch.Tensor] = []
+                missing_layers: list[str] = []
                 for key in keys:
                     student_feat = self._student_visual_cache.get(key)
                     teacher_feat = self._teacher_visual_cache.get(key)
                     if student_feat is None or teacher_feat is None:
                         missing_layers.append(key)
                         continue
-                    layer_losses.append(compute_distance(student_feat, teacher_feat))
-                if layer_losses:
-                    contributions.append(
-                        torch.stack(
-                            [loss_item.float() for loss_item in layer_losses]
-                        ).mean()
+                    base = compute_distance(
+                        student_feat, teacher_feat, deepstack_cfg.distance
                     )
+                    layer_losses.append(base)
+                if layer_losses:
+                    stacked = torch.stack(
+                        [loss_item.float() for loss_item in layer_losses]
+                    ).mean()
+                    component = deepstack_cfg.weight * stacked
+                    contributions.append(component)
+                    breakdown["deepstack"] = component
                 else:
                     if missing_layers:
                         missing_targets.append(
@@ -421,14 +526,6 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
                         )
                     else:
                         missing_targets.append("deepstack (no matching activations)")
-                continue
-
-            student_feat = self._student_visual_cache.get(name)
-            teacher_feat = self._teacher_visual_cache.get(name)
-            if student_feat is None or teacher_feat is None:
-                missing_targets.append(name)
-                continue
-            contributions.append(compute_distance(student_feat, teacher_feat))
 
         if not contributions:
             missing_desc = (
@@ -440,8 +537,13 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
                 "Ensure the dataset yields image inputs and that both teacher and student expose the requested visual modules."
             )
 
-        stacked = torch.stack([loss.float() for loss in contributions])
-        return stacked.mean()
+        self._last_visual_kd_breakdown = breakdown
+
+        total_loss = contributions[0]
+        for loss in contributions[1:]:
+            total_loss = total_loss + loss
+
+        return total_loss
 
     def __del__(self):
         try:
@@ -452,18 +554,40 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
     def _ensure_visual_kd_state(self) -> None:
         if not hasattr(self, "_visual_kd_enabled"):
             self._visual_kd_enabled = False
-        if not hasattr(self, "_visual_kd_weight"):
-            self._visual_kd_weight = 0.0
+        if not hasattr(self, "_visual_kd_config"):
+            self._visual_kd_config = VisualKDConfig.disabled()
+
+        if not hasattr(self, "_visual_kd_vit_cfg") or not hasattr(
+            self, "_visual_kd_aligner_cfg"
+        ) or not hasattr(self, "_visual_kd_deepstack_cfg"):
+            cfg = self._visual_kd_config
+            self._visual_kd_vit_cfg = getattr(cfg, "vit", VisualKDTargetConfig())
+            self._visual_kd_aligner_cfg = getattr(
+                cfg, "aligner", VisualKDTargetConfig()
+            )
+            self._visual_kd_deepstack_cfg = getattr(
+                cfg, "deepstack", VisualKDTargetConfig()
+            )
+
         if not hasattr(self, "_visual_kd_targets"):
-            self._visual_kd_targets = []
-        if not hasattr(self, "_visual_kd_distance"):
-            self._visual_kd_distance = "mse"
+            cfg = self._visual_kd_config
+            self._visual_kd_targets = [
+                name
+                for name, target_cfg in (
+                    ("vit", cfg.vit),
+                    ("aligner", cfg.aligner),
+                    ("deepstack", cfg.deepstack),
+                )
+                if target_cfg.enabled
+            ]
         if not hasattr(self, "_visual_hooks"):
             self._visual_hooks = []
         if not hasattr(self, "_student_visual_cache"):
             self._student_visual_cache = {}
         if not hasattr(self, "_teacher_visual_cache"):
             self._teacher_visual_cache = {}
+        if not hasattr(self, "_last_visual_kd_breakdown"):
+            self._last_visual_kd_breakdown = {}
 
     def _has_teacher_model(self) -> bool:
         return hasattr(self, "teacher_model") and self.teacher_model is not None
@@ -514,8 +638,21 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
                 if finite_values.numel() == 0:
                     continue
 
-                aggregated = float(finite_values.mean().item())
                 metric_key = key if mode == "train" else f"eval_{key}"
+                base_key = self._metric_base_key(metric_key)
+                aggregate_as_sum = base_key in {
+                    "token_acc_correct",
+                    "token_acc_total",
+                }
+
+                if aggregate_as_sum:
+                    aggregated = float(finite_values.sum().item())
+                    reduction = "sum"
+                else:
+                    aggregated = float(finite_values.mean().item())
+                    reduction = "mean"
+
+                aggregated = self._sync_metric_value(aggregated, reduction=reduction)
                 aggregated_logs[metric_key] = aggregated
                 keys_to_remove.add(metric_key)
 
@@ -525,6 +662,8 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
             logs.pop(key, None)
             sanitized_logs.pop(key, None)
 
+        self._coalesce_accuracy_metrics(aggregated_logs)
+
         sanitized_logs.update(aggregated_logs)
         logs.update(aggregated_logs)
 
@@ -532,3 +671,45 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
             super().log(sanitized_logs, start_time)
         else:
             super().log(sanitized_logs)
+
+    @staticmethod
+    def _metric_base_key(metric_key: str) -> str:
+        if metric_key.startswith("eval_"):
+            return metric_key[5:]
+        return metric_key
+
+    @staticmethod
+    def _coalesce_accuracy_metrics(metrics: Dict[str, float]) -> None:
+        """Convert *_token_acc_{correct,total} into *_token_acc ratios."""
+
+        for prefix in ("", "eval_"):
+            correct_key = f"{prefix}token_acc_correct"
+            total_key = f"{prefix}token_acc_total"
+            correct = metrics.pop(correct_key, None)
+            total = metrics.pop(total_key, None)
+            if correct is None or total is None:
+                continue
+            if total <= 0:
+                continue
+            metrics[f"{prefix}token_acc"] = correct / total
+
+    def _sync_metric_value(self, value: float, *, reduction: str) -> float:
+        """Synchronize metric scalars across ranks."""
+
+        if not (dist.is_available() and dist.is_initialized()):
+            return value
+
+        try:
+            device = next(self.model.parameters()).device
+        except Exception:
+            device = torch.device("cpu")
+
+        world_size = dist.get_world_size()
+        if world_size <= 1:
+            return value
+
+        tensor = torch.tensor([value], dtype=torch.float64, device=device)
+        dist.all_reduce(tensor)
+        if reduction == "mean":
+            tensor /= world_size
+        return float(tensor.item())

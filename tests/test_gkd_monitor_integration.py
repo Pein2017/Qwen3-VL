@@ -11,6 +11,8 @@ from src.config import (
     PromptOverrides,
     SaveDelayConfig,
     TrainingConfig,
+    VisualKDConfig,
+    VisualKDTargetConfig,
 )
 from src.config.loader import ConfigLoader
 from src.config.missions import SUPPORTED_MISSIONS
@@ -85,7 +87,15 @@ def _build_minimal_training_config(
     visual_kd_section = {"enabled": visual_enabled}
     if visual_enabled:
         visual_kd_section.update(
-            {"weight": 0.1, "targets": ["merger"], "distance": "mse"}
+            {
+                "vit": {"enabled": False},
+                "aligner": {
+                    "enabled": True,
+                    "weight": 0.1,
+                    "distance": "mse",
+                },
+                "deepstack": {"enabled": False},
+            }
         )
 
     payload = {
@@ -94,6 +104,7 @@ def _build_minimal_training_config(
             "train_jsonl": "data/train.jsonl",
             "user_prompt": "user prompt",
             "emit_norm": "norm1000",
+            "json_format": "standard",
             "visual_kd": visual_kd_section,
         },
         "model": {},
@@ -266,7 +277,8 @@ def test_gkd_monitor_logs_losses(monkeypatch):
     trainer._metrics["train"]["llm_kd_loss"].extend([0.1, 0.2])
     trainer._metrics["train"]["sft_loss"].extend([0.4, 0.5])
     trainer._metrics["train"]["loss"].extend([0.5, 0.7])
-    trainer._metrics["train"]["token_acc"].extend([0.8, 0.9])
+    trainer._metrics["train"]["token_acc_correct"].extend([8.0, 9.0])
+    trainer._metrics["train"]["token_acc_total"].extend([10.0, 10.0])
     trainer.model = SimpleNamespace(training=True)
 
     trainer.log({"eval/loss": 1.23})
@@ -281,10 +293,7 @@ def test_gkd_monitor_logs_losses(monkeypatch):
         == (0.4 + 0.5) / 2
     )
     assert pytest.approx(captured_logs["loss"], rel=1e-6) == train_loss_avg
-    assert (
-        pytest.approx(captured_logs["token_acc"], rel=1e-6)
-        == (0.8 + 0.9) / 2
-    )
+    assert pytest.approx(captured_logs["token_acc"], rel=1e-6) == 17.0 / 20.0
     assert pytest.approx(captured_logs["eval/loss"], rel=1e-6) == 1.23
     assert "train/eval/loss" not in captured_logs
     assert not trainer._metrics["train"]
@@ -292,7 +301,8 @@ def test_gkd_monitor_logs_losses(monkeypatch):
     trainer._metrics["eval"]["llm_kd_loss"].extend([0.3])
     trainer._metrics["eval"]["sft_loss"].extend([0.6])
     trainer._metrics["eval"]["loss"].extend([0.9])
-    trainer._metrics["eval"]["token_acc"].extend([0.4])
+    trainer._metrics["eval"]["token_acc_correct"].extend([4.0])
+    trainer._metrics["eval"]["token_acc_total"].extend([5.0])
 
     eval_metrics_payload: dict[str, float] = {}
     trainer.log(eval_metrics_payload)
@@ -300,10 +310,28 @@ def test_gkd_monitor_logs_losses(monkeypatch):
     assert pytest.approx(captured_logs["eval_llm_kd_loss"], rel=1e-6) == 0.3
     assert pytest.approx(captured_logs["eval_sft_loss"], rel=1e-6) == 0.6
     assert pytest.approx(captured_logs["eval_loss"], rel=1e-6) == 0.9
-    assert pytest.approx(captured_logs["eval_token_acc"], rel=1e-6) == 0.4
-    assert pytest.approx(eval_metrics_payload["eval_token_acc"], rel=1e-6) == 0.4
+    assert pytest.approx(captured_logs["eval_token_acc"], rel=1e-6) == 0.8
+    assert pytest.approx(eval_metrics_payload["eval_token_acc"], rel=1e-6) == 0.8
     assert pytest.approx(eval_metrics_payload["eval_loss"], rel=1e-6) == 0.9
     assert not trainer._metrics["eval"]
+
+
+def test_gkd_monitor_coalesce_accuracy_metrics():
+    payload = {
+        "token_acc_correct": 8.0,
+        "token_acc_total": 10.0,
+        "eval_token_acc_correct": 5.0,
+        "eval_token_acc_total": 5.0,
+    }
+
+    GKDTrainerWithMetrics._coalesce_accuracy_metrics(payload)
+
+    assert payload["token_acc"] == pytest.approx(0.8)
+    assert payload["eval_token_acc"] == pytest.approx(1.0)
+    assert "token_acc_correct" not in payload
+    assert "token_acc_total" not in payload
+    assert "eval_token_acc_correct" not in payload
+    assert "eval_token_acc_total" not in payload
 
 
 def test_gkd_compute_loss_aligns_tokens():
@@ -372,7 +400,8 @@ def test_gkd_compute_loss_aligns_tokens():
     torch.testing.assert_close(captured["teacher"], expected_teacher)
     assert captured["beta"] == pytest.approx(0.25)
     assert trainer._metrics["train"]["llm_kd_loss"][0].item() == pytest.approx(0.5)
-    assert trainer._metrics["train"]["token_acc"][0].item() == pytest.approx(1.0)
+    assert trainer._metrics["train"]["token_acc_correct"][0].item() == pytest.approx(1.0)
+    assert trainer._metrics["train"]["token_acc_total"][0].item() == pytest.approx(1.0)
 
 
 def test_gkd_compute_loss_raises_on_vocab_mismatch():
@@ -506,9 +535,12 @@ def test_visual_kd_adds_weighted_loss():
     trainer._student_visual_cache = {}
     trainer._teacher_visual_cache = {}
     trainer._visual_kd_enabled = True
-    trainer._visual_kd_weight = 0.1
-    trainer._visual_kd_targets = ["merger", "deepstack"]
-    trainer._visual_kd_distance = "mse"
+    trainer._visual_kd_config = VisualKDConfig(
+        enabled=True,
+        vit=VisualKDTargetConfig(enabled=False),
+        aligner=VisualKDTargetConfig(enabled=True, weight=0.1, distance="mse"),
+        deepstack=VisualKDTargetConfig(enabled=True, weight=0.1, distance="mse"),
+    )
 
     trainer.model = student_model
     trainer._register_visual_hooks()
@@ -516,8 +548,8 @@ def test_visual_kd_adds_weighted_loss():
     loss = trainer.compute_loss(student_model, {"labels": labels})
     assert isinstance(loss, torch.Tensor)
 
-    # MSE merger = 0.5, deepstack = 0.25 => mean = 0.375; weighted = 0.0375
-    expected_weighted_loss = torch.tensor(0.0375)
+    # MSE merger = 0.5, deepstack = 0.25 => weighted sum = 0.05 + 0.025 = 0.075
+    expected_weighted_loss = torch.tensor(0.075)
     assert pytest.approx(loss.item(), rel=1e-6) == pytest.approx(
         expected_weighted_loss.item()
     )
@@ -546,9 +578,6 @@ def test_ce_loss_unscaled_when_llm_kd_disabled():
     trainer.get_use_logits_to_keep = lambda default_value=True: False  # type: ignore[method-assign]
     trainer.prepare_logits_to_keep = lambda inputs: None  # type: ignore[method-assign]
     trainer._visual_kd_enabled = False
-    trainer._visual_kd_weight = 0.0
-    trainer._visual_kd_targets = []
-    trainer._visual_kd_distance = "mse"
 
     loss = trainer.compute_loss(student_model, {"labels": labels})
     assert isinstance(loss, torch.Tensor)
@@ -601,9 +630,7 @@ def test_visual_kd_skips_when_disabled():
     trainer._student_visual_cache = {}
     trainer._teacher_visual_cache = {}
     trainer._visual_kd_enabled = False
-    trainer._visual_kd_weight = 0.0
-    trainer._visual_kd_targets = []
-    trainer._visual_kd_distance = "mse"
+    trainer._visual_kd_config = VisualKDConfig.disabled()
 
     trainer.model = student_model
 
@@ -665,9 +692,7 @@ def test_gkd_eval_logs_llm_kd_loss():
     trainer._student_visual_cache = {}
     trainer._teacher_visual_cache = {}
     trainer._visual_kd_enabled = False
-    trainer._visual_kd_weight = 0.0
-    trainer._visual_kd_targets = []
-    trainer._visual_kd_distance = "mse"
+    trainer._visual_kd_config = VisualKDConfig.disabled()
 
     trainer.model = student_model
 

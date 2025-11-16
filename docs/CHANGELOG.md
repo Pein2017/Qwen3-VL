@@ -36,15 +36,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Adds an optional visual feature distillation term to the GKD trainer so the vision encoder + aligner stay anchored to the teacher while the language tower adapts to new coordinate formats.
 
 #### Technical Details
-- Config schema: `custom.visual_kd` validated via `ConfigLoader` (defaults disabled, enum checks for distance/targets) and surfaced on `TrainArguments`.
-- Trainer: `src/trainers/gkd_monitor.py` registers hooks on `visual.merger` + `deepstack_merger_list`, computes MSE/cosine distances, and logs `train/vision_kd_loss` / `eval/vision_kd_loss` (post-weight).
-- Tests: extended `tests/test_gkd_monitor_integration.py` with synthetic models covering feature caches, logging, and legacy fallbacks.
-- Docs: `docs/REFERENCE.md` and `docs/DATA_AND_DATASETS.md` describe the knob and operational guidance; new overlay `configs/stage_3_gkd_visual.yaml` demonstrates usage.
+- Config schema: `custom.visual_kd` with per-component targets (`vit`, `aligner`, `deepstack`), each with independent `enabled`, `weight`, and `distance` settings. Validated via `ConfigLoader` and surfaced on `TrainArguments`.
+- Trainer: `src/trainers/gkd_monitor.py` registers hooks on `visual.merger` (for both vit and aligner targets) and `deepstack_merger_list`, computes MSE/cosine distances per enabled target, and logs `train/vision_kd_loss` / `eval/vision_kd_loss` (sum of weighted per-target losses).
+- Tests: `tests/test_gkd_monitor_integration.py` covers feature caches, per-target loss computation, and metrics logging.
+- Docs: `docs/REFERENCE.md` describes the new nested schema and operational guidance; stage configs (`stage_1_gkd.yaml`, `stage_2_gkd.yaml`, `stage_3_gkd.yaml`) demonstrate usage.
 
 #### Impact
 - ✅ Prevents vision/aligner drift without clamping the language tower via KL
+- ✅ Per-component control: enable/disable and weight each vision target independently
 - ✅ Lightweight configuration knob (YAML-only) with telemetry for monitoring
-- ✅ Backwards compatible—existing configs remain unchanged when the block is omitted
+- ✅ Clean break from legacy flat schema; all configs require explicit per-target structure
 
 ---
 

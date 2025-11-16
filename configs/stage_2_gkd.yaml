@@ -23,8 +23,8 @@ tuner:
     - model.visual.deepstack_merger_list.0
     - model.visual.deepstack_merger_list.1
     - model.visual.deepstack_merger_list.2
-  lora_rank: 8
-  lora_alpha: 16
+  lora_rank: 16
+  lora_alpha: 32
   lora_dropout: 0.1
   lora_bias: none
 
@@ -38,14 +38,13 @@ rlhf:
 
 training:
   # Paths and naming
-  output_dir: ./output/11-15/stage_2_gkd
-  run_name: last_2_llm-eff_batch_32-lrs_1_1_epoch_6-lora_8_16
-  
+  output_dir: ./output/11-15/stage_2
+  run_name: eff_batch_32-epoch_6-lr_1e-4-last_llm_2-lrs_1_1
   # Epochs and batch sizes
   num_train_epochs: 6
   per_device_train_batch_size: 1
   per_device_eval_batch_size: 2
-  gradient_accumulation_steps: 8
+  gradient_accumulation_steps: 16
   
   # Optimizer and learning rates
   optimizer: multimodal
@@ -57,7 +56,7 @@ training:
   eval_strategy: steps
   save_strategy: best
   eval_steps: 20
-  save_steps: 200
+  save_steps: 10
   save_total_limit: 4
   save_delay_steps: 200
   save_only_model: true
@@ -77,9 +76,16 @@ custom:
   trainer_variant: gkd_monitor
   visual_kd:
     enabled: false
-    weight: 0.2  
-    targets: [merger, deepstack]
-    distance: cosine
+    vit:
+      enabled: true
+      weight: 0.2
+      distance: cosine
+    aligner:
+      enabled: false
+    deepstack:
+      enabled: true
+      weight: 0.2
+      distance: cosine
   emit_norm: norm1000
   dump_conversation_text: false
 

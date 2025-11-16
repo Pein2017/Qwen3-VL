@@ -123,23 +123,39 @@ class SaveDelayConfig:
 
 
 @dataclass(frozen=True)
-class VisualKDConfig:
-    enabled: bool
+class VisualKDTargetConfig:
+    enabled: bool = False
     weight: float = 0.0
-    targets: Tuple[str, ...] = field(default_factory=tuple)
     distance: AllowedVisualDistance = "mse"
 
     def __post_init__(self) -> None:
         if self.enabled and self.weight <= 0:
-            raise ValueError("visual_kd.weight must be > 0 when enabled")
-        if self.enabled and not self.targets:
-            raise ValueError("visual_kd.targets must be non-empty when enabled")
+            raise ValueError("visual_kd.*.weight must be > 0 when enabled")
         if self.distance not in {"mse", "cosine"}:
-            raise ValueError("visual_kd.distance must be one of {mse, cosine}")
+            raise ValueError(
+                "visual_kd.*.distance must be one of {mse, cosine}"
+            )
+
+
+@dataclass(frozen=True)
+class VisualKDConfig:
+    enabled: bool
+    vit: VisualKDTargetConfig = field(default_factory=VisualKDTargetConfig)
+    aligner: VisualKDTargetConfig = field(default_factory=VisualKDTargetConfig)
+    deepstack: VisualKDTargetConfig = field(default_factory=VisualKDTargetConfig)
+
+    def __post_init__(self) -> None:
+        if not self.enabled:
+            return
+        if not (self.vit.enabled or self.aligner.enabled or self.deepstack.enabled):
+            raise ValueError(
+                "custom.visual_kd must enable at least one of vit/aligner/deepstack "
+                "when visual_kd.enabled is true"
+            )
 
     @classmethod
     def disabled(cls) -> "VisualKDConfig":
-        return cls(enabled=False, weight=0.0, targets=tuple(), distance="mse")
+        return cls(enabled=False)
 
     @classmethod
     def from_mapping(cls, payload: Optional[Mapping[str, Any]]) -> "VisualKDConfig":
@@ -149,41 +165,62 @@ class VisualKDConfig:
             raise TypeError("custom.visual_kd must be a mapping when provided")
 
         enabled = bool(payload.get("enabled", False))
-        raw_weight = payload.get("weight", 0.0)
-        try:
-            weight = float(raw_weight)
-        except (TypeError, ValueError) as exc:
-            raise ValueError("custom.visual_kd.weight must be numeric") from exc
-
-        raw_targets = payload.get("targets", [])
-        if isinstance(raw_targets, str):
-            targets_iter: Sequence[str] = [raw_targets]
-        elif isinstance(raw_targets, Sequence):
-            targets_iter = [str(t) for t in raw_targets]
-        else:
-            raise TypeError("custom.visual_kd.targets must be a sequence or string")
-
-        dedup: list[str] = []
-        seen: set[str] = set()
-        for item in targets_iter:
-            lowered = item.lower()
-            if lowered not in {"merger", "deepstack"}:
-                raise ValueError(
-                    "custom.visual_kd.targets contains unsupported entries: " + lowered
-                )
-            if lowered not in seen:
-                seen.add(lowered)
-                dedup.append(lowered)
-
-        raw_distance = payload.get("distance", "mse")
-        if not isinstance(raw_distance, str):
-            raise TypeError("custom.visual_kd.distance must be a string")
-        distance = raw_distance.lower()
-
         if not enabled:
             return cls.disabled()
 
-        return cls(enabled=True, weight=weight, targets=tuple(dedup), distance=distance)  # type: ignore[arg-type]
+        def parse_target(
+            name: str, raw: Optional[Mapping[str, Any]]
+        ) -> VisualKDTargetConfig:
+            if raw is None:
+                return VisualKDTargetConfig()
+            if not isinstance(raw, Mapping):
+                raise TypeError(
+                    f"custom.visual_kd.{name} must be a mapping when provided"
+                )
+
+            target_enabled = bool(raw.get("enabled", False))
+            raw_weight = raw.get("weight", 0.0)
+            try:
+                weight = float(raw_weight)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"custom.visual_kd.{name}.weight must be numeric"
+                ) from exc
+
+            raw_distance = raw.get("distance", "mse")
+            if not isinstance(raw_distance, str):
+                raise TypeError(
+                    f"custom.visual_kd.{name}.distance must be a string"
+                )
+            distance = raw_distance.lower()
+
+            if distance not in {"mse", "cosine"}:
+                raise ValueError(
+                    f"custom.visual_kd.{name}.distance must be one of {{mse, cosine}}"
+                )
+
+            return VisualKDTargetConfig(
+                enabled=target_enabled,
+                weight=weight,
+                distance=distance,  # type: ignore[arg-type]
+            )
+
+        vit_cfg = parse_target("vit", payload.get("vit"))
+        aligner_cfg = parse_target("aligner", payload.get("aligner"))
+        deepstack_cfg = parse_target("deepstack", payload.get("deepstack"))
+
+        if not (vit_cfg.enabled or aligner_cfg.enabled or deepstack_cfg.enabled):
+            raise ValueError(
+                "custom.visual_kd.enabled is true but all per-target configs are disabled; "
+                "enable at least one of vit/aligner/deepstack"
+            )
+
+        return cls(
+            enabled=True,
+            vit=vit_cfg,
+            aligner=aligner_cfg,
+            deepstack=deepstack_cfg,
+        )
 
 
 @dataclass(frozen=True)
