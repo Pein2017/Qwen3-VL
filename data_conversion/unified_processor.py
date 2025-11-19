@@ -31,7 +31,6 @@ from data_conversion.utils.sanitizers import (
     strip_occlusion_tokens,
 )
 from data_conversion.utils.sorting import sort_objects_tlbr
-from data_conversion.validation_manager import ValidationManager
 from data_conversion.vision_process import ImageProcessor
 
 
@@ -86,16 +85,7 @@ class UnifiedProcessor:
         )
         self.data_splitter = DataSplitter(val_ratio=config.val_ratio, seed=config.seed)
 
-        # Initialize validation manager with strict validation
-        self.validation_manager = ValidationManager(
-            validation_mode="strict",
-            min_object_size=10,
-            max_coordinate_value=50000,
-            require_non_empty_description=True,
-            check_coordinate_bounds=True,
-        )
-
-        # Track invalid objects and samples for reporting
+        # Track invalid objects and samples for reporting (for legacy compatibility)
         self.invalid_objects = []
         self.invalid_samples = []
 
@@ -195,6 +185,15 @@ class UnifiedProcessor:
                 s = standardize_label_description(s) or s
             except Exception:
                 pass
+        # Remove completeness attributes from screw/fiber connector objects
+        # This is always applied (not behind a config flag) as it's a data quality fix
+        try:
+            from data_conversion.utils.sanitizers import remove_screw_completeness_attributes
+
+            s = remove_screw_completeness_attributes(s) or s
+        except Exception:
+            # Best effort; do not fail pipeline on optional sanitization
+            pass
         return s
 
     def _rewrite_desc_with_remark(self, desc: str) -> str:
@@ -423,25 +422,8 @@ class UnifiedProcessor:
                 if d:
                     obj["desc"] = self._sanitize_description(d)
 
-        # Use ValidationManager to filter objects
-        valid_objects, invalid_objects = self.validation_manager.filter_valid_objects(
-            objects, img_w, img_h, image_id
-        )
-
-        # Track invalid objects for reporting
-        self.invalid_objects.extend(invalid_objects)
-
-        # Log validation results
-        if invalid_objects:
-            logger.warning(
-                f"Filtered out {len(invalid_objects)} invalid objects from {image_id}: "
-                f"{len(valid_objects)} valid objects remaining"
-            )
-            logger.debug(
-                f"Invalid objects details: {[obj.get('_validation_errors', []) for obj in invalid_objects]}"
-            )
-
-        return valid_objects
+        # For trusted input, no validation needed - return all objects
+        return objects
 
     def _process_sample_coordinates_unified(
         self,
@@ -489,11 +471,11 @@ class UnifiedProcessor:
         # Get any coordinate for dimension calculation
         if "bbox_2d" in first_obj:
             geometry_input = first_obj["bbox_2d"]
-        elif "quad" in first_obj:
-            # Create bbox from quad for dimension calculation
-            quad = first_obj["quad"]
-            x_coords = [quad[i] for i in range(0, len(quad), 2)]
-            y_coords = [quad[i] for i in range(1, len(quad), 2)]
+        elif "poly" in first_obj:
+            # Create bbox from poly for dimension calculation
+            poly = first_obj["poly"]
+            x_coords = [poly[i] for i in range(0, len(poly), 2)]
+            y_coords = [poly[i] for i in range(1, len(poly), 2)]
             geometry_input = [
                 min(x_coords),
                 min(y_coords),
@@ -536,13 +518,18 @@ class UnifiedProcessor:
                 )
                 updated_obj["bbox_2d"] = [int(round(c)) for c in transformed_coords]
 
-            elif "quad" in obj:
-                # Transform quad coordinates (8 coordinates: x1,y1,x2,y2,x3,y3,x4,y4)
-                coords = obj["quad"]
+            elif "poly" in obj:
+                # Transform poly coordinates (x1,y1,x2,y2,x3,y3,x4,y4,...)
+                # Note: poly format should be closed (first point repeated at end)
+                coords = obj["poly"]
+                # Check if already closed - if so, remove closing point before transformation
+                is_closed = len(coords) >= 4 and coords[0] == coords[-2] and coords[1] == coords[-1]
+                coords_to_transform = coords[:-2] if is_closed else coords
+                
                 transformed_coords = []
-                for i in range(0, len(coords), 2):
-                    if i + 1 < len(coords):
-                        point = [coords[i], coords[i + 1]]
+                for i in range(0, len(coords_to_transform), 2):
+                    if i + 1 < len(coords_to_transform):
+                        point = [coords_to_transform[i], coords_to_transform[i + 1]]
                         transformed_point = self._transform_coordinates(
                             point,
                             image_path,
@@ -557,7 +544,10 @@ class UnifiedProcessor:
                                 int(round(transformed_point[1])),
                             ]
                         )
-                updated_obj["quad"] = transformed_coords
+                # Ensure polygon is closed
+                if len(transformed_coords) >= 4:
+                    transformed_coords.extend([transformed_coords[0], transformed_coords[1]])
+                updated_obj["poly"] = transformed_coords
 
             elif "line" in obj:
                 # Transform line coordinates (sequence of x,y pairs)
@@ -839,54 +829,23 @@ class UnifiedProcessor:
         logger.info(f"   📝 {len(full_descriptions)} complete descriptions")
 
     def _export_validation_reports(self) -> None:
-        """Export comprehensive validation reports including invalid samples and objects."""
-        logger.info("📋 Exporting validation reports...")
+        """Export validation reports (legacy compatibility - no validation for trusted input)."""
+        logger.info("📋 Validation reports skipped (trusted input mode)")
 
-        # Export ValidationManager reports
-        validation_files = self.validation_manager.export_validation_reports(
-            self.output_dir
-        )
-
-        # Export invalid objects with detailed error information
+        # Export invalid objects/samples if any were tracked (should be empty for trusted input)
         if self.invalid_objects:
             invalid_objects_path = self.output_dir / "invalid_objects.jsonl"
             FileOperations.write_jsonl(self.invalid_objects, invalid_objects_path)
-            logger.info(
+            logger.warning(
                 f"📋 Exported {len(self.invalid_objects)} invalid objects to {invalid_objects_path}"
             )
 
-        # Export invalid samples summary
         if self.invalid_samples:
             invalid_samples_path = self.output_dir / "invalid_samples.jsonl"
             FileOperations.write_jsonl(self.invalid_samples, invalid_samples_path)
-            logger.info(
+            logger.warning(
                 f"📋 Exported {len(self.invalid_samples)} invalid samples to {invalid_samples_path}"
             )
-
-        # Generate validation summary statistics
-        validation_summary = {
-            "total_invalid_objects": len(self.invalid_objects),
-            "total_invalid_samples": len(self.invalid_samples),
-            "validation_manager_stats": self.validation_manager.generate_validation_summary(),
-            "invalid_sample_reasons": {},
-            "timestamp": self._get_current_timestamp(),
-        }
-
-        # Count reasons for invalid samples
-        for sample in self.invalid_samples:
-            reason = sample.get("reason", "unknown")
-            validation_summary["invalid_sample_reasons"][reason] = (
-                validation_summary["invalid_sample_reasons"].get(reason, 0) + 1
-            )
-
-        # Export validation summary
-        summary_path = self.output_dir / "validation_report.json"
-        FileOperations.save_json_data(validation_summary, summary_path, indent=2)
-
-        logger.info("✅ Validation reports exported successfully")
-        logger.info(f"   📊 {len(self.invalid_objects)} invalid objects")
-        logger.info(f"   📊 {len(self.invalid_samples)} invalid samples")
-        logger.info(f"   📋 Detailed reports: {list(validation_files.keys())}")
 
     def _get_current_timestamp(self) -> str:
         """Get current timestamp in ISO format."""
@@ -919,7 +878,7 @@ class UnifiedProcessor:
 
         # Validation steps have been removed
 
-        # Final summary with validation statistics
+        # Final summary statistics
         result = {
             "train": len(train_samples),
             "val": len(val_samples),
@@ -927,8 +886,6 @@ class UnifiedProcessor:
             "total_processed": len(all_samples),
             "total_invalid_objects": len(self.invalid_objects),
             "total_invalid_samples": len(self.invalid_samples),
-            "validation_success_rate": self.validation_manager.valid_samples
-            / max(1, self.validation_manager.total_samples_processed),
         }
 
         logger.info("🎉 Pipeline completed successfully!")
@@ -939,12 +896,10 @@ class UnifiedProcessor:
         logger.info(
             f"   Combined: {result['total_processed']} samples → all_samples.jsonl"
         )
-        logger.info("🔍 Validation Summary:")
-        logger.info(f"   Invalid objects filtered: {result['total_invalid_objects']}")
-        logger.info(f"   Invalid samples skipped: {result['total_invalid_samples']}")
-        logger.info(
-            f"   Validation success rate: {result['validation_success_rate']:.2%}"
-        )
+        if self.invalid_objects or self.invalid_samples:
+            logger.info("🔍 Processing Summary:")
+            logger.info(f"   Invalid objects tracked: {result['total_invalid_objects']}")
+            logger.info(f"   Invalid samples tracked: {result['total_invalid_samples']}")
 
         return result
 

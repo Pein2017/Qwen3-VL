@@ -187,8 +187,8 @@ class TeacherSelector:
         for obj in sample.get("objects", []):
             if "bbox_2d" in obj:
                 g.add("bbox_2d")
-            if "quad" in obj:
-                g.add("quad")
+            if "poly" in obj:
+                g.add("poly")
             if "line" in obj:
                 g.add("line")
         return g

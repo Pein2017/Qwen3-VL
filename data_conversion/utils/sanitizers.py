@@ -137,3 +137,53 @@ def standardize_label_description(desc: Optional[str]) -> Optional[str]:
         return "标签/无法识别"
 
     return s
+
+
+def remove_screw_completeness_attributes(desc: Optional[str]) -> Optional[str]:
+    """
+    Remove completeness attributes from screw and fiber connector objects.
+
+    For objects with type '螺丝、光纤插头', removes the completeness attribute pattern
+    ',{只显示部分|显示完整}' from the description.
+
+    Examples:
+        Input:  "螺丝、光纤插头/BBU安装螺丝,只显示部分,符合要求"
+        Output: "螺丝、光纤插头/BBU安装螺丝,符合要求"
+
+        Input:  "螺丝、光纤插头/BBU安装螺丝,显示完整,符合要求"
+        Output: "螺丝、光纤插头/BBU安装螺丝,符合要求"
+
+        Input:  "BBU设备/华为,显示完整,机柜空间充足需要安装/这个BBU设备未按要求配备挡风板"
+        Output: "BBU设备/华为,显示完整,机柜空间充足需要安装/这个BBU设备未按要求配备挡风板" (unchanged)
+
+    Args:
+        desc: Description string to sanitize
+
+    Returns:
+        Sanitized description with completeness attributes removed for screw objects,
+        or original description if not a screw object or if desc is None/empty
+    """
+    if not desc or not isinstance(desc, str):
+        return desc
+
+    s = desc.strip()
+    if not s:
+        return s
+
+    # Extract object type (first level before '/')
+    parts = s.split("/", 1)
+    if not parts:
+        return s
+
+    object_type = parts[0].strip()
+
+    # Only apply to screw and fiber connector objects
+    if object_type != "螺丝、光纤插头":
+        return s
+
+    # Remove completeness attribute pattern: ,{只显示部分|显示完整}
+    # Pattern matches comma followed by either completeness token
+    pattern = r",(?:只显示部分|显示完整)"
+    sanitized = re.sub(pattern, "", s)
+
+    return sanitized

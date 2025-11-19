@@ -262,7 +262,7 @@ class ValidationManager:
             self._validate_description(obj["desc"], object_index, report)
 
         # Check for geometry fields
-        geometry_types = ["bbox_2d", "quad", "line"]
+        geometry_types = ["bbox_2d", "poly", "line"]
         found_geometry = None
 
         for geom_type in geometry_types:
@@ -292,8 +292,8 @@ class ValidationManager:
                 ValidationError(
                     error_type="missing_geometry",
                     severity="critical",
-                    message=f"Object {object_index} missing geometry (bbox_2d, quad, or line)",
-                    fix_suggestion="Add one of: bbox_2d, quad, or line geometry",
+                    message=f"Object {object_index} missing geometry (bbox_2d, poly, or line)",
+                    fix_suggestion="Add one of: bbox_2d, poly, or line geometry",
                     object_index=object_index,
                 )
             )
@@ -345,8 +345,8 @@ class ValidationManager:
             self._validate_bbox(
                 geometry, object_index, report, image_width, image_height
             )
-        elif geom_type == "quad":
-            self._validate_quad(
+        elif geom_type == "poly":
+            self._validate_poly(
                 geometry, object_index, report, image_width, image_height
             )
         elif geom_type == "line":
@@ -456,40 +456,40 @@ class ValidationManager:
                     )
                 )
 
-    def _validate_quad(
+    def _validate_poly(
         self,
-        quad: Any,
+        poly: Any,
         object_index: int,
         report: ValidationReport,
         image_width: Optional[int] = None,
         image_height: Optional[int] = None,
     ) -> None:
-        """Validate quad format [x1,y1,x2,y2,x3,y3,x4,y4]."""
-        if not isinstance(quad, list) or len(quad) != 8:
+        """Validate poly format [x1,y1,x2,y2,x3,y3,x4,y4,...]."""
+        if not isinstance(poly, list) or len(poly) < 8 or len(poly) % 2 != 0:
             report.add_error(
                 ValidationError(
-                    error_type="invalid_quad_format",
+                    error_type="invalid_poly_format",
                     severity="critical",
-                    message=f"Object {object_index} quad must be list of 8 coordinates",
-                    fix_suggestion="Ensure quad is [x1,y1,x2,y2,x3,y3,x4,y4]",
+                    message=f"Object {object_index} poly must be list of at least 8 coordinates (even number)",
+                    fix_suggestion="Ensure poly is [x1,y1,x2,y2,x3,y3,x4,y4,...] with even number of coordinates",
                     object_index=object_index,
-                    field_name="quad",
-                    invalid_value=quad,
+                    field_name="poly",
+                    invalid_value=poly,
                 )
             )
             return
 
         # Check coordinate types
-        for i, coord in enumerate(quad):
+        for i, coord in enumerate(poly):
             if not isinstance(coord, (int, float)):
                 report.add_error(
                     ValidationError(
                         error_type="invalid_coordinate_type",
                         severity="critical",
-                        message=f"Object {object_index} quad coordinate {i} must be number",
+                        message=f"Object {object_index} poly coordinate {i} must be number",
                         fix_suggestion="Ensure all coordinates are numeric values",
                         object_index=object_index,
-                        field_name=f"quad[{i}]",
+                        field_name=f"poly[{i}]",
                         invalid_value=coord,
                     )
                 )
@@ -497,20 +497,21 @@ class ValidationManager:
 
         # Check bounds if image dimensions available
         if self.check_coordinate_bounds and image_width and image_height:
-            for i in range(0, 8, 2):
-                x, y = quad[i], quad[i + 1]
-                if x < 0 or y < 0 or x > image_width or y > image_height:
-                    report.add_error(
-                        ValidationError(
-                            error_type="coordinates_out_of_bounds",
-                            severity="critical",
-                            message=f"Object {object_index} quad point {i // 2} out of bounds",
-                            fix_suggestion=f"Ensure coordinates are within image ({image_width}x{image_height})",
-                            object_index=object_index,
-                            field_name="quad",
-                            invalid_value=f"point: ({x},{y}), image: {image_width}x{image_height}",
+            for i in range(0, len(poly), 2):
+                if i + 1 < len(poly):
+                    x, y = poly[i], poly[i + 1]
+                    if x < 0 or y < 0 or x > image_width or y > image_height:
+                        report.add_error(
+                            ValidationError(
+                                error_type="coordinates_out_of_bounds",
+                                severity="critical",
+                                message=f"Object {object_index} poly point {i // 2} out of bounds",
+                                fix_suggestion=f"Ensure coordinates are within image ({image_width}x{image_height})",
+                                object_index=object_index,
+                                field_name="poly",
+                                invalid_value=f"point: ({x},{y}), image: {image_width}x{image_height}",
+                            )
                         )
-                    )
 
     def _validate_line(
         self,

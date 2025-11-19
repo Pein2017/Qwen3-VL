@@ -26,7 +26,7 @@
     "bbu": {
       "chinese_label": "BBU设备",
       "geometry_types": [
-        "quad",
+        "poly",
         "bbox_2d"
       ],
       "hierarchy_template": "BBU设备,brand,completeness,windshield_requirement/[windshield_conformity]/[special_text]",
@@ -104,7 +104,7 @@
     "bbu_shield": {
       "chinese_label": "挡风板",
       "geometry_types": [
-        "quad",
+        "poly",
         "bbox_2d"
       ],
       "hierarchy_template": "挡风板,brand,completeness,obstruction,direction/[special_text]",
@@ -176,7 +176,7 @@
     "connect_point": {
       "chinese_label": "螺丝、光纤插头",
       "geometry_types": [
-        "quad",
+        "poly",
         "bbox_2d"
       ],
       "hierarchy_template": "螺丝、光纤插头,type,completeness,compliance/[specific_issues]/[special_text]",
@@ -258,7 +258,7 @@
     "label": {
       "chinese_label": "标签",
       "geometry_types": [
-        "quad",
+        "poly",
         "bbox_2d"
       ],
       "hierarchy_template": "标签/text_content",

@@ -44,7 +44,7 @@ ordering for stable learning signals.
 - Supported object types (strict): `{bbu, bbu_shield, connect_point, label, fiber, wire}`
   - Geometry constraints:
     - `fiber`, `wire` → line geometries
-    - `bbu`, `bbu_shield`, `connect_point`, `label` → quad or bbox geometries
+    - `bbu`, `bbu_shield`, `connect_point`, `label` → poly or bbox geometries
 - Optional fixed vocabulary files for teacher pool building (auto-detected):
   - `data_conversion/attribute_taxonomy.json`
   - `data_conversion/hierarchical_attribute_mapping.json`
@@ -64,7 +64,7 @@ ordering for stable learning signals.
   - Separator rules: comma (`,`) for same-level attributes, slash (`/`) for levels/conditionals
 
 - Geometry normalization and canonicalization:
-  - Converts V2 geometries to native formats: `bbox_2d`, `quad`, `line`
+  - Converts V2 geometries to native formats: `bbox_2d`, `poly`, `line`
   - Applies canonical vertex/point ordering (see next section)
   - Clamps coordinates to image bounds and fixes degeneracies
 
@@ -103,8 +103,8 @@ ordering for stable learning signals.
 ## Geometry & Coordinate Rules
 
 - BBox (`bbox_2d`): `[x_min, y_min, x_max, y_max]` with `x_min < x_max`, `y_min < y_max`
-- Quad (`quad`): 8 integers representing 4 vertices ordered canonically
-  - Canonical ordering: start at top-left, then proceed clockwise
+- Poly (`poly`): Even number of integers representing polygon vertices (minimum 8 for 4-point polygons, extensible to arbitrary number of points)
+  - Canonical ordering: start at top-left, then proceed clockwise (for 4-point polygons)
 - Line (`line`): `[x1, y1, x2, y2, ...]`
   - 2-point lines: ordered lexicographically by `(x, then y)`
   - Multi-point lines: preserve path structure; choose a canonical direction so the first point is the
@@ -132,7 +132,7 @@ images/                # Processed images (EXIF-corrected, smart-resized)
 
 Key notes:
 - All JSONL files use the same flat format: `{ "images": [..], "objects": [..], "width": W, "height": H }`
-- Objects preserve their native geometry key: one of `bbox_2d`, `quad`, `line`, plus a hierarchical `desc`
+- Objects preserve their native geometry key: one of `bbox_2d`, `poly`, `line`, plus a hierarchical `desc`
 - `label_vocabulary.json` aggregates object types, properties, and full descriptions for training aids
 
 ---
@@ -205,7 +205,7 @@ Training samples use native multi-geometry with hierarchical descriptions:
       "desc": "螺丝、光纤插头/BBU安装螺丝,显示完整,符合要求"
     },
     {
-      "quad": [704, 487, 670, 554, 973, 644, 993, 590],
+      "poly": [704, 487, 670, 554, 973, 644, 993, 590],
       "desc": "标签/4G-RRU3-光纤"
     },
     {

@@ -36,13 +36,13 @@ from data_conversion.utils.exif_utils import apply_exif_orientation
 logger = logging.getLogger(__name__)
 
 IMAGE_FACTOR = 28
-MIN_PIXELS = 4 * 28 * 28
-MAX_PIXELS = 512 * 28 * 28
+MIN_PIXELS = 4 * 32*32
+MAX_PIXELS = 768 * 32*32
 MAX_RATIO = 200
 
 
 VIDEO_MIN_PIXELS = 128 * 28 * 28
-VIDEO_MAX_PIXELS = 768 * 28 * 28
+VIDEO_MAX_PIXELS = 768 * 32*32
 FRAME_FACTOR = 2
 FPS = 2.0
 FPS_MIN_FRAMES = 4
@@ -52,7 +52,7 @@ FPS_MAX_FRAMES = 768
 # Here, 128K represents the maximum number of input tokens for the VLLM model.
 # Remember to adjust it according to your own configuration.
 VIDEO_TOTAL_PIXELS = int(
-    float(os.environ.get("VIDEO_MAX_PIXELS", 128000 * 28 * 28 * 0.9))
+    float(os.environ.get("VIDEO_MAX_PIXELS", 128000 * 32*32 * 0.9))
 )
 logger.info(f"set VIDEO_TOTAL_PIXELS: {VIDEO_TOTAL_PIXELS}")
 

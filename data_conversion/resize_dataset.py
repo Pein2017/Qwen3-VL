@@ -148,21 +148,11 @@ def _load_image_apply_exif(image_path: Path) -> Image.Image:
         return img.convert("RGB")
 
 
-def _clamp(v: int, lo: int, hi: int) -> int:
-    return int(max(lo, min(hi, v)))
-
-
 def _scale_points(points: List[float | int], sx: float, sy: float, w: int, h: int) -> List[int]:
     out: List[int] = []
     for i, v in enumerate(points):
-        if i % 2 == 0:
-            # x
-            nv = int(round(float(v) * sx))
-            out.append(_clamp(nv, 0, w - 1))
-        else:
-            # y
-            nv = int(round(float(v) * sy))
-            out.append(_clamp(nv, 0, h - 1))
+        nv = int(round(float(v) * (sx if i % 2 == 0 else sy)))
+        out.append(nv)
     return out
 
 
@@ -182,7 +172,7 @@ def _scale_bbox2d(bbox: List[float | int], sx: float, sy: float, w: int, h: int)
     return [x1, y1, x2, y2]
 
 
-def _canonicalize_quad(points8: List[int | float]) -> List[int]:
+def _canonicalize_poly(points8: List[int | float]) -> List[int]:
     # Ported from vis_tools/vis_helper.canonicalize_quad
     if not isinstance(points8, (list, tuple)) or len(points8) != 8:
         return [int(round(v)) for v in (points8 or [])]
@@ -210,11 +200,11 @@ def _canonicalize_quad(points8: List[int | float]) -> List[int]:
     return [int(round(v)) for xy in sorted_pts for v in xy]
 
 
-def _scale_quad(points8: List[float | int], sx: float, sy: float, w: int, h: int) -> List[int]:
+def _scale_poly(points8: List[float | int], sx: float, sy: float, w: int, h: int) -> List[int]:
     if not isinstance(points8, (list, tuple)) or len(points8) != 8:
-        raise ValueError(f"quad must be length=8, got {points8}")
+        raise ValueError(f"poly must be length=8, got {points8}")
     scaled = _scale_points(list(points8), sx, sy, w, h)
-    return _canonicalize_quad(scaled)
+    return _canonicalize_poly(scaled)
 
 
 def _scale_line(points: List[float | int], sx: float, sy: float, w: int, h: int) -> List[int]:
@@ -224,7 +214,7 @@ def _scale_line(points: List[float | int], sx: float, sy: float, w: int, h: int)
 
 
 def _detect_geometry_key(obj: Dict[str, Any]) -> str:
-    keys = [k for k in ("bbox_2d", "quad", "line") if k in obj]
+    keys = [k for k in ("bbox_2d", "poly", "line") if k in obj]
     if len(keys) != 1:
         raise ValueError(f"object must contain exactly one geometry key, got {keys}")
     return keys[0]
@@ -271,8 +261,8 @@ def _scale_objects(objects: List[Dict[str, Any]], sx: float, sy: float, w: int, 
         new_obj = dict(obj)
         if gkey == "bbox_2d":
             new_obj["bbox_2d"] = _scale_bbox2d(obj[gkey], sx, sy, w, h)
-        elif gkey == "quad":
-            new_obj["quad"] = _scale_quad(obj[gkey], sx, sy, w, h)
+        elif gkey == "poly":
+            new_obj["poly"] = _scale_poly(obj[gkey], sx, sy, w, h)
         elif gkey == "line":
             new_obj["line"] = _scale_line(obj[gkey], sx, sy, w, h)
         scaled_objects.append(new_obj)

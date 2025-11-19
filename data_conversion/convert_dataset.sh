@@ -25,7 +25,8 @@ export LANG=C.UTF-8
 export PYTHONIOENCODING=utf-8
 
 # Environment setup
-export PYTHONPATH=/data/Qwen2.5-VL-main:$PYTHONPATH
+# Prioritize current project directory to use updated code
+export PYTHONPATH=/data/Qwen3-VL:$PYTHONPATH
 
 # Dynamically determine project root from script location
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -39,9 +40,9 @@ export MODELSCOPE_CACHE="./modelscope/hub"
 # ============================================================================
 
 # Required paths - YOU MUST SET THESE
-INPUT_DIR="ds_v2"                    # e.g., "ds_v2" or "my_dataset"
+INPUT_DIR="raw_ds/bbu_scene_2.0/bbu_scene_2.0"  # e.g., "ds_v2" or "my_dataset"
 OUTPUT_DIR="data"                   # e.g., "data" or "/path/to/output"
-DATASET_NAME="bbu_full_unresized"         # e.g., "experiment_1" or leave empty to auto-detect
+DATASET_NAME="bbu_full_768_poly"         # e.g., "experiment_1" or leave empty to auto-detect
 
 # Optional configuration files - SET THESE IF YOU HAVE THEM
 HIERARCHY_FILE=""               # e.g., "data_conversion/label_hierarchy.json" or leave empty
@@ -49,7 +50,7 @@ HIERARCHY_FILE=""               # e.g., "data_conversion/label_hierarchy.json" o
 # Processing parameters - YOU MUST SET THESE
 VAL_RATIO="0.2"                    # e.g., "0.1" for 10% validation split
 MAX_TEACHERS="0"                 # e.g., "10" for max teacher samples, or "0" to disable teacher-pool (for dynamic teacher-sampling)
-RESIZE="false"                      # "true" or "false" for image resizing
+RESIZE="true"                       # "true" or "false" for image resizing
 OBJECT_TYPES="full"               # e.g., "bbu label" or "fiber wire" (space-separated, arbitrary combinations), or "full" for all types
 
 # Optional settings

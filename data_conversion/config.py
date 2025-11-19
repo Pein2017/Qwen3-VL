@@ -202,32 +202,7 @@ class DataConversionConfig:
 
         return cls(**config_dict)
 
-    @classmethod
-    def from_env(cls) -> "DataConversionConfig":
-        """Create config from environment variables (for backward compatibility)."""
-        import os
 
-        config_dict = {}
-
-        # Map environment variables to config fields
-        # Direct 1:1 mapping - no conversion needed
-        for _ in cls.__dataclass_fields__:
-            env_var = field.upper()
-            value = os.environ.get(env_var)
-            if value is not None:
-                # Convert string values to appropriate types
-                if field == "resize":
-                    config_dict[field] = value.lower() in ("true", "1", "yes")
-                elif field == "val_ratio":
-                    config_dict[field] = float(value)
-                elif field in ("max_teachers", "seed"):
-                    config_dict[field] = int(value)
-                elif field == "object_types":
-                    config_dict[field] = value.split()
-                else:
-                    config_dict[field] = value
-
-        return cls(**config_dict)
 
 
 def setup_logging(config: DataConversionConfig) -> None:

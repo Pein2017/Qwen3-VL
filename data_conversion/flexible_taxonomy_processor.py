@@ -37,7 +37,7 @@ class AnnotationSample:
     """Represents a processed annotation sample with hierarchical information."""
 
     object_type: str
-    geometry_format: str  # bbox_2d, quad, line
+    geometry_format: str  # bbox_2d, poly, line
     coordinates: List[float]
     grouped_attributes: Dict[str, Dict[str, str]]  # group -> attribute -> value
     description: str
@@ -103,15 +103,8 @@ class FlexibleTaxonomyProcessor:
             logger.warning("Could not determine object type")
             return None
 
-        # Process geometry with constraint validation
+        # Process geometry
         geometry_format, coordinates = self._process_geometry(geometry, object_type)
-
-        # Validate geometry constraints
-        if not self._validate_geometry_constraint(object_type, geometry_format):
-            logger.warning(
-                f"Geometry constraint violation: {object_type} with {geometry_format}"
-            )
-            return None
 
         # Group attributes by taxonomy
         grouped_attributes = self._group_attributes(content, content_zh, object_type)
@@ -121,12 +114,9 @@ class FlexibleTaxonomyProcessor:
             object_type, content_zh, content
         )
         # Standardize 标签 descriptions
-        try:
-            from data_conversion.utils.sanitizers import standardize_label_description
+        from data_conversion.utils.sanitizers import standardize_label_description
 
-            description = standardize_label_description(description) or description
-        except Exception as e:
-            raise e
+        description = standardize_label_description(description) or description
 
         return AnnotationSample(
             object_type=object_type,
@@ -176,11 +166,11 @@ class FlexibleTaxonomyProcessor:
                     line_coords.extend([int(round(coord[0])), int(round(coord[1]))])
             return "line", line_coords
 
-        elif geometry_type in ["Quad", "Square"]:
-            # Extract quad coordinates using unified helper
-            quad_coords = CoordinateManager._extract_quad_coordinates(geometry)
-            if quad_coords:
-                return "quad", quad_coords
+        elif geometry_type in ["Quad", "Square", "Polygon"]:
+            # Extract poly coordinates using unified helper
+            poly_coords = CoordinateManager._extract_poly_coordinates(geometry)
+            if poly_coords:
+                return "poly", poly_coords
 
         # ExtentPolygon -> bbox_2d
         return "bbox_2d", bbox
@@ -428,25 +418,6 @@ class FlexibleTaxonomyProcessor:
 
         return None
 
-    def _validate_geometry_constraint(
-        self, object_type: str, geometry_format: str
-    ) -> bool:
-        """Validate that object type matches allowed geometry constraints."""
-        if object_type not in self.hierarchical_object_types:
-            return True  # Allow unknown types
-
-        obj_mapping = self.hierarchical_object_types[object_type]
-        allowed_geometries = obj_mapping.get("geometry_types", [])
-
-        if not allowed_geometries:
-            return True  # No constraints defined
-
-        # Map geometry formats to constraint names
-        geometry_mapping = {"line": "line", "bbox_2d": "bbox_2d", "quad": "quad"}
-
-        constraint_name = geometry_mapping.get(geometry_format, geometry_format)
-        return constraint_name in allowed_geometries
-
     def _create_description(
         self, object_type: str, grouped_attributes: Dict[str, Dict[str, str]]
     ) -> str:
@@ -548,7 +519,7 @@ class HierarchicalProcessor:
         Returns objects in format:
         [
             {'bbox_2d': [x1,y1,x2,y2], 'desc': '...'},
-            {'quad': [x1,y1,x2,y2,x3,y3,x4,y4], 'desc': '...'},
+            {'poly': [x1,y1,x2,y2,x3,y3,x4,y4,...], 'desc': '...'},
             {'line': [x1,y1,x2,y2,...], 'desc': '...'}
         ]
         """

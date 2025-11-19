@@ -28,7 +28,7 @@ class CoordinateManager:
     Also provides unified geometry processing for all coordinate types:
     - Simple bbox: [x1, y1, x2, y2]
     - ExtentPolygon: GeoJSON-style with coordinates array
-    - Quad: Four-point polygon (四边形)
+    - Poly: Polygon with arbitrary number of points (多边形)
     - LineString: Multi-point line annotation
     """
 
@@ -178,9 +178,12 @@ class CoordinateManager:
         new_width: int,
         new_height: int,
     ) -> List[int]:
-        """
-        Scale bbox coordinates for smart resize operation.
-        Returns integer coordinates suitable for pixel-based operations.
+        """Scale bbox coordinates for smart resize operation.
+
+        This function assumes input coordinates are already valid and inside the
+        [0, original_width/height] range. In the trusted-input pipeline we avoid
+        silently clamping or "fixing" coordinates here and only apply the
+        deterministic scaling implied by the resize.
         """
         if original_width == new_width and original_height == new_height:
             # Convert to integers even if no scaling needed
@@ -192,17 +195,24 @@ class CoordinateManager:
 
         x1, y1, x2, y2 = bbox
 
-        # Apply scaling and round to integers
+        # Apply scaling and round to integers (no extra clamping/correction)
         new_x1 = int(round(x1 * scale_x))
         new_y1 = int(round(y1 * scale_y))
         new_x2 = int(round(x2 * scale_x))
         new_y2 = int(round(y2 * scale_y))
 
-        # Clamp to image bounds and ensure valid bbox
-        new_x1 = max(0, min(new_x1, new_width - 1))
-        new_y1 = max(0, min(new_y1, new_height - 1))
-        new_x2 = max(new_x1 + 1, min(new_x2, new_width))  # Ensure x2 > x1
-        new_y2 = max(new_y1 + 1, min(new_y2, new_height))  # Ensure y2 > y1
+        # Fail fast if invariants are broken; this should never happen for
+        # pre-validated input and a correct resize pipeline.
+        assert 0 <= new_x1 <= new_x2 <= new_width, (
+            f"Invalid bbox after smart-resize scaling on x-axis: "
+            f"[{new_x1}, {new_x2}] for width={new_width} (orig bbox={bbox}, "
+            f"orig_size={original_width}x{original_height}, new_size={new_width}x{new_height})"
+        )
+        assert 0 <= new_y1 <= new_y2 <= new_height, (
+            f"Invalid bbox after smart-resize scaling on y-axis: "
+            f"[{new_y1}, {new_y2}] for height={new_height} (orig bbox={bbox}, "
+            f"orig_size={original_width}x{original_height}, new_size={new_width}x{new_height})"
+        )
 
         logger.debug(
             f"Smart resize scale: [{x1:.1f},{y1:.1f},{x2:.1f},{y2:.1f}] "
@@ -643,7 +653,7 @@ class CoordinateManager:
             # Direct 2D array format
             result_geometry["coordinates"] = [[x, y] for x, y in transformed_points]
 
-        elif geometry_type == "Quad":
+        elif geometry_type in ["Quad", "Polygon"]:
             # 3D array format with rings
             if len(transformed_points) > 0:
                 result_geometry["coordinates"] = [
@@ -757,7 +767,7 @@ class CoordinateManager:
 
         Handles various coordinate structures:
         - ExtentPolygon: [[x1,y1], [x2,y2], [x3,y3], [x4,y4], [x1,y1]]
-        - Quad: [[[x1,y1], [x2,y2], [x3,y3], [x4,y4], [x1,y1]]]
+        - Quad/Polygon: [[[x1,y1], [x2,y2], [x3,y3], [x4,y4], [x1,y1]]]
         - LineString: [[x1,y1], [x2,y2], [x3,y3], ...]
         """
         points = []
@@ -769,7 +779,7 @@ class CoordinateManager:
                     if isinstance(coord, (list, tuple)) and len(coord) >= 2:
                         points.append((float(coord[0]), float(coord[1])))
 
-            elif geometry_type in ["Quad"]:
+            elif geometry_type in ["Quad", "Polygon"]:
                 # 3D array with lineType: [[[x1,y1], [x2,y2], ...]] (supports legacy "Square" type)
                 if coordinates and isinstance(coordinates[0], list):
                     for ring in coordinates:
@@ -910,7 +920,7 @@ class CoordinateManager:
 
         Args:
             geometry_input: Geometry data
-            preferred_format: Preferred output format ("bbox_2d", "quad", "line", or "auto")
+            preferred_format: Preferred output format ("bbox_2d", "poly", "line", or "auto")
 
         Returns:
             Dictionary with annotation format and coordinates
@@ -947,18 +957,18 @@ class CoordinateManager:
                         # Remove bbox_2d if line is preferred format
                         result = {"line": line_coords, "bbox_2d": bbox}
 
-            elif geometry_type in ["Quad", "Square"] and (
-                preferred_format in ["quad", "auto"]
+            elif geometry_type in ["Quad", "Square", "Polygon"] and (
+                preferred_format in ["poly", "auto"]
             ):
-                # Quad annotation: extract 4-point polygon (supports legacy "Square" type)
-                quad_coords = CoordinateManager._extract_quad_coordinates(
+                # Poly annotation: extract polygon coordinates from Quad/Polygon/Square GeoJSON geometry types
+                poly_coords = CoordinateManager._extract_poly_coordinates(
                     geometry_input
                 )
-                if quad_coords:
-                    result["quad"] = quad_coords
-                    if preferred_format == "quad":
-                        # Remove bbox_2d if quad is preferred format
-                        result = {"quad": quad_coords, "bbox_2d": bbox}
+                if poly_coords:
+                    result["poly"] = poly_coords
+                    if preferred_format == "poly":
+                        # Remove bbox_2d if poly is preferred format
+                        result = {"poly": poly_coords, "bbox_2d": bbox}
 
             # Always preserve full geometry for reference
             result["geometry"] = geometry_input
@@ -985,8 +995,8 @@ class CoordinateManager:
         return line_coords
 
     @staticmethod
-    def _extract_quad_coordinates(geometry: Dict) -> List[float]:
-        """Extract 4-point quad coordinates from Quad/Polygon geometry."""
+    def _extract_poly_coordinates(geometry: Dict) -> List[float]:
+        """Extract polygon coordinates from Quad/Polygon GeoJSON geometry (source format)."""
         coordinates = geometry.get("coordinates", [])
 
         # Handle nested coordinate structure
@@ -997,26 +1007,53 @@ class CoordinateManager:
         else:
             points = coordinates
 
-        # Extract first 4 points for quad format
-        quad_coords = []
-        for _, point in enumerate(points[:4]):  # Take first 4 points
+        # Extract all points for poly format (currently supports 4-point quads, but extensible)
+        poly_coords = []
+        for _, point in enumerate(points):  # Take all points (currently 4 for quads)
             if isinstance(point, list) and len(point) >= 2:
-                quad_coords.extend(
+                poly_coords.extend(
                     [int(round(float(point[0]))), int(round(float(point[1])))]
                 )
 
-        # Ensure we have exactly 8 coordinates (4 points)
-        if len(quad_coords) == 8:
-            return quad_coords
+        # For now, ensure we have at least 8 coordinates (4 points minimum)
+        # This can be extended to support arbitrary polygon points
+        if len(poly_coords) >= 8 and len(poly_coords) % 2 == 0:
+            # Close the polygon by adding first point at end
+            closed = CoordinateManager._close_polygon(poly_coords)
+            return [float(coord) for coord in closed]
         else:
             logger.warning(
-                f"Invalid quad coordinates: expected 8 values, got {len(quad_coords)}"
+                f"Invalid poly coordinates: expected at least 8 values (even number), got {len(poly_coords)}"
             )
             return []
 
     # =========================================================================
     # COORDINATE NORMALIZATION METHODS
     # =========================================================================
+
+    @staticmethod
+    def _close_polygon(poly_coords: Union[List[float], List[int]]) -> Union[List[float], List[int]]:
+        """
+        Close a polygon by adding the first point at the end if not already closed.
+        
+        Args:
+            poly_coords: Polygon coordinates [x1, y1, x2, y2, ...] (int or float)
+            
+        Returns:
+            Closed polygon coordinates [x1, y1, x2, y2, ..., x1, y1] (same type as input)
+        """
+        if len(poly_coords) < 4 or len(poly_coords) % 2 != 0:
+            return poly_coords
+        
+        # Check if already closed (first point == last point)
+        if len(poly_coords) >= 4:
+            first_x, first_y = poly_coords[0], poly_coords[1]
+            last_x, last_y = poly_coords[-2], poly_coords[-1]
+            if first_x == last_x and first_y == last_y:
+                return poly_coords  # Already closed
+        
+        # Close by appending first point
+        return poly_coords + [poly_coords[0], poly_coords[1]]
 
     @staticmethod
     def normalize_object_coordinates(
@@ -1026,7 +1063,7 @@ class CoordinateManager:
         Normalize coordinates within an object preserving native geometry format.
 
         Args:
-            obj: Object with geometry (bbox_2d, line, or quad) and description
+            obj: Object with geometry (bbox_2d, line, or poly) and description
             width: Image width for bounds checking
             height: Image height for bounds checking
 
@@ -1043,9 +1080,9 @@ class CoordinateManager:
             normalized_obj["line"] = CoordinateManager.normalize_line_coordinates(
                 obj["line"], width, height
             )
-        elif "quad" in obj:
-            normalized_obj["quad"] = CoordinateManager.normalize_quad_coordinates(
-                obj["quad"], width, height
+        elif "poly" in obj:
+            normalized_obj["poly"] = CoordinateManager.normalize_poly_coordinates(
+                obj["poly"], width, height
             )
         else:
             logger.warning(f"Object missing geometry type: {obj}")
@@ -1150,41 +1187,55 @@ class CoordinateManager:
         return normalized_coords
 
     @staticmethod
-    def normalize_quad_coordinates(
-        quad_coords: List[float], width: int, height: int
+    def normalize_poly_coordinates(
+        poly_coords: List[float], width: int, height: int
     ) -> List[int]:
         """
-        Normalize quad coordinates with canonical vertex ordering.
+        Normalize polygon coordinates with canonical vertex ordering.
 
         Args:
-            quad_coords: [x1, y1, x2, y2, x3, y3, x4, y4] quad vertices
+            poly_coords: [x1, y1, x2, y2, x3, y3, x4, y4, ...] polygon vertices
             width: Image width for bounds checking
             height: Image height for bounds checking
 
         Returns:
             Normalized coordinates with canonical vertex ordering
         """
-        if len(quad_coords) != 8:
+        if len(poly_coords) < 8 or len(poly_coords) % 2 != 0:
             logger.warning(
-                f"Invalid quad coordinates: expected 8 values, got {len(quad_coords)}"
+                f"Invalid poly coordinates: expected at least 8 values (even number), got {len(poly_coords)}"
             )
             return [0, 0, 1, 0, 1, 1, 0, 1]
 
-        # Clamp all coordinates to image bounds
-        normalized_coords = []
-        for i in range(0, 8, 2):
-            x = max(0, min(quad_coords[i], width - 1))
-            y = max(0, min(quad_coords[i + 1], height - 1))
-            normalized_coords.extend([x, y])
+        # For now, handle 4-point polygons (quads) - can be extended for arbitrary polygons
+        if len(poly_coords) == 8:
+            # Clamp all coordinates to image bounds
+            normalized_coords = []
+            for i in range(0, 8, 2):
+                x = max(0, min(poly_coords[i], width - 1))
+                y = max(0, min(poly_coords[i + 1], height - 1))
+                normalized_coords.extend([x, y])
 
-        # Convert to points for canonical ordering
-        points = [
-            (normalized_coords[i], normalized_coords[i + 1]) for i in range(0, 8, 2)
-        ]
-        ordered_points = CoordinateManager._canonical_quad_ordering(points)
+            # Convert to points for canonical ordering
+            points = [
+                (normalized_coords[i], normalized_coords[i + 1]) for i in range(0, 8, 2)
+            ]
+            ordered_points = CoordinateManager._canonical_poly_ordering(points)
 
-        # Flatten back to coordinate list
-        return [int(coord) for point in ordered_points for coord in point]
+            # Flatten back to coordinate list and close polygon
+            flattened = [int(coord) for point in ordered_points for coord in point]
+            closed = CoordinateManager._close_polygon(flattened)
+            return [int(coord) for coord in closed]
+        else:
+            # For polygons with more than 4 points, clamp coordinates and close
+            normalized_coords = []
+            for i in range(0, len(poly_coords), 2):
+                x = max(0, min(poly_coords[i], width - 1))
+                y = max(0, min(poly_coords[i + 1], height - 1))
+                normalized_coords.extend([int(x), int(y)])
+            # Close the polygon
+            closed = CoordinateManager._close_polygon(normalized_coords)
+            return [int(coord) for coord in closed]
 
     @staticmethod
     def _canonical_line_ordering(
@@ -1294,7 +1345,7 @@ class CoordinateManager:
         return [(x1, y1), (x2, y2)]
 
     @staticmethod
-    def _canonical_quad_ordering(
+    def _canonical_poly_ordering(
         points: List[Tuple[float, float]],
     ) -> List[Tuple[int, int]]:
         """
@@ -1304,19 +1355,19 @@ class CoordinateManager:
         for optimal vision-language model training performance.
 
         Benefits for vision-language learning:
-        - Consistent vertex traversal direction across all quads
+        - Consistent vertex traversal direction across all polygons
         - Predictable coordinate sequence for improved model learning
         - Alignment with reading order (top-left start)
         - Reduced coordinate token sequence variations
 
         Args:
-            points: List of (x, y) vertex coordinates
+            points: List of (x, y) vertex coordinates (currently supports 4-point polygons)
 
         Returns:
             Points ordered starting from top-left, proceeding clockwise
         """
         if len(points) != 4:
-            raise ValueError(f"Quad must have exactly 4 points: {points}")
+            raise ValueError(f"Polygon must have exactly 4 points for canonical ordering: {points}")
 
         # Find top-left point (minimum y, then minimum x for ties)
         top_left = min(points, key=lambda p: (p[1], p[0]))
@@ -1341,7 +1392,7 @@ class CoordinateManager:
                 return (1, dx + dy)  # Prioritize rightward + downward
             elif dx <= 0 and dy > 0:  # Bottom-left quadrant (left or same x, and down)
                 return (2, -dx + dy)  # Prioritize leftward + downward
-            else:  # dx <= 0 and dy <= 0 - should not happen for valid quads, but handle gracefully
+            else:  # dx <= 0 and dy <= 0 - should not happen for valid polygons, but handle gracefully
                 return (3, -dx - dy)  # Fallback case
 
         # Sort remaining points by their relation to top-left
@@ -1494,15 +1545,15 @@ class DataValidator:
         return True
 
     @staticmethod
-    def validate_quad(quad) -> bool:
-        """Validate quad format [x1, y1, x2, y2, x3, y3, x4, y4]."""
-        if not isinstance(quad, list) or len(quad) != 8:
-            raise ValueError(f"Quad must be list of 8 numbers, got {quad}")
+    def validate_poly(poly) -> bool:
+        """Validate poly format [x1, y1, x2, y2, x3, y3, x4, y4, ...]."""
+        if not isinstance(poly, list) or len(poly) < 8 or len(poly) % 2 != 0:
+            raise ValueError(f"Poly must be list of at least 8 numbers (even number), got {poly}")
 
-        for i, coord in enumerate(quad):
+        for i, coord in enumerate(poly):
             if not isinstance(coord, (int, float)):
                 raise ValueError(
-                    f"Quad coordinate {i} must be number, got {type(coord)}"
+                    f"Poly coordinate {i} must be number, got {type(coord)}"
                 )
 
         return True
@@ -1552,17 +1603,17 @@ class DataValidator:
                 raise ValueError(f"Object {i} missing 'desc'")
 
             # Check for at least one geometry type
-            geometry_types = ["bbox_2d", "quad", "line"]
+            geometry_types = ["bbox_2d", "poly", "line"]
             if not any(geom_type in obj for geom_type in geometry_types):
                 raise ValueError(
-                    f"Object {i} missing geometry type (bbox_2d, quad, or line)"
+                    f"Object {i} missing geometry type (bbox_2d, poly, or line)"
                 )
 
             # Validate geometry coordinates
             if "bbox_2d" in obj:
                 DataValidator.validate_bbox(obj["bbox_2d"])
-            elif "quad" in obj:
-                DataValidator.validate_quad(obj["quad"])
+            elif "poly" in obj:
+                DataValidator.validate_poly(obj["poly"])
             elif "line" in obj:
                 DataValidator.validate_line(obj["line"])
 
@@ -1582,7 +1633,7 @@ class StructureValidator:
         train_samples: List[Dict],
         val_samples: List[Dict],
         teacher_samples: List[Dict],
-        max_teachers: int = None
+        max_teachers: Optional[int] = None
     ) -> bool:
         """Validate complete pipeline output."""
         if not train_samples:

@@ -9,8 +9,8 @@ from typing import Dict, List, Tuple
 def _first_xy(obj: Dict) -> Tuple[int, int]:
     if "bbox_2d" in obj:
         return obj["bbox_2d"][0], obj["bbox_2d"][1]
-    if "quad" in obj:
-        return obj["quad"][0], obj["quad"][1]
+    if "poly" in obj:
+        return obj["poly"][0], obj["poly"][1]
     if "line" in obj:
         return obj["line"][0], obj["line"][1]
     return 0, 0
