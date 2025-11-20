@@ -141,27 +141,13 @@ def standardize_label_description(desc: Optional[str]) -> Optional[str]:
 
 def remove_screw_completeness_attributes(desc: Optional[str]) -> Optional[str]:
     """
-    Remove completeness attributes from screw and fiber connector objects.
+    Remove completeness attributes from screw objects only within the attribute slot.
 
-    For objects with type '螺丝、光纤插头', removes the completeness attribute pattern
-    ',{只显示部分|显示完整}' from the description.
-
-    Examples:
-        Input:  "螺丝、光纤插头/BBU安装螺丝,只显示部分,符合要求"
-        Output: "螺丝、光纤插头/BBU安装螺丝,符合要求"
-
-        Input:  "螺丝、光纤插头/BBU安装螺丝,显示完整,符合要求"
-        Output: "螺丝、光纤插头/BBU安装螺丝,符合要求"
-
-        Input:  "BBU设备/华为,显示完整,机柜空间充足需要安装/这个BBU设备未按要求配备挡风板"
-        Output: "BBU设备/华为,显示完整,机柜空间充足需要安装/这个BBU设备未按要求配备挡风板" (unchanged)
-
-    Args:
-        desc: Description string to sanitize
-
-    Returns:
-        Sanitized description with completeness attributes removed for screw objects,
-        or original description if not a screw object or if desc is None/empty
+    We expect descriptions of the form:
+        螺丝、光纤插头/{type},{completeness},...
+    Completeness tokens ('只显示部分', '显示完整') should only be dropped from the comma
+    list immediately after the object type. Text appearing in later sections such as
+    '备注' must remain untouched.
     """
     if not desc or not isinstance(desc, str):
         return desc
@@ -170,20 +156,25 @@ def remove_screw_completeness_attributes(desc: Optional[str]) -> Optional[str]:
     if not s:
         return s
 
-    # Extract object type (first level before '/')
-    parts = s.split("/", 1)
-    if not parts:
+    parts = s.split("/", 2)
+    if not parts or parts[0].strip() != "螺丝、光纤插头":
         return s
 
-    object_type = parts[0].strip()
+    if len(parts) == 1:
+        return s  # No attributes to clean
 
-    # Only apply to screw and fiber connector objects
-    if object_type != "螺丝、光纤插头":
-        return s
+    attribute_segment = parts[1]
+    remainder = parts[2] if len(parts) > 2 else None
 
-    # Remove completeness attribute pattern: ,{只显示部分|显示完整}
-    # Pattern matches comma followed by either completeness token
-    pattern = r",(?:只显示部分|显示完整)"
-    sanitized = re.sub(pattern, "", s)
+    tokens = [tok.strip() for tok in attribute_segment.split(",")]
+    filtered = [
+        tok for tok in tokens if tok and tok not in {"只显示部分", "显示完整"}
+    ]
+    cleaned_segment = ",".join(filtered)
 
-    return sanitized
+    rebuilt = [parts[0]]
+    rebuilt.append(cleaned_segment)
+    if remainder is not None:
+        rebuilt.append(remainder)
+
+    return "/".join(rebuilt)

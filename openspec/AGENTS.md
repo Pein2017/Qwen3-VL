@@ -12,6 +12,14 @@ Instructions for AI coding assistants using OpenSpec for spec-driven development
 - Validate: `openspec validate [change-id] --strict` and fix issues
 - Request approval: Do not start implementation until proposal is approved
 
+## Documentation Expectations
+
+- Keep the doc base in sync with code changes. Use `docs/README.md` as the directory ↔ doc map (e.g., `src/` → `docs/REFERENCE.md`, `data_conversion/` → `docs/DATA_AND_DATASETS.md`, `public_data/` → `docs/PUBLIC_DATA.md`, `scripts/` → `docs/REFERENCE.md` + `docs/STAGE_A_STAGE_B.md`).
+- When touching Stage-A/B pipelines (`src/stage_a`, `src/stage_b`, `configs/stage_b`, `scripts/stage_*`), update both `docs/REFERENCE.md` (technical runbook) and `docs/STAGE_A_STAGE_B.md` / `stage-B-knowledge-Chinese.md` (business guidance).
+- Changes to conversion, datasets, or augmentation must update `docs/DATA_AND_DATASETS.md` and/or `docs/DATA_AUGMENTATION.md` plus any taxonomy JSONs referenced there.
+- New CLI entrypoints or script behaviors go into `docs/README.md` (script table) and the relevant deep-dive doc.
+- If instructions conflict, pause and ask for clarification before editing specs or docs.
+
 ## Three-Stage Workflow
 
 ### Stage 1: Creating Changes
@@ -158,99 +166,21 @@ New request?
 
 1. **Create directory:** `changes/[change-id]/` (kebab-case, verb-led, unique)
 
-2. **Write proposal.md:**
-```markdown
-# Change: [Brief description of change]
+2. **Write proposal.md:** capture why, what changes, and impact in a short markdown file.
 
-## Why
-[1-2 sentences on problem/opportunity]
+3. **Create spec deltas:** add ADDED/MODIFIED/REMOVED requirements under `changes/[change-id]/specs/<capability>/spec.md`.
 
-## What Changes
-- [Bullet list of changes]
-- [Mark breaking changes with **BREAKING**]
+4. **Create tasks.md:** break implementation into checklisted steps.
 
-## Impact
-- Affected specs: [list capabilities]
-- Affected code: [key files/systems]
-```
-
-3. **Create spec deltas:** `specs/[capability]/spec.md`
-```markdown
-## ADDED Requirements
-### Requirement: New Feature
-The system SHALL provide...
-
-#### Scenario: Success case
-- **WHEN** user performs action
-- **THEN** expected result
-
-## MODIFIED Requirements
-### Requirement: Existing Feature
-[Complete modified requirement]
-
-## REMOVED Requirements
-### Requirement: Old Feature
-**Reason**: [Why removing]
-**Migration**: [How to handle]
-```
-If multiple capabilities are affected, create multiple delta files under `changes/[change-id]/specs/<capability>/spec.md`—one per capability.
-
-4. **Create tasks.md:**
-```markdown
-## 1. Implementation
-- [ ] 1.1 Create database schema
-- [ ] 1.2 Implement API endpoint
-- [ ] 1.3 Add frontend component
-- [ ] 1.4 Write tests
-```
-
-5. **Create design.md when needed:**
-Create `design.md` if any of the following apply; otherwise omit it:
-- Cross-cutting change (multiple services/modules) or a new architectural pattern
-- New external dependency or significant data model changes
-- Security, performance, or migration complexity
-- Ambiguity that benefits from technical decisions before coding
-
-Minimal `design.md` skeleton:
-```markdown
-## Context
-[Background, constraints, stakeholders]
-
-## Goals / Non-Goals
-- Goals: [...]
-- Non-Goals: [...]
-
-## Decisions
-- Decision: [What and why]
-- Alternatives considered: [Options + rationale]
-
-## Risks / Trade-offs
-- [Risk] → Mitigation
-
-## Migration Plan
-[Steps, rollback]
-
-## Open Questions
-- [...]
-```
+5. **Create design.md when needed:** only for cross‑cutting or complex changes (see `openspec/project.md` for examples).
 
 ## Spec File Format
 
 ### Critical: Scenario Formatting
 
-**CORRECT** (use #### headers):
-```markdown
-#### Scenario: User login success
-- **WHEN** valid credentials provided
-- **THEN** return JWT token
-```
+Use `#### Scenario: <Name>` headings, with **WHEN**/**THEN** bullet steps inside the scenario.
 
-**WRONG** (don't use bullets or bold):
-```markdown
-- **Scenario: User login**  ❌
-**Scenario**: User login     ❌
-### Scenario: User login      ❌
-```
+Avoid using bullets or bold text for scenario headers; always use the `#### Scenario:` form.
 
 Every requirement MUST have at least one scenario.
 
@@ -279,12 +209,7 @@ Authoring a MODIFIED requirement correctly:
 3) Paste it under `## MODIFIED Requirements` and edit to reflect the new behavior.
 4) Ensure the header text matches exactly (whitespace-insensitive) and keep at least one `#### Scenario:`.
 
-Example for RENAMED:
-```markdown
-## RENAMED Requirements
-- FROM: `### Requirement: Login`
-- TO: `### Requirement: User Authentication`
-```
+For RENAMED requirements, record the previous and new requirement names (FROM → TO) under `## RENAMED Requirements`.
 
 ## Troubleshooting
 
@@ -317,61 +242,11 @@ openspec show [spec] --json -r 1
 
 ## Happy Path Script
 
-```bash
-# 1) Explore current state
-openspec spec list --long
-openspec list
-# Optional full-text search:
-# rg -n "Requirement:|Scenario:" openspec/specs
-# rg -n "^#|Requirement:" openspec/changes
-
-# 2) Choose change id and scaffold
-CHANGE=add-two-factor-auth
-mkdir -p openspec/changes/$CHANGE/{specs/auth}
-printf "## Why\n...\n\n## What Changes\n- ...\n\n## Impact\n- ...\n" > openspec/changes/$CHANGE/proposal.md
-printf "## 1. Implementation\n- [ ] 1.1 ...\n" > openspec/changes/$CHANGE/tasks.md
-
-# 3) Add deltas (example)
-cat > openspec/changes/$CHANGE/specs/auth/spec.md << 'EOF'
-## ADDED Requirements
-### Requirement: Two-Factor Authentication
-Users MUST provide a second factor during login.
-
-#### Scenario: OTP required
-- **WHEN** valid credentials are provided
-- **THEN** an OTP challenge is required
-EOF
-
-# 4) Validate
-openspec validate $CHANGE --strict
-```
+See existing entries under `openspec/changes/` and the project documentation for end‑to‑end examples of using OpenSpec in this repository.
 
 ## Multi-Capability Example
 
-```
-openspec/changes/add-2fa-notify/
-├── proposal.md
-├── tasks.md
-└── specs/
-    ├── auth/
-    │   └── spec.md   # ADDED: Two-Factor Authentication
-    └── notifications/
-        └── spec.md   # ADDED: OTP email notification
-```
-
-auth/spec.md
-```markdown
-## ADDED Requirements
-### Requirement: Two-Factor Authentication
-...
-```
-
-notifications/spec.md
-```markdown
-## ADDED Requirements
-### Requirement: OTP Email Notification
-...
-```
+See multi‑capability changes under `openspec/changes/` for concrete directory layouts and spec examples.
 
 ## Best Practices
 

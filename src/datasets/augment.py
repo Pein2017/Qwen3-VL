@@ -7,6 +7,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from PIL import Image
 
+from data_conversion.utils.exif_utils import apply_exif_orientation
+
 from ..utils.logger import get_logger
 from .augmentation.base import AugmentationPipeline
 from .contracts import AugmentationTelemetry, validate_geometry_sequence
@@ -55,6 +57,7 @@ def apply_augmentations(
                     )
                 path = os.path.join(base, path)
             im = Image.open(path)
+            im = apply_exif_orientation(im)
         else:
             im = p
         if not isinstance(im, Image.Image):

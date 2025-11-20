@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any, Dict, List
 
 from .base import Compose, ImageAugmenter
@@ -29,6 +30,7 @@ def build_compose_from_config(cfg: Dict[str, Any]) -> Compose:
     if not isinstance(ops_cfg, list):
         raise TypeError("augmentation.ops must be a list of operations")
     ops: List[ImageAugmenter] = []
+    ops_meta: List[Dict[str, Any]] = []
     for op in ops_cfg:
         if not isinstance(op, dict):
             raise TypeError(
@@ -41,8 +43,18 @@ def build_compose_from_config(cfg: Dict[str, Any]) -> Compose:
         cls = get_augmenter(str(name))
         if not isinstance(params, dict):
             raise TypeError("augmentation op 'params' must be a dict")
-        ops.append(cls(**params))
-    return Compose(ops)
+        params_copy = dict(params)
+        augmenter_instance = cls(**params_copy)
+        setattr(augmenter_instance, "_aug_name", name)
+        ops.append(augmenter_instance)
+        ops_meta.append({"name": name, "params": deepcopy(params_copy)})
+    pipeline = Compose(ops)
+    pipeline._augmentation_meta = ops_meta  # type: ignore[attr-defined]
+    name_map: Dict[str, List[ImageAugmenter]] = {}
+    for meta, instance in zip(ops_meta, ops):
+        name_map.setdefault(meta["name"], []).append(instance)
+    pipeline._augmentation_name_map = name_map  # type: ignore[attr-defined]
+    return pipeline
 
 
 __all__ = ["build_compose_from_config"]

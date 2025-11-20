@@ -15,7 +15,7 @@
 
 原始标注采用“分层属性摘要”，关键类型与层级见 `data_conversion/hierarchical_attribute_mapping.json`（下简称“属性映射”）。要点：
 - 对象类型：`bbu`（BBU设备）、`bbu_shield`（挡风板）、`connect_point`（螺丝/光纤插头）、`label`（标签）、`fiber`（光纤，线对象）、`wire`（电线，线对象）
-- 几何约束：硬件采用 `quad/bbox_2d`，线缆采用 `line`；训练与推理链路保持几何与文本同步
+- 几何约束：硬件采用 `poly/bbox_2d`，线缆采用 `line`；训练与推理链路保持几何与文本同步
 - 层级语义：使用“/”分隔属性层级；条件属性仅在父属性满足时出现；`备注` 为自由文本备注
 
 生产摘要（Stage-A与Stage-B共用）的格式规范见 `docs/DATA_AND_DATASETS.md`：

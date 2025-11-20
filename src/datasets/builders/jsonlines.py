@@ -219,7 +219,7 @@ class JSONLinesBuilder(BaseBuilder):
     def _format_object_entry(self, entry: Mapping[str, Any]) -> Dict[str, Any]:
         formatted_entry: Dict[str, Any] = {}
         for field, value in entry.items():
-            if field in {"quad", "line"} and isinstance(value, list):
+            if field in {"poly", "line"} and isinstance(value, list):
                 formatted_entry[field] = self._format_geometry_sequence(value)
             elif field == "bbox_2d" and isinstance(value, list):
                 formatted_entry[field] = list(value)

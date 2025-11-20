@@ -28,6 +28,8 @@ from .contracts import (
     validate_geometry_sequence,
 )
 from .dense_caption import DenseCaptionDataset
+from .fusion import FusionConfig, build_fused_jsonl
+from .fusion_dataset import MultiSourceFusionDataset
 from .utils import load_jsonl, extract_object_points, extract_geometry
 
 # AugmentationConfig removed with v1 API; use Compose pipelines directly
@@ -66,6 +68,11 @@ __all__ = [
     # Builders
     "BaseBuilder",
     "JSONLinesBuilder",
+    "FusionConfig",
+    "build_fused_jsonl",
+    "MultiSourceFusionDataset",
+    "FusionConfig",
+    "build_fused_jsonl",
     # Preprocessors
     "BasePreprocessor",
     "DenseCaptionPreprocessor",

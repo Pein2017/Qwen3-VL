@@ -1,7 +1,7 @@
 """Augmentation preprocessor - decoupled from dataset logic"""
 
 import random
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, MutableMapping, Optional, Sequence
 
 from .base import BasePreprocessor
 from ..utils import extract_geometry
@@ -24,6 +24,8 @@ class AugmentationPreprocessor(BasePreprocessor):
         augmenter: Optional[Any] = None,
         rng: Optional[random.Random] = None,
         bypass_prob: float = 0.0,
+        curriculum_state: Optional[MutableMapping[str, Any]] = None,
+        augment_sources: Optional[Sequence[str]] = None,
         **kwargs: Any,
     ):
         """Initialize augmentation preprocessor.
@@ -38,6 +40,16 @@ class AugmentationPreprocessor(BasePreprocessor):
         self.augmenter = augmenter
         self.rng = rng if rng is not None else random.Random()
         self.bypass_prob = float(bypass_prob)
+        self.curriculum_state = curriculum_state
+        self._curriculum_last_step: int | None = None
+        normalized_sources: Optional[Sequence[str]] = None
+        if augment_sources:
+            normalized_sources = tuple(
+                str(item).strip() for item in augment_sources if str(item).strip()
+            )
+        self._augment_sources = (
+            frozenset(normalized_sources) if normalized_sources else None
+        )
 
     def preprocess(self, row: ConversationRecord) -> Optional[ConversationRecord]:
         """Apply augmentations to a record.
@@ -50,6 +62,12 @@ class AugmentationPreprocessor(BasePreprocessor):
         """
         if self.augmenter is None:
             return row
+
+        if not self._should_augment(row):
+            return row
+
+        if self.curriculum_state is not None:
+            self._sync_curriculum()
 
         # Randomly bypass augmentation for clean samples
         if self.rng.random() < self.bypass_prob:
@@ -112,7 +130,7 @@ class AugmentationPreprocessor(BasePreprocessor):
             for i, obj in enumerate(objs):
                 if (
                     obj.get("bbox_2d") is not None
-                    or obj.get("quad") is not None
+                    or obj.get("poly") is not None
                     or obj.get("line") is not None
                 ):
                     g = per_obj_geoms_new[j]
@@ -140,7 +158,7 @@ class AugmentationPreprocessor(BasePreprocessor):
             for i, obj in enumerate(objs):
                 if (
                     obj.get("bbox_2d") is not None
-                    or obj.get("quad") is not None
+                    or obj.get("poly") is not None
                     or obj.get("line") is not None
                 ):
                     obj_idx_with_geom.append(i)
@@ -214,7 +232,59 @@ class AugmentationPreprocessor(BasePreprocessor):
         except Exception:
             # Non-fatal: leave original width/height
             pass
+
         return rec
+
+    def _should_augment(self, row: ConversationRecord) -> bool:
+        if self._augment_sources is None:
+            return True
+        metadata = row.get("metadata")
+        if not isinstance(metadata, Mapping):
+            return True
+        dataset_name = metadata.get("dataset")
+        if dataset_name is None:
+            return True
+        return str(dataset_name) in self._augment_sources
+
+    def _sync_curriculum(self) -> None:
+        state = self.curriculum_state
+        if state is None:
+            return
+        step = state.get("step")
+        try:
+            step = int(step) if step is not None else 0
+        except (TypeError, ValueError):
+            step = 0
+        if self._curriculum_last_step == step:
+            return
+        bypass = state.get("bypass_prob")
+        if bypass is not None:
+            try:
+                self.bypass_prob = float(bypass)
+            except (TypeError, ValueError):
+                pass
+        ops = state.get("ops") or {}
+        if isinstance(ops, Mapping):
+            self._apply_curriculum_overrides(ops)
+        self._curriculum_last_step = step
+
+    def _apply_curriculum_overrides(
+        self, overrides: Mapping[str, Mapping[str, Any]]
+    ) -> None:
+        if self.augmenter is None:
+            return
+        for op in getattr(self.augmenter, "ops", []):
+            name = getattr(op, "_aug_name", None)
+            if not name:
+                continue
+            params = overrides.get(name)
+            if not isinstance(params, Mapping):
+                continue
+            for param_name, value in params.items():
+                try:
+                    setattr(op, param_name, value)
+                except Exception:
+                    continue
 
     def _update_geometry_field(
         self, obj: Dict[str, Any], new_geom: Dict[str, Any]
@@ -223,24 +293,24 @@ class AugmentationPreprocessor(BasePreprocessor):
         Update object's geometry field, ensuring only ONE geometry type exists.
 
         Critical for downstream consistency - builders expect exactly one of:
-        bbox_2d, quad, or line per object.
+        bbox_2d, poly, or line per object.
 
         Args:
             obj: Object dict to update
-            new_geom: New geometry dict with bbox_2d, quad, or line field
+            new_geom: New geometry dict with bbox_2d, poly, or line field
         """
         if "bbox_2d" in new_geom:
             obj["bbox_2d"] = new_geom["bbox_2d"]
-            obj.pop("quad", None)
+            obj.pop("poly", None)
             obj.pop("line", None)
-        elif "quad" in new_geom:
-            obj["quad"] = new_geom["quad"]
+        elif "poly" in new_geom:
+            obj["poly"] = new_geom["poly"]
             obj.pop("bbox_2d", None)
             obj.pop("line", None)
         elif "line" in new_geom:
             obj["line"] = new_geom["line"]
             obj.pop("bbox_2d", None)
-            obj.pop("quad", None)
+            obj.pop("poly", None)
 
 
 __all__ = ["AugmentationPreprocessor"]

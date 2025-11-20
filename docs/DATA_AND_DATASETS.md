@@ -26,7 +26,7 @@ Each record in your training data follows this structure:
   "images": ["path/to/img1.jpg", "path/to/img2.jpg"],
   "objects": [
     {"bbox_2d": [x1, y1, x2, y2], "desc": "物体描述"},
-    {"quad": [x1, y1, x2, y2, x3, y3, x4, y4], "desc": "旋转框描述"},
+    {"poly": [x1, y1, x2, y2, x3, y3, x4, y4], "desc": "旋转框描述"},
     {"line": [x1, y1, ..., xn, yn], "line_points": N, "desc": "线段描述"}
   ],
   "width": 1920,
@@ -37,7 +37,7 @@ Each record in your training data follows this structure:
 
 **Key Rules**:
 - Image paths resolve relative to JSONL file directory (absolute paths also allowed)
-- Exactly ONE geometry field per object (`bbox_2d`, `quad`, or `line`)
+- Exactly ONE geometry field per object (`bbox_2d`, `poly`, or `line`)
 - For lines: `line_points` must equal number of coords ÷ 2
 - Coordinates are in pixel space with original `width`/`height`
 
@@ -46,7 +46,7 @@ Each record in your training data follows this structure:
 | Type | Format | Use Case |
 |------|--------|----------|
 | **bbox_2d** | `[x1, y1, x2, y2]` | Axis-aligned boxes |
-| **quad** | `[x1,y1, x2,y2, x3,y3, x4,y4]` | Rotated rectangles (4 corners, clockwise) |
+| **poly** | `[x1,y1, x2,y2, x3,y3, x4,y4]` | Rotated rectangles (4 corners, clockwise); already poly-capable |
 | **line** | `[x1,y1, ..., xn,yn]` + `line_points: N` | Polylines (cables, fibers) |
 
 ### Coordinate Normalization
@@ -147,6 +147,53 @@ custom:
   emit_norm: norm1000              # Coordinate format in text
 ```
 
+## Conversion & QA Tooling
+
+- **BBU conversion (`data_conversion/`)**:
+  - `convert_dataset.sh` wraps `data_conversion/pipeline/unified_processor.py` with environment + parameter guardrails (max pixels, resize factor, validation toggles).
+  - Taxonomies live in `attribute_taxonomy.json` + `hierarchical_attribute_mapping.json`; update both when new object types/attributes ship. `pipeline/summary_builder.py` and `pipeline/flexible_taxonomy_processor.py` consume these definitions.
+  - Validation artifacts (`invalid_objects.jsonl`, `validation_results.json`) allow offline QA before a dataset ever reaches `src/datasets/`.
+  - Coordinate sanity is centralized in `pipeline/coordinate_manager.py` (EXIF + smart-resize + clamp) and `pipeline/vision_process.py`.
+- **Public datasets (`public_data/`)**:
+  - See `PUBLIC_DATA.md` + `public_data/README.md` for LVIS download, conversion, sampling, visualization, and pytest coverage.
+  - Each converter produces JSONL that matches this document’s schema; polygons include `poly_points`.
+- **Fusion tooling**:
+  - `scripts/fuse_datasets.py` plus `src/datasets/fusion.py` can pre-build fused JSONL based on a YAML config (target dataset + auxiliary sources). Useful when you want deterministic sampling instead of streaming fusion.
+- **Visualization**:
+  - `vis_tools/vis_augment_compare.py` and friends overlay objects/summaries to validate augmentation and JSONL integrity. See `vis_tools/README_CROP_VIS.md`.
+
+## Multi-Dataset Fusion
+
+When you want BBU dense-caption training to consume auxiliary detection datasets (LVIS, COCO, etc.), provide a `custom.fusion_config` (YAML/JSON). The fusion loader mixes:
+
+- **Target dataset**: consumed exactly once per epoch, annotated with `metadata.dataset == "bbu"`, and kept as the sole evaluation source (keep `custom.val_jsonl` pointing at the BBU val split).
+- **Auxiliary sources**: each entry declares `train_jsonl`, `ratio`, `template` (e.g., `"aux_dense"`), and optional `poly_fallback: bbox_2d`. The fusion loader annotates `metadata.dataset`/`metadata.template`, optionally downgrades polygons (via `poly_fallback`), and resamples each source with replacement every epoch.
+- **Augmentation control**: use `custom.augment_sources` to list the dataset names eligible for augmentation (default `["bbu"]`).
+
+Example fusion config:
+
+```yaml
+target:
+  name: bbu
+  train_jsonl: /data/bbu/train.jsonl
+  val_jsonl: /data/bbu/val.jsonl
+  template: bbu_dense
+  poly_fallback: off
+sources:
+  - name: coco
+    train_jsonl: /data/coco/train.jsonl
+    ratio: 0.1
+    template: aux_dense
+    poly_fallback: bbox_2d
+  - name: objects365
+    train_jsonl: /data/objects365/train.jsonl
+    ratio: 0.05
+    template: aux_dense
+    poly_fallback: off
+```
+
+You can either stream this config directly via `MultiSourceFusionDataset` (per-epoch resampling) or precompute fused JSONLs with `scripts/fuse_datasets.py --config <path>`. The fusion dataset logs `metadata.dataset` and `metadata.template`, so downstream components (augmentation, template selection, telemetry) know which source each record came from.
+
 ---
 
 ## Builders
@@ -219,10 +266,15 @@ custom:
         params: { prob: 0.5 }
       - name: rotate
         params: { max_deg: 25.0, prob: 0.4 }
-      - name: expand_to_fit_affine
-        params: { multiple: 32 }
+      - name: random_crop
+        params: { scale: [0.7, 1.0], prob: 0.3 }
+      - name: resize_by_scale
+        params: { lo: 0.9, hi: 1.1, prob: 0.5 }
       - name: color_jitter
         params: { brightness: [0.75, 1.25], prob: 0.5 }
+      # ✅ MUST be last: ensures final padding to multiple of 32
+      - name: expand_to_fit_affine
+        params: { multiple: 32 }
 ```
 
 ### Domain Context: BBU Installation Inspection
@@ -233,7 +285,7 @@ This corpus covers telecom cabinet inspections, focused on **BBU (Baseband Unit)
   - `bbu` (BBU设备) — expects attributes such as brand (`bbu_brand`), completeness (`bbu_stituation`), and windshield requirement (`bbu_equipment`).
   - `bbu_shield` (挡风板) — brand, completeness, obstruction status, and installation direction.
   - `connect_point` (接地/接线端子), `label` (标签), plus `fiber` / `wire` lines for cabling.
-  Geometry constraints from the mapping JSON enforce quads/bboxes for hardware and polylines for cabling.
+  Geometry constraints from the mapping JSON enforce polys/bboxes for hardware and polylines for cabling.
 - **Summary / Stage-A / Stage-B** (production) reuse the same records:
   - Stage-A generates per-image summaries (requires every record to carry a `summary`).
   - Stage-B consumes multiple images per site to emit a final deployment verdict.

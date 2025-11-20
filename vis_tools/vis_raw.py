@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Any, Dict, Iterable, List
+from typing import Any, Dict, Iterable, List, Optional
 
 import matplotlib.pyplot as plt
 from PIL import Image
@@ -14,32 +13,31 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from vis_tools.vis_helper import draw_objects, generate_colors  # noqa: E402
+from vis_tools.vis_helper import (  # noqa: E402
+    canonicalize_poly,
+    draw_objects,
+    generate_colors,
+)
+from data_conversion.utils.exif_utils import apply_exif_orientation  # noqa: E402
 
 try:  # pragma: no cover
     from tqdm import tqdm as _tqdm  # type: ignore
 except Exception:  # pragma: no cover
+
     def _tqdm(iterable=None, **kwargs):  # type: ignore
         return iterable if iterable is not None else []
 
 
-def parse_args(argv: Iterable[str]):
-    parser = argparse.ArgumentParser(
-        description="Visualize raw annotations over images from a JSONL dataset.",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    parser.add_argument("--jsonl", type=str, required=True, help="Path to JSONL (e.g., data/bbu_full_768/all_samples.jsonl)")
-    parser.add_argument("--out_dir", type=str, default="vis_out/raw", help="Directory to save visualizations")
-    parser.add_argument("--limit", type=int, default=0, help="Max number of samples to visualize (0 means all)")
-    parser.add_argument("--dpi", type=int, default=120, help="Matplotlib savefig DPI")
-    parser.add_argument(
-        "--color_by",
-        type=str,
-        default="type",
-        choices=["type", "desc"],
-        help="Color by object type or full desc prefix",
-    )
-    return parser.parse_args(list(argv))
+# ============================================================================
+# Configuration
+# ============================================================================
+input_path = "data/bbu_full_768_poly/all_samples.jsonl"  # Path to JSONL (e.g., data/bbu_full_768/all_samples.jsonl)
+output_dir = "vis_out/debug"  # Directory to save visualizations
+limit = 20  # Max number of samples to visualize (0 means all)
+dpi = 120  # Matplotlib savefig DPI
+color_by = "type"  # Color by object type or full desc prefix ("type" or "desc")
+# Filter by image filename (set to None to visualize all, or a substring to match)
+filter_image_name = "QC-20231218-0025165_4127784"  # Set to None to disable filtering
 
 
 def read_jsonl(path: Path) -> Iterable[Dict[str, Any]]:
@@ -51,15 +49,20 @@ def read_jsonl(path: Path) -> Iterable[Dict[str, Any]]:
             yield json.loads(line)
 
 
-def to_vis_objects(sample_objects: List[Dict[str, Any]], color_by: str) -> List[Dict[str, Any]]:
+def to_vis_objects(
+    sample_objects: List[Dict[str, Any]], color_by: str
+) -> List[Dict[str, Any]]:
     vis_objects: List[Dict[str, Any]] = []
     for obj in sample_objects or []:
         if "bbox_2d" in obj:
             gtype = "bbox_2d"
             pts = obj["bbox_2d"]
-        elif "quad" in obj:
-            gtype = "quad"
-            pts = obj["quad"]
+        elif "poly" in obj or "quad" in obj:
+            gtype = "poly"
+            pts = obj.get("poly") or obj.get("quad")
+            # Legacy datasets may still use "quad" ordering; canonicalize to stay consistent
+            if "quad" in obj and pts:
+                pts = canonicalize_poly(pts)
         elif "line" in obj:
             gtype = "line"
             pts = obj["line"]
@@ -77,12 +80,22 @@ def to_vis_objects(sample_objects: List[Dict[str, Any]], color_by: str) -> List[
     return vis_objects
 
 
-def visualize(jsonl_path: Path, out_dir: Path, limit: int, dpi: int, color_by: str) -> None:
+def visualize(
+    jsonl_path: Path,
+    out_dir: Path,
+    limit: int,
+    dpi: int,
+    color_by: str,
+    filter_image_name: Optional[str] = None,
+) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     base_dir = jsonl_path.parent
 
     count = 0
-    for idx, rec in enumerate(_tqdm(read_jsonl(jsonl_path), desc=jsonl_path.name, unit="rec")):
+    found_samples = 0
+    for idx, rec in enumerate(
+        _tqdm(read_jsonl(jsonl_path), desc=jsonl_path.name, unit="rec")
+    ):
         if limit and count >= limit:
             break
 
@@ -90,38 +103,64 @@ def visualize(jsonl_path: Path, out_dir: Path, limit: int, dpi: int, color_by: s
         if not isinstance(images, list) or len(images) != 1:
             raise ValueError(f"Record must have exactly one image path, got: {images}")
         image_rel = images[0]
+
+        # Filter by image filename if specified
+        if filter_image_name is not None:
+            if filter_image_name not in image_rel:
+                continue
+
         image_path = (base_dir / image_rel).resolve()
 
-        img = Image.open(image_path).convert("RGB")
+        if not image_path.exists():
+            print(f"Warning: Image not found: {image_path}")
+            continue
+
+        img = apply_exif_orientation(Image.open(image_path))
         obj_list = to_vis_objects(rec.get("objects", []), color_by=color_by)
         labels = [o["desc"] for o in obj_list]
         color_map = generate_colors(labels)
 
-        fig, ax = plt.subplots(1, 1)
+        fig, ax = plt.subplots(1, 1, figsize=(12, 8))
         try:
             draw_objects(ax, img, obj_list, color_map, scaled=True)
-            ax.set_title(image_rel)
+            # Add more info to title
+            title = f"{image_rel}\nWidth: {rec.get('width', '?')} x Height: {rec.get('height', '?')} | Objects: {len(obj_list)}"
+            ax.set_title(title, fontsize=10)
             fig.tight_layout()
-            out_path = out_dir / f"vis_{idx:05d}.jpg"
+            # Use image filename in output name for easier identification
+            image_stem = Path(image_rel).stem
+            out_path = out_dir / f"vis_{image_stem}.jpg"
             fig.savefig(out_path, dpi=dpi)
+            print(f"Saved visualization: {out_path}")
         finally:
             plt.close(fig)
 
         count += 1
+        found_samples += 1
+        # If filtering and we found the sample, we can break early
+        if filter_image_name is not None and found_samples > 0:
+            break
+
+    if filter_image_name is not None and found_samples == 0:
+        print(f"Warning: No samples found matching '{filter_image_name}'")
 
 
-def main(argv: Iterable[str]) -> int:
-    args = parse_args(argv)
-    jsonl_path = Path(args.jsonl).resolve()
+def main() -> int:
+    jsonl_path = Path(input_path).resolve()
     if not jsonl_path.exists():
         raise ValueError(f"JSONL not found: {jsonl_path}")
 
-    out_dir = Path(args.out_dir).resolve()
-    visualize(jsonl_path=jsonl_path, out_dir=out_dir, limit=int(args.limit), dpi=int(args.dpi), color_by=str(args.color_by))
+    out_dir = Path(output_dir).resolve()
+    visualize(
+        jsonl_path=jsonl_path,
+        out_dir=out_dir,
+        limit=limit,
+        dpi=dpi,
+        color_by=color_by,
+        filter_image_name=filter_image_name,
+    )
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main(sys.argv[1:]))
-
-
+    raise SystemExit(main())

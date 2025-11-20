@@ -56,11 +56,14 @@ class FlexibleTaxonomyProcessor:
         taxonomy_path: Optional[str] = None,
         hierarchical_mapping_path: Optional[str] = None,
     ):
+        module_dir = Path(__file__).resolve().parent
+        data_root = module_dir.parent
+
         if taxonomy_path is None:
-            taxonomy_path = str(Path(__file__).parent / "attribute_taxonomy.json")
+            taxonomy_path = str(data_root / "attribute_taxonomy.json")
         if hierarchical_mapping_path is None:
             hierarchical_mapping_path = str(
-                Path(__file__).parent / "hierarchical_attribute_mapping.json"
+                data_root / "hierarchical_attribute_mapping.json"
             )
 
         self.taxonomy = self._load_taxonomy(taxonomy_path)
@@ -82,12 +85,13 @@ class FlexibleTaxonomyProcessor:
         with open(taxonomy_path, "r", encoding="utf-8") as f:
             return json.load(f)
 
-    def process_v2_feature(self, feature: Dict) -> Optional[AnnotationSample]:
+    def process_v2_feature(self, feature: Dict, image_id: Optional[str] = None) -> Optional[AnnotationSample]:
         """
         Process a single V2 feature into structured annotation sample.
 
         Args:
             feature: V2 feature with geometry and properties
+            image_id: Optional image identifier for logging (e.g., file path or image name)
 
         Returns:
             AnnotationSample or None if processing fails
@@ -96,15 +100,23 @@ class FlexibleTaxonomyProcessor:
         content_zh = properties.get("contentZh", {})
         content = properties.get("content", {})
         geometry = feature.get("geometry", {})
+        object_id = properties.get("objectId", "unknown")
 
         # Determine object type
         object_type = self._determine_object_type(content, content_zh)
         if not object_type:
-            logger.warning("Could not determine object type")
+            context_msg = f" (image: {image_id}, object: {object_id})" if image_id else f" (object: {object_id})"
+            logger.warning(f"Could not determine object type{context_msg}")
             return None
 
-        # Process geometry
-        geometry_format, coordinates = self._process_geometry(geometry, object_type)
+        # Process geometry (with properties and context for area validation)
+        geometry_result = self._process_geometry(
+            geometry, object_type, properties, image_id=image_id, object_id=object_id
+        )
+        if geometry_result is None:
+            # Object was rejected (degenerate polygon, zero area, etc.)
+            return None
+        geometry_format, coordinates = geometry_result
 
         # Group attributes by taxonomy
         grouped_attributes = self._group_attributes(content, content_zh, object_type)
@@ -146,10 +158,22 @@ class FlexibleTaxonomyProcessor:
         return None
 
     def _process_geometry(
-        self, geometry: Dict, object_type: str
-    ) -> Tuple[str, List[float]]:
-        """Process geometry based on object type and geometry structure."""
-        from data_conversion.coordinate_manager import CoordinateManager
+        self, geometry: Dict, object_type: str, properties: Optional[Dict] = None,
+        image_id: Optional[str] = None, object_id: Optional[str] = None
+    ) -> Optional[Tuple[str, List[float]]]:
+        """Process geometry based on object type and geometry structure.
+        
+        Args:
+            geometry: GeoJSON geometry object
+            object_type: Object type (bbu, label, etc.)
+            properties: Feature properties (optional, for area validation)
+            image_id: Optional image identifier for logging
+            object_id: Optional object identifier for logging
+        
+        Returns:
+            Tuple of (geometry_type, coordinates) or None if object should be rejected
+        """
+        from data_conversion.pipeline.coordinate_manager import CoordinateManager
 
         geometry_type = geometry.get("type", "")
         coordinates = geometry.get("coordinates", [])
@@ -164,16 +188,149 @@ class FlexibleTaxonomyProcessor:
             for coord in coordinates:
                 if isinstance(coord, list) and len(coord) >= 2:
                     line_coords.extend([int(round(coord[0])), int(round(coord[1]))])
+            
+            # Validate line: check for duplicate consecutive points (no duplication rule)
+            if len(line_coords) >= 4:  # At least 2 points
+                points = [(line_coords[i], line_coords[i+1]) for i in range(0, len(line_coords), 2)]
+                # Check for consecutive duplicates
+                for i in range(len(points) - 1):
+                    if points[i] == points[i+1]:
+                        context = f"image: {image_id}, object: {object_id}" if image_id else f"object: {object_id}"
+                        logger.warning(
+                            f"Rejecting line with duplicate consecutive points at index {i}: {points[i]} "
+                            f"({context}, coordinates: {line_coords[:20]}...)"
+                        )
+                        return None
+            
             return "line", line_coords
 
         elif geometry_type in ["Quad", "Square", "Polygon"]:
+            # Validate area for poly objects (from properties if available)
+            if properties:
+                area = properties.get("area", 0)
+                self_area = properties.get("selfArea", 0)
+                # Use selfArea if available (actual polygon area), otherwise use area
+                actual_area = self_area if self_area > 0 else area
+                
+                # Reject objects with zero or near-zero area (degenerate/problematic annotations)
+                if actual_area <= 0:
+                    context = f"image: {image_id}, object: {object_id}" if image_id else f"object: {object_id}"
+                    orig_coords = geometry.get("coordinates", [])
+                    logger.warning(
+                        f"Rejecting poly object with zero area: geometry_type={geometry_type}, "
+                        f"area={area}, selfArea={self_area} ({context}, "
+                        f"original_coordinates: {orig_coords})"
+                    )
+                    return None
+                # Reject objects with extremely small area (< 1 pixel^2)
+                if actual_area < 1.0:
+                    context = f"image: {image_id}, object: {object_id}" if image_id else f"object: {object_id}"
+                    orig_coords = geometry.get("coordinates", [])
+                    logger.warning(
+                        f"Rejecting poly object with tiny area ({actual_area:.2f} < 1.0): "
+                        f"geometry_type={geometry_type} ({context}, "
+                        f"original_coordinates: {orig_coords})"
+                    )
+                    return None
+            
             # Extract poly coordinates using unified helper
-            poly_coords = CoordinateManager._extract_poly_coordinates(geometry)
+            # IMPORTANT: Calculate area from ORIGINAL coordinates (before canonical ordering)
+            # Canonical ordering is for consistency, but can sometimes create self-intersecting shapes
+            # We validate using the original polygon shape
+            # NOTE: Raw data has 5 points for quad (4 points + 1 closing point) - we drop the closing point
+            orig_coords = geometry.get("coordinates", [])
+            orig_area = None
+            
+            if orig_coords:
+                # Extract original points (before any transformation/ordering)
+                orig_points = []
+                if isinstance(orig_coords[0], list) and isinstance(orig_coords[0][0], list):
+                    # Nested structure: [[[x1,y1], [x2,y2], ...]]
+                    ring = orig_coords[0]
+                    for coord in ring:
+                        if isinstance(coord, list) and len(coord) >= 2:
+                            orig_points.append((float(coord[0]), float(coord[1])))
+                else:
+                    # Flat structure: [[x1,y1], [x2,y2], ...]
+                    for coord in orig_coords:
+                        if isinstance(coord, list) and len(coord) >= 2:
+                            orig_points.append((float(coord[0]), float(coord[1])))
+                
+                # Remove closing point if present (raw data has 5 points: 4 + closing)
+                # This is critical - we must drop the closing point before area calculation
+                if len(orig_points) > 0:
+                    first_point = orig_points[0]
+                    last_point = orig_points[-1]
+                    # Check if first and last points are the same (closing point)
+                    if abs(first_point[0] - last_point[0]) < 1e-6 and abs(first_point[1] - last_point[1]) < 1e-6:
+                        orig_points = orig_points[:-1]
+                
+                # Calculate area from original coordinates (with closing point removed) using shoelace formula
+                if len(orig_points) >= 4:
+                    area_sum = 0.0
+                    for i in range(len(orig_points)):
+                        j = (i + 1) % len(orig_points)
+                        area_sum += orig_points[i][0] * orig_points[j][1]
+                        area_sum -= orig_points[j][0] * orig_points[i][1]
+                    orig_area = abs(area_sum) / 2.0
+            
+            # Now extract poly coordinates (which applies canonical ordering)
+            poly_coords = CoordinateManager.extract_poly_coordinates(geometry)
             if poly_coords:
+                # Validate using original area (before canonical ordering)
+                if orig_area is not None and orig_area <= 0:
+                    context = f"image: {image_id}, object: {object_id}" if image_id else f"object: {object_id}"
+                    logger.warning(
+                        f"Rejecting poly with zero area from original coordinates: {orig_area} "
+                        f"({context}, original_coordinates: {orig_coords})"
+                    )
+                    return None
+                
                 return "poly", poly_coords
+            
+            # If poly extraction failed (degenerate polygon), fall back to bbox_2d
+            # but only if bbox is valid and has non-zero area
+            if bbox and len(bbox) == 4:
+                bbox_area = (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
+                if bbox_area > 0:
+                    logger.info(
+                        f"Degenerate polygon fell back to bbox_2d: area={bbox_area:.2f}"
+                    )
+                    return "bbox_2d", bbox
+                else:
+                    context = f"image: {image_id}, object: {object_id}" if image_id else f"object: {object_id}"
+                    orig_coords = geometry.get("coordinates", [])
+                    logger.warning(
+                        f"Rejecting object: degenerate polygon and zero-area bbox "
+                        f"({context}, bbox: {bbox}, original_coordinates: {orig_coords})"
+                    )
+                    return None
+            # If bbox is also invalid, reject the object
+            context = f"image: {image_id}, object: {object_id}" if image_id else f"object: {object_id}"
+            orig_coords = geometry.get("coordinates", [])
+            logger.warning(
+                f"Rejecting object: degenerate polygon and invalid bbox "
+                f"({context}, bbox: {bbox}, original_coordinates: {orig_coords})"
+            )
+            return None
 
         # ExtentPolygon -> bbox_2d
-        return "bbox_2d", bbox
+        # Validate bbox area (non-zero area rule for bbox)
+        if bbox and len(bbox) == 4:
+            bbox_area = (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
+            if bbox_area <= 0:
+                context = f"image: {image_id}, object: {object_id}" if image_id else f"object: {object_id}"
+                orig_coords = geometry.get("coordinates", [])
+                logger.warning(
+                    f"Rejecting bbox_2d with zero or negative area: {bbox_area} "
+                    f"({context}, bbox: {bbox}, original_coordinates: {orig_coords})"
+                )
+                return None
+            return "bbox_2d", bbox
+        
+        # Invalid geometry
+        logger.warning(f"Unknown or invalid geometry type: {geometry_type}")
+        return None
 
     def _group_attributes(
         self, content: Dict, content_zh: Dict, object_type: str
@@ -434,9 +591,12 @@ class FlexibleTaxonomyProcessor:
 
         features = data.get("markResult", {}).get("features", [])
         samples = []
+        
+        # Extract image ID from file path
+        image_id = Path(file_path).stem
 
         for feature in features:
-            sample = self.process_v2_feature(feature)
+            sample = self.process_v2_feature(feature, image_id=image_id)
             if sample:
                 samples.append(sample)
 
@@ -511,10 +671,14 @@ class HierarchicalProcessor:
             f"Initialized HierarchicalProcessor for Chinese-only processing with object types: {self.object_types}"
         )
 
-    def extract_objects_from_markresult(self, features: List[Dict]) -> List[Dict]:
+    def extract_objects_from_markresult(self, features: List[Dict], image_id: Optional[str] = None) -> List[Dict]:
         """
         Extract objects from markResult features with native geometry types.
         Filters by specified object types for training subject separation.
+
+        Args:
+            features: List of V2 feature dictionaries
+            image_id: Optional image identifier for logging
 
         Returns objects in format:
         [
@@ -526,8 +690,8 @@ class HierarchicalProcessor:
         objects = []
 
         for feature in features:
-            # Process with flexible processor
-            sample = self.flexible_processor.process_v2_feature(feature)
+            # Process with flexible processor (pass image_id for detailed logging)
+            sample = self.flexible_processor.process_v2_feature(feature, image_id=image_id)
             if not sample:
                 continue
 

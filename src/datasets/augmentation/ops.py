@@ -46,6 +46,9 @@ def _pad_to_multiple(img: Image.Image, *, mult: int = 32) -> Image.Image:
     w, h = img.width, img.height
     new_w = ((w + mult - 1) // mult) * mult
     new_h = ((h + mult - 1) // mult) * mult
+    # Ensure dimensions are integers (PIL requires int, not float)
+    new_w = int(new_w)
+    new_h = int(new_h)
     if new_w == w and new_h == h:
         return img
     # Use middle gray (128, 128, 128) for padding to achieve zero in normalized space.
@@ -332,7 +335,8 @@ class ExpandToFitAffine(ImageAugmenter):
             total_pixels = max(1, new_width * new_height)
             padded_pixels = max(0.0, float(total_pixels) - float(width * height))
             self.padding_ratio = padded_pixels / float(total_pixels)
-            return M_total, new_width, new_height
+            # Ensure dimensions are integers (PIL requires int, not float)
+            return M_total, int(new_width), int(new_height)
 
         # Compute AABB of original corners under M_total
         corners = [
@@ -393,7 +397,8 @@ class ExpandToFitAffine(ImageAugmenter):
         padded_pixels = max(0.0, float(total_pixels) - float(raw_width * raw_height))
         self.padding_ratio = padded_pixels / float(total_pixels)
 
-        return M_total_updated, new_width, new_height
+        # Ensure dimensions are integers (PIL requires int, not float)
+        return M_total_updated, int(new_width), int(new_height)
 
     def apply(
         self,
@@ -439,6 +444,9 @@ class ResizeByScale(ImageAugmenter):
     ):
         if rng.random() >= self.prob:
             return images, geoms
+        # Ensure input dimensions are integers
+        width = int(width)
+        height = int(height)
         # choose scale
         if self.scales:
             s = self.scales[int(rng.randrange(0, len(self.scales)))]
@@ -450,6 +458,9 @@ class ResizeByScale(ImageAugmenter):
             m = self.align_multiple
             new_w = ((new_w + m - 1) // m) * m
             new_h = ((new_h + m - 1) // m) * m
+        # Ensure dimensions are integers (PIL requires int, not float)
+        new_w = int(new_w)
+        new_h = int(new_h)
         sx = new_w / float(width)
         sy = new_h / float(height)
 
@@ -466,8 +477,8 @@ class ResizeByScale(ImageAugmenter):
                 bb = [x1 * sx, y1 * sy, x2 * sx, y2 * sy]
                 bb = clamp_points(bb, new_w, new_h)
                 out_geoms.append({"bbox_2d": bb})
-            elif "quad" in g:
-                pts = g["quad"]
+            elif "poly" in g:
+                pts = g["poly"]
                 scaled: List[float] = []
                 for i in range(0, len(pts), 2):
                     scaled.append(float(pts[i]) * sx)
@@ -482,11 +493,11 @@ class ResizeByScale(ImageAugmenter):
                         # else: keep clipped polygon even if not exactly 4 points
                     clipped = to_clockwise(clipped)
                     q = clamp_points(clipped, new_w, new_h)
-                    out_geoms.append({"quad": q})
+                    out_geoms.append({"poly": q})
                 else:
                     # Degenerate: preserve by clamping original scaled coords
                     q = clamp_points(to_clockwise(scaled), new_w, new_h)
-                    out_geoms.append({"quad": q})
+                    out_geoms.append({"poly": q})
             elif "line" in g:
                 pts = g["line"]
                 scaled: List[float] = []
@@ -601,7 +612,13 @@ class CLAHE(ImageAugmenter):
         self, clip_limit: float = 3.0, tile_grid_size=(8, 8), prob: float = 0.5
     ):
         self.clip_limit = float(clip_limit)
-        self.tile_grid_size = (int(tile_grid_size[0]), int(tile_grid_size[1]))
+        # Ensure tile_grid_size is a tuple of integers (OpenCV requires tuple, not list)
+        if isinstance(tile_grid_size, (list, tuple)):
+            self.tile_grid_size = tuple(int(x) for x in tile_grid_size)
+        else:
+            raise TypeError(f"tile_grid_size must be a list or tuple, got {type(tile_grid_size)}")
+        if len(self.tile_grid_size) != 2:
+            raise ValueError(f"tile_grid_size must have 2 elements, got {len(self.tile_grid_size)}")
         self.prob = float(prob)
         self.kind = "color"
 
@@ -623,8 +640,10 @@ class CLAHE(ImageAugmenter):
                 "CLAHE requires opencv-python-headless installed in the 'ms' environment"
             ) from e
         out_imgs: List[Any] = []
+        # Ensure tile_grid_size is a tuple of integers for OpenCV (explicit conversion)
+        tile_size = tuple(int(x) for x in self.tile_grid_size)
         clahe = cv2.createCLAHE(
-            clipLimit=self.clip_limit, tileGridSize=self.tile_grid_size
+            clipLimit=self.clip_limit, tileGridSize=tile_size
         )
         for img in images:
             im = _pil(img).convert("RGB")
@@ -1022,8 +1041,8 @@ class RandomCrop(ImageAugmenter):
                 truncated = {
                     "bbox_2d": [clipped_x1, clipped_y1, clipped_x2, clipped_y2]
                 }
-            elif "quad" in g:
-                pts = g["quad"]
+            elif "poly" in g:
+                pts = g["poly"]
                 # Translate to crop origin for clipping
                 pts_translated = []
                 for i in range(0, len(pts), 2):
@@ -1051,14 +1070,14 @@ class RandomCrop(ImageAugmenter):
                     for i in range(0, len(clipped), 2):
                         final_pts.append(clipped[i] + crop_bbox[0])
                         final_pts.append(clipped[i + 1] + crop_bbox[1])
-                    truncated = {"quad": final_pts}
+                    truncated = {"poly": final_pts}
                 else:
-                    # Degenerate quad - clamp to crop boundary
+                    # Degenerate poly - clamp to crop boundary
                     clamped = []
                     for i in range(0, len(pts), 2):
                         clamped.append(max(crop_bbox[0], min(crop_bbox[2], pts[i])))
                         clamped.append(max(crop_bbox[1], min(crop_bbox[3], pts[i + 1])))
-                    truncated = {"quad": clamped}
+                    truncated = {"poly": clamped}
             elif "line" in g:
                 pts = g["line"]
                 # Translate to crop origin

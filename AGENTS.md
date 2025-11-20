@@ -17,68 +17,36 @@ Keep this managed block so 'openspec update' can refresh the instructions.
 
 <!-- OPENSPEC:END -->
 
-## Snapshot
-- Single repository for the Qwen3‑VL training stack under `/data/Qwen3-VL`; ms‑swift is the orchestration layer and Hugging Face transformers supply the model/template implementations.
-- Configuration drives behavior. Prefer editing YAML under `configs/` or config helpers in `src/config/` over introducing ad-hoc CLI flags.
-- Training artifacts live under `output/`, `tb/`, and `vis_out/`; keep them out of commits.
+## Project Overview
+Single repository for the Qwen3‑VL training stack with two main flows: model training and inference (Stage‑A per‑image summaries, Stage‑B group‑level reflection). For detailed architecture, workflows, and examples, see `docs/README.md` and `docs/REFERENCE.md`.
 
-## Core Surface
-- `src/` — code:
-  - `sft.py` launches supervised fine tuning via `swift.llm.train.sft.SwiftSft`.
-  - `config/` resolves YAML into `TrainArguments`, prompts, and template wiring.
-  - `datasets/` covers geometry helpers, augmentation, preprocessors, builders, and dynamic pairing.
-  - `utils/`, `callbacks/`, `stage_a/`, `stage_b/` hold supporting logic for training variants.
-- `docs/` — authoritative background (augmentation, data prep, reference workflows).
-- `configs/` — experiment presets (stages 1‑4, summary variants, debug/base overlays).
-- `scripts/` — runnable helpers: `train.sh`, adapter merge/inspection, GRPO runner, LoRA tools.
-- `vis_tools/` — visualization utilities for augmentation, raw samples, and crop debugging.
+## Key Directories
+- `src/` — Python source for training and inference
+- `configs/` — YAML configs for experiments and inference
+- `docs/` — authoritative documentation
+- `scripts/` — shell entrypoints wrapping common workflows
+- `vis_tools/` — visualization and debugging helpers
 
-## How to Run
-```bash
-# Recommended launcher (handles env + DDP sizing)
-conda run -n ms bash scripts/train.sh config=/abs/path/to/config.yaml gpus=0
+## Environment
+- Use `ms` conda environment for all Python scripts
+- `ms-swift` installed at `/data/ms-swift`
+- `transformers` in conda env at `/root/miniconda3/envs/ms/lib/python3.12/site-packages/transformers`
 
-# Direct module entry point from repo root
-conda run -n ms python -m src.sft --config /abs/path/to/config.yaml [--base_config /abs/base.yaml] [--debug]
-```
+## Development Approach
+- **Configuration-first**: Edit YAML in `configs/` rather than adding ad‑hoc flags
+- **Reuse over custom**: Prefer ms‑swift/transformers primitives before adding custom modules
+- **Documentation**: Update `docs/` when visible behavior, configs, or workflows change
+- **Spec-driven**: For features or major changes, consult `openspec/AGENTS.md` and follow the change process
+- **Geometry-aware**: Keep augmentation and data handling geometry‑aware; add tests/visualization when touching `src/datasets/`
 
-## Development Expectations
-- Favor upstream capabilities in ms‑swift or transformers before adding custom modules.
-- Keep augmentations and data handling geometry-aware; run `vis_tools/vis_augment_compare.py` for spot checks when touching `src/datasets/augmentation/`.
-- Update documentation in `docs/` when behavior or workflows change; stage config examples in `configs/` should remain runnable.
-- For feature or spec work, consult `openspec/AGENTS.md` and follow the change process there.
+## Design Principles (High-Level)
+- **Explicit over implicit**: No silent defaults; all config via YAML/CLI/constructor with early validation
+- **Type safety**: Strong typing, frozen configs (`@dataclass(frozen=True)`), predictable APIs
+- **Clean architecture**: Small public interfaces, dependency injection, compose over inherit, clean import graph (never import upward)
+- **Fail fast**: Validate early, clear error messages with remediation hints, no silent failures
+- **Extensibility**: Extend via new `Builder`/`Preprocessor`/`Template`, not by editing core logic
 
-## Stage-A Inference
-- Entry point `python -m src.stage_a.cli` wraps `run_stage_a_inference` and enforces typed config + validation.
-- Inputs: mission-scoped image tree `<root>/<mission>/{审核通过|审核不通过}/<group_id>/*.jpg`; checkpoints must be on disk.
-- Outputs: one JSONL per mission at `<output_dir>/<mission>_stage_a.jsonl` with `group_id`, `mission`, `label`, ordered `per_image` summaries.
-- Generation stack: `AutoProcessor` + `Qwen3VLForConditionalGeneration`, batched with optional verification logs; `max_pixels` defaults to `786432` for throughput.
-- Prompt alignment: prompts import from `src.config.prompts`; mission focus text comes from `src.config.missions.STAGE_A_MISSION_FOCUS`.
-- CLI flags expose device, batch size, generation params, prompt focus, and verification mode; all numeric inputs validated before model load.
-
-## Stage-B Reflection Pipeline
-- Run via `python -m src.stage_b.runner --config /abs/path/to/config.yaml [--log-level {debug|logging|warning}]`; the pipeline currently executes the full loop (`--step all`).
-- Config schema lives in `src.stage_b.config` (frozen dataclasses); values come from YAML under `configs/stage_b/`.
-- High-level flow per mission:
-  1. `ingest_stage_a` normalizes Stage-A JSONL into `GroupTicket` objects; missions are validated against the global guidance file during seeding.
-  2. `RolloutSampler` builds prompts with mission guidance, decodes multiple samples per ticket using the configured grid.
-  3. `attach_signals` annotates candidates with deterministic metrics; `CriticEngine` augments with structured LLM outputs when enabled.
-  4. `select_for_group` chooses the winner using a label-first policy with tie-breakers; conservative override applies when critic signals uncertainty（例如：需要复核、证据不足、建议“人工复核”）。
-  5. `ReflectionEngine` batches experience records (including critic summaries/critiques), calls the in-process model with `reflection.prompt_path`, and writes guidance updates through `GuidanceRepository` snapshots.
-  6. Holdout is currently disabled by default; the runner logs “holdout: skipped (deferred)”. Preview evaluation can be enabled via `apply_if_delta` when configured.
-- Outputs are written under `{output.root}/{output.run_name}/{mission}/` with `trajectories.jsonl`, `selections.jsonl`, `guidance.json`, and `reflection.jsonl` logs. Guidance snapshots rotate in `snapshots/` respecting retention.
-- Guidance lifecycle: `GuidanceRepository` seeds each mission from the global guidance file; missing missions raise an error. Writes use atomic file replacement and per-mission snapshot rotation; non-empty `experiences` are enforced.
-- Sampling prompts live in `src.stage_b.sampling.prompts` and expect ordered `per_image` maps from Stage-A.
-- Deterministic signals and selection live in `src.stage_b.signals` and `src.stage_b.scoring.selection`; legacy judge/summarizer modules were removed.
-- Critic constraints: temperature in [0.1, 0.3], max_candidates ≤ 6; `critic.prompt_path` must exist.
-- Config notes: `critic.prefilter` removed; `reflection.rapid_mode` remains a debug flag; `apply_if_delta` is deferred (not currently implemented).
-
-### Stage-B Config Highlights
-- `stage_a_paths`: absolute or relative JSONL files from Stage-A; multiple paths allowed.
-- `model`: `model_name_or_path`, `torch_dtype`, `device_map` forwarded to `Qwen3VLForConditionalGeneration` and tokenizer.
-- `sampler`: `grid` of decode configs (`temperature`, `top_p`, `max_new_tokens`, optional `seed`, `stop`), `samples_per_decode`, and `format_filter` toggle.
-- `signals`: enable/disable confidence/self-consistency and override semantic weights.
-- `reflection`: prompt template path, batch size, delta threshold, change cap per epoch, diversity parameters, and `max_reflection_length` guard.
-- `selection`: policy (`top_label` or `top_semantic`) and tie-break (`confidence` or `temperature`).
-- `output`: root directory + run name; mission folders created automatically.
-- `runner`: epoch count; `evaluation`: holdout size + metrics list.
+## Important
+- **Always interrupt if clarification is needed or anything is vague, ambiguous, or uncertain**
+- Run all Python scripts with `ms` conda environment
+- For commands and detailed configs, see `docs/README.md` and `docs/REFERENCE.md`

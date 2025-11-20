@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import copy
 import random
-from typing import Any, Dict, List, Literal, Optional, Sequence
+from typing import Any, Dict, List, Literal, Mapping, MutableMapping, Optional, Sequence
 
 from torch.utils.data import Dataset, get_worker_info
 
@@ -36,7 +36,10 @@ class DenseCaptionDataset(Dataset):
         system_prompt_summary: Optional[str] = None,
         bypass_prob: float = 0.0,
         seed: int = 2025,
+        curriculum_state: Optional[MutableMapping[str, Any]] = None,
+        augment_sources: Optional[Sequence[str]] = None,
     ):
+
         self.use_summary = bool(use_summary)
         self.system_prompt_dense = system_prompt_dense
         self.system_prompt_summary = system_prompt_summary
@@ -84,10 +87,18 @@ class DenseCaptionDataset(Dataset):
         self.base_records = validated_records
 
         self.preprocessor = preprocessor
+        self.augment_sources = (
+            tuple(str(item) for item in augment_sources) if augment_sources else None
+        )
         if augmenter is not None and self.preprocessor is None:
             self.preprocessor = AugmentationPreprocessor(
-                augmenter=augmenter, bypass_prob=self.bypass_prob
+                augmenter=augmenter,
+                bypass_prob=self.bypass_prob,
+                curriculum_state=curriculum_state,
+                augment_sources=self.augment_sources,
             )
+        if augmenter is not None and self.preprocessor is not None:
+            self.preprocessor.curriculum_state = curriculum_state
 
         self._epoch = 0
         self._rng = random.Random(self._seed_for_epoch(self._epoch))
@@ -114,9 +125,11 @@ class DenseCaptionDataset(Dataset):
             )
         kwargs.pop("use_detailed_caption", None)
         kwargs.pop("output_variant", None)  # Backward compat
+        augment_sources = kwargs.pop("augment_sources", None)
         return DenseCaptionDataset(
             base_records=records,
             template=template,
+            augment_sources=augment_sources,
             **kwargs,
         )
 

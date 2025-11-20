@@ -1,19 +1,19 @@
 #!/bin/bash
 # Merge LoRA adapter into base model for end2end inference
 
-adapters=output/11-12/stage_3_gkd/v0-20251112-083254/eff_batch_32-epoch_10-last_2_vision-last_1_llm-from_stage_2_checkpoint-400-small_lrs/checkpoint-690
+adapters=output/11-19/stage_1.5/v8-20251119-155621/poly-epoch_24-dlora-weak_aug-lrs_4_2_8-llm_kd_0.01-vision_kd_0.01-last_6_vision-all_llm-from_base/checkpoint-1656
 
 # Extract base model path from adapter_config.json
 base_model=$(python3 -c "import json; print(json.load(open('$adapters/adapter_config.json'))['base_model_name_or_path'])")
 
 
-output_dir=output/11-10/stage_3_gkd_merged_small_lrs-good/checkpoint-690
+output_dir=output/11-19/stage_1.5_merged/epoch_24-poly-from_base-checkpoint-1760
 
 echo "Detected base model: $base_model"
 echo "Adapters: $adapters"
 
 
-CUDA_VISIBLE_DEVICES=1 \
+CUDA_VISIBLE_DEVICES=3 \
 swift export \
     --model $base_model \
     --adapters $adapters \

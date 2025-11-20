@@ -4,12 +4,44 @@ Status: Active — Internal Engineering
 
 ## Quick Navigation
 - **What's New** → `CHANGELOG.md` 🆕
-- **Data & Datasets** → `DATA_AND_DATASETS.md` - Schema, builders, preprocessing
-- **Augmentation** → `AUGMENTATION.md` - Geometry transforms, smart cropping
-- **Training & Inference** → `REFERENCE.md` - Full guide, recipes, FAQ
-- **Stage-A & Stage-B** → `STAGE_A_STAGE_B.md` - Quality control pipeline, reflection loop
+- **Data & Datasets** → `DATA_AND_DATASETS.md` - Schema, builders, conversion pipeline
+- **Augmentation** → `DATA_AUGMENTATION.md` - Geometry transforms, telemetry, visualization hooks
+- **Training** → `TRAINING_PLAYBOOK.md`
+- **Inference & Stage-A** → `INFERENCE_AND_STAGEA.md`
+- **Stage-B Runtime** → `STAGE_B_RUNTIME.md`
+- **Reference overview** → `REFERENCE.md` - Architecture plus doc index
+- **Stage-A & Stage-B (business)** → `STAGE_A_STAGE_B.md`, `stage-B-knowledge-Chinese.md`
+- **Public datasets** → `PUBLIC_DATA.md`
 - **Upstream Dependencies** → `UPSTREAM_DEPENDENCIES.md` - HF Qwen3-VL + ms-swift context
-- **Experiments** → `experiments/` - Training comparisons, ablations
+- **Experiments** → `docs/experiments/` - Training comparisons, ablations
+- **Specs & governance** → `openspec/AGENTS.md`, `openspec/project.md`
+
+### Documentation Ownership & Directory Map
+
+| Directory | Primary doc(s) | Scope |
+|-----------|----------------|-------|
+| `src/` | `TRAINING_PLAYBOOK.md`, `INFERENCE_AND_STAGEA.md`, `REFERENCE.md` | Core training/inference implementation (`src/sft.py`, datasets, trainers). |
+| `data_conversion/` | `DATA_AND_DATASETS.md` (Conversion section) | Unified processor for BBU annotations, taxonomy JSONs, resize/validation helpers. |
+| `public_data/` | `PUBLIC_DATA.md` | LVIS and future auxiliary datasets (download, convert, sample, validate, visualize). |
+| `vis_tools/` | `DATA_AUGMENTATION.md`, `vis_tools/README_CROP_VIS.md` | Visualization/debug scripts for augmentation, eval dumps, Qwen3-VL outputs. |
+| `scripts/` | `TRAINING_PLAYBOOK.md`, `INFERENCE_AND_STAGEA.md`, `STAGE_B_RUNTIME.md` | Canonical entrypoints: training, inference, Stage-A/B launchers, dataset fusion. |
+| `openspec/` | `openspec/AGENTS.md`, `openspec/project.md` | Change-management specs and proposal workflow. |
+
+Whenever you add or modify code in the directories above, update the associated doc in the same PR to keep the handbook current.
+
+### Script & Tooling Inventory
+
+| Script | Location | Description |
+|--------|----------|-------------|
+| `train.sh` | `scripts/` | Conda-aware launcher for `python -m src.sft` / `torchrun` with config auto-resolution and debug toggles. |
+| `fuse_datasets.py` | `scripts/` | Offline builder for `src/datasets/fusion.py` configs; pre-mixes BBU + auxiliary JSONL with deterministic ratios. |
+| `download.py` | `scripts/` | Download helper for internal/raw corpora (mirrors instructions in `docs/DATA_AND_DATASETS.md`). |
+| `stage_a_infer.sh` | `scripts/` | Mission-aware wrapper around `src.stage_a.cli` with guardrails for checkpoint/input directories. |
+| `stage_b_run.sh` | `scripts/` | Stage-B reflection loop launcher; wires configs to `src.stage_b.runner`. |
+| `run_grpo.py` | `scripts/` | Experimental Stage-B GRPO launcher (LLM-only LoRA fine-tuning with rewards in `src/stage_b/rewards.py`). |
+| `inspect_lora_ckpts.py` | `scripts/` | Static inspector for adapter checkpoints to verify `modules_to_save` and LoRA coverage. |
+
+Use these scripts instead of ad-hoc commands so telemetry, logging, and environment setup stay consistent across teams.
 
 ## Recent Updates
 
@@ -19,8 +51,8 @@ Status: Active — Internal Engineering
 - Stage-A CLI wraps runtime flags in `StageAConfig`, catching invalid missions/paths before inference launches.
 
 ### v1.1.1 - Quad Truncation Refinement (Oct 2025) 🔧
-- Fixed rotate+crop quad handling: rotated quads now maintain rotation after crop
-- Added polygon simplification to preserve true quad corners
+- Fixed rotate+crop polygon handling: rotated polygons now maintain rotation after crop
+- Added polygon simplification to preserve true polygon corners
 - Perfect boundary truncation without spurious AABB conversion
 
 ### v1.1.0 - Smart Cropping with Label Filtering (Oct 2025) 🆕
@@ -31,6 +63,12 @@ Status: Active — Internal Engineering
 - See [CHANGELOG.md](CHANGELOG.md) for full details
 
 ---
+
+## Major Change: Geometry Schema Overhaul (Nov 2025) 🚨
+
+- **Big change**: the pipeline now publishes `poly` geometry entries everywhere (replacing the previous 4-point geometry key). Internally we still emit 4-point polygons today, but the schema and prompts are ready to hold arbitrary vertex counts going forward.
+- All documentation, builders, and augmentation ops now expect `poly` (even-length list ≥8 values) as one of the three canonical geometry keys (`bbox_2d`, `poly`, `line`).
+- This change affects data conversion, dataset builders, augmentation telemetry, Stage-A/B workflows, and training prompts. Please regenerate derived artifacts and re-validate dataset probes if you re-run conversion scripts.
 
 ## Architecture Overview
 
@@ -83,12 +121,14 @@ Vision Encoder (ViT) → Aligner (Projector) → LLM
 
 | Documentation | Source Code |
 |---------------|-------------|
-| Data & Datasets | `src/datasets/`, `src/datasets/data_details.md` |
-| Augmentation | `src/datasets/augmentation/`, `src/datasets/geometry.py` |
-| Training & Inference | `src/sft.py`, `src/stage_a/`, `src/stage_b/`, `configs/` |
-| Stage-A & Stage-B | `src/stage_a/`, `src/stage_b/`, `configs/stage_b/` |
+| Data & Datasets | `src/datasets/`, `data_conversion/`, `src/datasets/data_details.md`, `scripts/fuse_datasets.py` |
+| Augmentation | `src/datasets/augmentation/`, `src/datasets/geometry.py`, `vis_tools/` |
+| Training Playbook & Advanced FAQ | `src/sft.py`, `scripts/train.sh`, `configs/`, `src/callbacks/`, `src/trainers/` |
+| Inference & Stage-A | `src/stage_a/`, `scripts/stage_a_infer.sh`, `scripts/inspect_lora_ckpts.py`, `src/utils/logger.py` |
+| Stage-B Runtime | `src/stage_b/`, `scripts/stage_b_run.sh`, `scripts/run_grpo.py`, `configs/stage_b/` |
+| Public Data | `public_data/`, `public_data/scripts/`, `public_data/tests/` |
 | Utils & Logging | `src/utils/`, `src/callbacks/` |
 
 ---
 
-**Last Updated**: 2025-10-27 (v1.1.1)
+**Last Updated**: 2025-11-21 (Doc ownership refresh)

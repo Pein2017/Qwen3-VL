@@ -4,7 +4,7 @@ extends: base.yaml
 
 model:
   # Point to stage 2 best checkpoint - will load base model + LLM LoRA
-  model: output/11-10/stage_2_gkd_merged/checkpoint-400
+  model: output/11-17/stage_2_merged/lora_1_1_kd_0.1-checkpoint-414
 
 
 tuner:
@@ -33,31 +33,33 @@ rlhf:
   rlhf_type: gkd
   # Use a stable, cached teacher checkpoint; tests assert this lives under
   # ``model_cache/`` and is distinct from the student path.
-  teacher_model: model_cache/models/Qwen/Qwen3-VL-8B-Instruct
+  teacher_model: output/11-17/stage_2_merged/lora_1_1_kd_0.1-checkpoint-414
   sft_alpha: 1.0
-  llm_kd_weight: 2
+  llm_kd_weight: 0.2
   seq_kd: false
   lmbda: 0.0
 
 training:
   # Paths and naming
-  output_dir: ./output/11-14/stage_3_gkd
-  run_name: eff_batch_16-epoch_20-last_2_vision_1_llm-from_stage_2_checkpoint-400-lrs_1_4_1-larger_kd_weights
+  output_dir: ./output/11-17/stage_3_gkd
+  run_name: eff_batch_32-epoch_6-lrs_1_2_1-kd_weight_0.2
 
   # Epochs and batch sizes
-  num_train_epochs: 20
+  num_train_epochs: 6
   per_device_train_batch_size: 1
   per_device_eval_batch_size: 2
-  gradient_accumulation_steps: 4
+  # Auto-calculated from effective_batch_size, per_device_train_batch_size, and world_size
+  # gradient_accumulation_steps: 8  # Commented out - now auto-calculated
+  effective_batch_size: 32  # Will auto-calculate gradient_accumulation_steps to maintain this effective batch size
   
   # Optimizer and learning rates
   optimizer: multimodal
-  learning_rate: 1.0e-5  
-  vit_lr: 4.0e-5          
-  aligner_lr: 1.0e-5     
+  learning_rate: 1.0e-4  
+  vit_lr: 2.0e-4          
+  aligner_lr: 1.0e-4     
   
   lr_scheduler_kwargs:
-    min_lr: 1.0e-7
+    min_lr: 1.0e-6
   
   # Training flags
   packing: true
@@ -68,14 +70,14 @@ training:
   
   # Eval and checkpointing
   eval_strategy: steps
-  save_strategy: steps
+  save_strategy: best
   eval_steps: 20
-  save_steps: 500
-  save_delay_steps: 1000
+  save_steps: 10
   save_total_limit: 4
+  save_delay_steps: 250
   
   # Logging
-  logging_dir: ./tb/11-14/stage_3_gkd
+  logging_dir: ./tb/11-17/stage_3_gkd
   logging_steps: 10
   logging_first_step: true
 
@@ -92,7 +94,7 @@ deepspeed:
 custom:
   trainer_variant: gkd_monitor
   visual_kd:
-    enabled: true
+    enabled: false
     vit:
       enabled: false
     aligner:
@@ -107,7 +109,7 @@ custom:
   dump_conversation_text: false
   # Augmentation pipeline (training only). Eval remains unchanged.
   augmentation:
-    enabled: true
+    enabled: false
     bypass_prob: 0.2  # Slightly more clean samples (weaker augmentation)
     ops:
       # Geometric ops (moderate probabilities and ranges)

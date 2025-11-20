@@ -1,14 +1,13 @@
 #!/bin/bash
 
 # Data Conversion Pipeline - Manual Configuration
-# 
+#
 # Processes raw dataset directories into training-ready format:
 # /data/{dataset_name}/
-#   ├── images/*.jpeg        # Smart-resized images  
+#   ├── images/*.jpeg        # Smart-resized images
 #   ├── all_samples.jsonl    # All processed samples
 #   ├── train.jsonl          # Training split
-#   ├── val.jsonl            # Validation split  
-#   ├── teacher.jsonl        # Teacher samples
+#   ├── val.jsonl            # Validation split
 #   ├── label_vocabulary.json # Statistics
 #   ├── validation_results.json # Validation results
 #   ├── invalid_objects.jsonl # Invalid objects with details
@@ -42,16 +41,16 @@ export MODELSCOPE_CACHE="./modelscope/hub"
 # Required paths - YOU MUST SET THESE
 INPUT_DIR="raw_ds/bbu_scene_2.0/bbu_scene_2.0"  # e.g., "ds_v2" or "my_dataset"
 OUTPUT_DIR="data"                   # e.g., "data" or "/path/to/output"
-DATASET_NAME="bbu_full_768_poly"         # e.g., "experiment_1" or leave empty to auto-detect
+DATASET_NAME="bbu_full_768_poly-parallel"         # e.g., "experiment_1" or leave empty to auto-detect
 
-# Optional configuration files - SET THESE IF YOU HAVE THEM
-HIERARCHY_FILE=""               # e.g., "data_conversion/label_hierarchy.json" or leave empty
 
 # Processing parameters - YOU MUST SET THESE
 VAL_RATIO="0.2"                    # e.g., "0.1" for 10% validation split
-MAX_TEACHERS="0"                 # e.g., "10" for max teacher samples, or "0" to disable teacher-pool (for dynamic teacher-sampling)
 RESIZE="true"                       # "true" or "false" for image resizing
-OBJECT_TYPES="full"               # e.g., "bbu label" or "fiber wire" (space-separated, arbitrary combinations), or "full" for all types
+
+# Image resize parameters - REQUIRED (NO DEFAULTS ALLOWED)
+MAX_PIXELS="786432"                # Maximum pixels for image resizing (e.g., 786432 for 768*32*32)
+IMAGE_FACTOR="32"                  # Factor for image dimensions (e.g., 32)
 
 # Optional settings
 LOG_LEVEL="INFO"                    # e.g., "INFO", "DEBUG", "WARNING", "ERROR" or leave empty
@@ -59,8 +58,13 @@ SEED="17"                         # e.g., "17" or leave empty
 STRIP_OCCLUSION="true"            # "true" to remove tokens containing '遮挡'; default disabled to preserve data
 SANITIZE_TEXT="true"              # "true" to normalize text (spaces/hyphens/fullwidth/circled numbers)
 STANDARDIZE_LABEL_DESC="true"     # "true" to map empty-like 标签/* to 标签/无法识别
+FAIL_FAST="true"                  # "true" to stop immediately on invalid samples, "false" to continue with warnings
+LIMIT="-1"                        # Limit number of images to process (e.g., "10" for 10 images, "-1" for all images)
 
-# Validation settings - OPTIONAL (currently hardcoded in unified_processor.py)
+# Performance settings
+NUM_WORKERS="8"                   # Number of parallel workers (1=sequential, >1=parallel). Recommended: 4-8 for multi-core systems
+
+# Validation settings - OPTIONAL (currently hardcoded in pipeline/unified_processor.py)
 # TODO: These parameters will be configurable in a future update
 VALIDATION_MODE="strict"            # e.g., "strict", "lenient", "warning_only"
 MIN_OBJECT_SIZE="1"               # e.g., "10" for minimum object size in pixels
@@ -97,41 +101,38 @@ echo "📋 Configuration:"
 echo "   Input Dir: $INPUT_DIR"
 echo "   Output Dir: $OUTPUT_DIR"
 echo "   Dataset Name: $DATASET_NAME"
-echo "   Language: Chinese (default)"
-echo "   Hierarchy File: ${HIERARCHY_FILE:-'(not set)'}"
 echo "   Val Ratio: $VAL_RATIO"
-if [ "$MAX_TEACHERS" = "0" ]; then
-    echo "   Max Teachers: $MAX_TEACHERS (teacher-pool disabled for dynamic sampling)"
-else
-    echo "   Max Teachers: $MAX_TEACHERS"
-fi
 echo "   Smart Resize: $RESIZE"
-echo "   Object Types: $OBJECT_TYPES"
+echo "   Max Pixels: $MAX_PIXELS"
+echo "   Image Factor: $IMAGE_FACTOR"
 echo "   Log Level: $LOG_LEVEL"
 echo "   Seed: $SEED"
+echo "   Fail Fast: $FAIL_FAST"
+if [ "$LIMIT" = "-1" ]; then
+    echo "   Limit: $LIMIT (all images)"
+else
+    echo "   Limit: $LIMIT images"
+fi
 echo "   Validation Mode: $VALIDATION_MODE (hardcoded: strict)"
 echo "   Min Object Size: $MIN_OBJECT_SIZE (hardcoded: 10px)"
 echo "   Validation Reports: Always enabled"
+echo "   Parallel Workers: $NUM_WORKERS"
 echo ""
 
 # Build command arguments
-PYTHON_CMD="/root/miniconda3/envs/ms/bin/python data_conversion/unified_processor.py"
+PYTHON_CMD="/root/miniconda3/envs/ms/bin/python -m data_conversion.pipeline.unified_processor"
 ARGS="--input_dir \"$INPUT_DIR\""
 ARGS="$ARGS --output_dir \"$OUTPUT_DIR\""
-ARGS="$ARGS --language chinese"
 ARGS="$ARGS --dataset_name \"$DATASET_NAME\""
 ARGS="$ARGS --val_ratio \"$VAL_RATIO\""
-ARGS="$ARGS --max_teachers \"$MAX_TEACHERS\""
 ARGS="$ARGS --seed \"$SEED\""
 ARGS="$ARGS --log_level \"$LOG_LEVEL\""
-ARGS="$ARGS --object_types $OBJECT_TYPES"
+ARGS="$ARGS --max_pixels \"$MAX_PIXELS\""
+ARGS="$ARGS --image_factor \"$IMAGE_FACTOR\""
+ARGS="$ARGS --validation_mode \"$VALIDATION_MODE\""
+ARGS="$ARGS --min_object_size \"$MIN_OBJECT_SIZE\""
 
 # Add optional arguments if provided
-if [ -n "$HIERARCHY_FILE" ]; then
-    ARGS="$ARGS --hierarchy_path \"$HIERARCHY_FILE\""
-fi
-
-
 if [ "$RESIZE" = "true" ]; then
     ARGS="$ARGS --resize"
 fi
@@ -146,22 +147,50 @@ if [ "$STANDARDIZE_LABEL_DESC" = "true" ]; then
     ARGS="$ARGS --standardize_label_desc"
 fi
 
+if [ "$FAIL_FAST" = "true" ]; then
+    ARGS="$ARGS --fail_fast"
+else
+    ARGS="$ARGS --no_fail_fast"
+fi
+
+if [ "$ENABLE_VALIDATION_REPORTS" = "true" ]; then
+    ARGS="$ARGS --enable_validation_reports"
+else
+    ARGS="$ARGS --disable_validation_reports"
+fi
+
+if [ -n "$LIMIT" ] && [ "$LIMIT" != "-1" ]; then
+    ARGS="$ARGS --limit \"$LIMIT\""
+fi
+
+# Add num_workers argument
+if [ -n "$NUM_WORKERS" ]; then
+    ARGS="$ARGS --num_workers \"$NUM_WORKERS\""
+fi
+
 echo "🔄 Processing dataset: $DATASET_NAME ($INPUT_DIR)"
 echo "  └─ Executing: $PYTHON_CMD"
+echo "  └─ Logging to: convert.log"
+echo ""
 
-# Execute the command
-eval "$PYTHON_CMD $ARGS"
+# Execute the command and redirect output to convert.log
+# Use tee to also show output on terminal while logging to file
+eval "$PYTHON_CMD $ARGS" 2>&1 | tee convert.log
+EXIT_CODE=${PIPESTATUS[0]}
 
-if [ $? -eq 0 ]; then
+if [ $EXIT_CODE -eq 0 ]; then
     echo ""
     echo "✅ Dataset $DATASET_NAME processed successfully!"
     echo "📁 Output: $OUTPUT_DIR/$DATASET_NAME/"
+    echo "📝 Log file: convert.log"
     
     # Validation step has been removed for simplification
     
     echo "🚀 Ready for training!"
+    exit 0
 else
     echo ""
     echo "❌ Dataset $DATASET_NAME processing failed"
-    exit 1
+    echo "📝 Check convert.log for details"
+    exit $EXIT_CODE
 fi

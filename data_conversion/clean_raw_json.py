@@ -2,6 +2,8 @@ import argparse
 import json
 import os
 
+from data_conversion.annotation_cleaner import clean_annotation_content
+
 
 def clean_annotation_file(input_path, output_path, lang="both"):
     """
@@ -16,54 +18,7 @@ def clean_annotation_file(input_path, output_path, lang="both"):
     with open(input_path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
-    # Start with the original data structure
-    cleaned_data = {}
-
-    # Preserve essential metadata sections that are needed by the pipeline
-    essential_keys = ["info", "tagInfo", "version"]
-    for key in essential_keys:
-        if key in data:
-            cleaned_data[key] = data[key]
-
-    # Clean the features in markResult
-    cleaned_features = []
-    if "markResult" in data and "features" in data["markResult"]:
-        for feature in data["markResult"]["features"]:
-            properties: dict = {}
-            original_properties: dict = feature.get("properties", {})
-
-            # 根据语言选项保留中英文信息
-            if lang in ("zh", "both"):
-                properties["contentZh"] = original_properties.get("contentZh", {})
-            if lang in ("en", "both"):
-                properties["content"] = original_properties.get("content", {})
-
-            # Convert legacy "Square" geometry type to "Quad" for consistency
-            geometry = feature.get("geometry", {})
-            if geometry.get("type") == "Square":
-                geometry = geometry.copy()
-                geometry["type"] = "Quad"
-                print(f"  Converted geometry type 'Square' -> 'Quad' in feature")
-
-            cleaned_features.append(
-                {
-                    # GeoJSON 要求的 Feature 类型
-                    "type": feature.get("type", "Feature"),
-                    "geometry": geometry,
-                    "properties": properties,
-                }
-            )
-
-    # Preserve markResult structure with cleaned features
-    if "markResult" in data:
-        cleaned_data["markResult"] = {
-            "features": cleaned_features,
-            "type": data["markResult"].get("type", "FeatureCollection"),
-        }
-        # Preserve other markResult fields if they exist
-        for key in data["markResult"]:
-            if key not in ["features", "type"]:
-                cleaned_data["markResult"][key] = data["markResult"][key]
+    cleaned_data = clean_annotation_content(data, lang=lang)
 
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(cleaned_data, f, ensure_ascii=False)

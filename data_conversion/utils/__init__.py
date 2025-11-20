@@ -2,7 +2,7 @@
 Utilities for Data Conversion Pipeline
 
 Focused utility modules for file operations.
-Validation and transformation utilities moved to coordinate_manager.py.
+Validation and transformation utilities live in `data_conversion.pipeline.coordinate_manager`.
 """
 
 from .file_ops import FileOperations

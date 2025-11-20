@@ -96,6 +96,12 @@ The Stage-A/Stage-B stack addresses these by standardizing summaries, orchestrat
 - High-volume missions: run Stage-A continuously, Stage-B hourly with 32-record reflection batches.
 - Low-volume missions: Stage-A weekly, Stage-B on demand with manual approval of guidance edits.
 
+### Runbook: CLI Reference
+
+- **Stage-A summaries** — `scripts/stage_a_infer.sh` wraps `python -m src.stage_a.cli`, enforces the canonical mission focus prompts, and verifies that every intake folder carries `stage_a_complete=true` before emitting summaries into `output_post/stage_a/`. Override mission/device via env vars (`mission=... gpu=0`).
+- **Stage-B reflection loop** — `scripts/stage_b_run.sh` launches `python -m src.stage_b.runner` with `configs/stage_b/run.yaml` (or a mission-specific override). It writes `guidance.json`, `trajectories.jsonl`, `selections.jsonl`, and `reflection.jsonl` under `{output.root}/{output.run_name}/{mission}/`. Add `log_level=debug` when ops needs to inspect critic output.
+- **Guidance hygiene** — The runner copies the global guidance file into each mission directory. Promote or roll back mission edits by syncing those files back into the shared guidance repo after review.
+
 ---
 
 ## 6. Decision Metrics & Business KPIs
@@ -182,4 +188,3 @@ For hands-on runbooks (CLI flags, YAML examples), refer to the technical documen
 
 - **2025-11-06** — Refocused document on business context, governance, and KPI ownership (Quality Ops request).
 - **2025-01-XX** — Initial technical deep-dive (superseded, see technical runbooks for details).
-

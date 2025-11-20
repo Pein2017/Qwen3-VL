@@ -39,11 +39,11 @@ from transformers.generation.logits_process import (
     LogitsProcessorList,
 )
 
+from vis_tools import evaluate as geom_eval
 from vis_tools.vis_helper import (
-    canonicalize_quad,
+    canonicalize_poly,
     draw_objects,
 )
-
 
 # ==============================
 # Parse CLI arguments (deferred to main)
@@ -57,8 +57,8 @@ def _parse_args():
         "device_id",
         type=int,
         nargs="?",
-        default=0,
-        help="CUDA device ID (default: 0, i.e., cuda:0)",
+        default=None,
+        help="CUDA device ID (optional, if not provided uses DEVICE from runtime settings)",
     )
     return parser.parse_args()
 
@@ -68,15 +68,15 @@ def _parse_args():
 # ==============================
 
 # Required paths
-CKPT_PATH = "output/11-10/stage_3_gkd_merged/temp"  # HF dir or merged checkpoint  # HF dir or merged checkpoint
-JSONL_PATH = "data/bbu_full_768/val.jsonl"
+CKPT_PATH = "output/11-19/stage_1.5_merged/epoch_24-poly-from_base-checkpoint-1760"  # HF dir or merged checkpoint  # HF dir or merged checkpoint
+JSONL_PATH = "data/bbu_full_768_poly/val.jsonl"
 
 # Runtime settings
 LIMIT = 10
-DEVICE = "cuda:0"  # Will be overridden by args in main()
-SAVE_DIR = "vis_out/stage_3_gkd_merged/temp"
+DEVICE = "cuda:2"  # Default device; can be overridden by CLI arg in main()
+SAVE_DIR = "vis_out/stage_1.5_merged/epoch_24-poly-from_base"
 MAX_NEW_TOKENS = 2048
-TEMPERATURE = 0.1  # Moderate temperature for diversity without excessive randomness
+TEMPERATURE = 0.001  # Moderate temperature for diversity without excessive randomness
 TOP_P = 0.95  # Nucleus sampling - cuts off low-probability tail for better diversity
 REPETITION_PENALTY = (
     1.05  # Minimal global penalty to preserve recall (only prevents token-level loops)
@@ -90,7 +90,7 @@ STOP_AT_BALANCED_JSON = False
 MAX_OBJECTS_CAP: int | None = None
 # Dedup aggressiveness: require at least this many matched tokens and presence of geometry marker
 DEDUP_MIN_PREFIX_TOKENS = 24
-GEOMETRY_MARKERS = ('"line"', '"bbox_2d"', '"quad"')
+GEOMETRY_MARKERS = ('"line"', '"bbox_2d"', '"poly"')
 DEDUP_MAX_MATCH_WINDOW_TOKENS = 256
 
 # JSON format: must match training format ("standard")
@@ -122,6 +122,10 @@ try:
     )
 except Exception:
     raise Exception("Failed to import prompts")
+try:
+    from src.datasets.geometry import normalize_points  # type: ignore
+except Exception:
+    normalize_points = None  # type: ignore
 
 # Infer json_format from checkpoint path if not explicitly set
 _inferred_format: str | None = None
@@ -251,25 +255,39 @@ def run_infer_one(pil_img: Image.Image, prompt: str) -> tuple[str, str]:
                     return ""
 
             def __call__(
-                self, input_ids: torch.LongTensor, scores: torch.FloatTensor
-            ) -> bool:  # type: ignore[override]
+                self, input_ids: torch.LongTensor, scores: torch.FloatTensor, **kwargs
+            ) -> torch.BoolTensor:
+                batch_size = input_ids.shape[0] if input_ids is not None else 1
+                device = (
+                    input_ids.device if input_ids is not None else torch.device("cpu")
+                )
                 if input_ids is None or input_ids.size(0) == 0:
-                    return False
+                    return torch.full(
+                        (batch_size,), False, device=device, dtype=torch.bool
+                    )  # type: ignore[return-value]
                 seq = input_ids[0]
                 gen_ids = seq[self.prompt_len :]
                 if gen_ids.numel() == 0:
-                    return False
+                    return torch.full(
+                        (batch_size,), False, device=device, dtype=torch.bool
+                    )  # type: ignore[return-value]
                 text = self._decode(gen_ids)
                 if not text:
-                    return False
+                    return torch.full(
+                        (batch_size,), False, device=device, dtype=torch.bool
+                    )  # type: ignore[return-value]
                 if self.max_objects is not None and self.max_objects > 0:
                     try:
                         if text.count('"object_') >= self.max_objects:
-                            return True
+                            return torch.full(
+                                (batch_size,), True, device=device, dtype=torch.bool
+                            )  # type: ignore[return-value]
                     except Exception:
                         pass
                 if not STOP_AT_BALANCED_JSON:
-                    return False
+                    return torch.full(
+                        (batch_size,), False, device=device, dtype=torch.bool
+                    )  # type: ignore[return-value]
                 depth = 0
                 started = False
                 in_str = False
@@ -294,8 +312,13 @@ def run_infer_one(pil_img: Image.Image, prompt: str) -> tuple[str, str]:
                             if depth > 0:
                                 depth -= 1
                                 if started and depth == 0:
-                                    return True
-                return False
+                                    return torch.full(
+                                        (batch_size,),
+                                        True,
+                                        device=device,
+                                        dtype=torch.bool,
+                                    )  # type: ignore[return-value]
+                return torch.full((batch_size,), False, device=device, dtype=torch.bool)  # type: ignore[return-value]
 
         stopping = StoppingCriteriaList(
             [_BalancedJsonStopper(prompt_len, MAX_OBJECTS_CAP)]
@@ -461,7 +484,7 @@ def run_infer_one(pil_img: Image.Image, prompt: str) -> tuple[str, str]:
 # Parsing + inverse scale
 # ======================
 
-GEOM_KEYS = ("bbox_2d", "quad", "line")
+GEOM_KEYS = ("bbox_2d", "poly", "line")
 
 
 def _extract_outer_json(text: str) -> str | None:
@@ -791,8 +814,8 @@ def _create_legend(
     legend.get_frame().set_edgecolor("lightgray")
 
 
-def _canonicalize_quad(points8: List[int | float]) -> List[int]:
-    return canonicalize_quad(points8)
+def _canonicalize_poly(points: List[int | float]) -> List[int]:
+    return canonicalize_poly(points)
 
 
 def _draw_objects(
@@ -810,10 +833,10 @@ def _draw_objects(
         pts = obj["points"]
         desc = obj.get("desc", "")
         pts_px = pts if scaled else inverse_scale(pts, w, h)
-        # Canonicalize quad ordering to avoid self-crossing (use vis_generation logic)
-        if gtype == "quad" and len(pts_px) == 8:
+        # Canonicalize polygon ordering to avoid self-crossing (use vis_generation logic)
+        if gtype == "poly" and len(pts_px) >= 8 and len(pts_px) % 2 == 0:
             pts_list: List[int | float] = [int(p) for p in pts_px]
-            pts_px = _canonicalize_quad(pts_list)
+            pts_px = _canonicalize_poly(pts_list)
 
         color = color_map.get(desc) or "#000000"
         if gtype == "bbox_2d" and len(pts_px) == 4:
@@ -823,11 +846,11 @@ def _draw_objects(
                     (x1, y1), x2 - x1, y2 - y1, fill=False, edgecolor=color, linewidth=2
                 )
             )
-        elif gtype == "quad" and len(pts_px) == 8:
+        elif gtype == "poly" and len(pts_px) >= 8 and len(pts_px) % 2 == 0:
             # Draw polygon with dashed outline similar to vis_generation
-            quad_coords = [(pts_px[i], pts_px[i + 1]) for i in range(0, 8, 2)]
+            poly_coords = [(pts_px[i], pts_px[i + 1]) for i in range(0, len(pts_px), 2)]
             poly = patches.Polygon(
-                quad_coords,
+                poly_coords,
                 closed=True,
                 fill=False,
                 edgecolor=color,
@@ -878,8 +901,8 @@ def write_jsonl(records: List[Dict[str, Any]], jsonl_path: str) -> None:
 def _guess_geom_type_from_len(n_points: int) -> str | None:
     if n_points == 4:
         return "bbox_2d"
-    if n_points == 8:
-        return "quad"
+    if n_points >= 8 and n_points % 2 == 0:
+        return "poly"
     if n_points % 2 == 0 and n_points >= 4:
         return "line"
     return None
@@ -908,12 +931,12 @@ def extract_gt_objects(rec: Dict[str, Any], image_index: int) -> List[Dict[str, 
             )
         return objs
 
-    # Format B: list of per-object dicts [{desc, bbox_2d|quad|line, image_id?}, ...]
+    # Format B: list of per-object dicts [{desc, bbox_2d|poly|line, image_id?}, ...]
     if isinstance(objects, list):
         for obj in objects:
             if not isinstance(obj, dict):
                 continue
-            gtype = next((k for k in ("bbox_2d", "quad", "line") if k in obj), None)
+            gtype = next((k for k in ("bbox_2d", "poly", "line") if k in obj), None)
             if gtype is None:
                 continue
             pts = obj.get(gtype)
@@ -942,7 +965,10 @@ def main() -> None:
     # Parse command line arguments
     args = _parse_args()
     global DEVICE
-    DEVICE = f"cuda:{args.device_id}"
+    # Use CLI arg if provided, otherwise use runtime setting
+    if args.device_id is not None:
+        DEVICE = f"cuda:{args.device_id}"
+    # DEVICE already set to "cuda:7" from runtime settings if CLI arg not provided
 
     os.makedirs(SAVE_DIR, exist_ok=True)
     root = Path(JSONL_PATH).resolve().parent
@@ -954,6 +980,10 @@ def main() -> None:
         print(f"[INFO] Plotting from JSONL (no inference): {PLOT_JSONL_PATH}")
         dumped = list(load_records(PLOT_JSONL_PATH))
         count = 0
+        total_gt = 0
+        total_pred = 0
+        total_matched = 0
+        total_missing = 0
         for rec in dumped:
             img_path = rec.get("image_path")
             if not img_path:
@@ -965,22 +995,82 @@ def main() -> None:
             except Exception:
                 continue
 
-            gt_objs = rec.get("gt", [])
-            pred_objs = rec.get("pred", [])
+            w, h = img.size
+            # Prefer normalized GT if present; otherwise normalize from pixels
+            gt_norm = rec.get("gt_norm1000") or rec.get("gt_norm")
+            if gt_norm:
+                gt_objs = [
+                    {
+                        "desc": o.get("desc", ""),
+                        "type": o.get("type", ""),
+                        "points": o.get("points", []),
+                    }
+                    for o in gt_norm
+                    if isinstance(o, dict) and isinstance(o.get("points", []), list)
+                ]
+                gt_px = [
+                    {
+                        "desc": o.get("desc", ""),
+                        "type": o.get("type", ""),
+                        "points": inverse_scale(o.get("points", []), w, h),
+                    }
+                    for o in gt_objs
+                ]
+            else:
+                gt_px = rec.get("gt", [])
+                if normalize_points is not None:
+                    gt_objs = [
+                        {
+                            "desc": o.get("desc", ""),
+                            "type": o.get("type", ""),
+                            "points": normalize_points(
+                                o.get("points", []), w, h, "norm1000"
+                            ),
+                        }
+                        for o in gt_px
+                    ]
+                else:
+                    gt_objs = gt_px
 
-            # Deduplicate predictions to remove identical objects
-            pred_objs, _ = deduplicate_predictions(pred_objs, verbose=True)
+            pred_objs_norm = rec.get("pred_norm1000") or rec.get("pred", [])
+            # Deduplicate predictions to remove identical objects (norm space)
+            pred_objs_norm, _ = deduplicate_predictions(pred_objs_norm, verbose=True)
+
+            # Convert predictions from norm1000 to pixels for evaluation and drawing
+            w, h = img.size
+            pred_px = [
+                {
+                    "desc": o.get("desc", ""),
+                    "type": o.get("type", ""),
+                    "points": inverse_scale(o.get("points", []), w, h),
+                }
+                for o in pred_objs_norm
+            ]
+
+            # Geometry-based evaluation for this sample
+            eval_res = geom_eval.match_geometries(
+                gt_objs, pred_objs_norm, iou_threshold=0.5
+            )
+            print(
+                "[EVAL] image="
+                f"{count:05d}: GT={eval_res.num_gt}, Pred={eval_res.num_pred}, "
+                f"Matched={eval_res.num_matched}, Missing={eval_res.num_missing}"
+            )
+            total_gt += eval_res.num_gt
+            total_pred += eval_res.num_pred
+            total_matched += eval_res.num_matched
+            total_missing += eval_res.num_missing
 
             # Build legend color map
             labels = [o.get("desc", "") for o in gt_objs] + [
-                o.get("desc", "") for o in pred_objs
+                o.get("desc", "") for o in pred_objs_norm
             ]
             color_map = _generate_colors(labels)
             legend_counts: Dict[str, List[int]] = {}
             for o in gt_objs:
                 key = o.get("desc", "")
                 legend_counts.setdefault(key, [0, 0])[0] += 1
-            for o in pred_objs:
+            for o in pred_objs_norm:
                 key = o.get("desc", "")
                 legend_counts.setdefault(key, [0, 0])[1] += 1
 
@@ -1000,8 +1090,8 @@ def main() -> None:
                 scaled=True,
             )
             ax_l.set_title("GT")
-            draw_objects(ax_r, img, pred_objs, color_map, scaled=False)
-            ax_r.set_title("Prediction" + ("" if pred_objs else " (parse failed)"))
+            draw_objects(ax_r, img, pred_px, color_map, scaled=True)
+            ax_r.set_title("Prediction" + ("" if pred_px else " (parse failed)"))
             _create_legend(ax_legend, color_map, legend_counts)
 
             out_path = Path(SAVE_DIR) / f"vis_{count:05d}.jpg"
@@ -1011,10 +1101,21 @@ def main() -> None:
             count += 1
             if count >= LIMIT:
                 break
+
+        if count > 0:
+            print(
+                "[EVAL] Aggregate over "
+                f"{count} samples: GT={total_gt}, Pred={total_pred}, "
+                f"Matched={total_matched}, Missing={total_missing}"
+            )
         print(f"[DONE] Saved {count} figures to {SAVE_DIR}")
         return
 
     count = 0
+    total_gt = 0
+    total_pred = 0
+    total_matched = 0
+    total_missing = 0
     dumped_records: List[Dict[str, Any]] = []
     for rec in load_records(JSONL_PATH):
         images = (rec.get("images") or [])[:1]  # one image per figure
@@ -1030,6 +1131,15 @@ def main() -> None:
             continue
 
         gt = extract_gt_objects(rec, image_index=0)
+        # Use metadata width/height when available; fallback to actual image size
+        try:
+            meta_w = int(rec.get("width")) if rec.get("width") is not None else None
+            meta_h = int(rec.get("height")) if rec.get("height") is not None else None
+        except Exception:
+            meta_w = meta_h = None
+        w_img, h_img = img.size
+        w = meta_w or w_img
+        h = meta_h or h_img
 
         raw_text = ""
         clean_text = ""
@@ -1053,37 +1163,73 @@ def main() -> None:
             print(f"[ERROR] Failed to parse prediction: {e}")
             pred_objs = []
 
+        # Convert predictions from norm1000 to pixels for evaluation and drawing
+        pred_px = [
+            {
+                "desc": o.get("desc", ""),
+                "type": o.get("type", ""),
+                "points": inverse_scale(o.get("points", []), w, h),
+            }
+            for o in pred_objs
+        ]
+
+        # Geometry-based evaluation for this sample
+        gt_px = [
+            {
+                "type": o["type"],
+                "points": [int(round(p)) for p in o["points"]],
+                "desc": o.get("desc", ""),
+            }
+            for o in gt
+        ]
+        gt_norm = []
+        if normalize_points is not None and w and h:
+            for o in gt_px:
+                pts_norm = normalize_points(o.get("points", []), w, h, "norm1000")
+                gt_norm.append(
+                    {"type": o["type"], "points": pts_norm, "desc": o.get("desc", "")}
+                )
+        else:
+            gt_norm = gt_px
+
+        eval_res = geom_eval.match_geometries(gt_norm, pred_objs, iou_threshold=0.5)
+        print(
+            "[EVAL] image="
+            f"{count:05d}: GT={eval_res.num_gt}, Pred={eval_res.num_pred}, "
+            f"Matched={eval_res.num_matched}, Missing={eval_res.num_missing}"
+        )
+        total_gt += eval_res.num_gt
+        total_pred += eval_res.num_pred
+        total_matched += eval_res.num_matched
+        total_missing += eval_res.num_missing
+
         # Accumulate JSONL entries for later plotting
         if SAVE_JSONL:
             dumped_records.append(
                 {
                     "image_path": images[0],  # keep original relative path
-                    "gt": [
-                        {
-                            "desc": o.get("desc", ""),
-                            "type": o["type"],
-                            "points": [int(round(p)) for p in o["points"]],
-                        }
-                        for o in gt
-                    ],
+                    "gt": gt_px,
+                    "gt_norm1000": gt_norm,
                     "pred": pred_objs,
+                    "width": w,
+                    "height": h,
                     "raw_text": raw_text,
                     "clean_text": clean_text,
                 }
             )
 
         # Build legend color map using labels appearing in this figure
-        labels = [o.get("desc", "") for o in gt] + [
-            o.get("desc", "") for o in pred_objs
+        labels = [o.get("desc", "") for o in gt_px] + [
+            o.get("desc", "") for o in pred_px
         ]
         color_map = _generate_colors(labels)
 
         # Track counts for legend
         counts: Dict[str, List[int]] = {}
-        for o in gt:
+        for o in gt_px:
             key = o.get("desc", "")
             counts.setdefault(key, [0, 0])[0] += 1
-        for o in pred_objs:
+        for o in pred_px:
             key = o.get("desc", "")
             counts.setdefault(key, [0, 0])[1] += 1
 
@@ -1093,21 +1239,14 @@ def main() -> None:
         draw_objects(
             ax_l,
             img,
-            [
-                {
-                    "type": o["type"],
-                    "points": [int(round(p)) for p in o["points"]],
-                    "desc": o.get("desc", ""),
-                }
-                for o in gt
-            ],
+            gt_px,
             color_map,
             scaled=True,
         )
         ax_l.set_title("GT")
 
-        draw_objects(ax_r, img, pred_objs, color_map, scaled=False)
-        ax_r.set_title("Prediction" + ("" if pred_objs else " (parse failed)"))
+        draw_objects(ax_r, img, pred_px, color_map, scaled=True)
+        ax_r.set_title("Prediction" + ("" if pred_px else " (parse failed)"))
 
         _create_legend(ax_legend, color_map, counts)
 
@@ -1124,6 +1263,13 @@ def main() -> None:
     if SAVE_JSONL and dumped_records:
         write_jsonl(dumped_records, DUMP_JSONL_PATH)
         print(f"[INFO] Dumped GT vs Pred JSONL: {DUMP_JSONL_PATH}")
+
+    if count > 0:
+        print(
+            "[EVAL] Aggregate over "
+            f"{count} samples: GT={total_gt}, Pred={total_pred}, "
+            f"Matched={total_matched}, Missing={total_missing}"
+        )
 
     print(f"[DONE] Saved {count} figures to {SAVE_DIR}")
 

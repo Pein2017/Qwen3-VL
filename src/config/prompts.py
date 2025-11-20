@@ -41,13 +41,13 @@ DENSE_SYSTEM_PROMPT_CORE = (
     "- 对象按“自上到下 → 左到右”排序（线以最左端点为起点），编号从 1 递增。\n"
     "  * 排序规则详解：首先按 Y 坐标（纵向）从小到大排列（图像上方优先），Y 坐标相同时按 X 坐标（横向）从小到大排列（图像左方优先）。\n"
     "  * bbox_2d 排序参考点：使用左上角坐标 (x1, y1) 作为该对象的排序位置。\n"
-    "  * quad 排序参考点：使用第一个顶点 (x1, y1) 作为该对象的排序位置。\n"
+    "  * poly 排序参考点：使用第一个顶点 (x1, y1) 作为该对象的排序位置；当前样本以 4 个顶点为主，后续可扩展。\n"
     "  * line 排序参考点：使用最左端点（X 坐标最小的点）作为排序参考；若多个点的 X 坐标相同，则取其中 Y 坐标最小的点。\n"
-    "- 每个对象仅包含 desc + 单个几何键（bbox_2d/quad/line）；禁止多个几何键。\n"
+    "- 每个对象仅包含 desc + 单个几何键（bbox_2d/poly/line）；禁止多个几何键。\n"
     "- desc 采用“类型/属性[,属性]/[条件属性]”层级，不得包含多余空格或换行。\n"
     "- 坐标使用 norm1000 整数（0..1000）：\n"
     "  * bbox_2d：扁平数组 [x1,y1,x2,y2]（左上、右下）。\n"
-    "  * quad：二维数组对 [[x1,y1], [x2,y2], [x3,y3], [x4,y4]]（四个顶点）。\n"
+    "  * poly：二维数组对 [[x1,y1], [x2,y2], ...]（至少四个顶点，当前使用 4 个点表示四边形，未来可处理更多点）。\n"
     "  * line：二维数组对 [[x1,y1], [x2,y2], ...]（线段端点）；必须包含整数 line_points（≥2），其值等于点对个数。\n"
 )
 
@@ -79,7 +79,7 @@ SYSTEM_PROMPT_SUMMARY = (
     "先验规则（与密集标注共享的业务知识）：\n" + PRIOR_RULES + "\n\n"
     "【严格禁止】\n"
     "- 禁止任何坐标数字（如整数数组）\n"
-    "- 禁止几何字段名（bbox_2d、quad、line）\n"
+    "- 禁止几何字段名（bbox_2d、poly、line）\n"
     "- 禁止方括号[]包裹的数字列表\n"
     "- 禁止任何特殊标记或尖括号<>\n"
     "- 仅输出纯文本摘要，不得包含任何结构化几何信息\n\n"
@@ -97,6 +97,25 @@ USER_PROMPT_SUMMARY = (
 )
 
 
+SYSTEM_PROMPT_AUX = (
+    "你是一般视觉标注助手。只输出一个 JSON 对象，按“自上到下再从左到右”排序，坐标使用 norm1000 整数网格；"
+    "不添加质量/完整性判断，仅描述明显的物体类型/类别名。"
+    "出现不确定目标时返回最直接的类别名"
+)
+
+USER_PROMPT_AUX = (
+    "请简要列出图片中的可见物体（类型/类别名），保持 JSON 格式，避免补充额外属性。"
+)
+
+def get_template_prompts(name: str | None) -> tuple[str, str]:
+    normalized = (name or "bbu_dense").strip().lower()
+    registry = {
+        "aux_dense": (SYSTEM_PROMPT_AUX, USER_PROMPT_AUX),
+        "bbu_dense": (SYSTEM_PROMPT_JSON, USER_PROMPT_JSON),
+    }
+    return registry.get(normalized, (SYSTEM_PROMPT_JSON, USER_PROMPT_JSON))
+
+
 SYSTEM_PROMPT = SYSTEM_PROMPT_JSON
 USER_PROMPT = USER_PROMPT_JSON
 
@@ -108,5 +127,8 @@ __all__ = [
     "USER_PROMPT",
     "USER_PROMPT_JSON",
     "USER_PROMPT_SUMMARY",
+    "SYSTEM_PROMPT_AUX",
+    "USER_PROMPT_AUX",
+    "get_template_prompts",
     "build_dense_system_prompt",
 ]

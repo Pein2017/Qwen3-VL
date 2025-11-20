@@ -22,6 +22,10 @@ AllowedJsonFormat = Literal["standard"]
 ALLOWED_JSON_FORMATS: set[str] = {"standard"}
 
 
+def _default_augment_sources() -> Tuple[str, ...]:
+    return ("bbu",)
+
+
 def _normalize_json_format(value: Any) -> AllowedJsonFormat:
     if not isinstance(value, str):
         raise TypeError("custom.json_format must be a string")
@@ -232,6 +236,10 @@ class CustomConfig:
     use_summary: bool = False
     system_prompt_summary: Optional[str] = None
     augmentation: Optional[Mapping[str, Any]] = None
+    augmentation_curriculum: Optional[Mapping[str, Any]] = None
+    augment_sources: Tuple[str, ...] = field(
+        default_factory=_default_augment_sources
+    )
     bypass_prob: float = 0.0
     trainer_variant: Optional[str] = None
     sample_limit: Optional[Any] = None
@@ -243,6 +251,7 @@ class CustomConfig:
     output_variant: Literal["dense", "summary"] = "dense"
     visual_kd: VisualKDConfig = field(default_factory=VisualKDConfig.disabled)
     extra: Mapping[str, Any] = field(default_factory=dict)
+    fusion_config: Optional[str] = None
 
     def __post_init__(self) -> None:
         if not self.train_jsonl:
@@ -315,6 +324,24 @@ class CustomConfig:
                 "custom.images_per_user_turn is no longer supported; remove the field to use single-image turns."
             )
         augmentation = data.pop("augmentation", None)
+        augmentation_curriculum = data.pop("augmentation_curriculum", None)
+        def _normalize_sources(value: Any) -> Tuple[str, ...]:
+            if isinstance(value, str):
+                parts = tuple(
+                    item.strip() for item in value.split(",") if item.strip()
+                )
+                return parts
+            if isinstance(value, Sequence):
+                return tuple(str(item) for item in value)
+            raise TypeError(
+                "custom.augment_sources must be a string or sequence of strings"
+            )
+        augment_sources_raw = data.pop("augment_sources", None)
+        augment_sources = (
+            _default_augment_sources()
+            if augment_sources_raw is None
+            else _normalize_sources(augment_sources_raw)
+        )
         bypass_prob = float(data.pop("bypass_prob", 0.0))
         trainer_variant = data.pop("trainer_variant", None)
         sample_limit = data.pop("sample_limit", None)
@@ -323,6 +350,7 @@ class CustomConfig:
         dump_conversation_text = bool(data.pop("dump_conversation_text", False))
         dump_conversation_path = data.pop("dump_conversation_path", None)
         val_jsonl = data.pop("val_jsonl", None)
+        fusion_config = data.pop("fusion_config", None)
         visual_kd_raw = data.pop("visual_kd", None)
         visual_kd = VisualKDConfig.from_mapping(visual_kd_raw)
         json_format_raw = data.pop("json_format", None)
@@ -352,6 +380,10 @@ class CustomConfig:
             augmentation=augmentation
             if isinstance(augmentation, Mapping)
             else augmentation,
+            augmentation_curriculum=augmentation_curriculum
+            if isinstance(augmentation_curriculum, Mapping)
+            else augmentation_curriculum,
+            augment_sources=augment_sources,
             bypass_prob=bypass_prob,
             trainer_variant=str(trainer_variant)
             if trainer_variant is not None
@@ -364,6 +396,7 @@ class CustomConfig:
             if dump_conversation_path is not None
             else None,
             val_jsonl=str(val_jsonl) if val_jsonl is not None else None,
+            fusion_config=str(fusion_config) if fusion_config is not None else None,
             output_variant=prompts.output_variant,
             visual_kd=visual_kd,
             extra=extra,

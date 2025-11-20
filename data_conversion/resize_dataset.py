@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Tuple
 
 from PIL import Image
+from data_conversion.pipeline.coordinate_manager import CoordinateManager
+from data_conversion.pipeline.vision_process import smart_resize
 
 # Use the project's EXIF utility to materialize orientation
 try:
@@ -109,34 +111,28 @@ def round_by_factor(number: int, factor: int) -> int:
     return round(number / factor) * factor
 
 
-def compute_target_size(h: int, w: int, factor: int, min_pixels: int, max_pixels: int) -> Tuple[int, int]:
-    """Smart resize like vision_process.smart_resize but configurable.
+def compute_target_size(
+    h: int, w: int, factor: int, min_pixels: int, max_pixels: int
+) -> Tuple[int, int]:
+    """Compute target size via the canonical ``smart_resize`` implementation.
 
-    - h', w' divisible by factor
-    - area in [min_pixels, max_pixels]
-    - roughly preserve aspect ratio
+    This is a thin wrapper around :func:`data_conversion.vision_process.smart_resize`
+    so that the CLI tool shares exactly the same behaviour (including
+    aspect-ratio checks) as the main pipeline.
     """
     if h <= 0 or w <= 0:
-        raise ValueError(f"Invalid image size, expected positive dims, got h={h}, w={w}")
-    if max(h, w) / min(h, w) > MAX_RATIO:
         raise ValueError(
-            f"absolute aspect ratio must be smaller than {MAX_RATIO}, got {max(h, w) / min(h, w):.4f}"
+            f"Invalid image size, expected positive dims, got h={h}, w={w}"
         )
 
-    h_bar = max(factor, round_by_factor(h, factor))
-    w_bar = max(factor, round_by_factor(w, factor))
-
-    area = h_bar * w_bar
-    if area > max_pixels:
-        beta = math.sqrt((h * w) / max_pixels)
-        h_bar = max(factor, floor_by_factor(int(h / beta), factor))
-        w_bar = max(factor, floor_by_factor(int(w / beta), factor))
-    elif area < min_pixels:
-        beta = math.sqrt(min_pixels / (h * w))
-        h_bar = ceil_by_factor(int(h * beta), factor)
-        w_bar = ceil_by_factor(int(w * beta), factor)
-
-    return int(h_bar), int(w_bar)
+    new_h, new_w = smart_resize(
+        height=h,
+        width=w,
+        factor=factor,
+        min_pixels=min_pixels,
+        max_pixels=max_pixels,
+    )
+    return int(new_h), int(new_w)
 
 
 def _load_image_apply_exif(image_path: Path) -> Image.Image:
@@ -173,31 +169,15 @@ def _scale_bbox2d(bbox: List[float | int], sx: float, sy: float, w: int, h: int)
 
 
 def _canonicalize_poly(points8: List[int | float]) -> List[int]:
-    # Ported from vis_tools/vis_helper.canonicalize_quad
     if not isinstance(points8, (list, tuple)) or len(points8) != 8:
         return [int(round(v)) for v in (points8 or [])]
     pts = [(float(points8[i]), float(points8[i + 1])) for i in range(0, 8, 2)]
-    cx = sum(p[0] for p in pts) / 4.0
-    cy = sum(p[1] for p in pts) / 4.0
-
-    def classify_corner(p: Tuple[float, float]) -> Tuple[int, float]:
-        x, y = p
-        if x <= cx and y <= cy:
-            return (0, -(x + y))
-        elif x >= cx and y <= cy:
-            return (1, x - y)
-        elif x >= cx and y >= cy:
-            return (2, x + y)
-        else:
-            return (3, -x + y)
-
-    sorted_pts = sorted(pts, key=classify_corner)
-    if len({classify_corner(p)[0] for p in sorted_pts}) != 4:
-        sorted_by_y = sorted(pts, key=lambda p: p[1])
-        top = sorted(sorted_by_y[:2], key=lambda p: p[0])
-        bottom = sorted(sorted_by_y[2:], key=lambda p: p[0])
-        sorted_pts = [top[0], top[1], bottom[1], bottom[0]]
-    return [int(round(v)) for xy in sorted_pts for v in xy]
+    try:
+        ordered = CoordinateManager.canonical_poly_ordering(pts)
+    except ValueError as exc:
+        LOGGER.warning("Failed to canonicalize quad %s: %s", points8, exc)
+        ordered = pts
+    return [int(round(v)) for xy in ordered for v in xy]
 
 
 def _scale_poly(points8: List[float | int], sx: float, sy: float, w: int, h: int) -> List[int]:
@@ -412,5 +392,3 @@ if __name__ == "__main__":
         # Fail fast with actionable message
         LOGGER.error(f"Resize dataset failed: {e}")
         raise
-
-

@@ -29,7 +29,9 @@ training:
   num_train_epochs: 6
   per_device_train_batch_size: 1
   per_device_eval_batch_size: 2
-  gradient_accumulation_steps: 8
+  # Auto-calculated from effective_batch_size, per_device_train_batch_size, and world_size
+  # gradient_accumulation_steps: 8  # Commented out - now auto-calculated
+  effective_batch_size: 32  # Will auto-calculate gradient_accumulation_steps to maintain this effective batch size
   
   # Optimizer and learning rates
   optimizer: multimodal

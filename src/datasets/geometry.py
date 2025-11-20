@@ -11,7 +11,7 @@ def _pair_points(points: Sequence[float]) -> List[Tuple[float, float]]:
 
 
 def points_to_xyxy(points: Sequence[float]) -> List[float]:
-    """Compute [x1,y1,x2,y2] that encloses arbitrary points (bbox, quad, or line)."""
+    """Compute [x1,y1,x2,y2] that encloses arbitrary points (bbox, poly, or line)."""
     pts = _pair_points(points)
     xs = [p[0] for p in pts]
     ys = [p[1] for p in pts]
@@ -579,28 +579,30 @@ class BBox:
     x2: float
     y2: float
 
-    def to_quad_points(self) -> List[float]:
+    def to_poly_points(self) -> List[float]:
         return [self.x1, self.y1, self.x2, self.y1, self.x2, self.y2, self.x1, self.y2]
 
-    def apply_affine(self, M: List[List[float]]) -> Union["BBox", "Quad"]:
+    def apply_affine(self, M: List[List[float]]) -> Union["BBox", "Polygon"]:
         kind = classify_affine_kind(M)
-        pts = apply_affine(self.to_quad_points(), M)
+        pts = apply_affine(self.to_poly_points(), M)
         if kind == "axis_aligned":
             xs = pts[0::2]
             ys = pts[1::2]
             return BBox(min(xs), min(ys), max(xs), max(ys))
-        assert len(pts) == 8, f"Quad must have 8 points, got {len(pts)}"
-        return Quad(tuple(pts))  # type: ignore[arg-type]
+        if len(pts) % 2 != 0:
+            raise ValueError(f"Transformed polygon points must be even-length, got {len(pts)}")
+        return Polygon(tuple(pts))  # type: ignore[arg-type]
 
 
 @dataclass(frozen=True)
-class Quad:
-    points: Tuple[float, float, float, float, float, float, float, float]
+class Polygon:
+    points: Tuple[float, ...]
 
-    def apply_affine(self, M: List[List[float]]) -> "Quad":
+    def apply_affine(self, M: List[List[float]]) -> "Polygon":
         pts = apply_affine(self.points, M)
-        assert len(pts) == 8, f"Quad must have 8 points, got {len(pts)}"
-        return Quad(tuple(pts))  # type: ignore[arg-type]
+        if len(pts) % 2 != 0:
+            raise ValueError(f"Polygon must have even number of points, got {len(pts)}")
+        return Polygon(tuple(pts))  # type: ignore[arg-type]
 
 
 @dataclass(frozen=True)
@@ -612,19 +614,20 @@ class Polyline:
         return Polyline(tuple(pts))
 
 
-def geometry_from_dict(g: Dict[str, Any]) -> Union[BBox, Quad, Polyline]:
+def geometry_from_dict(g: Dict[str, Any]) -> Union[BBox, Polygon, Polyline]:
     if "bbox_2d" in g:
         x1, y1, x2, y2 = map(float, g["bbox_2d"])
         return BBox(x1, y1, x2, y2)
-    if "quad" in g:
-        pts = tuple(float(v) for v in g["quad"])
-        assert len(pts) == 8, f"quad must have 8 floats, got {len(pts)}"
-        return Quad(pts)  # type: ignore[arg-type]
+    if "poly" in g:
+        pts = tuple(float(v) for v in g["poly"])
+        if len(pts) < 8 or len(pts) % 2 != 0:
+            raise ValueError(f"poly must contain >=8 floats with even length, got {len(pts)}")
+        return Polygon(pts)  # type: ignore[arg-type]
     if "line" in g:
         pts = tuple(float(v) for v in g["line"])
         assert len(pts) >= 4 and len(pts) % 2 == 0, "line must have >= 2 points"
         return Polyline(pts)
-    raise ValueError("unknown geometry dict type; expected bbox_2d|quad|line")
+    raise ValueError("unknown geometry dict type; expected bbox_2d|poly|line")
 
 
 # ============================================================================
@@ -637,7 +640,7 @@ def get_aabb(geom: Dict[str, Any]) -> List[float]:
     Get axis-aligned bounding box [x1, y1, x2, y2] from any geometry type.
 
     For bbox_2d: returns the bbox directly
-    For quad: computes min/max from quad points
+    For poly: computes min/max from polygon points
     For line: computes min/max from line points
 
     Returns:
@@ -645,8 +648,8 @@ def get_aabb(geom: Dict[str, Any]) -> List[float]:
     """
     if "bbox_2d" in geom:
         return list(map(float, geom["bbox_2d"]))
-    elif "quad" in geom:
-        pts = geom["quad"]
+    elif "poly" in geom:
+        pts = geom["poly"]
         xs = [float(pts[i]) for i in range(0, len(pts), 2)]
         ys = [float(pts[i]) for i in range(1, len(pts), 2)]
         return [min(xs), min(ys), max(xs), max(ys)]
@@ -718,7 +721,7 @@ def compute_polygon_coverage(
     """Compute coverage using polygon clipping when possible.
 
     Args:
-        geom: geometry dict (quad or bbox_2d)
+        geom: geometry dict (poly or bbox_2d)
         crop_bbox: crop [x1, y1, x2, y2]
         fallback: if "bbox", returns AABB-based coverage when polygon coverage is zero.
 
@@ -731,8 +734,8 @@ def compute_polygon_coverage(
     if crop_w <= 0 or crop_h <= 0:
         return 0.0
 
-    if "quad" in geom:
-        pts = geom["quad"]
+    if "poly" in geom:
+        pts = geom["poly"]
         total_area = _polygon_area(pts)
         if total_area <= 0.0:
             return 0.0
@@ -773,11 +776,11 @@ def compute_coverage(geom: Dict[str, Any], crop_bbox: List[float]) -> float:
     Compute fraction of geometry that falls inside crop region.
 
     Uses axis-aligned bounding box approximation for efficiency.
-    For quads, this may overestimate the actual geometry area (since rotated
-    quads have larger AABBs), making the coverage estimate conservative.
+    For polys, this may overestimate the actual geometry area (since rotated
+    polygons have larger AABBs), making the coverage estimate conservative.
 
     Args:
-        geom: Geometry dict with bbox_2d, quad, or line field
+        geom: Geometry dict with bbox_2d, poly, or line field
         crop_bbox: Crop region [x1, y1, x2, y2]
 
     Returns:
@@ -819,7 +822,7 @@ def translate_geometry(geom: Dict[str, Any], dx: float, dy: float) -> Dict[str, 
     to crop-relative coordinates.
 
     Args:
-        geom: Geometry dict with bbox_2d, quad, or line field
+        geom: Geometry dict with bbox_2d, poly, or line field
         dx: X offset (typically negative crop x)
         dy: Y offset (typically negative crop y)
 
@@ -829,13 +832,13 @@ def translate_geometry(geom: Dict[str, Any], dx: float, dy: float) -> Dict[str, 
     if "bbox_2d" in geom:
         x1, y1, x2, y2 = geom["bbox_2d"]
         return {"bbox_2d": [x1 + dx, y1 + dy, x2 + dx, y2 + dy]}
-    elif "quad" in geom:
-        pts = geom["quad"]
+    elif "poly" in geom:
+        pts = geom["poly"]
         translated = []
         for i in range(0, len(pts), 2):
             translated.append(pts[i] + dx)
             translated.append(pts[i + 1] + dy)
-        return {"quad": translated}
+        return {"poly": translated}
     elif "line" in geom:
         pts = geom["line"]
         translated = []
@@ -858,8 +861,8 @@ def transform_geometry(
     """
     Single entrypoint for geometry transform with promotion, ordering, and clipping/rounding.
 
-    - BBox under general affine promotes to Quad.
-    - Quad is transformed exactly; enforce clockwise order.
+    - BBox under general affine promotes to Polygon.
+    - Polygon is transformed exactly; enforce clockwise order.
     - Polyline is transformed and clipped to rect; degenerate outputs dropped.
     - Rounding/clamping to integer pixel grid occurs at the end.
     """
@@ -869,53 +872,51 @@ def transform_geometry(
         if isinstance(res, BBox):
             bb = clamp_points([res.x1, res.y1, res.x2, res.y2], width, height)
             return {"bbox_2d": bb}
-        # BBox promoted to Quad under general affine (rotation/shear)
+        # BBox promoted to Polygon under general affine (rotation/shear)
         t = list(res.points)
-        # Check if quad is fully inside image bounds - if so, skip clipping to preserve exact rotation
-        # Use small epsilon tolerance for floating-point precision
+        # Check if polygon is fully inside image bounds - if so, skip clipping to preserve exact rotation
         eps = 0.5
         all_inside = all(
             -eps <= t[i] < width + eps and -eps <= t[i + 1] < height + eps
-            for i in range(0, 8, 2)
+            for i in range(0, len(t), 2)
         )
         if all_inside:
-            # Quad fully inside - use rotated points directly, just round/clamp
+            # Polygon fully inside - use rotated points directly, just round/clamp
             q = clamp_points(to_clockwise(t), width, height)
-            return {"quad": q}
-        # Quad needs clipping - use Sutherland-Hodgman
+            return {"poly": q}
+        # Polygon needs clipping - use Sutherland-Hodgman
         clipped = sutherland_hodgman_clip(t, width, height)
         if len(clipped) // 2 >= 3:
             poly = to_clockwise(clipped)
             if len(poly) // 2 != 4:
                 poly = min_area_rect(poly)
             q = clamp_points(poly, width, height)
-            return {"quad": q}
+            return {"poly": q}
         # fully outside: keep clamped transform to preserve geometry (degenerate possible)
         q = clamp_points(to_clockwise(t), width, height)
-        return {"quad": q}
-    if isinstance(obj, Quad):
+        return {"poly": q}
+    if isinstance(obj, Polygon):
         t = list(obj.apply_affine(M).points)
-        # Check if quad is fully inside image bounds - if so, skip clipping to preserve exact rotation
-        # Use small epsilon tolerance for floating-point precision
+        # Check if polygon is fully inside image bounds - if so, skip clipping to preserve exact rotation
         eps = 0.5
         all_inside = all(
             -eps <= t[i] < width + eps and -eps <= t[i + 1] < height + eps
-            for i in range(0, 8, 2)
+            for i in range(0, len(t), 2)
         )
         if all_inside:
-            # Quad fully inside - use rotated points directly, just round/clamp
+            # Polygon fully inside - use rotated points directly, just round/clamp
             q = clamp_points(to_clockwise(t), width, height)
-            return {"quad": q}
-        # Quad needs clipping - use Sutherland-Hodgman
+            return {"poly": q}
+        # Polygon needs clipping - use Sutherland-Hodgman
         clipped = sutherland_hodgman_clip(t, width, height)
         if len(clipped) // 2 >= 3:
             poly = to_clockwise(clipped)
             if len(poly) // 2 != 4:
                 poly = min_area_rect(poly)
             q = clamp_points(poly, width, height)
-            return {"quad": q}
+            return {"poly": q}
         q = clamp_points(to_clockwise(t), width, height)
-        return {"quad": q}
+        return {"poly": q}
     # Polyline
     pl = obj.apply_affine(M)
     clipped = clip_polyline_to_rect(list(pl.points), width, height)
@@ -934,4 +935,4 @@ def transform_geometry(
     return {"line": line_points}
 
 
-__all_typed__ = ["BBox", "Quad", "Polyline", "geometry_from_dict", "transform_geometry"]
+__all_typed__ = ["BBox", "Polygon", "Polyline", "geometry_from_dict", "transform_geometry"]

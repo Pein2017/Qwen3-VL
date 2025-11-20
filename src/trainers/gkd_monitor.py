@@ -86,6 +86,7 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
                 "visual_kd is enabled but no teacher model is attached. Attach a teacher_model or disable visual_kd in the configuration."
             )
 
+        # Only register hooks if visual_kd is enabled
         if self._visual_kd_enabled:
             try:
                 self._register_visual_hooks()
@@ -111,6 +112,7 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
     ):
         self._ensure_visual_kd_state()
 
+        # Only clear caches if visual_kd is enabled (avoids unnecessary dict operations)
         if self._visual_kd_enabled:
             self._clear_visual_caches()
 
@@ -156,6 +158,7 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
             raise RuntimeError(
                 "llm_kd_weight > 0 requires a teacher model. Verify rlhf.teacher_model in the configuration."
             )
+        # Only run teacher forward if needed for LLM KD or visual KD
         run_teacher_forward = teacher_available and (
             llm_kd_requested or self._visual_kd_enabled
         )
@@ -218,6 +221,7 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
         else:
             weighted_sft_loss = None
 
+        # Only compute visual KD loss if enabled (skip entirely if disabled)
         if self._visual_kd_enabled:
             vision_loss = self._compute_visual_kd_loss()
             if vision_loss is not None:
@@ -405,7 +409,10 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
                 raise TypeError(
                     f"Expected tensor output for visual hook '{name}', got {type(output)}"
                 )
-            self._student_visual_cache[name] = output
+            # Detach to prevent gradient flow through cached features
+            # This prevents double gradient accumulation when the same tensor
+            # participates in both CE loss and visual KD loss
+            self._student_visual_cache[name] = output.detach()
 
         return hook
 
@@ -435,6 +442,10 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
         hooks.clear()
 
     def _compute_visual_kd_loss(self) -> Optional[torch.Tensor]:
+        # Early return if visual_kd is disabled (should not be called, but defensive)
+        if not self._visual_kd_enabled:
+            return None
+
         # Ensure visual KD configs and caches are initialized before computing loss.
         self._ensure_visual_kd_state()
 
@@ -454,7 +465,9 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
             if distance == "cosine":
                 s_flat = student_feat.view(-1, student_feat.shape[-1])
                 t_flat = teacher_feat.view(-1, teacher_feat.shape[-1])
-                cosine = F.cosine_similarity(s_flat, t_flat, dim=-1)
+                s_norm = F.normalize(s_flat, p=2.0, dim=-1, eps=1e-8)
+                t_norm = F.normalize(t_flat, p=2.0, dim=-1, eps=1e-8)
+                cosine = F.cosine_similarity(s_norm, t_norm, dim=-1)
                 return (1 - cosine).mean()
             raise ValueError(f"Unsupported visual KD distance: {distance}")
 

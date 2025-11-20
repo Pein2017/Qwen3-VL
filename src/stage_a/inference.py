@@ -16,6 +16,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 from PIL import Image
+
+from data_conversion.utils.exif_utils import apply_exif_orientation
 from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
 
 from .prompts import SUMMARY_SYSTEM_PROMPT, build_user_prompt
@@ -666,7 +668,7 @@ def process_group(
     images: List[Image.Image] = []
     for path in group_info.paths:
         try:
-            img = Image.open(path).convert("RGB")
+            img = apply_exif_orientation(Image.open(path))
             images.append(img)
         except Exception as e:
             raise RuntimeError(f"Failed to open image: {path}") from e

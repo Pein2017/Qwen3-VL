@@ -3,17 +3,24 @@
 import argparse
 import copy
 import logging
+import math
 import os
 import re
 from dataclasses import asdict
+from multiprocessing import Manager
+from typing import Any
 
 from swift.llm.train.rlhf import SwiftRLHF
 from swift.llm.train.sft import SwiftSft
 from swift.trainers import TrainerFactory
+from swift.utils import get_dist_setting
 
 from .config import ConfigLoader, SaveDelayConfig
-from .datasets import DenseCaptionDataset
+from .datasets import DenseCaptionDataset, MultiSourceFusionDataset
+from .datasets.augmentation.curriculum import AugmentationCurriculumScheduler
 from .trainers import with_final_checkpoint
+from .callbacks.fusion_epoch import FusionEpochCallback
+from .datasets.fusion import FusionConfig
 from .utils import enable_verbose_logging, get_logger, set_log_level
 
 
@@ -234,6 +241,7 @@ def main():
     augmenter = None
     bypass_prob = float(custom_config.bypass_prob)
     aug_cfg = custom_config.augmentation
+    curriculum_cfg = None
     if isinstance(aug_cfg, dict) and aug_cfg.get("enabled", True):
         try:
             # Ensure ops are registered by importing ops module
@@ -242,11 +250,32 @@ def main():
 
             augmenter = build_compose_from_config(aug_cfg)
             bypass_prob = float(aug_cfg.get("bypass_prob", custom_config.bypass_prob))
+            curriculum_cfg = aug_cfg.get("curriculum")
             logger.info(
                 f"Augmentation pipeline built (bypass_prob={bypass_prob:.2f}, training only)"
             )
         except Exception as e:
             raise ValueError(f"Failed to build augmentation pipeline from YAML: {e}")
+
+    curriculum_state = None
+    curriculum_scheduler = None
+    if curriculum_cfg is None:
+        curriculum_cfg = custom_config.augmentation_curriculum
+    if curriculum_cfg:
+        if augmenter is None:
+            raise ValueError(
+                "augmentation curriculum requires a built augmentation pipeline"
+            )
+        try:
+            scheduler = AugmentationCurriculumScheduler.from_config(
+                base_bypass=bypass_prob,
+                op_meta=getattr(augmenter, "_augmentation_meta", []),
+                curriculum_raw=curriculum_cfg,
+            )
+        except Exception as exc:
+            raise ValueError(f"Failed to build augmentation curriculum: {exc}") from exc
+        curriculum_scheduler = scheduler
+        # Note: initial_state will be computed after dataset is loaded and total_steps is calculated
 
     # Sample limits for quick smoke tests
     shared_sample_limit = custom_config.sample_limit
@@ -298,22 +327,102 @@ def main():
         logger.info("Dense mode only (custom.use_summary=false)")
 
     dataset_seed = 42
-
-    dataset = DenseCaptionDataset.from_jsonl(
-        train_jsonl,
-        template=sft.template,
-        user_prompt=custom_config.user_prompt,
-        emit_norm=custom_config.emit_norm,
-        json_format=custom_config.json_format,
-        augmenter=augmenter,
-        bypass_prob=bypass_prob,
-        sample_limit=train_sample_limit,
-        use_summary=use_summary,
-        system_prompt_dense=system_prompt_dense,
-        system_prompt_summary=system_prompt_summary,
-        seed=dataset_seed,
-    )
+    dataset: Any
+    fusion_callback: FusionEpochCallback | None = None
+    if custom_config.fusion_config:
+        fusion_config = FusionConfig.from_file(custom_config.fusion_config)
+        dataset = MultiSourceFusionDataset(
+            fusion_config=fusion_config,
+            base_template=sft.template,
+            user_prompt=custom_config.user_prompt,
+            emit_norm=custom_config.emit_norm,
+            json_format=custom_config.json_format,
+            augmenter=augmenter,
+            bypass_prob=bypass_prob,
+            curriculum_state=curriculum_state,
+            use_summary=use_summary,
+            system_prompt_dense=system_prompt_dense,
+            system_prompt_summary=system_prompt_summary,
+            seed=dataset_seed,
+            augment_sources=custom_config.augment_sources,
+            sample_limit=train_sample_limit,
+        )
+        fusion_callback = FusionEpochCallback(dataset)
+    else:
+        dataset = DenseCaptionDataset.from_jsonl(
+            train_jsonl,
+            template=sft.template,
+            user_prompt=custom_config.user_prompt,
+            emit_norm=custom_config.emit_norm,
+            json_format=custom_config.json_format,
+            augmenter=augmenter,
+            bypass_prob=bypass_prob,
+            curriculum_state=curriculum_state,
+            sample_limit=train_sample_limit,
+            use_summary=use_summary,
+            system_prompt_dense=system_prompt_dense,
+            system_prompt_summary=system_prompt_summary,
+            seed=dataset_seed,
+            augment_sources=custom_config.augment_sources,
+        )
     logger.info(f"Training dataset size: {len(dataset)}")
+
+    # Calculate total_steps and initialize curriculum_state if needed
+    if curriculum_scheduler is not None:
+        if curriculum_scheduler._requires_total_steps:
+            # Calculate total_steps from dataset length, epochs, batch size, etc.
+            num_train_epochs = getattr(train_args, "num_train_epochs", None)
+            per_device_train_batch_size = getattr(
+                train_args, "per_device_train_batch_size", None
+            )
+            gradient_accumulation_steps = getattr(
+                train_args, "gradient_accumulation_steps", None
+            )
+            max_steps = getattr(train_args, "max_steps", None)
+
+            if max_steps is not None and max_steps > 0:
+                total_steps = max_steps
+            elif (
+                num_train_epochs is not None
+                and per_device_train_batch_size is not None
+                and gradient_accumulation_steps is not None
+            ):
+                _, _, world_size, _ = get_dist_setting()
+                if world_size <= 0:
+                    world_size = 1
+                len_dataset = len(dataset)
+                total_train_batch_size = (
+                    per_device_train_batch_size
+                    * gradient_accumulation_steps
+                    * world_size
+                )
+                num_update_steps_per_epoch = max(
+                    len_dataset // total_train_batch_size, 1
+                )
+                total_steps = math.ceil(num_train_epochs * num_update_steps_per_epoch)
+            else:
+                raise ValueError(
+                    "Cannot calculate total_steps for curriculum scheduler. "
+                    "Need either max_steps or (num_train_epochs, per_device_train_batch_size, gradient_accumulation_steps)"
+                )
+            curriculum_scheduler.set_total_steps(total_steps)
+            logger.info(f"Curriculum scheduler: set total_steps={total_steps}")
+
+        # Now get initial state and create curriculum_state
+        initial_state = curriculum_scheduler.get_state(0)
+        manager = Manager()
+        curriculum_state = manager.dict(
+            {
+                "step": 0,
+                "bypass_prob": initial_state["bypass_prob"],
+                "ops": copy.deepcopy(initial_state["ops"]),
+            }
+        )
+        # Update dataset's curriculum_state
+        if hasattr(dataset, "set_curriculum_state"):
+            dataset.set_curriculum_state(curriculum_state)
+        elif hasattr(dataset, "preprocessor") and dataset.preprocessor is not None:
+            dataset.preprocessor.curriculum_state = curriculum_state
 
     # Optional: multimodal health check (only in --debug mode)
     if args.debug:
@@ -489,6 +598,19 @@ def main():
 
     # Add SaveDelayCallback if save_delay_steps is configured
     callbacks = sft.callbacks.copy() if sft.callbacks else []
+    if curriculum_scheduler is not None and curriculum_state is not None:
+        from .callbacks.augmentation_curriculum import (
+            AugmentationCurriculumCallback,
+        )
+
+        callbacks.append(
+            AugmentationCurriculumCallback(
+                scheduler=curriculum_scheduler,
+                curriculum_state=curriculum_state,
+            )
+        )
+    if fusion_callback is not None:
+        callbacks.append(fusion_callback)
     save_delay_cfg = getattr(train_args, "save_delay_config", None)
     from .callbacks import SaveDelayCallback
 
@@ -548,7 +670,51 @@ def main():
         )
     logger.info("=" * 70)
 
-    sft.train(trainer)
+    try:
+        sft.train(trainer)
+    finally:
+        # Explicit cleanup to prevent DeepSpeed cleanup errors during GC
+        # This addresses a known DeepSpeed issue where __del__ can fail
+        # when accessing bf16_groups that are already partially destroyed
+        try:
+            # Check if DeepSpeed is enabled
+            if (
+                hasattr(trainer, "is_deepspeed_enabled")
+                and trainer.is_deepspeed_enabled
+            ):
+                model_wrapped = getattr(trainer, "model_wrapped", None)
+                # model_wrapped IS the DeepSpeed engine when DeepSpeed is enabled
+                if model_wrapped is not None:
+                    try:
+                        # Patch the optimizer's destroy method to prevent IndexError
+                        # This is safer than calling destroy() which can still fail
+                        optimizer = getattr(model_wrapped, "optimizer", None)
+                        if optimizer is not None and hasattr(optimizer, "destroy"):
+                            original_destroy = optimizer.destroy
+
+                            def safe_destroy():
+                                try:
+                                    original_destroy()
+                                except (IndexError, AttributeError, RuntimeError):
+                                    # Silently ignore errors during optimizer cleanup
+                                    # These are harmless - training already completed
+                                    pass
+
+                            optimizer.destroy = safe_destroy
+
+                        # Now safe to call engine destroy
+                        if hasattr(model_wrapped, "destroy"):
+                            model_wrapped.destroy()
+                        logger.debug("DeepSpeed engine cleaned up successfully")
+                    except Exception as cleanup_error:
+                        # Ignore cleanup errors - they're harmless at this point
+                        # Training already completed successfully
+                        logger.debug(
+                            f"DeepSpeed cleanup warning (non-fatal): {cleanup_error}"
+                        )
+        except Exception as e:
+            # Non-fatal: training already completed successfully
+            logger.debug(f"Cleanup warning (non-fatal): {e}")
 
 
 if __name__ == "__main__":

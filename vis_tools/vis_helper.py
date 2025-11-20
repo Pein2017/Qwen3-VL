@@ -1,52 +1,39 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, List, Tuple, Sequence
+import logging
+from typing import Any, Dict, List, Sequence
 
 import matplotlib.patches as patches
 from matplotlib import font_manager
 import matplotlib.pyplot as plt
 from PIL import Image
 
+from data_conversion.pipeline.coordinate_manager import CoordinateManager
 
-def canonicalize_quad(points8: List[int | float]) -> List[int]:
+logger = logging.getLogger(__name__)
+
+
+def canonicalize_poly(points: List[int | float]) -> List[int]:
     """
-    DEPRECATED: This function reorders quad points based on position relative to centroid.
-    
-    WARNING: Do NOT use this for quads from geometry transformations (rotation, affine, crop)!
-    Those quads are already in correct clockwise order from transform_geometry().
-    Reordering breaks rotated quads by destroying the correct corner connectivity.
-    
-    Only use this for:
-    - Legacy data with unknown/arbitrary quad ordering
-    - External sources not using our geometry transformation pipeline
-    
-    For modern augmentation pipeline: Use points as-is (already clockwise ordered).
+    Canonicalize polygon ordering to match prompts.py (top-left start, clockwise traversal).
+
+    Uses CoordinateManager._canonical_poly_ordering so visualization matches the
+    exact ordering enforced during data conversion/inference.
     """
-    if not isinstance(points8, (list, tuple)) or len(points8) != 8:
-        return [int(round(v)) for v in (points8 or [])]
-    pts = [(float(points8[i]), float(points8[i + 1])) for i in range(0, 8, 2)]
-    cx = sum(p[0] for p in pts) / 4.0
-    cy = sum(p[1] for p in pts) / 4.0
+    if not isinstance(points, (list, tuple)) or len(points) < 8 or len(points) % 2 != 0:
+        return [int(round(v)) for v in (points or [])]
 
-    def classify_corner(p: Tuple[float, float]) -> Tuple[int, float]:
-        x, y = p
-        if x <= cx and y <= cy:
-            return (0, -(x + y))
-        elif x >= cx and y <= cy:
-            return (1, x - y)
-        elif x >= cx and y >= cy:
-            return (2, x + y)
-        else:
-            return (3, -x + y)
+    point_pairs = [
+        (float(points[i]), float(points[i + 1])) for i in range(0, len(points), 2)
+    ]
+    try:
+        ordered = CoordinateManager._canonical_poly_ordering(point_pairs)
+    except ValueError as exc:
+        logger.warning("Failed to canonicalize polygon %s: %s", points, exc)
+        ordered = point_pairs
 
-    sorted_pts = sorted(pts, key=classify_corner)
-    if len({classify_corner(p)[0] for p in sorted_pts}) != 4:
-        sorted_by_y = sorted(pts, key=lambda p: p[1])
-        top = sorted(sorted_by_y[:2], key=lambda p: p[0])
-        bottom = sorted(sorted_by_y[2:], key=lambda p: p[0])
-        sorted_pts = [top[0], top[1], bottom[1], bottom[0]]
-    return [int(round(v)) for xy in sorted_pts for v in xy]
+    return [int(round(v)) for xy in ordered for v in xy]
 
 
 def draw_objects(ax, img: Image.Image, objects: List[Dict[str, Any]], color_map: Dict[str, str], scaled: bool, show_labels: bool = True) -> None:
@@ -58,8 +45,8 @@ def draw_objects(ax, img: Image.Image, objects: List[Dict[str, Any]], color_map:
         pts = obj["points"]
         desc = obj.get("desc", "")
         pts_px = pts if scaled else _inverse_scale(pts, w, h)
-        # NOTE: Do NOT canonicalize quad points - they are already in correct clockwise order
-        # from geometry transformations. Reordering breaks rotated quads!
+        # NOTE: Do NOT canonicalize polygon points - they are already in correct clockwise order
+        # from geometry transformations. Reordering breaks rotated polygons!
         color = color_map.get(desc) or "#000000"
         
         # Determine label position (top-left corner of geometry)
@@ -69,9 +56,9 @@ def draw_objects(ax, img: Image.Image, objects: List[Dict[str, Any]], color_map:
             x1, y1, x2, y2 = pts_px
             ax.add_patch(patches.Rectangle((x1, y1), x2 - x1, y2 - y1, fill=False, edgecolor=color, linewidth=2))
             label_x, label_y = x1, y1
-        elif gtype == "quad" and len(pts_px) == 8:
-            quad_coords = [(pts_px[i], pts_px[i + 1]) for i in range(0, 8, 2)]
-            poly = patches.Polygon(quad_coords, closed=True, fill=False, edgecolor=color, linewidth=2, linestyle="--", alpha=0.9)
+        elif gtype == "poly" and len(pts_px) >= 8 and len(pts_px) % 2 == 0:
+            poly_coords = [(pts_px[i], pts_px[i + 1]) for i in range(0, len(pts_px), 2)]
+            poly = patches.Polygon(poly_coords, closed=True, fill=False, edgecolor=color, linewidth=2, linestyle="--", alpha=0.9)
             ax.add_patch(poly)
             # Use top-most point for label
             label_x = min(pts_px[::2])
@@ -176,7 +163,7 @@ def create_caption_completeness_text(fig, caption_series: Sequence[tuple[str, Di
 
 
 __all__ = [
-    "canonicalize_quad",
+    "canonicalize_poly",
     "draw_objects",
     "inverse_scale",
     "generate_colors",
@@ -222,5 +209,3 @@ for path, family_list in _font_candidates:
         continue
 if not _font_installed:
     plt.rcParams.setdefault("font.family", ["sans-serif"])
-
-

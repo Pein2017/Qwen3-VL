@@ -30,7 +30,11 @@ logger = logging.getLogger(__name__)
 
 
 class DatasetMerger:
-    """Merges multiple processed datasets with intelligent teacher rebalancing."""
+    """Merges multiple processed datasets into unified training sets.
+
+    Teacher pool selection has been removed from the pipeline.
+    This merger now only handles train/val split merging.
+    """
 
     def __init__(self, base_output_dir: str = "data"):
         """Initialize merger with base output directory."""
@@ -39,14 +43,13 @@ class DatasetMerger:
         self.combined_dir.mkdir(parents=True, exist_ok=True)
 
     def merge_datasets(
-        self, dataset_names: List[str], max_teachers: int = 20, val_ratio: float = 0.2
+        self, dataset_names: List[str], val_ratio: float = 0.2
     ) -> Dict[str, int]:
         """
         Merge multiple datasets into unified training sets.
 
         Args:
             dataset_names: List of dataset names to merge
-            max_teachers: Maximum teacher samples to include
             val_ratio: Validation split ratio
 
         Returns:
@@ -57,7 +60,6 @@ class DatasetMerger:
         # Collect all samples from datasets
         all_train_samples = []
         all_val_samples = []
-        all_teacher_samples = []
 
         dataset_stats = {}
 
@@ -68,27 +70,19 @@ class DatasetMerger:
                 continue
 
             stats = self._load_dataset(
-                dataset_dir, all_train_samples, all_val_samples, all_teacher_samples
+                dataset_dir, all_train_samples, all_val_samples
             )
             dataset_stats[dataset_name] = stats
             logger.info(f"  {dataset_name}: {stats}")
-
-        # Rebalance teacher samples across datasets
-        balanced_teachers = self._rebalance_teachers(all_teacher_samples, max_teachers)
 
         # Write merged outputs
         output_stats = {
             "train": len(all_train_samples),
             "val": len(all_val_samples),
-            "teacher": len(balanced_teachers),
-            "total": len(all_train_samples)
-            + len(all_val_samples)
-            + len(balanced_teachers),
+            "total": len(all_train_samples) + len(all_val_samples),
         }
 
-        self._write_merged_outputs(
-            all_train_samples, all_val_samples, balanced_teachers
-        )
+        self._write_merged_outputs(all_train_samples, all_val_samples)
         self._write_merge_metadata(dataset_names, dataset_stats, output_stats)
 
         logger.info(f"✅ Merged datasets: {output_stats}")
@@ -99,10 +93,9 @@ class DatasetMerger:
         dataset_dir: Path,
         all_train: List[Dict],
         all_val: List[Dict],
-        all_teacher: List[Dict],
     ) -> Dict[str, int]:
         """Load samples from a single dataset."""
-        stats = {"train": 0, "val": 0, "teacher": 0}
+        stats = {"train": 0, "val": 0}
 
         # Load train samples
         train_file = dataset_dir / "train.jsonl"
@@ -123,107 +116,12 @@ class DatasetMerger:
             all_val.extend(val_samples)
             stats["val"] = len(val_samples)
 
-        # Load teacher samples
-        teacher_file = dataset_dir / "teacher.jsonl"
-        if teacher_file.exists():
-            teacher_samples = self._load_jsonl(teacher_file)
-            for sample in teacher_samples:
-                sample["_dataset_source"] = dataset_dir.name
-            all_teacher.extend(teacher_samples)
-            stats["teacher"] = len(teacher_samples)
-
         return stats
-
-    def _rebalance_teachers(
-        self, all_teachers: List[Dict], max_teachers: int
-    ) -> List[Dict]:
-        """Rebalance teacher samples to ensure diversity across datasets and labels."""
-        if len(all_teachers) <= max_teachers:
-            return all_teachers
-
-        logger.info(f"🎓 Rebalancing {len(all_teachers)} teachers → {max_teachers}")
-
-        # Group by dataset source
-        teachers_by_dataset = {}
-        for teacher in all_teachers:
-            dataset = teacher.get("_dataset_source", "unknown")
-            if dataset not in teachers_by_dataset:
-                teachers_by_dataset[dataset] = []
-            teachers_by_dataset[dataset].append(teacher)
-
-        # Group by unique label combinations
-        teachers_by_labels = {}
-        for teacher in all_teachers:
-            labels = set()
-            for obj in teacher.get("objects", []):
-                labels.add(obj.get("desc", ""))
-            label_key = tuple(sorted(labels))
-            if label_key not in teachers_by_labels:
-                teachers_by_labels[label_key] = []
-            teachers_by_labels[label_key].append(teacher)
-
-        # Select balanced set prioritizing:
-        # 1. Label diversity (different label combinations)
-        # 2. Dataset diversity (equal representation)
-        # 3. Geometry diversity (if available)
-
-        selected_teachers = []
-        dataset_counts = {name: 0 for name in teachers_by_dataset.keys()}
-        used_label_combinations = set()
-
-        # First pass: Select one teacher per unique label combination
-        for label_key, teachers in teachers_by_labels.items():
-            if len(selected_teachers) >= max_teachers:
-                break
-
-            # Prefer teachers from under-represented datasets
-            teachers_sorted = sorted(
-                teachers,
-                key=lambda t: (
-                    dataset_counts[t.get("_dataset_source", "unknown")],
-                    -len(t.get("objects", [])),
-                ),
-            )
-
-            selected_teacher = teachers_sorted[0]
-            selected_teachers.append(selected_teacher)
-            dataset_counts[selected_teacher.get("_dataset_source", "unknown")] += 1
-            used_label_combinations.add(label_key)
-
-        # Second pass: Fill remaining slots with dataset balance priority
-        remaining_teachers = [t for t in all_teachers if t not in selected_teachers]
-        while len(selected_teachers) < max_teachers and remaining_teachers:
-            # Find teacher from least represented dataset
-            min_count = min(dataset_counts.values())
-            candidate_datasets = [
-                name for name, count in dataset_counts.items() if count == min_count
-            ]
-
-            best_teacher = None
-            for teacher in remaining_teachers:
-                if teacher.get("_dataset_source", "unknown") in candidate_datasets:
-                    best_teacher = teacher
-                    break
-
-            if best_teacher is None:
-                best_teacher = remaining_teachers[0]
-
-            selected_teachers.append(best_teacher)
-            dataset_counts[best_teacher.get("_dataset_source", "unknown")] += 1
-            remaining_teachers.remove(best_teacher)
-
-        logger.info(f"  Selected teachers by dataset: {dataset_counts}")
-        logger.info(
-            f"  Unique label combinations covered: {len(used_label_combinations)}"
-        )
-
-        return selected_teachers
 
     def _write_merged_outputs(
         self,
         train_samples: List[Dict],
         val_samples: List[Dict],
-        teacher_samples: List[Dict],
     ) -> None:
         """Write merged output files."""
         logger.info("💾 Writing merged outputs...")
@@ -231,14 +129,13 @@ class DatasetMerger:
         # Write individual files
         self._write_jsonl(train_samples, self.combined_dir / "train.jsonl")
         self._write_jsonl(val_samples, self.combined_dir / "val.jsonl")
-        self._write_jsonl(teacher_samples, self.combined_dir / "teacher.jsonl")
 
         # Write combined file
-        all_samples = teacher_samples + train_samples + val_samples
+        all_samples = train_samples + val_samples
         self._write_jsonl(all_samples, self.combined_dir / "all_samples.jsonl")
 
         logger.info(
-            f"  Written {len(train_samples)} train, {len(val_samples)} val, {len(teacher_samples)} teacher samples"
+            f"  Written {len(train_samples)} train, {len(val_samples)} val samples"
         )
 
     def _write_merge_metadata(
@@ -297,9 +194,6 @@ def main():
     parser = argparse.ArgumentParser(description="Merge multiple processed datasets")
     parser.add_argument("--datasets", nargs="+", help="Dataset names to merge")
     parser.add_argument("--output_dir", default="data", help="Base output directory")
-    parser.add_argument(
-        "--max_teachers", type=int, default=20, help="Maximum teacher samples"
-    )
     parser.add_argument("--list", action="store_true", help="List available datasets")
     parser.add_argument("--log_level", default="INFO", help="Logging level")
 
@@ -328,7 +222,7 @@ def main():
             print("No datasets specified and less than 2 available")
             return
 
-    result = merger.merge_datasets(args.datasets, args.max_teachers)
+    result = merger.merge_datasets(args.datasets)
     print(f"\n✅ Merge complete: {result}")
 
 

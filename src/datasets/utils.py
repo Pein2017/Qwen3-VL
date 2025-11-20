@@ -27,15 +27,15 @@ def extract_object_points(obj: Dict[str, Any]) -> Tuple[str, List[float]]:
     """Extract geometry type and points from an object.
 
     Args:
-        obj: Object dictionary containing geometry (bbox_2d, quad, or line)
+    obj: Object dictionary containing geometry (bbox_2d, poly, or line)
 
     Returns:
         Tuple of (geometry_type, points_list)
     """
     if "bbox_2d" in obj:
         return "bbox_2d", list(map(float, obj["bbox_2d"]))
-    if "quad" in obj:
-        return "quad", list(map(float, obj["quad"]))
+    if "poly" in obj:
+        return "poly", list(map(float, obj["poly"]))
     if "line" in obj:
         return "line", list(map(float, obj["line"]))
     return "", []
@@ -55,8 +55,8 @@ def extract_geometry(obj: Dict[str, Any]) -> Dict[str, List[float]]:
     geom: Dict[str, List[float]] = {}
     if obj.get("bbox_2d") is not None:
         geom["bbox_2d"] = obj["bbox_2d"]
-    if obj.get("quad") is not None:
-        geom["quad"] = obj["quad"]
+    if obj.get("poly") is not None:
+        geom["poly"] = obj["poly"]
     if obj.get("line") is not None:
         geom["line"] = obj["line"]
     return geom

@@ -105,13 +105,18 @@ class ValidationManager:
 
     def __init__(
         self,
-        validation_mode: str = "strict",  # 'strict', 'lenient', 'warning_only'
         min_object_size: int = 10,  # minimum bbox width/height in pixels
         max_coordinate_value: int = 50000,  # maximum reasonable coordinate value
         require_non_empty_description: bool = True,
         check_coordinate_bounds: bool = True,
     ):
-        self.validation_mode = validation_mode
+        """Initialize a strictly enforced validation manager.
+
+        Validation behavior (what counts as an error vs warning) is fixed to a
+        strict regime: structurally invalid data and empty descriptions are
+        treated as critical errors and cause samples/objects to be marked
+        invalid.
+        """
         self.min_object_size = min_object_size
         self.max_coordinate_value = max_coordinate_value
         self.require_non_empty_description = require_non_empty_description
@@ -124,7 +129,10 @@ class ValidationManager:
         self.invalid_samples = 0
         self.validation_reports: List[ValidationReport] = []
 
-        logger.info(f"ValidationManager initialized in {validation_mode} mode")
+        logger.info(
+            "ValidationManager initialized with strict validation behavior "
+            "(no validation_mode configuration)"
+        )
 
     def validate_sample(
         self,
@@ -166,6 +174,7 @@ class ValidationManager:
         self.validation_reports.append(report)
 
         return report.is_valid, report
+
 
     def _validate_sample_structure(
         self, sample: Dict[str, Any], report: ValidationReport
@@ -320,9 +329,7 @@ class ValidationManager:
             report.add_error(
                 ValidationError(
                     error_type="empty_description",
-                    severity="warning"
-                    if self.validation_mode == "lenient"
-                    else "critical",
+                    severity="critical",
                     message=f"Object {object_index} has empty description",
                     fix_suggestion="Provide meaningful description for the object",
                     object_index=object_index,
@@ -588,8 +595,8 @@ class ValidationManager:
         Returns:
             Tuple of (valid_objects, invalid_objects_with_errors)
         """
-        valid_objects = []
-        invalid_objects = []
+        valid_objects: List[Dict[str, Any]] = []
+        invalid_objects: List[Dict[str, Any]] = []
 
         for i, obj in enumerate(objects):
             # Create a temporary sample for validation
@@ -598,7 +605,7 @@ class ValidationManager:
                 temp_sample, f"{sample_id}_obj_{i}", image_width, image_height
             )
 
-            if is_valid or self.validation_mode == "warning_only":
+            if is_valid:
                 valid_objects.append(obj)
             else:
                 # Add error details to invalid object
@@ -618,7 +625,7 @@ class ValidationManager:
             return {"message": "No validation reports available"}
 
         total_errors = sum(len(report.errors) for report in self.validation_reports)
-        error_type_counts = {}
+        error_type_counts: Dict[str, int] = {}
         severity_counts = {"critical": 0, "warning": 0, "info": 0}
 
         for report in self.validation_reports:
@@ -641,7 +648,6 @@ class ValidationManager:
                 "severity_counts": severity_counts,
             },
             "validation_config": {
-                "validation_mode": self.validation_mode,
                 "min_object_size": self.min_object_size,
                 "max_coordinate_value": self.max_coordinate_value,
                 "require_non_empty_description": self.require_non_empty_description,
@@ -694,3 +700,147 @@ class ValidationManager:
         logger.info(f"Generated files: {list(report_files.keys())}")
 
         return report_files
+
+
+class DataValidator:
+    """Low-level geometry and sample structure validation helpers."""
+
+    @staticmethod
+    def validate_bbox(
+        bbox: List[float],
+        image_width: Optional[int] = None,
+        image_height: Optional[int] = None,
+    ) -> bool:
+        if not isinstance(bbox, list) or len(bbox) != 4:
+            raise ValueError(f"Bbox must be a list of 4 elements, got: {bbox}")
+
+        if not all(isinstance(coord, (int, float)) for coord in bbox):
+            raise ValueError(f"Bbox coordinates must be numbers, got: {bbox}")
+
+        x_min, y_min, x_max, y_max = bbox
+
+        if x_min > x_max:
+            x_min, x_max = x_max, x_min
+        if y_min > y_max:
+            y_min, y_max = y_max, y_min
+
+        if x_min > x_max or y_min > y_max:
+            raise ValueError(
+                f"Invalid bbox: x_min <= x_max and y_min <= y_max required, got: {bbox}"
+            )
+
+        if x_min < 0 or y_min < 0 or x_max < 0 or y_max < 0:
+            raise ValueError(f"Bbox coordinates cannot be negative, got: {bbox}")
+
+        if image_width is not None and image_height is not None:
+            if x_max > image_width or y_max > image_height:
+                raise ValueError(
+                    f"Bbox {bbox} exceeds image dimensions ({image_width}x{image_height})"
+                )
+
+        return True
+
+    @staticmethod
+    def validate_poly(poly: List[float]) -> bool:
+        if not isinstance(poly, list) or len(poly) < 8 or len(poly) % 2 != 0:
+            raise ValueError(
+                f"Poly must be list of at least 8 numbers (even number), got {poly}"
+            )
+
+        for i, coord in enumerate(poly):
+            if not isinstance(coord, (int, float)):
+                raise ValueError(f"Poly coordinate {i} must be number, got {type(coord)}")
+
+        return True
+
+    @staticmethod
+    def validate_line(line: List[float]) -> bool:
+        if not isinstance(line, list) or len(line) < 4 or len(line) % 2 != 0:
+            raise ValueError(
+                f"Line must be list of even number of coordinates (>=4), got {line}"
+            )
+
+        for i, coord in enumerate(line):
+            if not isinstance(coord, (int, float)):
+                raise ValueError(f"Line coordinate {i} must be number, got {type(coord)}")
+
+        return True
+
+    @staticmethod
+    def validate_sample_structure(sample: Dict[str, Any]) -> bool:
+        required_fields = ["images", "objects"]
+
+        for field in required_fields:
+            if field not in sample:
+                raise ValueError(f"Missing required field: {field}")
+
+        images = sample.get("images")
+        if not isinstance(images, list) or len(images) == 0:
+            raise ValueError("Field 'images' must be a non-empty list")
+
+        objects = sample.get("objects")
+        if not isinstance(objects, list):
+            raise ValueError("Field 'objects' must be a list")
+
+        for i, obj in enumerate(objects):
+            if not isinstance(obj, dict):
+                raise ValueError(f"Object {i} must be a dictionary")
+
+            if "desc" not in obj:
+                raise ValueError(f"Object {i} missing 'desc'")
+
+            geometry_types = ["bbox_2d", "poly", "line"]
+            if not any(geom_type in obj for geom_type in geometry_types):
+                raise ValueError(
+                    f"Object {i} missing geometry type (bbox_2d, poly, or line)"
+                )
+
+            if "bbox_2d" in obj:
+                DataValidator.validate_bbox(obj["bbox_2d"])
+            elif "poly" in obj:
+                DataValidator.validate_poly(obj["poly"])
+            elif "line" in obj:
+                DataValidator.validate_line(obj["line"])
+
+            desc = obj["desc"]
+            if not isinstance(desc, str) or not desc.strip():
+                raise ValueError(f"Object {i} 'desc' must be non-empty string")
+
+        return True
+
+
+class StructureValidator:
+    """Pipeline-level structural validation (train/val split integrity)."""
+
+    @staticmethod
+    def validate_pipeline_output(
+        train_samples: List[Dict],
+        val_samples: List[Dict],
+    ) -> bool:
+        if not train_samples:
+            raise ValueError("Training samples cannot be empty")
+
+        if not val_samples and len(train_samples) > 1:
+            raise ValueError(
+                "Validation samples cannot be empty when multiple training samples exist"
+            )
+
+        for i, sample in enumerate(train_samples):
+            try:
+                DataValidator.validate_sample_structure(sample)
+            except ValueError as exc:
+                raise ValueError(f"Train sample {i}: {exc}") from exc
+
+        for i, sample in enumerate(val_samples):
+            try:
+                DataValidator.validate_sample_structure(sample)
+            except ValueError as exc:
+                raise ValueError(f"Validation sample {i}: {exc}") from exc
+
+        train_images = {sample["images"][0] for sample in train_samples}
+        val_images = {sample["images"][0] for sample in val_samples}
+
+        if train_images & val_images:
+            raise ValueError("Training and validation sets have overlapping images")
+
+        return True

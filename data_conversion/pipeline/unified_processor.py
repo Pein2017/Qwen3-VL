@@ -8,31 +8,46 @@ Merged SampleExtractor directly into UnifiedProcessor to eliminate redundancy.
 
 import logging
 import sys
+from multiprocessing import Pool, cpu_count
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-# TeacherSelector now integrated as nested class
-from data_conversion.config import DataConversionConfig
-from data_conversion.constants import DEFAULT_LABEL_HIERARCHY
-from data_conversion.coordinate_manager import (
-    CoordinateManager,
-    DataValidator,
-    FormatConverter,
-    StructureValidator,
+try:
+    from tqdm import tqdm
+except ImportError:
+    tqdm = None
+
+from data_conversion.pipeline.config import (
+    DataConversionConfig,
+    setup_logging,
+    validate_config,
 )
-from data_conversion.data_splitter import DataSplitter
-from data_conversion.flexible_taxonomy_processor import HierarchicalProcessor
-from data_conversion.summary_builder import build_summary_from_objects
-from data_conversion.teacher_selector import TeacherSelector
+from data_conversion.pipeline.constants import DEFAULT_LABEL_HIERARCHY, OBJECT_TYPES
+from data_conversion.pipeline.coordinate_manager import CoordinateManager
+from data_conversion.pipeline.data_splitter import DataSplitter
+from data_conversion.pipeline.flexible_taxonomy_processor import (
+    HierarchicalProcessor,
+)
+from data_conversion.pipeline.format_converter import FormatConverter
+from data_conversion.pipeline.summary_builder import build_summary_from_objects
 from data_conversion.utils.file_ops import FileOperations
+from data_conversion.utils.sanitizer_pipeline import (
+    SanitizerPipeline,
+    SanitizerStep,
+)
 from data_conversion.utils.sanitizers import (
+    remove_screw_completeness_attributes,
     sanitize_text,
     standardize_label_description,
+    strip_annotator_notes,
     strip_occlusion_tokens,
 )
 from data_conversion.utils.sorting import sort_objects_tlbr
-from data_conversion.vision_process import ImageProcessor
-
+from data_conversion.pipeline.validation_manager import (
+    StructureValidator,
+    ValidationManager,
+)
+from data_conversion.pipeline.vision_process import ImageProcessor
 
 # Configure UTF-8 encoding for stdout/stderr if supported
 try:
@@ -49,6 +64,60 @@ except (AttributeError, TypeError):
 
 logger = logging.getLogger(__name__)
 
+# Global worker state - initialized once per worker process
+_worker_processor = None
+
+
+# ============================================================================
+# Multiprocessing Worker Functions
+# ============================================================================
+
+
+def _init_worker(config: DataConversionConfig, label_hierarchy: Dict) -> None:
+    """
+    Initialize worker process state.
+
+    This function is called once per worker when the Pool is created.
+    It creates a single UnifiedProcessor instance that will be reused
+    for all samples processed by this worker.
+
+    Args:
+        config: Data conversion configuration
+        label_hierarchy: Label hierarchy dictionary
+    """
+    global _worker_processor
+
+    # Suppress initialization logs in worker processes to avoid spam
+    # Only show WARNING and above from workers
+    logging.getLogger("data_conversion").setLevel(logging.WARNING)
+    logging.getLogger("__main__").setLevel(logging.WARNING)
+
+    # Create processor instance once per worker
+    _worker_processor = UnifiedProcessor(config)
+    _worker_processor.label_hierarchy = label_hierarchy
+
+
+def _process_sample_worker(json_path: Path) -> Optional[Dict]:
+    """
+    Worker function for parallel sample processing.
+
+    This function is called for each sample. It reuses the processor
+    instance created in _init_worker() to avoid repeated initialization.
+
+    Args:
+        json_path: Path to the JSON file to process
+
+    Returns:
+        Processed sample dict or None if processing failed
+    """
+    global _worker_processor
+
+    if _worker_processor is None:
+        raise RuntimeError("Worker not initialized - _init_worker must be called first")
+
+    # Process the single sample using the shared worker processor
+    return _worker_processor.process_single_sample(json_path)
+
 
 class UnifiedProcessor:
     """Streamlined orchestrator for the unified data processing pipeline."""
@@ -61,33 +130,40 @@ class UnifiedProcessor:
 
         # Initialize components - no token mapping needed for Chinese-only
 
-        # Load label hierarchy or use default
-        if config.hierarchy_path and Path(config.hierarchy_path).exists():
-            self.label_hierarchy = FileOperations.load_label_hierarchy(
-                Path(config.hierarchy_path)
-            )
-        else:
-            # Default hierarchy matching actual v2 data structure
-            self.label_hierarchy = DEFAULT_LABEL_HIERARCHY
+        # Use built-in hierarchy for consistent processing
+        self.label_hierarchy = DEFAULT_LABEL_HIERARCHY
 
         # Initialize hierarchical processor for v2 data support (Chinese only)
         self.hierarchical_processor = HierarchicalProcessor(
-            object_types=set(config.object_types),
+            object_types=set(OBJECT_TYPES),
             label_hierarchy=self.label_hierarchy,
         )
 
         self.image_processor = ImageProcessor(config)
-        self.teacher_selector = TeacherSelector(
-            label_hierarchy=self.label_hierarchy,
-            allowed_object_types=set(config.object_types),
-            max_teachers=config.max_teachers,
-            seed=config.seed,
-        )
         self.data_splitter = DataSplitter(val_ratio=config.val_ratio, seed=config.seed)
 
-        # Track invalid objects and samples for reporting (for legacy compatibility)
-        self.invalid_objects = []
-        self.invalid_samples = []
+        validation_mode = getattr(config, "validation_mode", "strict")
+        require_desc = True
+        check_bounds = True
+        if validation_mode == "lenient":
+            require_desc = False
+        elif validation_mode == "warning_only":
+            require_desc = False
+            check_bounds = False
+
+        self.validation_manager = ValidationManager(
+            min_object_size=getattr(config, "min_object_size", 10),
+            require_non_empty_description=require_desc,
+            check_coordinate_bounds=check_bounds,
+        )
+        self.validation_mode = validation_mode
+        self.enable_validation_reports = getattr(
+            config, "enable_validation_reports", True
+        )
+
+        # Track invalid objects and samples for reporting / legacy compatibility
+        self.invalid_objects: List[Dict] = []
+        self.invalid_samples: List[Dict] = []
 
         logger.info("UnifiedProcessor initialized successfully (Chinese-only mode)")
 
@@ -165,36 +241,55 @@ class UnifiedProcessor:
         return combo in allowed_props
 
     def _sanitize_description(self, desc: str) -> str:
-        # Apply built-in sanitizers based on flags
-        s = desc
+        steps: List[SanitizerStep] = []
+
         if getattr(self.config, "sanitize_text", False):
-            s = sanitize_text(s) or s
-            # Also remove annotator notes like '框选范围*'
-            try:
-                from data_conversion.utils.sanitizers import strip_annotator_notes
+            steps.append(SanitizerStep("sanitize_text", sanitize_text, mandatory=True))
+            # Always remove annotator notes when sanitize_text is enabled
+            steps.append(
+                SanitizerStep(
+                    "strip_annotator_notes",
+                    strip_annotator_notes,
+                    mandatory=False,
+                )
+            )
 
-                s = strip_annotator_notes(s) or s
-            except Exception:
-                # Best effort; do not fail pipeline on optional sanitization
-                pass
         if getattr(self.config, "remove_occlusion_tokens", False):
-            s = strip_occlusion_tokens(s) or s
-        # Standardize 标签 descriptions to eliminate empty-like cases
-        if getattr(self.config, "standardize_label_desc", False):
-            try:
-                s = standardize_label_description(s) or s
-            except Exception:
-                pass
-        # Remove completeness attributes from screw/fiber connector objects
-        # This is always applied (not behind a config flag) as it's a data quality fix
-        try:
-            from data_conversion.utils.sanitizers import remove_screw_completeness_attributes
+            steps.append(
+                SanitizerStep(
+                    "strip_occlusion_tokens",
+                    strip_occlusion_tokens,
+                    mandatory=True,
+                )
+            )
 
-            s = remove_screw_completeness_attributes(s) or s
-        except Exception:
-            # Best effort; do not fail pipeline on optional sanitization
-            pass
-        return s
+        if getattr(self.config, "standardize_label_desc", False):
+            steps.append(
+                SanitizerStep(
+                    "standardize_label_description",
+                    standardize_label_description,
+                    mandatory=True,
+                )
+            )
+
+        # Always attempt to remove completeness attributes for screw objects
+        steps.append(
+            SanitizerStep(
+                "remove_screw_completeness_attributes",
+                remove_screw_completeness_attributes,
+                mandatory=False,
+            )
+        )
+
+        if not steps:
+            return desc
+
+        pipeline = SanitizerPipeline(
+            steps,
+            fail_fast=getattr(self.config, "fail_fast", True),
+        )
+        sanitized = pipeline.run(desc)
+        return sanitized if sanitized is not None else ""
 
     def _rewrite_desc_with_remark(self, desc: str) -> str:
         """Rewrite hierarchical desc by folding trailing free-text level into ',备注:...'.
@@ -225,9 +320,13 @@ class UnifiedProcessor:
             l1_tokens = []
             if levels:
                 l1_tokens = [t.strip() for t in levels[0].split(",") if t.strip()]
-            if obj.startswith("BBU设备") and any("机柜空间充足需要安装" in t for t in l1_tokens):
+            if obj.startswith("BBU设备") and any(
+                "机柜空间充足需要安装" in t for t in l1_tokens
+            ):
                 structured_count = min(2, len(levels))
-            elif obj.startswith("螺丝、光纤插头") and any("不符合要求" in t for t in l1_tokens):
+            elif obj.startswith("螺丝、光纤插头") and any(
+                "不符合要求" in t for t in l1_tokens
+            ):
                 structured_count = min(2, len(levels))
             elif obj.startswith("光纤") and any("有保护措施" in t for t in l1_tokens):
                 structured_count = min(2, len(levels))
@@ -237,13 +336,17 @@ class UnifiedProcessor:
             # 如果存在额外层，视为备注层（最后一层）
             if len(levels) > structured_count:
                 remark = levels[-1]
-                base = "/".join([obj] + levels[:structured_count]) if structured_count > 0 else obj
+                base = (
+                    "/".join([obj] + levels[:structured_count])
+                    if structured_count > 0
+                    else obj
+                )
                 # 将备注折叠到末尾，保持半角逗号和冒号风格
                 return f"{base},备注:{remark}"
             return desc
         except Exception as e:
-           logger.error(f"Error rewriting desc with remark: {e}")
-           raise Exception("Error rewriting desc with remark")
+            logger.error(f"Error rewriting desc with remark: {e}")
+            raise Exception("Error rewriting desc with remark")
 
     def extract_objects_from_datalist(self, data_list: List[Dict]) -> List[Dict]:
         """Extract objects from dataList format."""
@@ -275,11 +378,13 @@ class UnifiedProcessor:
             if not content_dict or not self.is_allowed_object(content_dict):
                 continue
 
-            desc = FormatConverter.format_description(
-                content_dict, self.config.response_types, "chinese"
-            )
+            desc = FormatConverter.format_description(content_dict)
             if desc:
-                if getattr(self.config, "remove_occlusion_tokens", False) or getattr(self.config, "sanitize_text", False) or getattr(self.config, "standardize_label_desc", False):
+                if (
+                    getattr(self.config, "remove_occlusion_tokens", False)
+                    or getattr(self.config, "sanitize_text", False)
+                    or getattr(self.config, "standardize_label_desc", False)
+                ):
                     desc = self._sanitize_description(desc)
                 if desc:
                     desc = self._rewrite_desc_with_remark(desc)
@@ -287,12 +392,25 @@ class UnifiedProcessor:
 
         return objects
 
-    def extract_objects_from_markresult(self, features: List[Dict]) -> List[Dict]:
-        """Extract objects from markResult features with native geometry types."""
-        # Use hierarchical processor for V2 data support
-        objects = self.hierarchical_processor.extract_objects_from_markresult(features)
+    def extract_objects_from_markresult(
+        self, features: List[Dict], image_id: Optional[str] = None
+    ) -> List[Dict]:
+        """Extract objects from markResult features with native geometry types.
+
+        Args:
+            features: List of V2 feature dictionaries
+            image_id: Optional image identifier for logging
+        """
+        # Use hierarchical processor for V2 data support (pass image_id for detailed logging)
+        objects = self.hierarchical_processor.extract_objects_from_markresult(
+            features, image_id=image_id
+        )
         # Apply sanitizer if configured
-        if getattr(self.config, "remove_occlusion_tokens", False) or getattr(self.config, "sanitize_text", False) or getattr(self.config, "standardize_label_desc", False):
+        if (
+            getattr(self.config, "remove_occlusion_tokens", False)
+            or getattr(self.config, "sanitize_text", False)
+            or getattr(self.config, "standardize_label_desc", False)
+        ):
             for obj in objects:
                 d = obj.get("desc", "")
                 if d:
@@ -321,12 +439,12 @@ class UnifiedProcessor:
                 image_path
             )
 
-            # Detect dimension mismatch (likely due to EXIF orientation)
+            # Detect dimension mismatch (after EXIF correction)
             if json_width != actual_width or json_height != actual_height:
                 logger.info(
                     f"Dimension mismatch for {image_path.name}: "
-                    f"JSON says {json_width}x{json_height} but image is {actual_width}x{actual_height}. "
-                    f"Will apply coordinate rescaling."
+                    f"JSON says {json_width}x{json_height} but EXIF-normalized image is "
+                    f"{actual_width}x{actual_height}. Will apply coordinate rescaling."
                 )
 
             # Keep JSON dimensions for coordinate transformation pipeline
@@ -339,8 +457,10 @@ class UnifiedProcessor:
             elif "markResult" in json_data and isinstance(
                 json_data.get("markResult", {}).get("features"), list
             ):
+                # Extract image ID from file path for detailed logging
+                image_id = json_path.stem
                 objects = self.extract_objects_from_markresult(
-                    json_data["markResult"]["features"]
+                    json_data["markResult"]["features"], image_id=image_id
                 )
 
             if not objects:
@@ -356,7 +476,7 @@ class UnifiedProcessor:
             )
             objects = processed_sample["objects"]
 
-            # Process objects (validation step has been removed)
+            # Filter objects via strict validation layer
             objects = self._filter_valid_objects(
                 objects, final_width, final_height, str(image_path.name)
             )
@@ -378,16 +498,36 @@ class UnifiedProcessor:
                 )
                 return None
 
-            # Sort objects by position using first coordinate pair
-            objects = sort_objects_tlbr(objects)
+            # Sort objects unless compatibility mode requests preserving the original order
+            if not getattr(self.config, "preserve_annotation_order", False):
+                objects = sort_objects_tlbr(objects)
+            else:
+                logger.debug(
+                    "Preserving legacy annotation order for %s", image_path.name
+                )
 
             # Build deterministic one-line summary from objects
             summary_text = build_summary_from_objects(objects)
 
             # Process image (copy/resize) to match coordinate transformations
-            processed_image_path, _, _ = self.image_processor.process_image(
-                image_path, json_width, json_height
+            processed_image_path, img_w, img_h = self.image_processor.process_image(
+                image_path,
+                json_width,
+                json_height,
+                final_width=final_width,
+                final_height=final_height,
             )
+
+            # Fail fast if image and geometry pipelines disagree on final size
+            if (img_w, img_h) != (final_width, final_height):
+                msg = (
+                    f"ImageProcessor produced size {img_w}x{img_h} but "
+                    f"CoordinateManager reported {final_width}x{final_height} "
+                    f"for {image_path.name}"
+                )
+                logger.error(msg)
+                if self.config.fail_fast:
+                    raise ValueError(msg)
 
             # Build relative image path for JSONL (relative to dataset directory)
             rel_image_path = self.image_processor.get_relative_image_path(
@@ -411,19 +551,42 @@ class UnifiedProcessor:
     def _filter_valid_objects(
         self, objects: List[Dict], img_w: int, img_h: int, image_id: str
     ) -> List[Dict]:
-        """Filter objects using comprehensive validation with reporting."""
+        """Filter objects using strict validation with reporting.
+
+        This uses ValidationManager to validate each object and records
+        any invalid objects for downstream analysis.
+        """
         if not objects:
             return objects
 
         # Re-sanitize descriptions right before validation/output, in case any slipped through
-        if getattr(self.config, "remove_occlusion_tokens", False) or getattr(self.config, "sanitize_text", False) or getattr(self.config, "standardize_label_desc", False):
+        if (
+            getattr(self.config, "remove_occlusion_tokens", False)
+            or getattr(self.config, "sanitize_text", False)
+            or getattr(self.config, "standardize_label_desc", False)
+        ):
             for obj in objects:
                 d = obj.get("desc", "")
                 if d:
                     obj["desc"] = self._sanitize_description(d)
 
-        # For trusted input, no validation needed - return all objects
-        return objects
+        # Validate objects via ValidationManager and track invalid ones
+        valid_objects, invalid_objects = self.validation_manager.filter_valid_objects(
+            objects,
+            image_width=img_w,
+            image_height=img_h,
+            sample_id=image_id,
+        )
+
+        if invalid_objects:
+            self.invalid_objects.extend(invalid_objects)
+            logger.warning(
+                "Filtered out %d invalid objects for image %s",
+                len(invalid_objects),
+                image_id,
+            )
+
+        return valid_objects
 
     def _process_sample_coordinates_unified(
         self,
@@ -442,25 +605,23 @@ class UnifiedProcessor:
         if "objects" not in sample_data or not sample_data["objects"]:
             # No objects to process, just get final dimensions
             if enable_smart_resize:
-                from data_conversion.vision_process import (
-                    MAX_PIXELS,
-                    MIN_PIXELS,
-                    smart_resize,
-                )
+                from data_conversion.pipeline.vision_process import MIN_PIXELS
+                from data_conversion.pipeline.vision_process import smart_resize
 
-                _, _, _, final_w, final_h = CoordinateManager.get_exif_transform_matrix(
+                _, _, _, final_w, final_h, _ = CoordinateManager.get_exif_transform_matrix(
                     image_path
                 )
+
                 resize_h, resize_w = smart_resize(
                     height=final_h,
                     width=final_w,
-                    factor=28,
+                    factor=self.config.image_factor,
                     min_pixels=MIN_PIXELS,
-                    max_pixels=MAX_PIXELS,
+                    max_pixels=self.config.max_pixels,
                 )
                 return sample_data, resize_w, resize_h
             else:
-                _, _, _, final_w, final_h = CoordinateManager.get_exif_transform_matrix(
+                _, _, _, final_w, final_h, _ = CoordinateManager.get_exif_transform_matrix(
                     image_path
                 )
                 return sample_data, final_w, final_h
@@ -498,7 +659,13 @@ class UnifiedProcessor:
 
         # Use unified geometry transformation for dimension calculation
         _, _, final_width, final_height = CoordinateManager.transform_geometry_complete(
-            geometry_input, image_path, json_width, json_height, enable_smart_resize
+            geometry_input,
+            image_path,
+            json_width,
+            json_height,
+            smart_resize_factor=self.config.image_factor,
+            max_pixels=self.config.max_pixels,
+            enable_smart_resize=enable_smart_resize,
         )
 
         # Process all objects with their native geometry
@@ -519,13 +686,17 @@ class UnifiedProcessor:
                 updated_obj["bbox_2d"] = [int(round(c)) for c in transformed_coords]
 
             elif "poly" in obj:
-                # Transform poly coordinates (x1,y1,x2,y2,x3,y3,x4,y4,...)
-                # Note: poly format should be closed (first point repeated at end)
+                # Transform poly coordinates (sequence of x,y pairs)
+                # Strip any closing/duplicated point
                 coords = obj["poly"]
                 # Check if already closed - if so, remove closing point before transformation
-                is_closed = len(coords) >= 4 and coords[0] == coords[-2] and coords[1] == coords[-1]
+                is_closed = (
+                    len(coords) >= 4
+                    and coords[0] == coords[-2]
+                    and coords[1] == coords[-1]
+                )
                 coords_to_transform = coords[:-2] if is_closed else coords
-                
+
                 transformed_coords = []
                 for i in range(0, len(coords_to_transform), 2):
                     if i + 1 < len(coords_to_transform):
@@ -544,9 +715,23 @@ class UnifiedProcessor:
                                 int(round(transformed_point[1])),
                             ]
                         )
-                # Ensure polygon is closed
-                if len(transformed_coords) >= 4:
-                    transformed_coords.extend([transformed_coords[0], transformed_coords[1]])
+
+                # Re-apply canonical ordering after transformation to ensure top-left start
+                # This matches the prompt specification: "poly 排序参考点：使用第一个顶点 (x1, y1)"
+                if len(transformed_coords) >= 8 and len(transformed_coords) % 2 == 0:
+                    points_list = [
+                        (transformed_coords[i], transformed_coords[i + 1])
+                        for i in range(0, len(transformed_coords), 2)
+                    ]
+                    ordered_points = CoordinateManager.canonical_poly_ordering(
+                        points_list
+                    )
+                    # Flatten back to coordinate list (without closing point)
+                    transformed_coords = [
+                        int(coord) for point in ordered_points for coord in point
+                    ]
+
+                # Store canonicalized coordinates without duplicate closing point
                 updated_obj["poly"] = transformed_coords
 
             elif "line" in obj:
@@ -598,13 +783,25 @@ class UnifiedProcessor:
             # For single points, create a minimal bbox and extract the transformed point
             bbox = [coords[0], coords[1], coords[0], coords[1]]
             transformed_bbox, _, _, _ = CoordinateManager.transform_geometry_complete(
-                bbox, image_path, json_width, json_height, enable_smart_resize
+                bbox,
+                image_path,
+                json_width,
+                json_height,
+                smart_resize_factor=self.config.image_factor,
+                max_pixels=self.config.max_pixels,
+                enable_smart_resize=enable_smart_resize,
             )
             return [transformed_bbox[0], transformed_bbox[1]]  # Return just x, y
         else:
             # For bbox format
             transformed_bbox, _, _, _ = CoordinateManager.transform_geometry_complete(
-                coords, image_path, json_width, json_height, enable_smart_resize
+                coords,
+                image_path,
+                json_width,
+                json_height,
+                smart_resize_factor=self.config.image_factor,
+                max_pixels=self.config.max_pixels,
+                enable_smart_resize=enable_smart_resize,
             )
             return transformed_bbox
 
@@ -616,23 +813,183 @@ class UnifiedProcessor:
         json_files = FileOperations.find_json_files(self.input_dir)
         logger.info(f"📁 Found {len(json_files)} JSON files")
 
+        # Apply limit if specified (for debugging)
+        if self.config.limit > 0:
+            original_count = len(json_files)
+            json_files = json_files[: self.config.limit]
+            logger.info(
+                f"🔢 Limiting processing to {len(json_files)} images (out of {original_count} total)"
+            )
+
+        # Determine number of workers
+        num_workers = getattr(self.config, "num_workers", 1)
+
+        # Use parallel processing if num_workers > 1
+        if num_workers > 1:
+            return self._process_samples_parallel(json_files, num_workers)
+        else:
+            return self._process_samples_sequential(json_files)
+
+    def _process_samples_sequential(self, json_files: List[Path]) -> List[Dict]:
+        """Process samples sequentially (original implementation)."""
+        logger.info("📝 Processing samples sequentially (num_workers=1)")
+
         # Process all samples
-        all_samples = []
+        all_samples: List[Dict] = []
         processed_count = 0
         skipped_count = 0
 
-        for json_file in json_files:
-            sample = self.process_single_sample(json_file)
-            if sample:
-                # Validate sample structure
-                DataValidator.validate_sample_structure(sample)
+        # Initialize progress bar if tqdm is available
+        pbar = None
+        if tqdm is not None:
+            pbar = tqdm(total=len(json_files), desc="Processing samples", unit="sample")
+        else:
+            logger.info(f"Processing {len(json_files)} samples...")
+
+        try:
+            for json_file in json_files:
+                sample = self.process_single_sample(json_file)
+                if not sample:
+                    skipped_count += 1
+                    if pbar is not None:
+                        pbar.update(1)
+                    continue
+
+                # Validate full sample structure/content via ValidationManager
+                sample_id = str(json_file.name)
+                image_width = sample.get("width")
+                image_height = sample.get("height")
+
+                is_valid, report = self.validation_manager.validate_sample(
+                    sample,
+                    sample_id=sample_id,
+                    image_width=image_width,
+                    image_height=image_height,
+                )
+
+                if not is_valid:
+                    invalid_sample = {
+                        "sample_id": sample_id,
+                        "reason": "validation_failed",
+                        "image_path": sample.get("images", [None])[0],
+                        "json_path": str(json_file),
+                        "validation_errors": [e.to_dict() for e in report.errors],
+                    }
+                    self.invalid_samples.append(invalid_sample)
+
+                    message = (
+                        f"Sample {sample_id} failed validation with "
+                        f"{len(report.errors)} errors; skipping from outputs"
+                    )
+
+                    if getattr(self.config, "fail_fast", True):
+                        raise ValueError(message)
+
+                    logger.warning(message)
+                    skipped_count += 1
+                    if pbar is not None:
+                        pbar.update(1)
+                    continue
+
                 all_samples.append(sample)
                 processed_count += 1
-            else:
-                skipped_count += 1
 
-            if processed_count % 100 == 0 and processed_count > 0:
-                logger.info(f"Processed {processed_count} samples...")
+                if pbar is not None:
+                    pbar.update(1)
+                    # Update progress bar description with current stats
+                    pbar.set_postfix(
+                        {"processed": processed_count, "skipped": skipped_count}
+                    )
+        finally:
+            if pbar is not None:
+                pbar.close()
+
+        logger.info(
+            f"✅ Sample processing complete: {processed_count} processed, {skipped_count} skipped"
+        )
+
+        if not all_samples:
+            raise ValueError("No valid samples were processed")
+
+        return all_samples
+
+    def _process_samples_parallel(self, json_files: List[Path], num_workers: int) -> List[Dict]:
+        """Process samples in parallel using multiprocessing."""
+        # Limit workers to available CPU cores
+        max_workers = min(num_workers, cpu_count(), len(json_files))
+        logger.info(f"🚀 Processing samples in parallel with {max_workers} workers")
+        logger.info("ℹ️  Worker initialization logs suppressed (only warnings/errors shown)")
+
+        # Process samples in parallel
+        all_samples: List[Dict] = []
+        processed_count = 0
+        skipped_count = 0
+
+        try:
+            # Create pool with initializer to set up each worker once
+            with Pool(
+                processes=max_workers,
+                initializer=_init_worker,
+                initargs=(self.config, self.label_hierarchy)
+            ) as pool:
+                # Use imap_unordered for better performance (order doesn't matter for validation)
+                if tqdm is not None:
+                    results = list(tqdm(
+                        pool.imap_unordered(_process_sample_worker, json_files),
+                        total=len(json_files),
+                        desc=f"Processing samples ({max_workers} workers)",
+                        unit="sample"
+                    ))
+                else:
+                    logger.info(f"Processing {len(json_files)} samples with {max_workers} workers...")
+                    results = list(pool.imap_unordered(_process_sample_worker, json_files))
+
+            # Post-process results: validate and filter
+            logger.info("📋 Validating processed samples...")
+            for i, sample in enumerate(results):
+                if not sample:
+                    skipped_count += 1
+                    continue
+
+                # Validate full sample structure/content via ValidationManager
+                sample_id = sample.get("images", [f"sample_{i}"])[0]
+                image_width = sample.get("width")
+                image_height = sample.get("height")
+
+                is_valid, report = self.validation_manager.validate_sample(
+                    sample,
+                    sample_id=sample_id,
+                    image_width=image_width,
+                    image_height=image_height,
+                )
+
+                if not is_valid:
+                    invalid_sample = {
+                        "sample_id": sample_id,
+                        "reason": "validation_failed",
+                        "image_path": sample.get("images", [None])[0],
+                        "validation_errors": [e.to_dict() for e in report.errors],
+                    }
+                    self.invalid_samples.append(invalid_sample)
+
+                    message = (
+                        f"Sample {sample_id} failed validation with "
+                        f"{len(report.errors)} errors; skipping from outputs"
+                    )
+
+                    if getattr(self.config, "fail_fast", True):
+                        raise ValueError(message)
+
+                    logger.warning(message)
+                    skipped_count += 1
+                    continue
+
+                all_samples.append(sample)
+                processed_count += 1
+
+        except Exception as e:
+            logger.error(f"Error during parallel processing: {e}")
+            raise
 
         logger.info(
             f"✅ Sample processing complete: {processed_count} processed, {skipped_count} skipped"
@@ -645,52 +1002,32 @@ class UnifiedProcessor:
 
     def split_into_sets(
         self, all_samples: List[Dict]
-    ) -> Tuple[List[Dict], List[Dict], List[Dict]]:
-        """Split samples into training, validation, and teacher sets.
+    ) -> Tuple[List[Dict], List[Dict]]:
+        """Split samples into training and validation sets.
 
-        All samples remain in flat format without any teacher-student nesting.
+        Teacher pool selection has been removed; all samples are used for train/val.
 
         Args:
             all_samples: List of all processed samples
 
         Returns:
-            Tuple of (train_samples, val_samples, teacher_samples)
+            Tuple of (train_samples, val_samples)
         """
-        logger.info(f"📊 Splitting {len(all_samples)} samples...")
+        logger.info(f"📊 Splitting {len(all_samples)} samples into train/val...")
 
-        # Create data splitter
-        data_splitter = DataSplitter(
-            val_ratio=self.config.val_ratio, seed=self.config.seed
-        )
-
-        # Select teacher samples first (before train/val split)
-        teacher_selector = self.teacher_selector
-        teacher_samples, teacher_indices, teacher_stats = (
-            teacher_selector.select_teachers(all_samples)
-        )
-
-        # Remove teacher samples from the pool
-        remaining_samples = [
-            s for i, s in enumerate(all_samples) if i not in teacher_indices
-        ]
-
-        # Split remaining samples into train and validation sets
-        train_samples, val_samples = data_splitter.split(remaining_samples)
+        # Split all samples into train and validation sets
+        train_samples, val_samples = self.data_splitter.split(all_samples)
 
         logger.info(
-            f"✅ Split complete: {len(train_samples)} train, {len(val_samples)} val, {len(teacher_samples)} teacher samples"
+            f"✅ Split complete: {len(train_samples)} train, {len(val_samples)} val samples"
         )
 
-        # Store teacher stats for later export
-        self._teacher_pool_stats = teacher_stats
-
-        return train_samples, val_samples, teacher_samples
+        return train_samples, val_samples
 
     def write_outputs(
         self,
         train_samples: List[Dict],
         val_samples: List[Dict],
-        teacher_samples: List[Dict],
     ) -> None:
         """Write output files in flat format only.
 
@@ -702,25 +1039,15 @@ class UnifiedProcessor:
         # Write all files in flat format (no teacher-student nesting)
         FileOperations.write_jsonl(train_samples, self.output_dir / "train.jsonl")
         FileOperations.write_jsonl(val_samples, self.output_dir / "val.jsonl")
-        FileOperations.write_jsonl(
-            teacher_samples, self.output_dir / "teacher_pool.jsonl"
-        )
 
         # Write all samples in flat format
-        all_direct_samples = teacher_samples + train_samples + val_samples
+        all_direct_samples = train_samples + val_samples
         FileOperations.write_jsonl(
             all_direct_samples, self.output_dir / "all_samples.jsonl"
         )
 
         # Extract and export unique labels from original samples
         self._export_label_vocabulary(all_direct_samples)
-
-        # Write teacher pool stats if available
-        stats = getattr(self, "_teacher_pool_stats", None)
-        if isinstance(stats, dict) and stats:
-            stats_path = self.output_dir / "teacher_pool_stats.json"
-            FileOperations.save_json_data(stats, stats_path, indent=2)
-            logger.info(f"📈 Teacher pool stats written to {stats_path}")
 
         # Export validation reports
         self._export_validation_reports()
@@ -731,9 +1058,6 @@ class UnifiedProcessor:
         )
         logger.info(
             f"   🎓 Training files (flat format): train.jsonl ({len(train_samples)} samples), val.jsonl ({len(val_samples)} samples)"
-        )
-        logger.info(
-            f"   📚 Teacher pool (flat format): teacher_pool.jsonl ({len(teacher_samples)} samples)"
         )
 
     def _convert_to_teacher_student_format(
@@ -829,10 +1153,29 @@ class UnifiedProcessor:
         logger.info(f"   📝 {len(full_descriptions)} complete descriptions")
 
     def _export_validation_reports(self) -> None:
-        """Export validation reports (legacy compatibility - no validation for trusted input)."""
-        logger.info("📋 Validation reports skipped (trusted input mode)")
+        """Export validation reports and legacy invalid object/sample lists."""
+        # Structured reports from ValidationManager (strict validation).
+        if getattr(self, "validation_manager", None) is not None:
+            if not self.enable_validation_reports:
+                logger.info("📋 Validation report export disabled via configuration")
+            elif self.validation_manager.validation_reports:
+                report_files = self.validation_manager.export_validation_reports(
+                    self.output_dir
+                )
+                summary = ", ".join(
+                    f"{name}={path}" for name, path in report_files.items()
+                )
+                logger.info(f"📋 Validation reports exported: {summary}")
+            else:
+                logger.info(
+                    "📋 No validation issues recorded; skipping structured reports"
+                )
+        else:
+            logger.info(
+                "📋 ValidationManager is not initialized; skipping structured reports"
+            )
 
-        # Export invalid objects/samples if any were tracked (should be empty for trusted input)
+        # Legacy JSONL exports of invalid objects/samples for backward compatibility.
         if self.invalid_objects:
             invalid_objects_path = self.output_dir / "invalid_objects.jsonl"
             FileOperations.write_jsonl(self.invalid_objects, invalid_objects_path)
@@ -865,24 +1208,22 @@ class UnifiedProcessor:
         # Step 1: Process all samples
         all_samples = self.process_all_samples()
 
-        # Step 2: Split into train/val/teacher sets
-        train_samples, val_samples, teacher_samples = self.split_into_sets(all_samples)
+        # Step 2: Split into train/val sets
+        train_samples, val_samples = self.split_into_sets(all_samples)
 
         # Step 3: Validate output structure
         StructureValidator.validate_pipeline_output(
-            train_samples, val_samples, teacher_samples, max_teachers=self.config.max_teachers
+            train_samples,
+            val_samples,
         )
 
         # Step 4: Write output files
-        self.write_outputs(train_samples, val_samples, teacher_samples)
-
-        # Validation steps have been removed
+        self.write_outputs(train_samples, val_samples)
 
         # Final summary statistics
         result = {
             "train": len(train_samples),
             "val": len(val_samples),
-            "teacher": len(teacher_samples),
             "total_processed": len(all_samples),
             "total_invalid_objects": len(self.invalid_objects),
             "total_invalid_samples": len(self.invalid_samples),
@@ -892,25 +1233,30 @@ class UnifiedProcessor:
         logger.info("📊 Final Output:")
         logger.info(f"   Training: {result['train']} samples → train.jsonl")
         logger.info(f"   Validation: {result['val']} samples → val.jsonl")
-        logger.info(f"   Teacher: {result['teacher']} samples → teacher_pool.jsonl")
+        logger.info(
+            f"   Combined: {result['total_processed']} samples → all_samples.jsonl"
+        )
         logger.info(
             f"   Combined: {result['total_processed']} samples → all_samples.jsonl"
         )
         if self.invalid_objects or self.invalid_samples:
             logger.info("🔍 Processing Summary:")
-            logger.info(f"   Invalid objects tracked: {result['total_invalid_objects']}")
-            logger.info(f"   Invalid samples tracked: {result['total_invalid_samples']}")
+            logger.info(
+                f"   Invalid objects tracked: {result['total_invalid_objects']}"
+            )
+            logger.info(
+                f"   Invalid samples tracked: {result['total_invalid_samples']}"
+            )
 
         return result
 
 
 # TeacherSelector has been extracted to data_conversion.teacher_selector
 
+
 def main():
     """Main entry point with CLI argument parsing."""
     import argparse
-
-    from config import setup_logging, validate_config
 
     parser = argparse.ArgumentParser(description="Data Processor for Qwen2.5-VL")
 
@@ -922,23 +1268,11 @@ def main():
         "--output_dir", required=True, help="Output directory for JSONL files"
     )
     parser.add_argument(
-        "--language",
-        choices=["chinese", "english"],
-        required=True,
-        help="Language mode",
-    )
-    parser.add_argument(
         "--dataset_name",
         help="Dataset name for organized output (auto-detected from input_dir if not provided)",
     )
 
     # Processing arguments - REQUIRED
-    parser.add_argument(
-        "--object_types",
-        nargs="+",
-        required=True,
-        help="Object types to include (e.g., bbu label fiber connect_point)",
-    )
     parser.add_argument(
         "--val_ratio",
         type=float,
@@ -946,18 +1280,24 @@ def main():
         help="Validation split ratio (e.g., 0.1)",
     )
     parser.add_argument(
-        "--max_teachers",
-        type=int,
-        required=True,
-        help="Maximum teacher samples (e.g., 10)",
-    )
-    parser.add_argument(
         "--seed", type=int, required=True, help="Random seed (e.g., 42)"
     )
 
+    # Image resize parameters - REQUIRED
+    parser.add_argument(
+        "--max_pixels",
+        type=int,
+        required=True,
+        help="Maximum pixels for image resizing (e.g., 786432 for 768*32*32)",
+    )
+    parser.add_argument(
+        "--image_factor",
+        type=int,
+        required=True,
+        help="Factor for image dimensions (e.g., 32)",
+    )
+
     # Processing options - OPTIONAL
-    parser.add_argument("--token_map_path", help="Path to token mapping file")
-    parser.add_argument("--hierarchy_path", help="Path to label hierarchy file")
     parser.add_argument("--resize", action="store_true", help="Enable image resizing")
     parser.add_argument(
         "--log_level",
@@ -965,14 +1305,20 @@ def main():
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
         help="Logging level",
     )
-
-    # Advanced processing options
     parser.add_argument(
-        "--geometry_diversity_weight",
-        type=float,
-        default=4.0,
-        help="Weight for geometry diversity in teacher selection",
+        "--fail_fast",
+        dest="fail_fast",
+        action="store_true",
+        help="Stop immediately when encountering invalid samples",
     )
+    parser.add_argument(
+        "--no_fail_fast",
+        dest="fail_fast",
+        action="store_false",
+        help="Continue processing after invalid samples are detected (skip them)",
+    )
+    parser.set_defaults(fail_fast=True)
+
 
     # New filtering flag
     parser.add_argument(
@@ -989,6 +1335,50 @@ def main():
         "--standardize_label_desc",
         action="store_true",
         help="Standardize label descriptions: map '标签/*' empty-like values (空格/看不清/、 or empty) to '标签/无法识别'",
+    )
+    parser.add_argument(
+        "--preserve_annotation_order",
+        action="store_true",
+        help="Skip TLBR reordering and keep the original annotation order (useful for regression diffs)",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=-1,
+        help="Limit number of images to process for debugging (e.g., 10 for 10 images, -1 for all images)",
+    )
+    parser.add_argument(
+        "--validation_mode",
+        choices=["strict", "lenient", "warning_only"],
+        required=True,
+        help="Validation mode controlling strictness of geometry/text checks",
+    )
+    parser.add_argument(
+        "--min_object_size",
+        type=int,
+        required=True,
+        help="Minimum bbox width/height in pixels considered valid",
+    )
+    parser.add_argument(
+        "--enable_validation_reports",
+        dest="enable_validation_reports",
+        action="store_true",
+        help="Enable exporting validation reports to disk",
+    )
+    parser.add_argument(
+        "--disable_validation_reports",
+        dest="enable_validation_reports",
+        action="store_false",
+        help="Disable exporting validation reports to disk",
+    )
+    parser.set_defaults(enable_validation_reports=True)
+
+    # Performance options
+    parser.add_argument(
+        "--num_workers",
+        type=int,
+        default=1,
+        help="Number of parallel workers for multiprocessing (1=sequential, >1=parallel). Default: 1",
     )
 
     args = parser.parse_args()

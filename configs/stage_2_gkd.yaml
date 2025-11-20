@@ -3,7 +3,7 @@ extends: base.yaml
 # Stage 2: LoRA on LLM last-4 blocks, freeze ViT; fully train MLP aligner (TOON + GKD)
 
 model:
-  model: output/11-14/stage_1/v1-20251114-155109/eff_batch_32-epoch_6-lr_1e-4/toc_acc_8158-checkpoint-414
+  model: output/11-17/stage_1/v2-20251117-124945/eff_batch_32-epoch_6-lr_1e-4-kd_0.1/checkpoint-414
 
 tuner:
   train_type: lora
@@ -14,7 +14,7 @@ tuner:
   target_modules: [all-linear]
   # Apply LoRA to last 4 LLM layers (32-35) for the 8B model (which has 36 layers total, 0-35)
   # This regex targets language_model.layers.{32,33,34,35}.{self_attn,mlp}.*
-  target_regex: '^(?:model\.)?language_model\.layers\.(?:34|35)\.(?:self_attn\.(?:q_proj|k_proj|v_proj|o_proj)|mlp\.(?:gate_proj|up_proj|down_proj))$'
+  target_regex: '^(?:model\.)?language_model\.layers\.(?:35)\.(?:self_attn\.(?:q_proj|k_proj|v_proj|o_proj)|mlp\.(?:gate_proj|up_proj|down_proj))$'
   # CRITICAL: modules_to_save does NOT support ModuleList - must specify individual elements
   # Qwen3-VL has: model.visual.merger (single module) + deepstack_merger_list (ModuleList with 3 elements)
   # These modules will be FULLY fine-tuned (not LoRA)
@@ -30,7 +30,7 @@ tuner:
 
 rlhf:
   rlhf_type: gkd
-  teacher_model: output/11-14/stage_1/v1-20251114-155109/eff_batch_32-epoch_6-lr_1e-4/toc_acc_8158-checkpoint-414
+  teacher_model: output/11-17/stage_1/v2-20251117-124945/eff_batch_32-epoch_6-lr_1e-4-kd_0.1/checkpoint-414
   sft_alpha: 1
   llm_kd_weight: 1e-8  # Example: down-weight LM KD while keeping visual KD enabled.
   seq_kd: false
@@ -38,13 +38,15 @@ rlhf:
 
 training:
   # Paths and naming
-  output_dir: ./output/11-15/stage_2
-  run_name: eff_batch_32-epoch_6-lr_1e-4-last_llm_2-lrs_1_1
+  output_dir: ./output/11-15/stage_2_visual_kd
+  run_name: epoch_6-lr_1e-4-last_llm_1-lrs_1_1-kd_weight_0.1-normalized
   # Epochs and batch sizes
   num_train_epochs: 6
   per_device_train_batch_size: 1
   per_device_eval_batch_size: 2
-  gradient_accumulation_steps: 16
+  # Auto-calculated from effective_batch_size, per_device_train_batch_size, and world_size
+  # gradient_accumulation_steps: 4  # Commented out - now auto-calculated
+  effective_batch_size: 32  # Will auto-calculate gradient_accumulation_steps to maintain this effective batch size
   
   # Optimizer and learning rates
   optimizer: multimodal
@@ -62,7 +64,7 @@ training:
   save_only_model: true
   
   # Logging
-  logging_dir: ./tb/11-15/stage_2
+  logging_dir: ./tb/11-15/stage_2_visual_kd
   logging_steps: 10
   logging_first_step: true
 
@@ -75,16 +77,17 @@ data:
 custom:
   trainer_variant: gkd_monitor
   visual_kd:
-    enabled: false
+    enabled: true
     vit:
-      enabled: true
-      weight: 0.2
+      enabled: false
+      weight: 0.1
       distance: cosine
     aligner:
-      enabled: false
+      enabled: true
+      weight: 0.1
     deepstack:
       enabled: true
-      weight: 0.2
+      weight: 0.1
       distance: cosine
   emit_norm: norm1000
   dump_conversation_text: false

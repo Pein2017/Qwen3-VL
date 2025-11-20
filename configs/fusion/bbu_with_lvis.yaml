@@ -1,0 +1,17 @@
+target:
+  name: bbu
+  train_jsonl: data/bbu_full_768/train.jsonl
+  val_jsonl: data/bbu_full_768/val.jsonl
+  template: bbu_dense
+  poly_fallback: off
+sources:
+  - name: lvis
+    train_jsonl: public_data/lvis/processed/train.jsonl
+    ratio: 0.08
+    template: aux_dense
+    poly_fallback: bbox_2d
+  - name: coco
+    train_jsonl: public_data/coco/processed/train.jsonl
+    ratio: 0.04
+    template: aux_dense
+    poly_fallback: bbox_2d

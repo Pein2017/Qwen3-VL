@@ -2,7 +2,8 @@
 
 > **Unified Processing Architecture – August 2025**
 >
-> Streamlined data conversion pipeline using `unified_processor.py` for BBU equipment annotation processing.
+> Streamlined data conversion pipeline using `data_conversion/pipeline/unified_processor.py`
+> for BBU equipment annotation processing.
 > Focuses on rigorous geometry handling, hierarchical Chinese descriptions, and deterministic coordinate
 > transformations.
 
@@ -10,12 +11,14 @@
 
 ## Table of Contents
 1. [Overview](#overview)
-2. [Inputs](#inputs)
-3. [What the Pipeline Does](#what-the-pipeline-does)
-4. [Geometry & Coordinate Rules](#geometry--coordinate-rules)
-5. [Outputs](#outputs)
-6. [Raw Input Example (kept as reference)](#raw-input-example-kept-as-reference)
-7. [Output Sample](#output-sample)
+2. [Performance & Parallel Processing](#performance--parallel-processing)
+3. [Inputs](#inputs)
+4. [What the Pipeline Does](#what-the-pipeline-does)
+5. [Validation Architecture](#validation-architecture)
+6. [Geometry & Coordinate Rules](#geometry--coordinate-rules)
+7. [Outputs](#outputs)
+8. [Raw Input Example (kept as reference)](#raw-input-example-kept-as-reference)
+9. [Output Sample](#output-sample)
 
 ---
 
@@ -25,12 +28,73 @@ The unified pipeline converts V2 annotations + images into training-ready JSONL 
 hierarchical descriptions. The processing emphasizes exact coordinate transformations and canonical geometry
 ordering for stable learning signals.
 
-- Core modules:
+- Core modules (under `data_conversion/pipeline/`):
   - `unified_processor.py`: Orchestrates the end-to-end pipeline
   - `coordinate_manager.py`: EXIF orientation → dimension rescaling → smart resize (in that order)
   - `flexible_taxonomy_processor.py`: V2 annotation parsing and hierarchical description generation
   - `validation_manager.py`: Object/sample validation and reporting
   - `vision_process.py`: Smart resize with factor alignment and pixel budget
+
+### Background: Raw Inputs vs. Desired Outputs
+
+| Aspect | Raw export (`raw_ds/.../*.json`) | Desired converted output (`data/{dataset}/all_samples.jsonl`) |
+| --- | --- | --- |
+| Geometry encoding | Mix of `dataList` rectangles, `markResult` quads/lines, inconsistent vertex order | Pure `bbox_2d` / `poly` / `line`, canonicalized, TL→BR ordering |
+| Image orientation | EXIF metadata may rotate pixels without updating annotations | Pixel data normalized (EXIF applied), annotations adjusted to match |
+| Description text | Annotator-provided Chinese strings with optional “显示完整/只显示部分” tokens and occlusion notes | Hierarchical `desc` with sanitized tokens (completeness stripped only from screw attribute slot, remarks preserved) |
+| Object ordering | Whatever the annotation platform emitted | Strict “top-to-bottom then left-to-right” ordering for reproducible prompts |
+| File format | One JSON per image, nested feature structure | Flat JSONL, one line per sample, ready for training splits |
+
+Typical workflow:
+1. Drop the raw export (e.g., `raw_ds/bbu_scene_2.0/...`) under the repo.
+2. Configure `data_conversion/convert_dataset.sh` with paths, resize settings, and sanitization flags.
+3. Run the script to produce `data/{dataset_name}/...` where each JSONL line matches the “Desired converted output” column.
+
+---
+
+## Performance & Parallel Processing
+
+The pipeline supports **multiprocessing** for significant speedup on multi-core systems.
+
+### Configuration
+
+Set the number of parallel workers in `convert_dataset.sh`:
+
+```bash
+# Performance settings
+NUM_WORKERS="8"  # Number of parallel workers (1=sequential, >1=parallel)
+```
+
+**Recommendations:**
+- **Sequential mode** (`NUM_WORKERS="1"`): Use for debugging or small datasets (<100 images)
+- **Parallel mode** (`NUM_WORKERS="4"` to `"8"`): Recommended for production datasets
+  - Set to 4-8 for typical multi-core systems
+  - Higher values may not improve performance due to I/O bottlenecks
+  - Each worker processes images independently with its own validation state
+
+### Expected Speedup
+
+| Workers | Dataset Size | Expected Speedup | Notes |
+|---------|--------------|------------------|-------|
+| 1 | Any | 1x (baseline) | Sequential processing |
+| 4 | 1000+ images | 3-4x | Good balance for most systems |
+| 8 | 5000+ images | 5-7x | Optimal for high-core systems |
+| 16+ | 10000+ images | 6-8x | Diminishing returns due to I/O |
+
+**Performance factors:**
+- Image I/O (reading/writing) is the main bottleneck
+- Coordinate transformations and validation are CPU-bound
+- Progress bar updates in real-time across all workers
+- Memory usage scales linearly with worker count
+
+### Implementation Details
+
+- Uses Python's `multiprocessing.Pool` with `imap_unordered` for efficiency
+- **Worker initialization**: Each worker initializes once and reuses its processor instance across all samples
+  - Avoids repeated initialization overhead (1886 samples → only 8 initializations with 8 workers)
+  - Worker initialization logs are suppressed to reduce console spam (only warnings/errors shown)
+- Post-processing validation runs sequentially after parallel processing
+- Invalid samples are aggregated from all workers for reporting
 
 ---
 
@@ -45,10 +109,7 @@ ordering for stable learning signals.
   - Geometry constraints:
     - `fiber`, `wire` → line geometries
     - `bbu`, `bbu_shield`, `connect_point`, `label` → poly or bbox geometries
-- Optional fixed vocabulary files for teacher pool building (auto-detected):
-  - `data_conversion/attribute_taxonomy.json`
-  - `data_conversion/hierarchical_attribute_mapping.json`
-  - If present, they define a fixed universe of canonical tokens for coverage; otherwise, a simple free-vocabulary fallback is used automatically.
+
 
 ---
 
@@ -77,7 +138,7 @@ ordering for stable learning signals.
   - Enforces geometry constraints and bounds
   - Minimum object size checks (square/bbox)
   - Requires non-empty `desc`
-  - Strips occlusion tokens containing “遮挡” by default (configurable). This property is deprecated and shown to be unhelpful for training, so occlusion words like “有遮挡/无遮挡/挡风板有遮挡” are removed from `desc` during conversion and are excluded from teacher‑pool coverage and selection entirely.
+  - Strips occlusion tokens containing “遮挡” by default (configurable). This property is deprecated and shown to be unhelpful for training, so occlusion words like “有遮挡/无遮挡/挡风板有遮挡” are removed from `desc` during conversion.
   - Standardizes label descriptions (configurable): any `标签/*` with empty-like or non-informative content (e.g., `空格`, `看不清`, `、`, or missing) is normalized to `标签/无法识别`.
   - Records invalid objects/samples for reporting
 
@@ -86,21 +147,42 @@ ordering for stable learning signals.
   - Processes/copies the image to match final transform (EXIF and smart resize)
 
 - Deterministic splitting and exports:
-  - Selects a teacher pool using fixed rules (see below), then splits remaining into train/val
+  - Splits all samples into train/val sets using deterministic random split
   - Writes flat-format JSONL files and summary artifacts
 
-### Teacher Pool Builder (Rule‑Based)
-- Fixed vocabulary mode (default):
-  - Builds a coverage universe from `attribute_taxonomy.json` and `hierarchical_attribute_mapping.json` (excludes any `free_text` fields). Occlusion tokens containing “遮挡” are explicitly excluded from the universe and do not affect coverage scores.
-  - Greedy set‑cover picks samples to maximize token coverage up to `MAX_TEACHERS` with deterministic tie‑breakers: prefer `line` only if fiber/wire tokens remain → brand balancing → geometry novelty → object_count closest to median → lexicographic by image path.
-  - Respects `OBJECT_TYPES` (tokens tied exclusively to filtered‑out types are ignored).
-- Free vocabulary fallback:
-  - Automatically used only if the fixed files are missing. Builds top‑K frequent tokens per object type and geometry and applies the same greedy selection.
-- Emits `teacher_pool.jsonl` and `teacher_pool_stats.json` with coverage metrics (mode, universe size, covered/uncovered units, brand distribution, geometry presence, object_count summary).
+---
+
+## Validation Architecture
+
+The pipeline uses a two-layer validation strategy:
+
+### 1. Object/Sample Validation (ValidationManager)
+- **When:** During sample processing in `process_all_samples()`
+- **What:** Validates individual objects and complete samples
+- **How:** `ValidationManager.validate_sample()` and `filter_valid_objects()`
+- **Output:** Detailed error reports with suggestions; invalid objects/samples tracked for reporting
+- **Behavior:** Strict validation; invalid objects are filtered out, invalid samples can fail-fast or be skipped
+
+### 2. Pipeline-Level Validation (StructureValidator)
+- **When:** After splitting into train/val sets, before writing outputs
+- **What:** Validates train/val split integrity
+- **How:** `StructureValidator.validate_pipeline_output(train_samples, val_samples)`
+- **Checks:**
+  - Training samples are not empty
+  - Validation samples are not empty (unless dataset is very small)
+  - All samples have correct structure (images, objects fields)
+  - No overlapping images between train and validation sets
+- **Behavior:** Lightweight, side-effect free; raises ValueError if validation fails
+
+### Configuration
+- `fail_fast: bool` (default: True) - If True, invalid samples cause pipeline to exit; if False, invalid samples are skipped with warning
+- Validation is always enabled; there is no "validation_mode" configuration
 
 ---
 
 ## Geometry & Coordinate Rules
+
+### Geometry Types
 
 - BBox (`bbox_2d`): `[x_min, y_min, x_max, y_max]` with `x_min < x_max`, `y_min < y_max`
 - Poly (`poly`): Even number of integers representing polygon vertices (minimum 8 for 4-point polygons, extensible to arbitrary number of points)
@@ -111,6 +193,53 @@ ordering for stable learning signals.
     topmost-leftmost among endpoints; reverse the whole sequence if needed
 - All coordinates are clamped within final image bounds and rounded to integers after transforms
 
+### Coordinate Transformation Pipeline (CoordinateManager)
+
+The pipeline applies three transformation stages in strict order to all geometry types:
+
+**Stage 1: EXIF Orientation Compensation**
+- Reads EXIF orientation tag from image file
+- Transforms coordinates if image has rotation/flip metadata (orientations 2-8)
+- Skipped if JSON dimensions already match oriented dimensions
+- Example: Portrait photo stored as landscape with 90° rotation tag
+
+**Stage 2: Dimension Mismatch Rescaling**
+- Compares JSON metadata dimensions (`info.width`, `info.height`) with actual image dimensions
+- Applies proportional scaling if dimensions differ
+- Common when images are pre-processed but annotations are not updated
+- Example: JSON says 1920x1080, but actual image is 960x540 (downscaled by 0.5x)
+
+**Stage 3: Smart Resize Scaling**
+- Resizes image to fit within `max_pixels` constraint (e.g., 786432 for 768*32*32)
+- Maintains aspect ratio to avoid distortion
+- Ensures dimensions are multiples of `image_factor` (e.g., 32 for model requirements)
+- Scales coordinates proportionally to match resized image
+- Example: 1920x1080 → 896x512 (within pixel budget, factor=32)
+
+**API Usage:**
+```python
+# Primary entry point - applies all three stages
+bbox, transformed_geom, final_w, final_h = CoordinateManager.transform_geometry_complete(
+    geometry_input=obj["poly"],  # or obj["bbox_2d"], obj["line"]
+    image_path=Path("image.jpg"),
+    json_width=1920,
+    json_height=1080,
+    smart_resize_factor=32,
+    max_pixels=786432,
+    enable_smart_resize=True
+)
+
+# Validate after transformation
+if not CoordinateManager.validate_geometry_bounds(transformed_geom, final_w, final_h):
+    logger.warning("Invalid geometry - out of bounds")
+```
+
+**Key Properties:**
+- All transformations are deterministic and stateless
+- Coordinates are clamped to image bounds after each stage
+- Works with all geometry types (bbox, poly, line, GeoJSON)
+- Individual stages can be used separately for advanced use cases
+
 ---
 
 ## Outputs
@@ -120,9 +249,7 @@ Directory for each processed dataset (example shown as `data/{dataset_name}/`):
 ```
 train.jsonl            # Training samples (flat)
 val.jsonl              # Validation samples (flat)
-teacher_pool.jsonl     # Teacher pool (flat)
-teacher_pool_stats.json# Teacher pool coverage statistics
-all_samples.jsonl      # Combined flat samples (teacher + train + val)
+all_samples.jsonl      # Combined flat samples (train + val)
 label_vocabulary.json  # Aggregated labels and statistics
 validation_report.json # Summary + counts of invalid objects/samples
 invalid_objects.jsonl  # Per-object validation failures (detailed)

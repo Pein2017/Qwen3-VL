@@ -4,13 +4,20 @@ This document describes the robust geometry-preserving augmentation system for Q
 
 ## Overview
 
-The augmentation pipeline handles 3 geometry types (bbox, quad, polyline) with proper coordinate transforms, clipping, and canvas expansion to prevent cropping artifacts during rotation.
+The augmentation pipeline handles 3 geometry types (bbox, poly, polyline) with proper coordinate transforms, clipping, and canvas expansion to prevent cropping artifacts during rotation.
+
+### Source-Aware Augmentation Control
+
+- Define `custom.augment_sources` in your training config (e.g., `["bbu"]`) to specify which dataset names may be augmented. The loader tags every record with `metadata.dataset` (BBU records default to `"bbu"`) so the `AugmentationPreprocessor` can skip auxiliary sources gracefully. This keeps general-domain detection samples clean while allowing rich geometry transforms for the target domain.
+- When `metadata.dataset` is not listed, the preprocessor returns the record untouched (no geometry transforms, no cropping, no coverage filtering) while still honoring curriculum state for the rest of the batch.
+- The same source metadata drives template selection/telemetry in the fusion pipeline described in [DATA_AND_DATASETS.md](DATA_AND_DATASETS.md).
+- Poly fallback (`poly_fallback: bbox_2d`) takes effect before augmentation, so the pipeline still sees a single geometry field (`bbox_2d`) even though the source JSONL originally contained polygons.
 
 ## Key Features
 
 ### ✅ **Robust Rotation Without Cropping**
 - Canvas automatically expands to contain full rotated image
-- Geometry quads align perfectly with visual content
+- Geometry polygons align perfectly with visual content
 - No training on partially-cropped objects
 
 ### ✅ **Safety Limits**
@@ -23,10 +30,10 @@ The augmentation pipeline handles 3 geometry types (bbox, quad, polyline) with p
 - Centralized geometry transform logic (no duplication)
 - <1% performance overhead
 
-### ✅ **Smart Cropping with Label Filtering** 🆕 *(v1.1 - Oct 2025)*
+-### ✅ **Smart Cropping with Label Filtering** 🆕 *(v1.1 - Oct 2025)*
 - Automatic object filtering based on visibility (min_coverage threshold)
-- Geometry truncation at crop boundaries (bbox/quad/line)
-- Polygon-aware coverage for quads (Sutherland–Hodgman clipping plus shoelace area computation) to avoid elongated false positives
+- Geometry truncation at crop boundaries (bbox/poly/line)
+- Polygon-aware coverage for polygons (Sutherland–Hodgman clipping plus shoelace area computation) to avoid elongated false positives
 - Completeness field updates: `显示完整` → `只显示部分` for partially visible objects (structured metadata supported)
 - Skip conditions: preserves dense scenes (<4 objects) and line objects (cables/fibers)
 - Perfect visual-label alignment for dense detection captioning
@@ -60,17 +67,17 @@ The augmentation pipeline handles 3 geometry types (bbox, quad, polyline) with p
 **What Changed**:
 - Added `RandomCrop` operator with automatic label filtering and geometry truncation
 - Removed redundant operators: `CenterCrop` (use RandomCrop with fixed scale), `Equalize` (use AutoContrast)
-- Fixed quad rotation preservation (no unnecessary AABB conversion for quads inside canvas)
+- Fixed polygon rotation preservation (no unnecessary AABB conversion for polygons inside canvas)
 - Enhanced visualization script with extreme testing mode for all augmentation operations
 
-**v1.1.1 Patch (Same Day)**: Refined quad truncation for rotate+crop scenarios
+**v1.1.1 Patch (Same Day)**: Refined polygon truncation for rotate+crop scenarios
 - Added `simplify_polygon()` to remove redundant vertices from axis-aligned clipping
-- Added `choose_four_corners()` to select true quad corners before AABB fallback
-- Result: Rotated quads maintain rotation after crop, with accurate boundary intersections
+- Added `choose_four_corners()` to select true polygon corners before AABB fallback
+- Result: Rotated polygons maintain rotation after crop, with accurate boundary intersections
 
 **Key Capabilities**:
 1. **Coverage-based filtering**: Objects <30% visible are dropped from GT
-2. **Geometry truncation**: Bbox/quad/line clipped to crop boundaries
+2. **Geometry truncation**: Bbox/poly/line clipped to crop boundaries
 3. **Completeness tracking**: Automatic `显示完整` ↔ `只显示部分` updates based on coverage (including `attributes.completeness` when present)
 4. **Smart skip conditions**: Preserves dense scenes (<4 objects) and line objects; emits telemetry on skip reasons
 
@@ -94,9 +101,9 @@ The augmentation pipeline handles 3 geometry types (bbox, quad, polyline) with p
 **Status**: ✅ Deployed  
 **Change ID**: `2025-10-28-dense-augmentation-telemetry`
 
-**What Changed**:
+- **What Changed**:
 - Pixel-cap enforcement re-runs after 32× alignment and rounds down to the nearest legal multiple, guaranteeing `max_pixels` is never exceeded.
-- RandomCrop now measures quads via polygon clipping (shoelace area computation) rather than AABB overlap.
+- RandomCrop now measures polygons via polygon clipping (shoelace area computation) rather than AABB overlap.
 - Completeness updates propagate to structured metadata fields (`attributes.completeness`, `attributes.完整性`), with debug logging when replacements are skipped.
 - Compose skips redundant identity warps; telemetry captures padding ratios, crop skip reasons, and kept-object coverage summaries via logger `augmentation.telemetry`.
 - Regression tests cover pixel-cap enforcement (including identity alignment) and polygon coverage edge cases.
@@ -128,12 +135,6 @@ custom:
       - name: scale
         params: { lo: 1.1, hi: 1.4, prob: 0.25 }
       
-      # Barrier: expand canvas to fit transforms, pad to 32-multiple
-      - name: expand_to_fit_affine
-        params: 
-          multiple: 32
-          max_pixels: 921600  # 960×960, adjust for your GPU memory
-      
       # Resolution changes (barrier, changes canvas size)
       - name: resize_by_scale
         params: { lo: 0.75, hi: 1.2, align_multiple: 32, prob: 0.7 }
@@ -143,6 +144,13 @@ custom:
         params: { brightness: [0.75, 1.25], contrast: [0.75, 1.25], prob: 0.5 }
       - name: gamma
         params: { gamma: [0.8, 1.3], prob: 0.3 }
+      
+      # ✅ Final padding: MUST be last to ensure all images are multiple of 32
+      # Applied after all size-changing operations to guarantee final alignment
+      - name: expand_to_fit_affine
+        params: 
+          multiple: 32
+          max_pixels: 921600  # 960×960, adjust for your GPU memory
 ```
 
 ### Clean Sample Preservation (`bypass_prob`)
@@ -155,12 +163,48 @@ Set `bypass_prob` to preserve a percentage of training samples without any augme
 
 Clean samples help prevent overfitting to augmented patterns and maintain model familiarity with original data. Validation data is always clean regardless of this setting.
 
+### Curriculum Scheduling (`custom.augmentation.curriculum`)
+
+You can gradually intensify augmentation by adding a `curriculum` block to your augmentation config. The scheduler operates on training **progress** and linearly interpolates `bypass_prob` plus any numeric operator fields (probabilities or two-element ranges) between phase boundaries. Prefer percent milestones (`until_percent`) so schedules stay stable when batch size or accumulation changes; absolute steps (`until_step`) remain available.
+
+```yaml
+custom:
+  augmentation:
+    enabled: true
+    bypass_prob: 0.05
+    ops:
+      - name: rotate
+        params: { max_deg: 8.0, prob: 0.1 }
+    curriculum:
+      phases:
+        - until_percent: 20    # 20% of total training steps
+          bypass_prob: 0.1
+          ops:
+            rotate:
+              prob: 0.3
+              max_deg: 10.0
+        - until_percent: 50    # halfway point
+          bypass_prob: 0.2
+          ops:
+            rotate:
+              prob: 0.5
+              max_deg: 12.0
+```
+
+Each phase declares a target `bypass_prob` and overrides for numeric op parameters. Between milestones, the scheduler interpolates linearly from the previous target to the next, then holds the final targets for all later steps. Repeat targets across consecutive phases for piecewise-constant behavior.
+
+Curriculum validation happens before training: non-monotonic milestones, unknown op names, or overriding non-numeric fields abort training. Operators without numeric parameters are ignored by the scheduler. Percent milestones require total steps from the trainer (resolved automatically); mixing steps and percents in one curriculum is disallowed.
+
+No additional logging is emitted by default; the training loop applies the shared state inside the `AugmentationPreprocessor` so all dataloader workers see the same effective values.
+
 ### Order Matters!
 
 1. **Affine ops** (hflip, vflip, rotate, scale) - accumulated
-2. **expand_to_fit_affine** - AFTER geometric ops, BEFORE resize
-3. **resize_by_scale** - changes dimensions again
-4. **Color ops** - applied last (don't affect geometry)
+2. **Size-changing barriers** (random_crop, resize_by_scale) - flush affines, change dimensions
+3. **Color ops** - applied after size changes (don't affect geometry)
+4. **expand_to_fit_affine** - **MUST be last** to ensure final padding to multiple of 32
+
+**Important**: `expand_to_fit_affine` should be placed at the **end** of the pipeline (after all size-changing operations) to guarantee that all images are padded to a multiple of 32. This ensures compatibility with Qwen3-VL's ViT requirements. If placed earlier, subsequent operations like `random_crop` or `resize_by_scale` may break the 32× alignment.
 
 ## Operator Types
 
@@ -186,6 +230,9 @@ Clean samples help prevent overfitting to augmented patterns and maintain model 
 - Deferred until after all affines flushed
 - Applied to images only (geometry unchanged)
 - Efficient: no redundant warps
+
+**Configuration Notes**:
+- **CLAHE**: `tile_grid_size` accepts a list `[8, 8]` in YAML (automatically converted to tuple internally). Both list and tuple formats are supported.
 
 ### 3. Barrier Operators (`kind="barrier"`)
 **Examples**: `ExpandToFitAffine`, `ResizeByScale`, `PadToMultiple`
@@ -390,9 +437,9 @@ augmentation strength.
 
 ## Geometry Transform Rules
 
-### BBox → Quad Promotion
+### BBox → Polygon Promotion
 Under **general affines** (rotation, shear, non-uniform scale):
-- BBox converted to 4-point Quad
+- BBox converted to 4-point polygon
 - All 4 corners transformed
 - Clipped with Sutherland-Hodgman
 - Enforced clockwise order
@@ -402,11 +449,11 @@ Under **axis-aligned affines** (flips, uniform scale):
 - Coordinates transformed directly
 - Min/max envelope maintained
 
-### Quad Handling
+### Polygon Handling
 - Always 8 floats (4 points in clockwise order)
 - All vertices transformed by affine
 - Clipped to image bounds
-- If clipped to non-quad shape, fitted with minimum-area rectangle
+- If clipped to non-polygon shape, fitted with minimum-area rectangle
 
 ### Polyline (Line) Handling
 - Variable-length point sequence
@@ -456,7 +503,7 @@ conda run -n ms python -m pytest tests/augmentation/ tests/test_augmentation_geo
 - ✅ Rotation with canvas expansion
 - ✅ Mixed affines (rotate + scale + flip)
 - ✅ Pixel limit enforcement
-- ✅ Geometry type preservation (bbox/quad/line)
+- ✅ Geometry type preservation (bbox/poly/line)
 - ✅ Determinism and bounds checking
 
 ### Visualization
@@ -476,14 +523,21 @@ Outputs to `vis_out/augment_stage3_exact/` showing original vs augmented with ov
 3. Increase `max_pixels` if GPU memory allows
 
 ### Geometry not aligning with image
-**Cause**: Missing `expand_to_fit_affine` after rotation
-**Fix**: Add barrier op after geometric transforms:
+**Cause**: Missing `expand_to_fit_affine` after rotation, or placed in wrong position
+**Fix**: Add `expand_to_fit_affine` at the **end** of the pipeline (after all size-changing operations):
 ```yaml
 - name: rotate
   params: { max_deg: 25.0, prob: 0.4 }
-- name: expand_to_fit_affine
+- name: random_crop
+  params: { scale: [0.7, 1.0], prob: 0.3 }
+- name: resize_by_scale
+  params: { lo: 0.9, hi: 1.1, prob: 0.5 }
+# ... color ops ...
+- name: expand_to_fit_affine  # MUST be last
   params: { multiple: 32 }
 ```
+
+**Note**: Placing `expand_to_fit_affine` before size-changing operations (like `random_crop` or `resize_by_scale`) will cause the final image to not be a multiple of 32, breaking ViT requirements.
 
 ### OOM during training
 **Cause**: max_pixels too high or packing disabled
@@ -596,21 +650,28 @@ Outputs to `vis_out/augment_stage3_exact/` showing original vs augmented with ov
 ```
 
 ### Crop with rotation produces unexpected results
-**Cause**: Crop applied BEFORE rotation (wrong order)
+**Cause**: Crop applied BEFORE rotation (wrong order), or `expand_to_fit_affine` placed incorrectly
 
-**Fix**: Always apply crop AFTER affine transforms:
+**Fix**: Apply crop AFTER affine transforms, and place `expand_to_fit_affine` at the END:
 ```yaml
 # CORRECT order:
 - name: rotate
   params: { max_deg: 25.0, prob: 0.4 }
-- name: expand_to_fit_affine  # Flush affines
-  params: { multiple: 32 }
-- name: random_crop           # Then crop
+- name: random_crop           # After affines, before final padding
   params: { scale: [0.7, 1.0], prob: 0.3 }
+- name: resize_by_scale
+  params: { lo: 0.9, hi: 1.1, prob: 0.5 }
+# ... color ops ...
+- name: expand_to_fit_affine  # MUST be last for final 32× padding
+  params: { multiple: 32 }
 
 # WRONG order (crop before rotation):
 # - name: random_crop
 # - name: rotate  # Will re-crop rotated content!
+
+# WRONG order (expand_to_fit_affine too early):
+# - name: expand_to_fit_affine  # Too early!
+# - name: resize_by_scale       # Breaks 32× alignment
 ```
 
 ## Implementation Reference
@@ -785,5 +846,41 @@ python vis_tools/vis_augment_compare.py
 
 ---
 
-**Last Updated**: 2025-10-27 (v1.1.2)
+## Recent Updates
 
+### November 2025: Final Padding Placement & Type Safety (v1.1.3)
+**Status**: ✅ Deployed  
+**Change ID**: `2025-11-19-final-padding-placement`
+
+**What Changed**:
+- `expand_to_fit_affine` must now be placed at the **end** of the augmentation pipeline (after all size-changing operations) to guarantee final padding to multiple of 32
+- Added explicit integer type conversions for PIL operations (prevents float dimension errors)
+- Enhanced CLAHE configuration validation (accepts list or tuple for `tile_grid_size`)
+
+**Why This Matters**:
+- Placing `expand_to_fit_affine` before size-changing operations (like `random_crop` or `resize_by_scale`) breaks the 32× alignment requirement
+- Final padding ensures all images are compatible with Qwen3-VL's ViT requirements
+- Type safety fixes prevent runtime errors from float dimensions in PIL operations
+
+**Migration Guide**:
+If your config has `expand_to_fit_affine` before size-changing operations, move it to the end:
+```yaml
+# OLD (incorrect):
+- name: expand_to_fit_affine
+  params: { multiple: 32 }
+- name: resize_by_scale
+  params: { lo: 0.9, hi: 1.1, prob: 0.5 }
+
+# NEW (correct):
+- name: resize_by_scale
+  params: { lo: 0.9, hi: 1.1, prob: 0.5 }
+# ... color ops ...
+- name: expand_to_fit_affine  # MUST be last
+  params: { multiple: 32 }
+```
+
+**Impact**: Ensures consistent 32× alignment across all training samples, preventing dimension-related errors.
+
+---
+
+**Last Updated**: 2025-11-19 (v1.1.3)

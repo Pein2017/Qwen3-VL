@@ -1,0 +1,194 @@
+extends: ../base.yaml
+
+# Stage 1.5: Fully tune LAST-2 Vision blocks (25-26), LLM last-1 layer (35), and all aligner layers
+
+model:
+  # Point to stage 2 best checkpoint - will load base model + LLM LoRA
+  model: output/11-17/stage_1/v2-20251117-124945/eff_batch_32-epoch_6-lr_1e-4-kd_0.1/checkpoint-414
+
+
+tuner:
+  train_type: full
+  freeze_llm: true      # Freeze LLM by default, will unfreeze layer 35 via trainable_parameters_regex
+  freeze_vit: true      # Freeze ViT by default, will unfreeze blocks 25-26 via trainable_parameters_regex
+  freeze_aligner: true  # Freeze aligner by default, will unfreeze via trainable_parameters_regex
+  # trainable_parameters_regex has higher priority than freeze_* flags
+  # Fully tune: LLM layer 35, Vision blocks 25-26, and all aligner modules
+  trainable_parameters_regex: '^(?:model\.)?(?:language_model\.layers\.35|visual\.blocks\.(?:25|26)|visual\.(?:merger|deepstack_merger_list\.\d+))'
+
+rlhf:
+  rlhf_type: gkd
+  # Use a stable, cached teacher checkpoint; tests assert this lives under
+  # ``model_cache/`` and is distinct from the student path.
+  teacher_model: output/11-17/stage_1/v2-20251117-124945/eff_batch_32-epoch_6-lr_1e-4-kd_0.1/checkpoint-414
+  sft_alpha: 1.0
+  llm_kd_weight: 0.01
+  seq_kd: false
+  lmbda: 0.0
+
+training:
+  # Paths and naming
+  output_dir: ./output/11-18/stage_1.5
+  run_name: all_tuned-weak_aug-lrs_2_0.5_0.5-llm_kd_0.01-vision_kd_0.1
+
+  # Epochs and batch sizes
+  num_train_epochs: 6
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 2
+  # Auto-calculated from effective_batch_size, per_device_train_batch_size, and world_size
+  # gradient_accumulation_steps: 8  # Commented out - now auto-calculated
+  effective_batch_size: 32  # Will auto-calculate gradient_accumulation_steps to maintain this effective batch size
+  
+  # Optimizer and learning rates
+  optimizer: multimodal
+  learning_rate: 2.0e-4  
+  vit_lr: 0.5e-4          
+  aligner_lr: 0.5e-4     
+  
+  lr_scheduler_kwargs:
+    min_lr: 1.0e-6
+  
+  # Training flags
+  packing: true
+  weight_decay: 0.1
+  warmup_ratio: 0.1
+  add_version: true
+  save_safetensors: true
+  
+  # Eval and checkpointing
+  eval_strategy: steps
+  save_strategy: best
+  eval_steps: 40
+  save_steps: 10
+  save_total_limit: 4
+  save_delay_steps: 250
+  
+  # Logging
+  logging_dir: ./tb/11-18/stage_1.5
+  logging_steps: 10
+  logging_first_step: true
+
+data:
+  dataset_num_proc: 8
+  dataloader_num_workers: 16
+  dataloader_pin_memory: true
+  dataloader_prefetch_factor: 4
+
+deepspeed:
+  enabled: true
+  config: zero2
+
+custom:
+  trainer_variant: gkd_monitor
+  visual_kd:
+    enabled: true
+    vit:
+      enabled: true
+      weight: 0.1
+      distance: cosine
+    aligner:
+      enabled: true
+      weight: 0.1  # Heavier anchor on vision/aligner (0.1-0.2 typical). Lower if visuals overfit.
+      distance: cosine
+    deepstack:
+      enabled: true
+      weight: 0.1
+      distance: cosine
+  emit_norm: norm1000
+  dump_conversation_text: false
+  # Augmentation pipeline (training only). Eval remains unchanged.
+  # Soft augmentation: lower probabilities and less aggressive transforms
+  augmentation:
+    enabled: true
+    bypass_prob: 0.30        # initial clean share
+    ops:
+      - name: hflip
+        params: { prob: 0.20 }
+      - name: vflip
+        params: { prob: 0.05 }
+      - name: rotate
+        params: { max_deg: 10.0, prob: 0.15 }
+      - name: expand_to_fit_affine
+        params: { multiple: 32 }
+      - name: random_crop
+        params:
+          scale: [0.90, 1.00]
+          aspect_ratio: [0.95, 1.05]
+          min_coverage: 0.40
+          completeness_threshold: 0.95
+          min_objects: 4
+          skip_if_line: true
+          prob: 0.08
+      - name: resize_by_scale
+        params: { lo: 0.98, hi: 1.05, align_multiple: 32, prob: 0.30 }
+      - name: color_jitter
+        params: { brightness: [0.95, 1.05], contrast: [0.95, 1.05], saturation: [0.95, 1.05], prob: 0.15 }
+      - name: gamma
+        params: { gamma: [0.95, 1.05], prob: 0.08 }
+      - name: hsv
+        params: { hue_delta_deg: [-3, 3], sat: [0.98, 1.02], val: [0.98, 1.02], prob: 0.08 }
+      - name: clahe
+        params: { clip_limit: 1.5, tile_grid_size: [8, 8], prob: 0.05 }
+      - name: auto_contrast
+        params: { cutoff: 0, prob: 0.04 }
+      - name: sharpness
+        params: { factor: [0.95, 1.08], prob: 0.08 }
+
+    curriculum:
+      phases:
+        - until_percent: 20     # first 20% of training
+          bypass_prob: 0.20
+          ops:
+            rotate:
+              prob: 0.20
+              max_deg: 12.0
+            random_crop:
+              prob: 0.10
+              scale: [0.90, 0.98]
+            resize_by_scale:
+              prob: 0.35
+              lo: 0.97
+              hi: 1.06
+
+        - until_percent: 50     # midpoint
+          bypass_prob: 0.12
+          ops:
+            rotate:
+              prob: 0.25
+              max_deg: 14.0
+            random_crop:
+              prob: 0.13
+              scale: [0.88, 0.98]
+            resize_by_scale:
+              prob: 0.40
+              lo: 0.96
+              hi: 1.07
+            color_jitter:
+              prob: 0.18
+              brightness: [0.93, 1.07]
+              contrast: [0.93, 1.07]
+              saturation: [0.93, 1.07]
+
+        - until_percent: 100    # final plateau
+          bypass_prob: 0.08
+          ops:
+            rotate:
+              prob: 0.30
+              max_deg: 16.0
+            random_crop:
+              prob: 0.15
+              scale: [0.86, 0.98]
+            resize_by_scale:
+              prob: 0.45
+              lo: 0.95
+              hi: 1.08
+            color_jitter:
+              prob: 0.22
+              brightness: [0.92, 1.08]
+              contrast: [0.92, 1.08]
+              saturation: [0.92, 1.08]
+            hsv:
+              prob: 0.10
+              hue_delta_deg: [-4, 4]
+              sat: [0.97, 1.03]
+              val: [0.97, 1.03]

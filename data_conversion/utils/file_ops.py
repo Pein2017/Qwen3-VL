@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from PIL import Image
+from PIL import Image, ImageOps
 
 
 # Configure UTF-8 encoding for stdout/stderr if supported
@@ -98,12 +98,20 @@ class FileOperations:
 
     @staticmethod
     def get_image_dimensions(image_path: Path) -> Tuple[int, int]:
-        """Get image dimensions (width, height)."""
+        """Get EXIF-aware image dimensions (width, height).
+
+        We transpose the image using EXIF metadata so that reported dimensions
+        match the pixel orientation used by downstream geometry/resize logic.
+        """
         try:
             with Image.open(image_path) as img:
                 if img is None:
                     raise ValueError(f"Failed to open image: {image_path}")
-                return img.size
+
+                oriented = ImageOps.exif_transpose(img)
+                if oriented is None:
+                    oriented = img
+                return oriented.size
         except Exception as e:
             logger.error(f"Error getting dimensions for {image_path}: {e}")
             raise
@@ -144,31 +152,6 @@ class FileOperations:
                 f.write(json.dumps(sample, ensure_ascii=False) + "\n")
 
         logger.info(f"Written {len(samples)} samples to {output_path}")
-
-    @staticmethod
-    def load_label_hierarchy(hierarchy_path: Path) -> Dict[str, List[str]]:
-        """Load label hierarchy from JSON file."""
-        try:
-            with open(hierarchy_path, "r", encoding="utf-8") as f:
-                hierarchy = json.load(f)
-
-            # Validate structure
-            if not isinstance(hierarchy, dict):
-                raise ValueError(f"Invalid hierarchy format in {hierarchy_path}")
-
-            # Ensure all values are lists
-            for key, value in hierarchy.items():
-                if not isinstance(value, list):
-                    hierarchy[key] = []
-
-            logger.info(f"Loaded label hierarchy with {len(hierarchy)} categories")
-            return hierarchy
-
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Invalid JSON format in {hierarchy_path}: {e}")
-        except Exception as e:
-            logger.error(f"Error loading hierarchy {hierarchy_path}: {e}")
-            raise
 
     @staticmethod
     def load_token_map(token_map_path: Path) -> Dict[str, str]:

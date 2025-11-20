@@ -7,9 +7,9 @@ from typing import Any, Dict, List, Optional, Set
 
 import yaml
 from swift.llm.argument import RLHFArguments, TrainArguments
+from swift.utils import get_dist_setting
 
 from .prompts import (
-    SYSTEM_PROMPT_JSON,
     SYSTEM_PROMPT_SUMMARY,
     USER_PROMPT_JSON,
     USER_PROMPT_SUMMARY,
@@ -216,9 +216,7 @@ class ConfigLoader:
             try:
                 llm_kd_weight = float(llm_kd_weight_raw)
             except (TypeError, ValueError) as exc:
-                raise ValueError(
-                    "rlhf.llm_kd_weight must be a numeric value"
-                ) from exc
+                raise ValueError("rlhf.llm_kd_weight must be a numeric value") from exc
             if not math.isfinite(llm_kd_weight):
                 raise ValueError(
                     f"rlhf.llm_kd_weight must be finite, got {llm_kd_weight_raw!r}"
@@ -236,6 +234,56 @@ class ConfigLoader:
         else:
             save_last_epoch = ConfigLoader._coerce_bool(
                 save_last_epoch_raw, "training.save_last_epoch"
+            )
+
+        # Auto-calculate gradient_accumulation_steps from effective_batch_size
+        effective_batch_size = training_section.pop("effective_batch_size", None)
+        if effective_batch_size is not None:
+            try:
+                effective_batch_size = int(effective_batch_size)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    "training.effective_batch_size must be an integer"
+                ) from exc
+            if effective_batch_size <= 0:
+                raise ValueError(
+                    f"training.effective_batch_size must be > 0, got {effective_batch_size}"
+                )
+
+            per_device_train_batch_size = training_section.get(
+                "per_device_train_batch_size", 1
+            )
+            try:
+                per_device_train_batch_size = int(per_device_train_batch_size)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    "training.per_device_train_batch_size must be an integer"
+                ) from exc
+            if per_device_train_batch_size <= 0:
+                raise ValueError(
+                    f"training.per_device_train_batch_size must be > 0, got {per_device_train_batch_size}"
+                )
+
+            # Get world_size (number of GPUs) from environment
+            _, _, world_size, _ = get_dist_setting()
+            if world_size <= 0:
+                world_size = 1
+
+            # Calculate gradient_accumulation_steps
+            # Formula: effective_batch_size = per_device_train_batch_size × world_size × gradient_accumulation_steps
+            denominator = per_device_train_batch_size * world_size
+            gradient_accumulation_steps = max(
+                1, math.ceil(effective_batch_size / denominator)
+            )
+            training_section["gradient_accumulation_steps"] = (
+                gradient_accumulation_steps
+            )
+
+            logger.info(
+                f"Auto-calculated gradient_accumulation_steps={gradient_accumulation_steps} "
+                f"from effective_batch_size={effective_batch_size}, "
+                f"per_device_train_batch_size={per_device_train_batch_size}, "
+                f"world_size={world_size}"
             )
 
         if config.global_max_length is not None:

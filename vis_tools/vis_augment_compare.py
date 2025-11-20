@@ -141,8 +141,8 @@ def _geom_to_objects(
             desc = descs[idx] or ""
         if 'bbox_2d' in g:
             objs.append({'type': 'bbox_2d', 'points': g['bbox_2d'], 'desc': desc or 'bbox_2d'})
-        elif 'quad' in g:
-            objs.append({'type': 'quad', 'points': g['quad'], 'desc': desc or 'quad'})
+        elif 'poly' in g:
+            objs.append({'type': 'poly', 'points': g['poly'], 'desc': desc or 'poly'})
         elif 'line' in g:
             objs.append({'type': 'line', 'points': g['line'], 'desc': desc or 'line'})
     return objs
@@ -275,8 +275,8 @@ def visualize_samples(cfg: VisConfig) -> None:
             g: Dict[str, Any] = {}
             if o.get('bbox_2d') is not None:
                 g['bbox_2d'] = o['bbox_2d']
-            if o.get('quad') is not None:
-                g['quad'] = o['quad']
+            if o.get('poly') is not None:
+                g['poly'] = o['poly']
             if o.get('line') is not None:
                 g['line'] = o['line']
             if g:

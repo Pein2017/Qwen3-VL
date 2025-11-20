@@ -42,20 +42,20 @@ def main() -> None:
     # Configuration (edit these)
 
     # model_path = "output/summary_merged/10-25-aug_on-full_last2_llm"
-    model_path = "output/11-10/stage_3_gkd_merged_small_lrs-good/checkpoint-690"
+    model_path = "output/11-19/stage_1.5_merged/epoch_30-lrs_4_2_8-from_base-checkpoint-2070"
 
     image_paths = [
         # "demo/images/QC-20230106-0000211_16517.jpeg",
         # "demo/images/QC-20230106-0000211_16519.jpeg",
-        "demo/images/test_demo.jpg",
+        # "demo/images/test_demo.jpg",
         # ]
-        # "demo/irrelevant_images/QC-TEMP-20241028-0015135_4206555.jpeg",
+        "demo/irrelevant_images/QC-TEMP-20241028-0015135_4206555.jpeg",
         # "demo/irrelevant_images/QC-TEMP-20241028-0015135_4206556.jpeg",
         # "demo/irrelevant_images/QC-TEMP-20241028-0015135_4206715.jpeg",
     ]
-    prompt = "请介绍图片的内容，提取出所有文字"
-    max_new_tokens = 1024
-    temperature = 0.01
+    prompt = "请详细介绍图片的内容"
+    max_new_tokens = 512
+    temperature = 0.001
     top_p = 0.9
     top_k = None
     repetition_penalty = 1.1
