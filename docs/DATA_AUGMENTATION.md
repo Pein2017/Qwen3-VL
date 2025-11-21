@@ -8,10 +8,10 @@ The augmentation pipeline handles 3 geometry types (bbox, poly, polyline) with p
 
 ### Source-Aware Augmentation Control
 
-- Define `custom.augment_sources` in your training config (e.g., `["bbu"]`) to specify which dataset names may be augmented. The loader tags every record with `metadata.dataset` (BBU records default to `"bbu"`) so the `AugmentationPreprocessor` can skip auxiliary sources gracefully. This keeps general-domain detection samples clean while allowing rich geometry transforms for the target domain.
-- When `metadata.dataset` is not listed, the preprocessor returns the record untouched (no geometry transforms, no cropping, no coverage filtering) while still honoring curriculum state for the rest of the batch.
-- The same source metadata drives template selection/telemetry in the fusion pipeline described in [DATA_AND_DATASETS.md](DATA_AND_DATASETS.md).
-- Poly fallback (`poly_fallback: bbox_2d`) takes effect before augmentation, so the pipeline still sees a single geometry field (`bbox_2d`) even though the source JSONL originally contained polygons.
+- **Target-domain wrappers (e.g., `bbu`, `rru`)** attach the configured augmentation pipeline and curriculum scheduler. Every record flowing through those datasets is eligible for geometry/color transforms.
+- **Source-domain wrappers (e.g., `coco`, `lvis`, `objects365`, `flickr3k`)** default to clean images—`MultiSourceFusionDataset` simply omits the augmentation preprocessor for those datasets so auxiliary samples stay untouched.
+- Wrappers can override this behavior via `params.augmentation_enabled`/`params.curriculum_enabled` if a particular dataset should opt into augmentation.
+- Poly fallback (`poly_fallback: bbox_2d`) still occurs before augmentation, ensuring each object exposes exactly one geometry field even if the source JSONL shipped polygons originally.
 
 ## Key Features
 

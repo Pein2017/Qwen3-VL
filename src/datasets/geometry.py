@@ -11,7 +11,25 @@ def _pair_points(points: Sequence[float]) -> List[Tuple[float, float]]:
 
 
 def points_to_xyxy(points: Sequence[float]) -> List[float]:
-    """Compute [x1,y1,x2,y2] that encloses arbitrary points (bbox, poly, or line)."""
+    """
+    Compute [x1,y1,x2,y2] axis-aligned bounding box that encloses arbitrary points.
+
+    This is the canonical function for converting polygon or line points to bbox_2d format.
+    Used throughout the codebase for poly-to-bbox conversion (e.g., in fusion pipeline
+    when poly_max_points threshold is exceeded).
+
+    Args:
+        points: Flat list of coordinates [x0, y0, x1, y1, ..., xn, yn]
+
+    Returns:
+        [x1, y1, x2, y2] where (x1, y1) is top-left and (x2, y2) is bottom-right
+
+    Examples:
+        >>> points_to_xyxy([10, 20, 30, 40, 50, 60])
+        [10.0, 20.0, 50.0, 60.0]
+        >>> points_to_xyxy([100, 50, 150, 100, 120, 80])
+        [100.0, 50.0, 150.0, 100.0]
+    """
     pts = _pair_points(points)
     xs = [p[0] for p in pts]
     ys = [p[1] for p in pts]
@@ -590,7 +608,9 @@ class BBox:
             ys = pts[1::2]
             return BBox(min(xs), min(ys), max(xs), max(ys))
         if len(pts) % 2 != 0:
-            raise ValueError(f"Transformed polygon points must be even-length, got {len(pts)}")
+            raise ValueError(
+                f"Transformed polygon points must be even-length, got {len(pts)}"
+            )
         return Polygon(tuple(pts))  # type: ignore[arg-type]
 
 
@@ -621,7 +641,9 @@ def geometry_from_dict(g: Dict[str, Any]) -> Union[BBox, Polygon, Polyline]:
     if "poly" in g:
         pts = tuple(float(v) for v in g["poly"])
         if len(pts) < 8 or len(pts) % 2 != 0:
-            raise ValueError(f"poly must contain >=8 floats with even length, got {len(pts)}")
+            raise ValueError(
+                f"poly must contain >=8 floats with even length, got {len(pts)}"
+            )
         return Polygon(pts)  # type: ignore[arg-type]
     if "line" in g:
         pts = tuple(float(v) for v in g["line"])
@@ -640,8 +662,8 @@ def get_aabb(geom: Dict[str, Any]) -> List[float]:
     Get axis-aligned bounding box [x1, y1, x2, y2] from any geometry type.
 
     For bbox_2d: returns the bbox directly
-    For poly: computes min/max from polygon points
-    For line: computes min/max from line points
+    For poly: computes min/max from polygon points using points_to_xyxy
+    For line: computes min/max from line points using points_to_xyxy
 
     Returns:
         [x1, y1, x2, y2] where x1 <= x2 and y1 <= y2
@@ -649,15 +671,9 @@ def get_aabb(geom: Dict[str, Any]) -> List[float]:
     if "bbox_2d" in geom:
         return list(map(float, geom["bbox_2d"]))
     elif "poly" in geom:
-        pts = geom["poly"]
-        xs = [float(pts[i]) for i in range(0, len(pts), 2)]
-        ys = [float(pts[i]) for i in range(1, len(pts), 2)]
-        return [min(xs), min(ys), max(xs), max(ys)]
+        return points_to_xyxy(geom["poly"])
     elif "line" in geom:
-        pts = geom["line"]
-        xs = [float(pts[i]) for i in range(0, len(pts), 2)]
-        ys = [float(pts[i]) for i in range(1, len(pts), 2)]
-        return [min(xs), min(ys), max(xs), max(ys)]
+        return points_to_xyxy(geom["line"])
     else:
         raise ValueError(f"Unknown geometry type: {list(geom.keys())}")
 
@@ -935,4 +951,10 @@ def transform_geometry(
     return {"line": line_points}
 
 
-__all_typed__ = ["BBox", "Polygon", "Polyline", "geometry_from_dict", "transform_geometry"]
+__all_typed__ = [
+    "BBox",
+    "Polygon",
+    "Polyline",
+    "geometry_from_dict",
+    "transform_geometry",
+]

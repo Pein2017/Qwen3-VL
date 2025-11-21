@@ -1,6 +1,6 @@
 # Base Configuration - Shared defaults for Qwen3-VL SFT
 
-global_max_length: 15000
+global_max_length: 12000
 
 model:
   torch_dtype: bfloat16
@@ -64,8 +64,8 @@ data:
 custom:
   json_format: standard
   emit_norm: norm1000
-  train_jsonl: data/bbu_full_768_for_compare/train.jsonl
-  val_jsonl: data/bbu_full_768_for_compare/val.jsonl
+  train_jsonl: data/bbu_full_768_poly/train.jsonl
+  val_jsonl: data/bbu_full_768_poly/val.jsonl
   dump_conversation_path: output/conversation_text.txt
 
 

@@ -15,7 +15,7 @@ The training contract and augmentation pipeline operate purely on these three ge
 
 ### Offline image resize & JSONL conversion
 
-Before any dataset enters the multi-dataset fusion pipeline, it is expected to have been processed by the existing offline conversion stack driven by `data_conversion/convert_dataset.sh`. That script calls `data_conversion/pipeline/unified_processor.py` and `data_conversion/pipeline/vision_process.py` to (1) apply EXIF orientation and any raw-dimension rescaling, (2) run the `smart_resize` routine with a global pixel budget (`MAX_PIXELS`, default `768 * 28 * 28`) and patch factor (`IMAGE_FACTOR`, default `28`) so that final `width` / `height` are aligned to the vision patch grid (often illustrated as "multiple-of-32" tiles), and (3) write resized images plus flat canonical JSONL (`images` / `objects` / `width` / `height`). During this offline step all geometries (`bbox_2d`, `poly`, `line`) are transformed into the resized image frame and clamped to bounds, so by the time JSONL is consumed by `DenseCaptionDataset` coordinates already match the target resolution and no per-step dynamic resizing is required. The same strategy applies to both target-domain datasets (BBU, future RRU, other QC datasets) and source-domain detection datasets (LVIS, COCO, etc.): converters for public data are expected to emit JSONL that has gone through an equivalent smart-resize stage rather than relying on on-the-fly resizing at training time.
+Before any dataset enters the multi-dataset fusion pipeline, it is expected to have been processed by the existing offline conversion stack driven by `data_conversion/convert_dataset.sh`. That script calls `data_conversion/pipeline/unified_processor.py` and `data_conversion/pipeline/vision_process.py` to (1) apply EXIF orientation and any raw-dimension rescaling, (2) run the `smart_resize` routine with a global pixel budget (`MAX_PIXELS`, default `768 * 28 * 28`) and patch factor (`IMAGE_FACTOR`, default `28`) so that final `width` / `height` are aligned to the vision patch grid (often illustrated as "multiple-of-32" tiles), and (3) write resized images plus flat canonical JSONL (`images` / `objects` / `width` / `height`). During this offline step all geometries (`bbox_2d`, `poly`, `line`) are transformed into the resized image frame and clamped to bounds, so by the time JSONL is consumed by `DenseCaptionDataset` coordinates already match the target resolution and no per-step dynamic resizing is required. The same strategy applies to both target-domain datasets (BBU, future RRU, other QC datasets) and source-domain detection datasets (LVIS, COCO, etc.): converters for public data are expected to emit JSONL that has gone through an equivalent smart-resize stage rather than relying on on-the-fly resizing at training time. Additionally, image references stored inside JSONL are resolved relative to the JSONL directory and promoted to absolute paths during dataset loading so downstream code never depends on working-directory hacks or symlinks to locate images.
 
 ### Augmentation Expectations
 
@@ -28,6 +28,29 @@ The spec delta switches semantics from “quad” to “poly”:
 - All polygonal shapes (whether originally 4 or >4 points) are represented as `poly` and must preserve vertex ordering and non-degeneracy guarantees.
 
 This keeps the implementation simple (one polygon field) while still allowing special handling of 4-point rectangles via helper functions (e.g., `min_area_rect`, `choose_four_corners`) where needed.
+
+## Domain Model & Dataset Wrappers
+
+- **Domains**
+  - **Target domain**: downstream QC datasets such as BBU (current primary) and future programs like RRU. These datasets define the main loss objective, always participate in evaluation, and are eligible for all augmentation/curriculum features.
+  - **Source domain**: public/general detection datasets (COCO, Objects365, Flickr3k, etc.) that regularize the vision encoder. They default to *no augmentation* and never contribute to evaluation metrics unless explicitly opted in.
+- **Wrapper interface**
+  - Each dataset is represented by a wrapper class that exposes `domain`, `name`, `template_id`, `train_jsonl`/`val_jsonl` handles, optional `poly_fallback`, and boolean flags `supports_augmentation` / `supports_curriculum`.
+  - Wrappers own any dataset-specific preprocessing (image roots, taxonomy quirks, attribute normalization) and emit canonical `ConversationRecord` entries; no downstream code needs per-dataset conditionals.
+  - Prompt binding happens per wrapper: `template_id` selects the `(system_prompt, user_prompt)` pair at dataset-construction time, so individual records carry no template metadata.
+- **Factory**
+  - The fusion factory maps config keys (`bbu`, `rru`, `coco`, `objects365`, `flickr3k`, etc.) to wrapper classes, instantiates them with their `params`, and produces `DatasetSpec` objects consumed by the fusion dataset/builder.
+  - Because wrappers report `supports_augmentation`, augmentation/curriculum can be attached (or skipped) per dataset instance without relying on `metadata.dataset` at the record level.
+
+### Wrapper Onboarding Checklist
+
+Whenever a new source or target dataset is introduced, the wrapper must supply:
+
+1. **Canonical JSONL contract** — `images`/`objects`/`width`/`height` plus single-geometry objects, with relative image paths that resolve against the JSONL directory.
+2. **Geometry policy controls** — default `poly_fallback`, optional `poly_max_points`, and (for auxiliary datasets) an optional `poly_min_ratio` to retain a minimum volume of polygon-bearing samples after fallback.
+3. **Domain flags** — `domain`, `supports_augmentation`, and `supports_curriculum` so the factory can wire augmentation/curriculum only when appropriate.
+4. **Template binding** — a `template_id` mapping to prompts in `src/config/prompts.py`; add a new entry there if the dataset needs a specialized prompt.
+5. **Image root validation** — explicit checks that referenced directories exist; wrappers must not rely on caller-provided symlinks or ambient CWD to reach the images.
 
 ## Multi-Dataset Fusion
 
@@ -47,7 +70,7 @@ Total samples per epoch:
 
 - `N_total = N_BBU + Σ_d quota[d]`. The effective auxiliary fraction is `Σ_d quota[d] / N_BBU`, which for the example above is `0.15`.
 
-Auxiliary data serves purely as a **regularization signal**; there is no requirement to exhaust or balance the auxiliary pool across training runs.
+Auxiliary data serves purely as a **regularization signal**; there is no requirement to exhaust or balance the auxiliary pool across training runs. When polygon-rich supervision is required, wrappers can specify `poly_min_ratio` so the sampler first fills the mandated share of polygon-bearing records (after applying `poly_max_points`/fallback) before sampling the remainder uniformly.
 ### Stability, Ratios, and Scheduling
 
 To keep BBU performance stable while leveraging auxiliary regularization, the fusion scheme exposes **per-source ratios** instead of a single global knob:
@@ -55,14 +78,7 @@ To keep BBU performance stable while leveraging auxiliary regularization, the fu
 - Every auxiliary dataset entry in the fusion config declares `ratio` (float, default `0.0`, recommended range `[0.0, 0.5]`). Setting `ratio = 0.0` removes that dataset from the epoch schedule.
 - For dataset `d`, the per-epoch quota is `N_aux[d] = round(ratio_d * N_BBU)`. All quotas are computed relative to the same `N_BBU`, so a config like `coco: 0.1`, `objects365: 0.05` yields `10` COCO samples and `5` Objects365 samples when `N_BBU = 100`.
 
-Training loss remains the **same teacher-forcing cross entropy** for every record. Mixed batches simply compute CE over the concatenated tokens; there is **no auxiliary-specific scaling factor**. Telemetry may still log `loss_bbu` / `loss_aux` (or per-source variants) for observability, but those breakdowns are post-hoc measurements rather than inputs to the optimizer.
-
-To mitigate long-horizon drift, configs MAY also support an optional **auxiliary shutoff schedule**, e.g.:
-
-- `aux_enabled_epochs = [0, E_aux)` where `E_aux < E_total`.
-- After `E_aux`, the DataLoader behaves as if every auxiliary `ratio = 0.0` (pure BBU fine-tuning).
-
-These knobs are required to be exposed in the training config (no hard-coded defaults in dataset code) and used consistently across both fusion modes.
+Training loss remains the **same teacher-forcing cross entropy** for every record. Mixed batches simply compute CE over the concatenated tokens; there is **no auxiliary-specific scaling factor**, and ratios stay fixed throughout training (no dynamic ramp-up/down).
 
 **Distribution shift note**
 
@@ -87,8 +103,7 @@ Two implementation modes are supported; both MUST satisfy the epoch-level semant
      - Loads or streams the target JSONL to compute `N_BBU`.
      - Computes `quota[d] = round(ratio_d * N_BBU)` for every auxiliary dataset.
      - Draws `quota[d]` auxiliary records **with replacement** from each dataset independently.
-     - Annotates each record with `metadata.dataset = "<name>"`.
-     - Shuffles and writes a fused train JSONL containing `N_BBU + Σ_d quota[d]` records.
+     - Writes a fused train JSONL containing `N_BBU + Σ_d quota[d]` records in canonical format (no extra metadata); the downstream config remembers which slices came from which wrapper.
 
    For strict per-epoch semantics, the builder MAY be invoked once per epoch (e.g., `train_fused.epoch_000.jsonl`, `train_fused.epoch_001.jsonl`). Training configs then point `custom.train_jsonl` at the epoch-specific file, while `custom.val_jsonl` always references the target dataset's validation file (BBU-only evaluation).
 
@@ -117,47 +132,28 @@ BBU and auxiliary data use distinct prompt / template schemes so that BBU qualit
 
 - **Auxiliary (general-domain) data**
   - Uses a separate "aux-dense" template whose purpose is to keep the vision encoder's object + geometry representations calibrated, **not** to teach BBU-specific quality rules.
-  - The aux template **reuses the JSON geometry format** (per-object `bbox_2d` / `poly` / `line` with `norm1000` coordinates) but constrains `desc` to simple category-level Chinese labels (e.g., `"物体类型/类别名"`), without completeness fields or BBU-specific attributes.
+  - The aux template **reuses the JSON geometry format** (per-object `bbox_2d` / `poly` / `line` with `norm1000` coordinates) but constrains `desc` to concise English class names (one or two words), without completeness fields or BBU-specific attributes.
   - No Stage-B tokens or fields (e.g., `"显示完整"` / `"只显示部分"`) appear in aux outputs.
 
-Architecturally, template selection SHALL be driven by `metadata.dataset` (or an equivalent flag) via a small registry:
+Architecturally, template selection is driven by the wrapper-provided `template_id`:
 
 - A prompt registry in `src/config/prompts.py` (or a thin wrapper module) maps template names (e.g., `"bbu_dense"`, `"aux_dense"`) to `(system_prompt, user_prompt)` pairs.
-- The dataset builder or fusion step attaches `metadata.template = "<template_name>"` to each record (defaulting to `"bbu_dense"` for the target dataset and `"aux_dense"` for auxiliary datasets).
-- The training loop selects prompts at batch construction time based on `metadata.template`, so mixed batches can safely contain both BBU and auxiliary samples.
+- Each wrapper declares its `template_id`, and the fusion factory passes the resolved prompts directly into the `DenseCaptionDataset` it builds for that wrapper.
+- Mixed batches remain safe because the prompt binding happens when the sub-dataset is constructed; individual records require no extra metadata.
 
-
-## Validation & Telemetry
-
-To ensure that auxiliary fusion helps (or at least does not harm) the BBU quality-control objective, the implementation MUST provide the following instrumentation and baselines.
-
-### Validation & Telemetry
-
-BBU validation metrics remain the single criterion for accepting auxiliary fusion runs. Any fusion-enabled config MUST be compared against a BBU-only baseline that shares the same random seed (when feasible), optimizer, LR schedule, augmentation curriculum, and training duration. The baseline is obtained by setting every auxiliary `ratio = 0.0`.
-
-Optional diagnostics MAY include:
-
-- Tracking per-dataset loss curves when multiple auxiliary datasets are used (e.g., `loss_aux_coco`, `loss_aux_lvis`).
-- Running auxiliary-only evaluations (COCO-style detection/segmentation metrics) to ensure the encoder retains general-domain coverage.
-
-These diagnostics inform production decisions, but the hard requirement is **non-degraded BBU validations** compared to the baseline (small noise-level fluctuations are tolerable).
 
 ## Source-Aware Augmentation and Curriculum
 
-Augmentation remains a record-level preprocessor but follows a unified, domain-aware policy:
+Augmentation remains a record-level preprocessor but the on/off decision now happens per dataset wrapper rather than per-record metadata:
 
-- **BBU (target) data**
-  - Augmentation can be enabled/disabled via config and may use the full geometry-aware pipeline and curriculum described in `docs/DATA_AUGMENTATION.md`.
-  - Curriculum scheduling (`bypass_prob`, rotation strength, crop configuration, etc.) operates **only on BBU samples**: its progress is defined over global training steps, but only records with `metadata.dataset == "bbu"` are eligible for augmentation.
+- **Target domain datasets (default: BBU, RRU)**
+  - `supports_augmentation=True` and `supports_curriculum=True`.
+  - The fusion factory attaches the configured augmentation pipeline (and shared curriculum state) when constructing their `DenseCaptionDataset` instances.
+- **Source domain datasets (default: COCO, Objects365, Flickr3k)**
+  - `supports_augmentation=False` by default, so the factory simply omits the augmentation preprocessor; records remain untouched apart from canonical geometry handling.
+  - Wrappers can opt in by flipping the flag if a particular source should share augmentations with the target domain.
 
-- **Auxiliary (source) data**
-  - Always uses **clean images**: no geometric or color operators are applied.
-  - The augmentation preprocessor inspects `metadata.dataset` (or `metadata.is_target_domain`) and passes auxiliary samples through unchanged; coverage-based filtering, completeness updates, and `allows_geometry_drops` logic are skipped.
-
-This implies a small API refinement for the augmentation layer:
-
-- `AugmentationPreprocessor` MUST receive a per-record domain indicator (`metadata.dataset` or equivalent) and gate application of ops accordingly.
-- The existing curriculum implementation remains unchanged, but its effective scope is limited to BBU samples by this gating.
+Because the curriculum scheduler already drives a multiprocessing-safe state dict, no additional metadata is necessary—only the datasets that opted in receive the state reference.
 
 ## `public_data/` Integration
 
@@ -167,3 +163,7 @@ The LVIS/COCO converters and validators under `public_data/` at the repo root (`
 - Validators check `bbox_2d` / `poly` / `line` plus geometry-specific constraints but do not hard-code any knowledge of the BBU taxonomy.
 
 These public datasets can then be referenced in fusion configs as auxiliary sources and mixed into BBU training via the regularization scheme above, without changing the core training code.
+## Evaluation
+
+- The default trainer wiring keeps `custom.val_jsonl` pointed at the target dataset’s validation split; auxiliary datasets never participate in evaluation unless a config explicitly adds a diagnostic loader.
+- Because auxiliary ratios are fixed and low, regressions are caught by comparing against historical BBU validation runs (no mandatory re-train baseline baked into the spec).

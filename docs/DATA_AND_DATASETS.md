@@ -156,7 +156,7 @@ custom:
   - Coordinate sanity is centralized in `pipeline/coordinate_manager.py` (EXIF + smart-resize + clamp) and `pipeline/vision_process.py`.
 - **Public datasets (`public_data/`)**:
   - See `PUBLIC_DATA.md` + `public_data/README.md` for LVIS download, conversion, sampling, visualization, and pytest coverage.
-  - Each converter produces JSONL that matches this document’s schema; polygons include `poly_points`.
+  - Each converter produces JSONL that matches this document’s schema; polygons include `poly_points`. You can cap polygon complexity per source with `poly_max_points` (downgrades only oversized polygons to `bbox_2d`) or force all polygons to boxes via `poly_fallback: bbox_2d`.
 - **Fusion tooling**:
   - `scripts/fuse_datasets.py` plus `src/datasets/fusion.py` can pre-build fused JSONL based on a YAML config (target dataset + auxiliary sources). Useful when you want deterministic sampling instead of streaming fusion.
 - **Visualization**:
@@ -166,33 +166,32 @@ custom:
 
 When you want BBU dense-caption training to consume auxiliary detection datasets (LVIS, COCO, etc.), provide a `custom.fusion_config` (YAML/JSON). The fusion loader mixes:
 
-- **Target dataset**: consumed exactly once per epoch, annotated with `metadata.dataset == "bbu"`, and kept as the sole evaluation source (keep `custom.val_jsonl` pointing at the BBU val split).
-- **Auxiliary sources**: each entry declares `train_jsonl`, `ratio`, `template` (e.g., `"aux_dense"`), and optional `poly_fallback: bbox_2d`. The fusion loader annotates `metadata.dataset`/`metadata.template`, optionally downgrades polygons (via `poly_fallback`), and resamples each source with replacement every epoch.
-- **Augmentation control**: use `custom.augment_sources` to list the dataset names eligible for augmentation (default `["bbu"]`).
+- **Target dataset**: consumed exactly once per epoch and treated as the primary domain. Evaluation stays scoped to the target split (`custom.val_jsonl`), and wrappers for target datasets enable augmentation/curriculum by default.
+- **Auxiliary sources**: each entry declares the dataset wrapper (e.g., `coco`, `lvis`, `objects365`) plus a `ratio`. Wrappers normalize the JSONL schema, select prompts, and optionally downgrade polygons via `poly_fallback` (all polys → boxes) or `poly_max_points` (only oversized polys → boxes) before sampling `round(ratio * N_target)` records **with replacement** each epoch.
+- **Augmentation control**: dataset wrappers decide whether augmentation/curriculum applies. Source-domain wrappers (COCO/LVIS/etc.) default to clean images, while target-domain wrappers inherit the configured augmentation pipeline.
 
 Example fusion config:
 
 ```yaml
 target:
-  name: bbu
-  train_jsonl: /data/bbu/train.jsonl
-  val_jsonl: /data/bbu/val.jsonl
-  template: bbu_dense
-  poly_fallback: off
+  dataset: bbu
+  params:
+    train_jsonl: /data/bbu/train.jsonl
+    val_jsonl: /data/bbu/val.jsonl
 sources:
-  - name: coco
-    train_jsonl: /data/coco/train.jsonl
+  - dataset: coco
     ratio: 0.1
-    template: aux_dense
-    poly_fallback: bbox_2d
-  - name: objects365
-    train_jsonl: /data/objects365/train.jsonl
+    params:
+      train_jsonl: /data/coco/train.jsonl
+      poly_max_points: 12  # Keep polys ≤12 vertices, downgrade larger ones to bbox_2d
+  - dataset: objects365
     ratio: 0.05
-    template: aux_dense
-    poly_fallback: off
+    params:
+      train_jsonl: /data/objects365/train.jsonl
+      poly_fallback: bbox_2d  # Convert all polys to boxes for this source
 ```
 
-You can either stream this config directly via `MultiSourceFusionDataset` (per-epoch resampling) or precompute fused JSONLs with `scripts/fuse_datasets.py --config <path>`. The fusion dataset logs `metadata.dataset` and `metadata.template`, so downstream components (augmentation, template selection, telemetry) know which source each record came from.
+You can either stream this config directly via `MultiSourceFusionDataset` (per-epoch resampling) or precompute fused JSONLs with `scripts/fuse_datasets.py --config <path>`. Because wrappers bind prompts/augmentation per dataset instance, individual JSONL records no longer need `metadata.dataset` or `metadata.template` annotations—the fusion dataset keeps that provenance at the dataset-object level.
 
 ---
 

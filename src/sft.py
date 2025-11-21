@@ -344,7 +344,6 @@ def main():
             system_prompt_dense=system_prompt_dense,
             system_prompt_summary=system_prompt_summary,
             seed=dataset_seed,
-            augment_sources=custom_config.augment_sources,
             sample_limit=train_sample_limit,
         )
         fusion_callback = FusionEpochCallback(dataset)
@@ -363,7 +362,6 @@ def main():
             system_prompt_dense=system_prompt_dense,
             system_prompt_summary=system_prompt_summary,
             seed=dataset_seed,
-            augment_sources=custom_config.augment_sources,
         )
     logger.info(f"Training dataset size: {len(dataset)}")
 

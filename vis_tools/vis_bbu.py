@@ -1,24 +1,18 @@
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 import matplotlib.pyplot as plt
 from PIL import Image
 
-# Make repo root importable when executing this file directly
-REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
-
+from data_conversion.utils.exif_utils import apply_exif_orientation  # noqa: E402
 from vis_tools.vis_helper import (  # noqa: E402
     canonicalize_poly,
     draw_objects,
     generate_colors,
 )
-from data_conversion.utils.exif_utils import apply_exif_orientation  # noqa: E402
 
 try:  # pragma: no cover
     from tqdm import tqdm as _tqdm  # type: ignore

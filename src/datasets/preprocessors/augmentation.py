@@ -1,7 +1,7 @@
 """Augmentation preprocessor - decoupled from dataset logic"""
 
 import random
-from typing import Any, Dict, List, Mapping, MutableMapping, Optional, Sequence
+from typing import Any, Dict, List, Mapping, MutableMapping, Optional
 
 from .base import BasePreprocessor
 from ..utils import extract_geometry
@@ -25,7 +25,6 @@ class AugmentationPreprocessor(BasePreprocessor):
         rng: Optional[random.Random] = None,
         bypass_prob: float = 0.0,
         curriculum_state: Optional[MutableMapping[str, Any]] = None,
-        augment_sources: Optional[Sequence[str]] = None,
         **kwargs: Any,
     ):
         """Initialize augmentation preprocessor.
@@ -42,14 +41,6 @@ class AugmentationPreprocessor(BasePreprocessor):
         self.bypass_prob = float(bypass_prob)
         self.curriculum_state = curriculum_state
         self._curriculum_last_step: int | None = None
-        normalized_sources: Optional[Sequence[str]] = None
-        if augment_sources:
-            normalized_sources = tuple(
-                str(item).strip() for item in augment_sources if str(item).strip()
-            )
-        self._augment_sources = (
-            frozenset(normalized_sources) if normalized_sources else None
-        )
 
     def preprocess(self, row: ConversationRecord) -> Optional[ConversationRecord]:
         """Apply augmentations to a record.
@@ -61,9 +52,6 @@ class AugmentationPreprocessor(BasePreprocessor):
             Augmented record
         """
         if self.augmenter is None:
-            return row
-
-        if not self._should_augment(row):
             return row
 
         if self.curriculum_state is not None:
@@ -234,17 +222,6 @@ class AugmentationPreprocessor(BasePreprocessor):
             pass
 
         return rec
-
-    def _should_augment(self, row: ConversationRecord) -> bool:
-        if self._augment_sources is None:
-            return True
-        metadata = row.get("metadata")
-        if not isinstance(metadata, Mapping):
-            return True
-        dataset_name = metadata.get("dataset")
-        if dataset_name is None:
-            return True
-        return str(dataset_name) in self._augment_sources
 
     def _sync_curriculum(self) -> None:
         state = self.curriculum_state

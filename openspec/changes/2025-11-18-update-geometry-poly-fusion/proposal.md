@@ -23,8 +23,8 @@ This proposal formalizes the recent rename from `quad` → `poly` in `src/` and 
 
 2. **Multi-dataset fusion**
    - Define a fusion capability that takes multiple canonical JSONL datasets (BBU + auxiliary sources) and produces a single fused training JSONL according to configurable weights.
-   - Require per-record provenance (e.g., `metadata.dataset`) so augmentation and analysis can be source-aware.
-   - Allow per-source augmentation toggles (e.g., enable augment for BBU, disable for LVIS) without modifying `DenseCaptionDataset`.
+   - Introduce dataset wrappers (target vs. source) that carry provenance, template selection, and augmentation policy without mutating individual records.
+   - Allow per-source augmentation toggles (e.g., enable augment for BBU, disable for LVIS) via wrapper configuration rather than editing `DenseCaptionDataset`.
 
 3. **Evaluation focus**
    - Keep evaluation on the BBU target domain by default; auxiliary sources are used for training only unless explicitly enabled for analysis.
@@ -45,4 +45,3 @@ This proposal formalizes the recent rename from `quad` → `poly` in `src/` and 
   - `/data/public_data` converters and validators (LVIS/COCO) to emit/accept `poly` instead of `quad`, with an optional "large polygon → bbox_2d" fallback.
 - Docs:
   - `docs/DATA_AND_DATASETS.md`, `docs/DATA_AUGMENTATION.md`, `POLYGON_SUPPORT.md` (reflect `poly` and the fusion story).
-

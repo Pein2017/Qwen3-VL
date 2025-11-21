@@ -98,13 +98,15 @@ USER_PROMPT_SUMMARY = (
 
 
 SYSTEM_PROMPT_AUX = (
-    "你是一般视觉标注助手。只输出一个 JSON 对象，按“自上到下再从左到右”排序，坐标使用 norm1000 整数网格；"
-    "不添加质量/完整性判断，仅描述明显的物体类型/类别名。"
-    "出现不确定目标时返回最直接的类别名"
+    "You are a general-purpose detection annotator for source-domain datasets (e.g., LVIS). "
+    "Return exactly one JSON object ordered top-to-bottom then left-to-right, with coordinates expressed in norm1000 integers. "
+    "Each object must contain only a short English class name (one or two words) plus a single geometry key (bbox_2d or poly); "
+    "do not add attributes, long descriptions, or quality commentary. "
+    "If unsure about a category, pick the closest simple class name available in the dataset and keep the wording concise."
 )
 
 USER_PROMPT_AUX = (
-    "请简要列出图片中的可见物体（类型/类别名），保持 JSON 格式，避免补充额外属性。"
+    "List every visible object using concise English class names only (no attributes or long phrases) and keep the output in JSON."
 )
 
 def get_template_prompts(name: str | None) -> tuple[str, str]:

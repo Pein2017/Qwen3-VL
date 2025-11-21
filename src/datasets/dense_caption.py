@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import copy
+import os
 import random
+from pathlib import Path
 from typing import Any, Dict, List, Literal, Mapping, MutableMapping, Optional, Sequence
 
 from torch.utils.data import Dataset, get_worker_info
@@ -9,8 +11,9 @@ from torch.utils.data import Dataset, get_worker_info
 from src.config.prompts import USER_PROMPT_SUMMARY
 
 from .builders import JSONLinesBuilder
+from .preprocessors import SmartResizePreprocessor, smart_resize_params_from_env
 from .contracts import ConversationRecord, validate_conversation_record
-from .preprocessors import AugmentationPreprocessor
+from .preprocessors import AugmentationPreprocessor, SequentialPreprocessor
 from .utils import load_jsonl
 
 
@@ -37,7 +40,6 @@ class DenseCaptionDataset(Dataset):
         bypass_prob: float = 0.0,
         seed: int = 2025,
         curriculum_state: Optional[MutableMapping[str, Any]] = None,
-        augment_sources: Optional[Sequence[str]] = None,
     ):
 
         self.use_summary = bool(use_summary)
@@ -86,19 +88,30 @@ class DenseCaptionDataset(Dataset):
 
         self.base_records = validated_records
 
-        self.preprocessor = preprocessor
-        self.augment_sources = (
-            tuple(str(item) for item in augment_sources) if augment_sources else None
-        )
-        if augmenter is not None and self.preprocessor is None:
-            self.preprocessor = AugmentationPreprocessor(
-                augmenter=augmenter,
-                bypass_prob=self.bypass_prob,
-                curriculum_state=curriculum_state,
-                augment_sources=self.augment_sources,
+        preprocessors = []
+        if preprocessor is not None:
+            preprocessors.append(preprocessor)
+        if augmenter is not None:
+            preprocessors.append(
+                AugmentationPreprocessor(
+                    augmenter=augmenter,
+                    bypass_prob=self.bypass_prob,
+                    curriculum_state=curriculum_state,
+                )
             )
-        if augmenter is not None and self.preprocessor is not None:
-            self.preprocessor.curriculum_state = curriculum_state
+        if preprocessors:
+            self.preprocessor = (
+                preprocessors[0]
+                if len(preprocessors) == 1
+                else SequentialPreprocessor(preprocessors)
+            )
+            if hasattr(self.preprocessor, "curriculum_state"):
+                try:
+                    self.preprocessor.curriculum_state = curriculum_state
+                except Exception:
+                    pass
+        else:
+            self.preprocessor = None
 
         self._epoch = 0
         self._rng = random.Random(self._seed_for_epoch(self._epoch))
@@ -111,7 +124,7 @@ class DenseCaptionDataset(Dataset):
         template: Any,
         **kwargs,
     ) -> "DenseCaptionDataset":
-        records = load_jsonl(jsonl_path)
+        records = load_jsonl(jsonl_path, resolve_relative=True)
         # Optional sample limiting for quick smoke tests
         sample_limit = kwargs.pop("sample_limit", None)
         if isinstance(sample_limit, int) and sample_limit > 0:
@@ -125,11 +138,38 @@ class DenseCaptionDataset(Dataset):
             )
         kwargs.pop("use_detailed_caption", None)
         kwargs.pop("output_variant", None)  # Backward compat
-        augment_sources = kwargs.pop("augment_sources", None)
+
+        # Optional smart-resize guard (env-driven) to ensure pixel/grid compliance
+        guard_params = smart_resize_params_from_env()
+        if guard_params:
+            guard_output = kwargs.pop(
+                "smart_resize_output_dir",
+                None,
+            )
+            output_dir_env = os.getenv("SMART_RESIZE_GUARD_OUTPUT_DIR")
+            jsonl_dir = Path(jsonl_path).resolve().parent
+            output_dir = None
+            if guard_output:
+                output_dir = Path(guard_output).resolve()
+            elif output_dir_env:
+                output_dir = Path(output_dir_env).resolve()
+            else:
+                output_dir = jsonl_dir / "_smart_resized_images"
+            guard = SmartResizePreprocessor(
+                params=guard_params,
+                jsonl_dir=jsonl_dir,
+                output_dir=output_dir,
+                write_images=True,
+            )
+            guarded_records: List[ConversationRecord] = []
+            for rec in records:
+                updated = guard(rec)
+                if updated is not None:
+                    guarded_records.append(updated)
+            records = guarded_records
         return DenseCaptionDataset(
             base_records=records,
             template=template,
-            augment_sources=augment_sources,
             **kwargs,
         )
 
