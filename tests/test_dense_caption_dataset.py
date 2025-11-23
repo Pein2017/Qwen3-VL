@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from src.datasets.dense_caption import DenseCaptionDataset
+from src.datasets.dense_caption import BaseCaptionDataset, DenseCaptionDataset
 
 
 @dataclass
@@ -39,7 +39,7 @@ def _make_dataset():
         "height": 10,
     }
     template = _StubTemplate()
-    dataset = DenseCaptionDataset(
+    dataset = BaseCaptionDataset(
         base_records=[record],
         template=template,
         user_prompt="Describe the scene.",
@@ -59,3 +59,7 @@ def test_dense_caption_dataset_embeds_conversation_metadata():
     assert sample["messages"][1]["role"] == "user"
     assert "input_ids" in sample
     assert template.encode_calls == 1
+
+
+def test_dense_caption_alias_points_to_base():
+    assert DenseCaptionDataset is BaseCaptionDataset

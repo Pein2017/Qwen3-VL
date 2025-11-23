@@ -12,7 +12,7 @@ Unify the “smart resize” logic used by BBU conversions into a reusable detec
 - **Converter contract**: Each dataset implements only “cook annotations → canonical JSONL” (no resize). Schema: `images`, `objects` (exactly one geometry: `bbox_2d` | `poly`+`poly_points` | `line`), `width`, `height`, `desc`; paths relative to JSONL by default. New datasets customize only this step.
 - **Shared offline invocation**: Standard flags (`--smart-resize`, `--max_pixels`, `--image_factor`, optional `--min_pixels`) apply to any dataset; outputs co-locate resized images with JSONL under the chosen root, keeping JSONL-relative paths.
 - **Generic runner**: Provide a pluggable runner (converter module/name + shared resize flags) so new datasets get the same flow without forking code.
-- **Online guard**: Optional hook in fusion/loader uses the same module; no-ops on already-compliant samples.
+- **Unified fusion policy**: No online guard; unified fusion requires inputs to be pre-resized offline using the shared module.
 - **Telemetry**: Log scale factors; warn on large shrink (>2×) with remediation hints.
 
 ## Open Questions

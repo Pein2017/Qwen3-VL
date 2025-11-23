@@ -8,6 +8,9 @@ from typing import Any, Dict, Mapping, Optional, Type, Literal
 
 from ..fusion_types import DatasetSpec, FALLBACK_OPTIONS
 
+# Default cap for source-domain datasets to keep sequences bounded unless explicitly disabled.
+DEFAULT_SOURCE_OBJECT_CAP = 64
+
 DatasetDomain = Literal["target", "source"]
 
 
@@ -48,18 +51,6 @@ def _parse_poly_max_points(value: Any, *, field_name: str) -> Optional[int]:
     return parsed
 
 
-def _parse_poly_min_ratio(value: Any, *, field_name: str) -> Optional[float]:
-    if value is None:
-        return None
-    try:
-        parsed = float(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"{field_name} must be a float in [0, 1]") from exc
-    if not (0.0 <= parsed <= 1.0):
-        raise ValueError(f"{field_name} must be between 0.0 and 1.0")
-    return parsed
-
-
 def _parse_max_objects(value: Any, *, field_name: str) -> Optional[int]:
     if value is None:
         return None
@@ -72,6 +63,25 @@ def _parse_max_objects(value: Any, *, field_name: str) -> Optional[int]:
     return parsed
 
 
+def _parse_seed(value: Any, *, field_name: str) -> Optional[int]:
+    if value is None:
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field_name} must be an integer") from exc
+    return parsed
+
+
+def _parse_prompt(value: Any, *, field_name: str) -> Optional[str]:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        trimmed = value.strip()
+        return trimmed or None
+    raise TypeError(f"{field_name} must be a string if provided")
+
+
 class DatasetWrapper(abc.ABC):
     """Base class for converting fusion config entries into DatasetSpec objects."""
 
@@ -82,6 +92,7 @@ class DatasetWrapper(abc.ABC):
     supports_augmentation: bool = True
     supports_curriculum: bool = True
     default_poly_fallback: Literal["off", "bbox_2d"] = "off"
+    default_max_objects_per_image: Optional[int] = None
 
     @classmethod
     def build_spec(
@@ -101,7 +112,9 @@ class DatasetWrapper(abc.ABC):
         template = (
             str(template_value).strip() if template_value else cls.template_id
         )
-        poly_fallback = mapping.get("poly_fallback", cls.default_poly_fallback)
+        poly_fallback = mapping.get("poly_fallback")
+        if poly_fallback is None:
+            poly_fallback = cls.default_poly_fallback
         if poly_fallback not in FALLBACK_OPTIONS:
             raise ValueError(
                 f"{cls.__name__}.poly_fallback must be one of {FALLBACK_OPTIONS}"
@@ -110,12 +123,12 @@ class DatasetWrapper(abc.ABC):
             mapping.get("poly_max_points"),
             field_name=f"{cls.__name__}.poly_max_points",
         )
-        poly_min_ratio = _parse_poly_min_ratio(
-            mapping.get("poly_min_ratio"),
-            field_name=f"{cls.__name__}.poly_min_ratio",
-        )
+        has_cap_field = "max_objects_per_image" in mapping
+        cap_value = mapping.get("max_objects_per_image")
+        if not has_cap_field and cls.default_max_objects_per_image is not None:
+            cap_value = cls.default_max_objects_per_image
         max_objects = _parse_max_objects(
-            mapping.get("max_objects_per_image"),
+            cap_value,
             field_name=f"{cls.__name__}.max_objects_per_image",
         )
         aug_flag = _normalize_bool(
@@ -128,6 +141,17 @@ class DatasetWrapper(abc.ABC):
             field_name=f"{cls.__name__}.curriculum_enabled",
             default=cls.supports_curriculum,
         )
+        user_prompt = _parse_prompt(
+            mapping.get("user_prompt"),
+            field_name=f"{cls.__name__}.user_prompt",
+        )
+        system_prompt = _parse_prompt(
+            mapping.get("system_prompt"),
+            field_name=f"{cls.__name__}.system_prompt",
+        )
+        dataset_seed = _parse_seed(
+            mapping.get("seed"), field_name=f"{cls.__name__}.seed"
+        )
         resolved_name = name or cls.default_name
         return DatasetSpec(
             key=cls.key,
@@ -139,9 +163,11 @@ class DatasetWrapper(abc.ABC):
             supports_curriculum=curriculum_flag,
             poly_fallback=poly_fallback,  # type: ignore[arg-type]
             poly_max_points=poly_max_points,
-            poly_min_ratio=poly_min_ratio,
             max_objects_per_image=max_objects,
             val_jsonl=Path(str(val_jsonl)) if val_jsonl else None,
+            prompt_user=user_prompt,
+            prompt_system=system_prompt,
+            seed=dataset_seed,
         )
 
 
@@ -194,6 +220,7 @@ class PublicDetectionDatasetWrapper(DatasetWrapper):
     template_id = "aux_dense"
     supports_augmentation = False
     supports_curriculum = False
+    default_max_objects_per_image = DEFAULT_SOURCE_OBJECT_CAP
 
 
 @register_dataset_wrapper("bbu")

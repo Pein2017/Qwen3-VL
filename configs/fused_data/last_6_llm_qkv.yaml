@@ -1,6 +1,6 @@
 extends: ../base.yaml
 
-# Stage 1.5: DoRA on all LLM layers (q_proj & v_proj only), DoRA on last-12 Vision blocks (15-26, qkv only), DoRA on all aligner MLP layers
+# Stage 1.5: DoRA on all LLM layers (q_proj & v_proj only), DoRA on last-6 Vision blocks (21-26, qkv only), DoRA on all aligner MLP layers
 
 model:
   # Point to stage 2 best checkpoint - will load base model + LLM LoRA
@@ -11,13 +11,13 @@ tuner:
   use_swift_lora: false
   use_dora: true        # ← Enable DoRA (Weight-Decomposed Low-Rank Adaptation)
   freeze_llm: false     # ← Enable DoRA on all LLM layers (see target_regex below)
-  freeze_vit: false     # ← Add DoRA to Vision last-12 blocks (15-26 for 8B model)
+  freeze_vit: false     # ← Add DoRA to Vision last-6 blocks (21-26 for 8B model)
   freeze_aligner: false # ← Enable DoRA on all aligner modules
   target_modules: [all-linear]
   # LLM: all decoder layers, attention q_proj & v_proj only (no k_proj / o_proj, no MLP).
-  # Vision: last-12 blocks (15-26), attention qkv only (no proj, no MLP).
+  # Vision: last-6 blocks (21-26), attention qkv only (no proj, no MLP).
   # Aligner: merger & deepstack_merger_list MLPs (linear_fc1/fc2) fully tuned with DoRA.
-  target_regex: '^(?:model\.)?(?:language_model\.layers\.\d+\.self_attn\.(?:q_proj|v_proj)|visual\.blocks\.(?:15|16|17|18|19|20|21|22|23|24|25|26)\.attn\.qkv|visual\.(?:merger|deepstack_merger_list\.\d+)\.(?:linear_fc1|linear_fc2))$'
+  target_regex: '^(?:model\.)?(?:language_model\.layers\.\d+\.self_attn\.(?:q_proj|k_proj|v_proj)|visual\.blocks\.(?:21|22|23|24|25|26)\.attn\.qkv|visual\.(?:merger|deepstack_merger_list\.\d+)\.(?:linear_fc1|linear_fc2))$'
   
   modules_to_save: []  # All modules now use LoRA, none fully tuned
   lora_rank: 16
@@ -38,7 +38,7 @@ rlhf:
 training:
   # Paths and naming
   output_dir: ./output/11-23/stage_1.5
-  run_name: lvis_ratio_0.08-epoch_30-dlora-lrs_4_2_8-llm_kd_0.01-vision_kd_0.01-last_12_vision-all_llm-from_base
+  run_name: lvis_ratio_0.08-epoch_30-dlora-lrs_4_2_8-llm_kd_0.01-vision_kd_0.01-last_6_vision-llm_qkv
 
   # Epochs and batch sizes
   num_train_epochs: 30

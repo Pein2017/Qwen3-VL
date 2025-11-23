@@ -14,10 +14,22 @@ import math
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, MutableMapping, Optional, Sequence, Tuple
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    List,
+    MutableMapping,
+    Optional,
+    Sequence,
+    Tuple,
+    cast,
+)
 
 from PIL import Image
 
+from ..contracts import ConversationRecord
 from ..geometry import clamp_points, scale_points
 from .base import BasePreprocessor
 
@@ -176,9 +188,17 @@ class Resizer:
             max_ratio=self.params.max_ratio,
         )
 
-        # Idempotent path
+        # Idempotent path: still rewrite images to output_dir when requested
         if target_h == height and target_w == width:
-            row["images"] = self._maybe_relativize_paths(resolved_paths)
+            if self.write_images:
+                rewritten: List[str] = []
+                for path in resolved_paths:
+                    rewritten.append(
+                        str(self._resize_image(Path(path), target_w, target_h))
+                    )
+                row["images"] = self._maybe_relativize_paths(rewritten)
+            else:
+                row["images"] = self._maybe_relativize_paths(resolved_paths)
             row["width"] = width
             row["height"] = height
             return row
@@ -237,12 +257,80 @@ class Resizer:
         if not self.relative_output_root:
             return list(paths)
         rel_paths: List[Any] = []
+        relative_output_root_resolved = self.relative_output_root.resolve()
+        output_dir_resolved = self.output_dir.resolve() if self.output_dir else None
+
         for p in paths:
-            try:
-                path_obj = Path(str(p)).resolve()
-                rel_paths.append(str(path_obj.relative_to(self.relative_output_root)))
-            except Exception:
+            if not isinstance(p, str):
                 rel_paths.append(p)
+                continue
+
+            path_obj = Path(p)
+            path_resolved = path_obj.resolve() if path_obj.is_absolute() else path_obj
+
+            # Try direct relativization first
+            try:
+                rel_paths.append(
+                    str(path_resolved.relative_to(relative_output_root_resolved))
+                )
+                continue
+            except (ValueError, RuntimeError):
+                pass
+
+            # If path is under output_dir, construct relative path manually
+            if output_dir_resolved:
+                try:
+                    if path_resolved.is_absolute() and str(path_resolved).startswith(
+                        str(output_dir_resolved)
+                    ):
+                        # Path is under output_dir
+                        rel_to_output = path_resolved.relative_to(output_dir_resolved)
+                        # Compute relative path from output_dir to relative_output_root
+                        try:
+                            output_to_root = output_dir_resolved.relative_to(
+                                relative_output_root_resolved
+                            )
+                            # Construct: output_to_root / rel_to_output
+                            rel_path = output_to_root / rel_to_output
+                        except (ValueError, RuntimeError):
+                            # output_dir is not under relative_output_root, use just the name
+                            rel_path = Path(output_dir_resolved.name) / rel_to_output
+                        rel_paths.append(str(rel_path))
+                        continue
+                except (ValueError, RuntimeError):
+                    pass
+
+            # If path is already relative, try to normalize it
+            if not path_obj.is_absolute():
+                # Already relative, but might not be relative to relative_output_root
+                # Try to make it relative by joining with relative_output_root
+                try:
+                    # If it's a simple relative path, assume it's already correct
+                    # Otherwise, construct path relative to relative_output_root
+                    if str(path_obj).startswith("images/") or str(path_obj).startswith(
+                        "./images/"
+                    ):
+                        rel_paths.append(str(path_obj).lstrip("./"))
+                    else:
+                        # Try to resolve it relative to relative_output_root
+                        test_path = relative_output_root_resolved / path_obj
+                        if test_path.exists():
+                            rel_paths.append(str(path_obj))
+                        else:
+                            # Fallback: use just the filename under images/
+                            rel_paths.append(f"images/{path_obj.name}")
+                except Exception:
+                    # Last resort: use just the filename under images/
+                    rel_paths.append(f"images/{path_obj.name}")
+            else:
+                # Absolute path that we couldn't relativize
+                # This shouldn't happen for resized images, but log a warning
+                logger.warning(
+                    f"Could not relativize absolute path {p} to {relative_output_root_resolved}. "
+                    f"Using filename only."
+                )
+                rel_paths.append(f"images/{path_obj.name}")
+
         return rel_paths
 
     def _probe_image_size(self, image_path: str) -> Tuple[int, int]:
@@ -316,55 +404,14 @@ class SmartResizePreprocessor(BasePreprocessor):
             exif_fn=exif_fn,
         )
 
-    def preprocess(self, row: Dict[str, Any]) -> Dict[str, Any]:
-        return self.resizer.resize_record(row)
+    def preprocess(self, row: ConversationRecord) -> ConversationRecord | None:
+        result = self.resizer.resize_record(cast(Dict[str, Any], row))
+        return cast(ConversationRecord | None, result)
 
-    def _resolve_image_paths(self, images: Sequence[Any]) -> List[str]:
-        resolved: List[str] = []
-        base = self.jsonl_dir
-        for img in images:
-            if isinstance(img, str):
-                p = Path(img)
-                if not p.is_absolute() and base:
-                    p = (base / p).resolve()
-                resolved.append(str(p))
-            else:
-                resolved.append(img)
-        return resolved
 
-    def _probe_image_size(self, image_path: str) -> Tuple[int, int]:
-        with Image.open(image_path) as img:
-            img = img.convert("RGB")
-            return int(img.height), int(img.width)
-
-    def _resize_image(self, image_path: Path, width: int, height: int) -> Path:
-        out_path = image_path
-        if self.output_dir:
-            rel = image_path.name
-            base = self.jsonl_dir
-            if base:
-                try:
-                    rel = image_path.relative_to(base)
-                except ValueError:
-                    rel = image_path.name
-            out_path = (self.output_dir / rel).resolve()
-            out_path.parent.mkdir(parents=True, exist_ok=True)
-
-        if out_path.exists():
-            try:
-                with Image.open(out_path) as existing:
-                    if existing.size == (width, height):
-                        return out_path
-            except Exception:
-                pass  # fall through to rewrite if probing fails
-
-        with Image.open(image_path) as img:
-            rgb = img.convert("RGB")
-            resized = rgb.resize((width, height), Image.Resampling.LANCZOS)
-            resized.save(out_path)
-        return out_path
-
-def smart_resize_params_from_env(prefix: str = "SMART_RESIZE_GUARD") -> Optional[SmartResizeParams]:
+def smart_resize_params_from_env(
+    prefix: str = "SMART_RESIZE_GUARD",
+) -> Optional[SmartResizeParams]:
     """Build SmartResizeParams from environment variables when guard is requested.
 
     Env variables:

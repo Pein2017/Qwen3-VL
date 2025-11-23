@@ -15,8 +15,8 @@ def points_to_xyxy(points: Sequence[float]) -> List[float]:
     Compute [x1,y1,x2,y2] axis-aligned bounding box that encloses arbitrary points.
 
     This is the canonical function for converting polygon or line points to bbox_2d format.
-    Used throughout the codebase for poly-to-bbox conversion (e.g., in fusion pipeline
-    when poly_max_points threshold is exceeded).
+    Used throughout the codebase for poly-to-bbox conversion (e.g., in offline
+    conversion steps that cap polygon complexity).
 
     Args:
         points: Flat list of coordinates [x0, y0, x1, y1, ..., xn, yn]

@@ -262,6 +262,10 @@ class CustomConfig:
             raise TypeError("custom section must be a mapping")
 
         data: MutableMapping[str, Any] = dict(payload)
+        if "use_legacy_fusion" in data:
+            raise ValueError(
+                "custom.use_legacy_fusion has been removed; unified fusion loader is the only supported path."
+            )
 
         train_jsonl = data.pop("train_jsonl", data.pop("jsonl", None))
         user_prompt = data.pop("user_prompt", prompts.user)

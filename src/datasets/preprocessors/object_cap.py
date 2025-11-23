@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import random
-from typing import Any, Mapping, MutableMapping, Optional, Sequence
+from typing import Any, Optional
 
+from ..contracts import ConversationRecord
 from .base import BasePreprocessor
 
 
@@ -24,10 +25,10 @@ class ObjectCapPreprocessor(BasePreprocessor):
         self.min_objects = int(min_objects)
         self.rng: Optional[random.Random] = None
 
-    def preprocess(self, row: Mapping[str, Any]) -> Optional[MutableMapping[str, Any]]:
+    def preprocess(self, row: ConversationRecord) -> Optional[ConversationRecord]:
         objects = list(row.get("objects") or [])
         if len(objects) <= self.max_objects:
-            return dict(row)
+            return row
 
         keep = max(self.min_objects, self.max_objects)
         rng = self.rng if isinstance(self.rng, random.Random) else random
@@ -35,7 +36,7 @@ class ObjectCapPreprocessor(BasePreprocessor):
         keep_indices = sorted(rng.sample(range(len(objects)), keep))
         row_copy = dict(row)
         row_copy["objects"] = [objects[i] for i in keep_indices]
-        return row_copy
+        return row_copy  # type: ignore[return-value]
 
 
 __all__ = ["ObjectCapPreprocessor"]

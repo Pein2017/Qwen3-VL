@@ -23,11 +23,13 @@ class DatasetSpec:
     poly_fallback: Literal["off", "bbox_2d"] = "off"
     poly_max_points: Optional[int] = None
     val_jsonl: Optional[Path] = None
-    # Optional per-source control: ensure at least this fraction of auxiliary
-    # picks per epoch contain polygons after fallback. None = no constraint.
-    poly_min_ratio: Optional[float] = None
     # Optional object cap applied at load/epoch time (random downsample of objects).
     max_objects_per_image: Optional[int] = None
+    # Optional prompt overrides (per-dataset) applied on top of domain/default prompts.
+    prompt_user: Optional[str] = None
+    prompt_system: Optional[str] = None
+    # Optional deterministic seed for per-epoch sampling/shuffling.
+    seed: Optional[int] = None
 
 
 @dataclass(frozen=True)

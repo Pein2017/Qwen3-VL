@@ -68,13 +68,13 @@ def _parse_args():
 # ==============================
 
 # Required paths
-CKPT_PATH = "output/11-19/stage_1.5_merged/epoch_24-poly-from_base-checkpoint-1760"  # HF dir or merged checkpoint  # HF dir or merged checkpoint
+CKPT_PATH = "output/11-23/stage_1.5_merged/lvis_ratio_0.08-last_6-checkpoint-2250"  # HF dir or merged checkpoint  # HF dir or merged checkpoint
 JSONL_PATH = "data/bbu_full_768_poly/val.jsonl"
 
 # Runtime settings
 LIMIT = 10
 DEVICE = "cuda:2"  # Default device; can be overridden by CLI arg in main()
-SAVE_DIR = "vis_out/stage_1.5_merged/epoch_24-poly-from_base"
+SAVE_DIR = "vis_out/stage_1.5_merged/last_6-checkpoint-2250"
 MAX_NEW_TOKENS = 2048
 TEMPERATURE = 0.001  # Moderate temperature for diversity without excessive randomness
 TOP_P = 0.95  # Nucleus sampling - cuts off low-probability tail for better diversity

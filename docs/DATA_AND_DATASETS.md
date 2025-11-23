@@ -156,7 +156,7 @@ custom:
   - Coordinate sanity is centralized in `pipeline/coordinate_manager.py` (EXIF + smart-resize + clamp) and `pipeline/vision_process.py`.
 - **Public datasets (`public_data/`)**:
   - See `PUBLIC_DATA.md` + `public_data/README.md` for LVIS download, conversion, sampling, visualization, and pytest coverage.
-  - Each converter produces JSONL that matches this document’s schema; polygons include `poly_points`. You can cap polygon complexity per source with `poly_max_points` (downgrades only oversized polygons to `bbox_2d`) or force all polygons to boxes via `poly_fallback: bbox_2d`.
+  - Each converter produces JSONL that matches this document’s schema; polygons include `poly_points`. Cap polygon complexity during conversion (e.g., `--poly-max-points 12`) if you want oversized shapes turned into `bbox_2d`.
 - **Fusion tooling**:
   - `scripts/fuse_datasets.py` plus `src/datasets/fusion.py` can pre-build fused JSONL based on a YAML config (target dataset + auxiliary sources). Useful when you want deterministic sampling instead of streaming fusion.
 - **Visualization**:
@@ -164,11 +164,15 @@ custom:
 
 ## Multi-Dataset Fusion
 
-When you want BBU dense-caption training to consume auxiliary detection datasets (LVIS, COCO, etc.), provide a `custom.fusion_config` (YAML/JSON). The fusion loader mixes:
+When you want BBU dense-caption training to consume auxiliary detection datasets (LVIS, COCO, etc.), provide a `custom.fusion_config` (YAML/JSON). The unified fusion loader mixes:
 
-- **Target dataset**: consumed exactly once per epoch and treated as the primary domain. Evaluation stays scoped to the target split (`custom.val_jsonl`), and wrappers for target datasets enable augmentation/curriculum by default.
-- **Auxiliary sources**: each entry declares the dataset wrapper (e.g., `coco`, `lvis`, `objects365`) plus a `ratio`. Wrappers normalize the JSONL schema, select prompts, and optionally downgrade polygons via `poly_fallback` (all polys → boxes) or `poly_max_points` (only oversized polys → boxes) before sampling `round(ratio * N_target)` records **with replacement** each epoch.
-- **Augmentation control**: dataset wrappers decide whether augmentation/curriculum applies. Source-domain wrappers (COCO/LVIS/etc.) default to clean images, while target-domain wrappers inherit the configured augmentation pipeline.
+- **Target dataset** (required): consumed exactly once per epoch and treated as the primary domain. Evaluation defaults to the target `val_jsonl` unless a legacy fallback is used.
+- **Auxiliary sources**: each entry declares the dataset wrapper (e.g., `coco`, `lvis`, `objects365`) plus a `ratio`. Each epoch samples `round(ratio * N_target)` records **with replacement**, errors if the source pool is empty, and shuffles deterministically using the fusion seed and optional per-dataset seed.
+- **Per-dataset fields** (target and sources): `name`, `train_jsonl`, optional `val_jsonl`, `template`, optional `user_prompt`/`system_prompt` override, `augmentation_enabled`, `curriculum_enabled`, `max_objects_per_image`, optional `seed`. Sources default to **no augmentation/curriculum** and a **64 object cap**; targets inherit global augmentation/curriculum and can opt into a cap.
+- **Prompt priority**: `default < domain (wrapper template) < dataset-specific override`, applied to both system and user prompts per sample while keeping a single shared template instance.
+- **Object caps**: applied deterministically after augmentation and before encoding. Sources cap by default; targets may opt in via `max_objects_per_image`.
+- **Telemetry**: `last_sample_debug` exposes `dataset`, `prompt_source`, augmentation on/off, cap applied/limit, and input length for every sample; per-epoch `epoch_plan` reports counts and policy flags.
+- **No online smart-resize**: inputs are assumed pre-filtered/resized offline; resizing occurs only through augmentation ops when configured. If you need smart-resize, run it during conversion and provide the resized `train/val` JSONLs explicitly.
 
 Example fusion config:
 
@@ -183,15 +187,18 @@ sources:
     ratio: 0.1
     params:
       train_jsonl: /data/coco/train.jsonl
-      poly_max_points: 12  # Keep polys ≤12 vertices, downgrade larger ones to bbox_2d
+      user_prompt: "List objects in JSON."        # optional override
+      max_objects_per_image: 48                  # optional cap override
+      seed: 123                                  # optional per-source seed
   - dataset: objects365
     ratio: 0.05
     params:
       train_jsonl: /data/objects365/train.jsonl
-      poly_fallback: bbox_2d  # Convert all polys to boxes for this source
 ```
 
-You can either stream this config directly via `MultiSourceFusionDataset` (per-epoch resampling) or precompute fused JSONLs with `scripts/fuse_datasets.py --config <path>`. Because wrappers bind prompts/augmentation per dataset instance, individual JSONL records no longer need `metadata.dataset` or `metadata.template` annotations—the fusion dataset keeps that provenance at the dataset-object level.
+Runtime loader: `custom.fusion_config` always uses `FusionCaptionDataset` (alias `UnifiedFusionDataset`) with a single shared template. For deterministic static mixes, you can still precompute fused JSONLs with `scripts/fuse_datasets.py --config <path>`.
+
+For the universal JSONL record contract shared by all domains, see `docs/DATA_JSONL_CONTRACT.md`.
 
 ---
 

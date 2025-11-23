@@ -138,11 +138,53 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
         valid_count = int(mask.sum().item())
         vocab_size = student_logits_next.shape[-1]
 
+        # CRITICAL DEBUG: Log label distribution to diagnose unmasking
         if valid_count > 0:
-            masked_student_logits = student_logits_next.masked_select(
-                mask.unsqueeze(-1)
-            ).view(1, valid_count, vocab_size)
-            masked_labels = labels_next.masked_select(mask)
+            seq_len = (
+                labels_next.shape[1] if labels_next.ndim == 2 else labels_next.numel()
+            )
+            mask_ratio = float(mask.float().mean().item()) if mask.numel() else 0.0
+            # Check if labels are mostly unmasked (indicating loss_scale='all' or template_backend='jinja')
+            if mask_ratio > 0.3:  # More than 30% unmasked is suspicious
+                import logging
+
+                logger = logging.getLogger(__name__)
+                # Sample labels from different parts of the sequence (beginning, middle, end)
+                flat_labels = labels_next.flatten()
+                total = flat_labels.numel()
+                sample_indices = torch.cat(
+                    [
+                        flat_labels[: min(50, total)],  # Beginning
+                        flat_labels[
+                            max(0, total // 2 - 25) : min(total // 2 + 25, total)
+                        ],  # Middle
+                        flat_labels[max(0, total - 50) :],  # End
+                    ]
+                )
+                unique_labels = torch.unique(sample_indices)
+                # Count how many are -100 vs non--100
+                masked_count = int((sample_indices == -100).sum().item())
+                unmasked_count = int((sample_indices != -100).sum().item())
+                logger.debug(
+                    f"🔍 UNMASKING DETECTED: valid_count={valid_count}, seq_len={seq_len}, "
+                    f"mask_ratio={mask_ratio:.4f}, sample_masked={masked_count}, sample_unmasked={unmasked_count}, "
+                    f"unique_label_values (sample)={unique_labels.tolist()[:20]}"
+                )
+
+        self._maybe_log_token_stats(
+            valid_count=valid_count,
+            labels_next=labels_next,
+            mask=mask,
+            inputs=inputs,
+        )
+
+        if valid_count > 0:
+            # Extract masked student logits - keep original tensors for now (needed for CE loss)
+            flat_student = student_logits_next[mask]  # (valid_count, vocab_size)
+            masked_student_logits = flat_student.unsqueeze(
+                0
+            )  # (1, valid_count, vocab_size)
+            masked_labels = labels_next[mask]
         else:
             masked_student_logits = student_logits_next.new_empty((1, 0, vocab_size))
             masked_labels = labels_next.new_empty((0,), dtype=labels_next.dtype)
@@ -180,9 +222,23 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
 
             if llm_kd_requested:
                 if valid_count > 0:
-                    masked_teacher_logits = teacher_logits_next.masked_select(
-                        mask.unsqueeze(-1)
-                    ).view(1, valid_count, teacher_vocab_size)
+                    # Extract masked teacher logits and immediately free the large tensors
+                    flat_teacher = teacher_logits_next[
+                        mask
+                    ]  # (valid_count, vocab_size)
+                    masked_teacher_logits = flat_teacher.unsqueeze(
+                        0
+                    )  # (1, valid_count, vocab_size)
+
+                    # Free memory: delete large intermediate tensors before JSD computation
+                    # This frees ~1.16 GB per tensor (for seq_len=4096, vocab_size=151936)
+                    del (
+                        teacher_logits,
+                        teacher_logits_next,
+                        flat_teacher,
+                        teacher_outputs,
+                    )
+
                     student_for_kl = (
                         masked_student_logits
                         if model.training
@@ -226,9 +282,7 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
             vision_loss = self._compute_visual_kd_loss()
             if vision_loss is not None:
                 total_loss = total_loss + vision_loss
-                self._metrics[mode]["vision_kd_loss"].append(
-                    vision_loss.detach().cpu()
-                )
+                self._metrics[mode]["vision_kd_loss"].append(vision_loss.detach().cpu())
                 breakdown = getattr(self, "_last_visual_kd_breakdown", None)
                 if isinstance(breakdown, dict):
                     for target_name, loss_value in breakdown.items():
@@ -255,6 +309,103 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
         self._metrics[mode]["token_acc_total"].append(total_tokens.detach().cpu())
 
         return (total_loss, outputs_student) if return_outputs else total_loss
+
+    def _maybe_log_token_stats(
+        self,
+        *,
+        valid_count: int,
+        labels_next: torch.Tensor,
+        mask: torch.Tensor,
+        inputs: Dict[str, Union[torch.Tensor, Any]],
+    ) -> None:
+        """Lightweight logging hook to trace token masking/sequence lengths."""
+        # Lazily initialize debug file (stored outside checkpoints under /tmp by default)
+        file_path: Optional[str] = getattr(self, "_token_stats_file", None)
+        if file_path is False:
+            return
+        if file_path is None:
+            file_path = (
+                getattr(self.args, "token_stats_path", None)
+                or "/tmp/gkd_token_stats.log"
+            )
+            # Type guard: ensure file_path is a string
+            if not isinstance(file_path, str):
+                self._token_stats_file = False
+                return
+            try:
+                with open(file_path, "w", encoding="utf-8") as fout:
+                    fout.write(
+                        "# step valid_count seq_len mask_ratio input_ids attention_mask\n"
+                    )
+            except OSError:
+                # Disable logging if file is unwritable
+                self._token_stats_file = False
+                return
+            self._token_stats_file = file_path
+            self._token_stats_logged = 0
+
+        file_path = getattr(self, "_token_stats_file", None)
+        if not file_path or file_path is False:
+            return
+        # Type guard: ensure file_path is a string
+        if not isinstance(file_path, str):
+            return
+
+        # Limit logging to early steps or unusually large batches to avoid noise
+        logged = getattr(self, "_token_stats_logged", 0)
+        max_length = getattr(self.args, "max_length", None) or getattr(
+            getattr(self.args, "training_args", None), "max_length", 0
+        )
+        seq_len = (
+            int(labels_next.shape[1])
+            if labels_next.ndim == 2
+            else int(labels_next.numel())
+        )
+        mask_ratio = float(mask.float().mean().item()) if mask.numel() else 0.0
+        # Enhanced logging: log early steps, large valid_count, or high mask_ratio (potential unmasking issue)
+        should_log = (
+            logged < 32
+            or (max_length and valid_count > max_length)
+            or mask_ratio > 0.5  # More than 50% unmasked is suspicious
+            or valid_count > 2000  # Large valid_count might indicate unmasking issue
+        )
+        if not should_log:
+            return
+
+        step = getattr(getattr(self, "state", None), "global_step", None)
+        input_ids = inputs.get("input_ids")
+        attn = inputs.get("attention_mask")
+        input_len = None
+        attn_ratio = None
+        if isinstance(input_ids, torch.Tensor) and input_ids.ndim == 2:
+            input_len = int(input_ids.shape[1])
+        if isinstance(attn, torch.Tensor):
+            attn_ratio = float(attn.float().mean().item())
+
+        try:
+            with open(file_path, "a", encoding="utf-8") as fout:
+                # Enhanced logging: include valid_count/seq_len ratio and label statistics
+                valid_ratio = valid_count / seq_len if seq_len > 0 else 0.0
+                labels_non_neg100 = int((labels_next != -100).sum().item())
+                labels_total = int(labels_next.numel())
+                fout.write(
+                    f"{step if step is not None else 'NA'} "
+                    f"{valid_count} {seq_len} {mask_ratio:.4f} "
+                    f"{input_len if input_len is not None else 'NA'} "
+                    f"{attn_ratio if attn_ratio is not None else 'NA'} "
+                    f"valid_ratio={valid_ratio:.4f} labels_valid={labels_non_neg100}/{labels_total}\n"
+                )
+                # Also log diagnostic at debug level if mask_ratio is suspiciously high
+                if mask_ratio > 0.5 or valid_count > 2000:
+                    logger.debug(
+                        f"Step {step}: High mask ratio detected! valid_count={valid_count}, "
+                        f"seq_len={seq_len}, mask_ratio={mask_ratio:.4f}, valid_ratio={valid_ratio:.4f}. "
+                        f"This might indicate unmasking issue (loss_scale='all' or template_backend='jinja')."
+                    )
+            self._token_stats_logged = logged + 1
+        except OSError:
+            # Disable logging on persistent failures
+            self._token_stats_file = False
 
     def _run_teacher_forward(
         self,
@@ -313,6 +464,7 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
                 raise RuntimeError("merger not available for visual KD")
 
             if vit_cfg.enabled:
+
                 def student_vit_hook(_module: nn.Module, inputs, _output):
                     if not inputs:
                         raise RuntimeError(
@@ -570,9 +722,11 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
         if not hasattr(self, "_visual_kd_config"):
             self._visual_kd_config = VisualKDConfig.disabled()
 
-        if not hasattr(self, "_visual_kd_vit_cfg") or not hasattr(
-            self, "_visual_kd_aligner_cfg"
-        ) or not hasattr(self, "_visual_kd_deepstack_cfg"):
+        if (
+            not hasattr(self, "_visual_kd_vit_cfg")
+            or not hasattr(self, "_visual_kd_aligner_cfg")
+            or not hasattr(self, "_visual_kd_deepstack_cfg")
+        ):
             cfg = self._visual_kd_config
             self._visual_kd_vit_cfg = getattr(cfg, "vit", VisualKDTargetConfig())
             self._visual_kd_aligner_cfg = getattr(
@@ -605,7 +759,9 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
     def _has_teacher_model(self) -> bool:
         return hasattr(self, "teacher_model") and self.teacher_model is not None
 
-    def log(self, logs: Optional[Dict[str, float]], start_time: Optional[float] = None) -> None:
+    def log(
+        self, logs: Optional[Dict[str, float]], start_time: Optional[float] = None
+    ) -> None:
         if logs is None:
             logs = {}
 

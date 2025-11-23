@@ -15,17 +15,12 @@ The system SHALL use a single canonical JSONL schema for all detection-style dat
 - **WHEN** a record originates from an external dataset (e.g., LVIS/COCO) via a converter
 - **THEN** its geometry and fields conform to the same contract as BBU records, allowing interchangeability in `DenseCaptionDataset`.
 
-#### Scenario: Configurable polygon fallback
-- **GIVEN** a dataset whose JSONL contains only canonical geometry fields (`bbox_2d`, `poly`, `line`)
-- **AND** a dataset wrapper setting `poly_fallback: bbox_2d` or a polygon complexity cap `poly_max_points: N`
-- **WHEN** the wrapper instantiates training samples
-- **THEN** it converts polygons to axis-aligned `bbox_2d` either unconditionally (when `poly_fallback: bbox_2d`) or selectively for polygons with more than `N` vertices (when `poly_max_points` is set), while leaving the original JSONL untouched
-- **AND** when neither knob is set, all `poly` geometries are preserved as-is.
-
-#### Scenario: Per-object polygon simplification by vertex count
-- **GIVEN** a source dataset entry that specifies `poly_max_points: N`
+#### Scenario: Offline polygon simplification by vertex count
+- **GIVEN** a source dataset conversion step configured with `poly_max_points: N`
 - **WHEN** an object has a `poly` with more than `N` vertices (or `poly_points > N`)
-- **THEN** the loader downgrades only that object to `bbox_2d` while preserving polygons at or below the threshold, keeping the original JSONL unchanged
+- **THEN** the converter downgrades only that object to `bbox_2d` while preserving polygons at or below the threshold in the emitted JSONL
+- **AND** loaders consume the JSONL as-is without additional polygon fallback.
+- **AND** `public_data/scripts/convert_rescale_source.sh` (or any wrapper around `convert_lvis.py`) can be invoked with `--poly-max-points 12` to produce `public_data/lvis/rescale_32_768_poly_max_12/train.jsonl`, which fusion configs can reference directly.
 
 #### Scenario: Image paths resolve relative to JSONL location
 - **GIVEN** a dataset JSONL whose `images` entries are relative paths (e.g., `../raw/images/...`)
@@ -69,14 +64,19 @@ Augmentation SHALL be enabled or disabled per domain via dataset-wrapper configu
 - **WHEN** a source wrapper explicitly sets `supports_augmentation=true`
 - **THEN** the same augmentation pipeline (and optional curriculum) can be attached to that dataset while still avoiding code duplication across wrappers.
 
-### Requirement: Evaluation scoped to target dataset
-The default evaluation configuration SHALL use the target dataset’s validation split only.
+### Requirement: Evaluation scoped to target dataset with optional source splits
+The default evaluation configuration SHALL use the target dataset’s validation split, with optional source `val_jsonl` opt-in when explicitly provided.
 
 #### Scenario: Target-only evaluation
 - **GIVEN** a fusion config that declares a target dataset `bbu` with `val_jsonl`
-- **WHEN** the training config is resolved for evaluation
+- **WHEN** the training config is resolved for evaluation without source `val_jsonl`
 - **THEN** `custom.val_jsonl` points to the BBU `val_jsonl`
-- **AND** auxiliary datasets are not included in evaluation metrics unless explicitly configured.
+- **AND** auxiliary datasets are not included in evaluation metrics.
+
+#### Scenario: Source eval provided
+- **GIVEN** a fusion config whose source dataset provides its own `val_jsonl`
+- **WHEN** evaluation is built with source eval enabled
+- **THEN** the loader includes that source split (no shuffling) alongside the target eval set, assuming the source split was prepared offline (no train/val splitting inside the loader).
 
 ### Requirement: Uniform loss across datasets
 Mixed batches SHALL optimize the same teacher-forcing cross-entropy objective for every sample regardless of dataset provenance.
@@ -85,17 +85,6 @@ Mixed batches SHALL optimize the same teacher-forcing cross-entropy objective fo
 - **WHEN** the training loop builds a batch that contains both target and source records
 - **THEN** it runs the regular dense-caption CE loss over all targets without applying dataset-specific scaling factors or additional benchmarking passes
 
-### Requirement: Auxiliary polygon diversity guardrail
-Fusion configs SHALL support an optional minimum proportion of polygon-bearing samples for each auxiliary source to avoid collapses into bbox-only supervision.
-
-#### Scenario: Enforcing `poly_min_ratio`
-- **GIVEN** a source dataset spec that sets `poly_min_ratio: r`
-- **AND** an epoch quota of `Q` samples for that source
-- **WHEN** the loader schedules auxiliary indices for the epoch
-- **THEN** it first selects at least `ceil(Q * r)` records that still contain `poly` geometries after applying `poly_fallback`/`poly_max_points`
-- **AND** fills the remaining `Q - ceil(Q * r)` picks with unrestricted samples (still drawn with replacement)
-- **SO THAT** each epoch retains a predictable baseline of polygon supervision even when most polygons are downgraded.
-
 ### Requirement: Source-domain prompt constraints
 Source-domain datasets SHALL use an auxiliary prompt that emphasizes concise English class names instead of QC-specific descriptions.
 
@@ -103,4 +92,3 @@ Source-domain datasets SHALL use an auxiliary prompt that emphasizes concise Eng
 - **WHEN** a wrapper declares `template: aux_dense`
 - **THEN** the bound prompts instruct the model to output norm1000 geometry with short English class names (one or two words) and no completeness or quality commentary
 - **AND** LVIS/COCO style categories remain readable without leaking BBU-specific attributes into auxiliary supervision.
-

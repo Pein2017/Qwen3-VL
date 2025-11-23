@@ -35,7 +35,7 @@ This keeps the implementation simple (one polygon field) while still allowing sp
   - **Target domain**: downstream QC datasets such as BBU (current primary) and future programs like RRU. These datasets define the main loss objective, always participate in evaluation, and are eligible for all augmentation/curriculum features.
   - **Source domain**: public/general detection datasets (COCO, Objects365, Flickr3k, etc.) that regularize the vision encoder. They default to *no augmentation* and never contribute to evaluation metrics unless explicitly opted in.
 - **Wrapper interface**
-  - Each dataset is represented by a wrapper class that exposes `domain`, `name`, `template_id`, `train_jsonl`/`val_jsonl` handles, optional `poly_fallback`, and boolean flags `supports_augmentation` / `supports_curriculum`.
+  - Each dataset is represented by a wrapper class that exposes `domain`, `name`, `template_id`, `train_jsonl`/`val_jsonl` handles, and boolean flags `supports_augmentation` / `supports_curriculum`. Polygon simplification (if any) happens in the offline converters, not in the loader.
   - Wrappers own any dataset-specific preprocessing (image roots, taxonomy quirks, attribute normalization) and emit canonical `ConversationRecord` entries; no downstream code needs per-dataset conditionals.
   - Prompt binding happens per wrapper: `template_id` selects the `(system_prompt, user_prompt)` pair at dataset-construction time, so individual records carry no template metadata.
 - **Factory**
@@ -47,7 +47,7 @@ This keeps the implementation simple (one polygon field) while still allowing sp
 Whenever a new source or target dataset is introduced, the wrapper must supply:
 
 1. **Canonical JSONL contract** — `images`/`objects`/`width`/`height` plus single-geometry objects, with relative image paths that resolve against the JSONL directory.
-2. **Geometry policy controls** — default `poly_fallback`, optional `poly_max_points`, and (for auxiliary datasets) an optional `poly_min_ratio` to retain a minimum volume of polygon-bearing samples after fallback.
+2. **Geometry policy controls** — document any offline polygon simplification (e.g., `poly_max_points`) applied during conversion.
 3. **Domain flags** — `domain`, `supports_augmentation`, and `supports_curriculum` so the factory can wire augmentation/curriculum only when appropriate.
 4. **Template binding** — a `template_id` mapping to prompts in `src/config/prompts.py`; add a new entry there if the dataset needs a specialized prompt.
 5. **Image root validation** — explicit checks that referenced directories exist; wrappers must not rely on caller-provided symlinks or ambient CWD to reach the images.
@@ -70,7 +70,7 @@ Total samples per epoch:
 
 - `N_total = N_BBU + Σ_d quota[d]`. The effective auxiliary fraction is `Σ_d quota[d] / N_BBU`, which for the example above is `0.15`.
 
-Auxiliary data serves purely as a **regularization signal**; there is no requirement to exhaust or balance the auxiliary pool across training runs. When polygon-rich supervision is required, wrappers can specify `poly_min_ratio` so the sampler first fills the mandated share of polygon-bearing records (after applying `poly_max_points`/fallback) before sampling the remainder uniformly.
+Auxiliary data serves purely as a **regularization signal**; there is no requirement to exhaust or balance the auxiliary pool across training runs.
 ### Stability, Ratios, and Scheduling
 
 To keep BBU performance stable while leveraging auxiliary regularization, the fusion scheme exposes **per-source ratios** instead of a single global knob:
@@ -163,6 +163,7 @@ The LVIS/COCO converters and validators under `public_data/` at the repo root (`
 - Validators check `bbox_2d` / `poly` / `line` plus geometry-specific constraints but do not hard-code any knowledge of the BBU taxonomy.
 
 These public datasets can then be referenced in fusion configs as auxiliary sources and mixed into BBU training via the regularization scheme above, without changing the core training code.
+`public_data/scripts/convert_rescale_source.sh` bundles `convert_lvis.py` + smart-resize with a hard-coded `--poly-max-points 12`, writing outputs to `public_data/lvis/rescale_32_768_poly_max_12/train.jsonl`. Fusion configs such as `configs/fusion/bbu_with_lvis.yaml` now point to that capped JSONL so the loader reads prefiltered geometry without any runtime fallback.
 ## Evaluation
 
 - The default trainer wiring keeps `custom.val_jsonl` pointed at the target dataset’s validation split; auxiliary datasets never participate in evaluation unless a config explicitly adds a diagnostic loader.

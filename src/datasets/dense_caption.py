@@ -1,24 +1,24 @@
 from __future__ import annotations
 
 import copy
-import os
 import random
-from pathlib import Path
-from typing import Any, Dict, List, Literal, Mapping, MutableMapping, Optional, Sequence
+from typing import Any, Dict, List, Literal, MutableMapping, Optional, Sequence
 
 from torch.utils.data import Dataset, get_worker_info
 
 from src.config.prompts import USER_PROMPT_SUMMARY
 
 from .builders import JSONLinesBuilder
-from .preprocessors import SmartResizePreprocessor, smart_resize_params_from_env
 from .contracts import ConversationRecord, validate_conversation_record
 from .preprocessors import AugmentationPreprocessor, SequentialPreprocessor
 from .utils import load_jsonl
 
+# Exposed for debugging (e.g., OOM tracing)
+LAST_SAMPLE_DEBUG: Dict[str, Any] = {}
 
-class DenseCaptionDataset(Dataset):
-    """Dense caption dataset without dynamic pairing.
+
+class BaseCaptionDataset(Dataset):
+    """Base caption dataset without dynamic pairing.
 
     Each sample corresponds to a single base record. The dataset supports
     optional augmentation, summary/dense mode selection, and epoch-level shuffling
@@ -40,14 +40,15 @@ class DenseCaptionDataset(Dataset):
         bypass_prob: float = 0.0,
         seed: int = 2025,
         curriculum_state: Optional[MutableMapping[str, Any]] = None,
+        dataset_name: Optional[str] = None,
+        allow_empty: bool = False,
     ):
-
         self.use_summary = bool(use_summary)
         self.system_prompt_dense = system_prompt_dense
         self.system_prompt_summary = system_prompt_summary
         self.user_prompt = user_prompt
         self.emit_norm: Literal["none", "norm100", "norm1000"] = emit_norm
-        self.json_format = json_format
+        self.json_format: Literal["standard"] = json_format
         self.bypass_prob = float(bypass_prob)
         self.seed = int(seed)
         self.template = template
@@ -83,8 +84,8 @@ class DenseCaptionDataset(Dataset):
                 raise ValueError(f"Base record {idx} is invalid: {exc}") from exc
             validated_records.append(copy.deepcopy(validated))
 
-        if not validated_records:
-            raise ValueError("DenseCaptionDataset requires at least one valid record")
+        if not validated_records and not allow_empty:
+            raise ValueError("BaseCaptionDataset requires at least one valid record")
 
         self.base_records = validated_records
 
@@ -117,13 +118,15 @@ class DenseCaptionDataset(Dataset):
         self._rng = random.Random(self._seed_for_epoch(self._epoch))
         self._index_perm = list(range(len(self.base_records)))
         self._rebuild_perm_for_epoch()
+        self.dataset_name = dataset_name or "dataset"
+        self.last_sample_debug: Dict[str, Any] = {}
 
     @staticmethod
     def from_jsonl(
         jsonl_path: str,
         template: Any,
         **kwargs,
-    ) -> "DenseCaptionDataset":
+    ) -> "BaseCaptionDataset":
         records = load_jsonl(jsonl_path, resolve_relative=True)
         # Optional sample limiting for quick smoke tests
         sample_limit = kwargs.pop("sample_limit", None)
@@ -136,38 +139,9 @@ class DenseCaptionDataset(Dataset):
             raise TypeError(
                 "summary_ratio is no longer supported; use use_summary instead."
             )
-        kwargs.pop("use_detailed_caption", None)
-        kwargs.pop("output_variant", None)  # Backward compat
-
-        # Optional smart-resize guard (env-driven) to ensure pixel/grid compliance
-        guard_params = smart_resize_params_from_env()
-        if guard_params:
-            guard_output = kwargs.pop(
-                "smart_resize_output_dir",
-                None,
-            )
-            output_dir_env = os.getenv("SMART_RESIZE_GUARD_OUTPUT_DIR")
-            jsonl_dir = Path(jsonl_path).resolve().parent
-            output_dir = None
-            if guard_output:
-                output_dir = Path(guard_output).resolve()
-            elif output_dir_env:
-                output_dir = Path(output_dir_env).resolve()
-            else:
-                output_dir = jsonl_dir / "_smart_resized_images"
-            guard = SmartResizePreprocessor(
-                params=guard_params,
-                jsonl_dir=jsonl_dir,
-                output_dir=output_dir,
-                write_images=True,
-            )
-            guarded_records: List[ConversationRecord] = []
-            for rec in records:
-                updated = guard(rec)
-                if updated is not None:
-                    guarded_records.append(updated)
-            records = guarded_records
-        return DenseCaptionDataset(
+            kwargs.pop("use_detailed_caption", None)
+            kwargs.pop("output_variant", None)  # Backward compat
+        return BaseCaptionDataset(
             base_records=records,
             template=template,
             **kwargs,
@@ -202,7 +176,7 @@ class DenseCaptionDataset(Dataset):
 
     def __getitem__(self, index: int) -> Dict[str, Any]:
         if not self.base_records:
-            raise IndexError("DenseCaptionDataset is empty")
+            raise IndexError("BaseCaptionDataset is empty")
 
         base_idx = self._index_perm[index % len(self._index_perm)]
         record = copy.deepcopy(self.base_records[base_idx])
@@ -257,6 +231,34 @@ class DenseCaptionDataset(Dataset):
                 except Exception:
                     pass
 
+        # Track last-sample debug info for OOM/root-cause tracing
+        try:
+            objects = record.get("objects") or []
+            max_poly = 0
+            for obj in objects:
+                if "poly_points" in obj:
+                    max_poly = max(max_poly, int(obj.get("poly_points") or 0))
+            info = {
+                "dataset": self.dataset_name,
+                "base_idx": base_idx,
+                "objects": len(objects),
+                "max_poly_points": max_poly,
+                "width": record.get("width"),
+                "height": record.get("height"),
+                "mode": mode,
+            }
+            input_ids = encoded.get("input_ids")
+            if input_ids is not None and hasattr(input_ids, "__len__"):
+                try:
+                    info["input_ids_len"] = len(input_ids)
+                except Exception:
+                    pass
+            self.last_sample_debug = info
+            LAST_SAMPLE_DEBUG.update(info)
+        except Exception:
+            # Best-effort; do not block training
+            pass
+
         # Attach the original conversation so RLHF/GKD trainers can re-encode.
         encoded["messages"] = conversation_messages
         for key in ("assistant_payload", "objects", "metadata"):
@@ -264,3 +266,7 @@ class DenseCaptionDataset(Dataset):
                 encoded[key] = copy.deepcopy(merged[key])
 
         return encoded
+
+
+# Backward compatibility alias
+DenseCaptionDataset = BaseCaptionDataset

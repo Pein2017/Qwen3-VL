@@ -10,7 +10,9 @@ template:
   template: qwen3_vl
   truncation_strategy: right
   max_pixels: 1572864999  # an extremely large value so that never `do_resize`
-
+  # NOTE: RLHF defaults to loss_scale='last_round' which should be correct for single-round conversations
+  # Keeping default (last_round) - need to debug why it unmasks 50% of tokens
+  
 deepspeed:
   enabled: true
   config: zero2
@@ -56,7 +58,7 @@ data:
   dataset: ["dummy"]
   val_dataset: ["dummy"]  # Prevent eval_strategy from being overridden to 'no'
   dataset_num_proc: 8
-  dataloader_num_workers: 8
+  dataloader_num_workers: 16
   dataloader_pin_memory: true
   dataloader_prefetch_factor: 4
   dataloader_persistent_workers: true

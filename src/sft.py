@@ -10,17 +10,18 @@ from dataclasses import asdict
 from multiprocessing import Manager
 from typing import Any
 
+import torch
 from swift.llm.train.rlhf import SwiftRLHF
 from swift.llm.train.sft import SwiftSft
 from swift.trainers import TrainerFactory
 from swift.utils import get_dist_setting
 
-from .config import ConfigLoader, SaveDelayConfig
-from .datasets import DenseCaptionDataset, MultiSourceFusionDataset
-from .datasets.augmentation.curriculum import AugmentationCurriculumScheduler
-from .trainers import with_final_checkpoint
 from .callbacks.fusion_epoch import FusionEpochCallback
+from .config import ConfigLoader, SaveDelayConfig
+from .datasets import BaseCaptionDataset
+from .datasets.augmentation.curriculum import AugmentationCurriculumScheduler
 from .datasets.fusion import FusionConfig
+from .trainers import with_final_checkpoint
 from .utils import enable_verbose_logging, get_logger, set_log_level
 
 
@@ -329,10 +330,13 @@ def main():
     dataset_seed = 42
     dataset: Any
     fusion_callback: FusionEpochCallback | None = None
+    fusion_config_obj: FusionConfig | None = None
     if custom_config.fusion_config:
-        fusion_config = FusionConfig.from_file(custom_config.fusion_config)
-        dataset = MultiSourceFusionDataset(
-            fusion_config=fusion_config,
+        fusion_config_obj = FusionConfig.from_file(custom_config.fusion_config)
+        from .datasets.unified_fusion_dataset import FusionCaptionDataset
+
+        dataset = FusionCaptionDataset(
+            fusion_config=fusion_config_obj,
             base_template=sft.template,
             user_prompt=custom_config.user_prompt,
             emit_norm=custom_config.emit_norm,
@@ -345,10 +349,12 @@ def main():
             system_prompt_summary=system_prompt_summary,
             seed=dataset_seed,
             sample_limit=train_sample_limit,
+            split="train",
         )
+        # Fusion datasets rebuild their schedule each epoch
         fusion_callback = FusionEpochCallback(dataset)
     else:
-        dataset = DenseCaptionDataset.from_jsonl(
+        dataset = BaseCaptionDataset.from_jsonl(
             train_jsonl,
             template=sft.template,
             user_prompt=custom_config.user_prompt,
@@ -562,23 +568,65 @@ def main():
     # Build validation dataset if provided
     eval_dataset = None
     val_jsonl = custom_config.val_jsonl
-    if val_jsonl:
-        logger.info(f"Loading validation dataset: {val_jsonl}")
-        eval_dataset = DenseCaptionDataset.from_jsonl(
-            val_jsonl,
-            template=sft.template,
-            user_prompt=custom_config.user_prompt,
-            emit_norm=custom_config.emit_norm,
-            json_format=custom_config.json_format,
-            augmenter=None,  # No augmentation for validation
-            bypass_prob=0.0,  # Explicit: no bypass for validation
-            sample_limit=val_sample_limit,
-            use_summary=use_summary,
-            system_prompt_dense=system_prompt_dense,
-            system_prompt_summary=system_prompt_summary,
-            seed=dataset_seed,
+    if fusion_config_obj:
+        target_val_path = val_jsonl or (
+            str(fusion_config_obj.target.val_jsonl)
+            if fusion_config_obj.target.val_jsonl is not None
+            else None
         )
-        logger.info(f"Validation dataset size: {len(eval_dataset)}")
+        has_source_val = any(src.val_jsonl is not None for src in fusion_config_obj.sources)
+        if target_val_path:
+            logger.info(
+                "Loading fusion validation dataset: "
+                f"target={target_val_path or 'none'}, sources_with_val={has_source_val}"
+            )
+            from .datasets.unified_fusion_dataset import FusionCaptionDataset
+
+            eval_dataset = FusionCaptionDataset(
+                fusion_config=fusion_config_obj,
+                base_template=sft.template,
+                user_prompt=custom_config.user_prompt,
+                emit_norm=custom_config.emit_norm,
+                json_format=custom_config.json_format,
+                augmenter=None,  # No augmentation for validation
+                bypass_prob=0.0,
+                curriculum_state=None,
+                use_summary=use_summary,
+                system_prompt_dense=system_prompt_dense,
+                system_prompt_summary=system_prompt_summary,
+                seed=dataset_seed,
+                shuffle=False,
+                sample_limit=val_sample_limit,
+                split="eval",
+                target_eval_jsonl=target_val_path,
+                include_source_eval=True,
+            )
+            logger.info(f"Validation dataset size: {len(eval_dataset)}")
+        elif has_source_val:
+            logger.info(
+                "Skipping fusion validation dataset: source val_jsonl present but no target val_jsonl provided"
+            )
+    else:
+        eval_path_fallback = val_jsonl
+        if fusion_config_obj and fusion_config_obj.target.val_jsonl and not eval_path_fallback:
+            eval_path_fallback = str(fusion_config_obj.target.val_jsonl)
+        if eval_path_fallback:
+            logger.info(f"Loading validation dataset: {eval_path_fallback}")
+            eval_dataset = BaseCaptionDataset.from_jsonl(
+                eval_path_fallback,
+                template=sft.template,
+                user_prompt=custom_config.user_prompt,
+                emit_norm=custom_config.emit_norm,
+                json_format=custom_config.json_format,
+                augmenter=None,  # No augmentation for validation
+                bypass_prob=0.0,  # Explicit: no bypass for validation
+                sample_limit=val_sample_limit,
+                use_summary=use_summary,
+                system_prompt_dense=system_prompt_dense,
+                system_prompt_summary=system_prompt_summary,
+                seed=dataset_seed,
+            )
+            logger.info(f"Validation dataset size: {len(eval_dataset)}")
 
     # Sample printing disabled to avoid dumping labels/ids
 
@@ -652,6 +700,24 @@ def main():
         **trainer_kwargs,
     )
 
+    # Patch DeepSpeed __del__ to avoid noisy cleanup errors (safe no-op)
+    try:
+        import deepspeed  # type: ignore
+
+        if hasattr(deepspeed.runtime.engine.DeepSpeedEngine, "__del__"):
+            _orig_ds_del = deepspeed.runtime.engine.DeepSpeedEngine.__del__
+
+            def _safe_ds_del(self):  # type: ignore[override]
+                try:
+                    _orig_ds_del(self)
+                except Exception:
+                    # Suppress non-fatal cleanup errors
+                    pass
+
+            deepspeed.runtime.engine.DeepSpeedEngine.__del__ = _safe_ds_del  # type: ignore[assignment]
+    except Exception:
+        pass
+
     # Start training
     logger.info("=" * 70)
     logger.info("  Starting Training")
@@ -670,6 +736,10 @@ def main():
 
     try:
         sft.train(trainer)
+    except torch.cuda.OutOfMemoryError:
+        debug_info = getattr(dataset, "last_sample_debug", None)
+        logger.error(f"CUDA OOM encountered. Last sample debug: {debug_info}")
+        raise
     finally:
         # Explicit cleanup to prevent DeepSpeed cleanup errors during GC
         # This addresses a known DeepSpeed issue where __del__ can fail

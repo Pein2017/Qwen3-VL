@@ -13,7 +13,7 @@ All target and source detection converters SHALL emit the canonical BBU-style JS
 
 #### Scenario: Converter extensibility
 - **WHEN** a new source dataset is added
-- **THEN** only the converter implementation is customized; it reuses the shared smart-resize (offline/online) unchanged.
+- **THEN** only the converter implementation is customized; it reuses the shared smart-resize offline path (online guard is legacy-only).
 
 ### Requirement: Unified smart-resize preprocessor
 The system SHALL provide a shared detection preprocessor that enforces a pixel budget and grid alignment before training or inference.
@@ -43,20 +43,19 @@ The preprocessor SHALL normalize image paths relative to the JSONL location and 
 - **WHEN** the preprocessor loads or writes records
 - **THEN** it resolves those paths against the JSONL directory and stores absolute paths in-memory, avoiding dependence on process CWD or symlinks.
 
-### Requirement: Configurable invocation
-The smart-resize preprocessor SHALL be invocable both offline (during conversion) and online (as a guard in fusion) with identical semantics.
+### Requirement: Configurable invocation (offline-only for fusion)
+The smart-resize preprocessor SHALL be invocable during conversion (offline). Unified fusion does not run an online guard; runtime resize hooks must reject enablement attempts.
 
 #### Scenario: Offline conversion with smart resize
 - **WHEN** a converter (e.g., LVIS/COCO) is run with `--smart-resize` and `--max_pixels/--image_factor`
 - **THEN** it writes resized images to the configured output root, emits JSONL with updated dimensions/geometry, and keeps image paths relative to the resized folder.
 
-#### Scenario: Online guard for unresized sources
-- **GIVEN** a fusion config consuming a JSONL that may be unresized
-- **WHEN** the online guard is enabled
-- **THEN** it applies the same smart resize per sample unless the sample is already compliant, ensuring patch-aligned inputs without duplicating resize logic.
+#### Scenario: Online guard disallowed in unified fusion
+- **WHEN** an online smart-resize flag is passed to the unified fusion loader
+- **THEN** the loader rejects the configuration and instructs the user to run offline resize instead.
 
-### Requirement: Single implementation across domains
-All resize flows (BBU data_conversion, public_data converters, fusion guards) SHALL delegate to the shared smart-resize implementation.
+### Requirement: Single implementation across domains (offline-first)
+All resize flows (BBU data_conversion, public_data converters) SHALL delegate to the shared smart-resize implementation. Online fusion guards are not supported; offline resize is the single path.
 
 #### Scenario: data_conversion delegation
 - **WHEN** the BBU resize CLI runs (e.g., `data_conversion/resize_dataset.py`)

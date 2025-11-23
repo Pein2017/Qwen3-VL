@@ -27,9 +27,9 @@ from .contracts import (
     validate_conversation_record,
     validate_geometry_sequence,
 )
-from .dense_caption import DenseCaptionDataset
+from .dense_caption import BaseCaptionDataset, DenseCaptionDataset
 from .fusion import FusionConfig, build_fused_jsonl
-from .fusion_dataset import MultiSourceFusionDataset
+from .unified_fusion_dataset import FusionCaptionDataset, UnifiedFusionDataset
 from .utils import load_jsonl, extract_object_points, extract_geometry
 
 # AugmentationConfig removed with v1 API; use Compose pipelines directly
@@ -47,7 +47,10 @@ from .preprocessors import (
 
 __all__ = [
     # Primary dataset
+    "BaseCaptionDataset",
     "DenseCaptionDataset",
+    "FusionCaptionDataset",
+    "UnifiedFusionDataset",
     # Utilities
     "load_jsonl",
     "extract_object_points",
@@ -68,9 +71,6 @@ __all__ = [
     # Builders
     "BaseBuilder",
     "JSONLinesBuilder",
-    "FusionConfig",
-    "build_fused_jsonl",
-    "MultiSourceFusionDataset",
     "FusionConfig",
     "build_fused_jsonl",
     # Preprocessors

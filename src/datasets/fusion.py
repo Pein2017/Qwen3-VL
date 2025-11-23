@@ -7,10 +7,9 @@ import json
 import random
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, Mapping, Optional, Sequence, Tuple, Literal
+from typing import Any, Dict, Iterable, Mapping, Optional, Sequence, Tuple
 
 from .fusion_types import AuxiliarySpec, DatasetSpec
-from .geometry import points_to_xyxy
 from .wrappers import build_dataset_spec
 from .utils import load_jsonl
 
@@ -71,20 +70,31 @@ class FusionConfig:
                 raise ValueError("dataset entry must include 'dataset' or 'name'")
             dataset_key = str(dataset_key)
             name_override = str(entry.get("name")) if entry.get("name") else None
-
         params = entry.get("params")
         if params is None:
             params = {
                 "train_jsonl": entry.get("train_jsonl"),
-                "val_jsonl": entry.get("val_jsonl"),
-                "template": entry.get("template"),
-                "poly_fallback": entry.get("poly_fallback"),
-                "poly_max_points": entry.get("poly_max_points"),
-                "poly_min_ratio": entry.get("poly_min_ratio"),
-                "augmentation_enabled": entry.get("augmentation_enabled"),
-                "curriculum_enabled": entry.get("curriculum_enabled"),
-                "max_objects_per_image": entry.get("max_objects_per_image"),
             }
+            if "val_jsonl" in entry:
+                params["val_jsonl"] = entry.get("val_jsonl")
+            if "template" in entry:
+                params["template"] = entry.get("template")
+            if "poly_fallback" in entry:
+                params["poly_fallback"] = entry.get("poly_fallback")
+            if "poly_max_points" in entry:
+                params["poly_max_points"] = entry.get("poly_max_points")
+            if "augmentation_enabled" in entry:
+                params["augmentation_enabled"] = entry.get("augmentation_enabled")
+            if "curriculum_enabled" in entry:
+                params["curriculum_enabled"] = entry.get("curriculum_enabled")
+            if "max_objects_per_image" in entry:
+                params["max_objects_per_image"] = entry.get("max_objects_per_image")
+            if "user_prompt" in entry:
+                params["user_prompt"] = entry.get("user_prompt")
+            if "system_prompt" in entry:
+                params["system_prompt"] = entry.get("system_prompt")
+            if "seed" in entry:
+                params["seed"] = entry.get("seed")
         elif not isinstance(params, Mapping):
             raise TypeError("dataset params must be a mapping if provided")
 
@@ -114,57 +124,17 @@ class FusionConfig:
             supports_curriculum=spec.supports_curriculum,
             poly_fallback=spec.poly_fallback,
             poly_max_points=spec.poly_max_points,
-            poly_min_ratio=spec.poly_min_ratio,
             max_objects_per_image=spec.max_objects_per_image,
             val_jsonl=spec.val_jsonl,
+            prompt_user=spec.prompt_user,
+            prompt_system=spec.prompt_system,
+            seed=spec.seed,
             ratio=ratio,
         )
 
 
-def _flatten_poly_points(points: Any) -> Optional[list[float]]:
-    if isinstance(points, (list, tuple)):
-        if points and isinstance(points[0], (list, tuple)):
-            flat: list[float] = []
-            for pair in points:  # type: ignore[assignment]
-                if not isinstance(pair, (list, tuple)) or len(pair) != 2:
-                    return None
-                flat.extend([float(pair[0]), float(pair[1])])
-            return flat
-        return [float(v) for v in points]  # type: ignore[arg-type]
-    return None
-
-
-def _apply_poly_policy(
-    record: Dict[str, Any],
-    fallback: Literal["off", "bbox_2d"],
-    poly_max_points: Optional[int],
-) -> None:
-    objects = record.get("objects") or []
-    for obj in objects:
-        if "poly" not in obj:
-            continue
-        raw_pts = obj.get("poly")
-        pts = _flatten_poly_points(raw_pts)
-        if not pts:
-            continue
-        point_count = len(pts) // 2
-        fallback_all = fallback == "bbox_2d"
-        fallback_large = (
-            poly_max_points is not None and point_count > poly_max_points
-        )
-        if fallback_all or fallback_large:
-            obj["bbox_2d"] = points_to_xyxy(pts)
-            obj.pop("poly", None)
-            obj.pop("poly_points", None)
-
-
-def _annotate_record(
-    record: Mapping[str, Any],
-    fallback: Literal["off", "bbox_2d"],
-    poly_max_points: Optional[int],
-) -> Dict[str, Any]:
+def _annotate_record(record: Mapping[str, Any]) -> Dict[str, Any]:
     annotated = copy.deepcopy(record)
-    _apply_poly_policy(annotated, fallback, poly_max_points)
     return annotated
 
 
@@ -194,28 +164,20 @@ def build_fused_jsonl(
 
     fused: list[Dict[str, Any]] = []
     for record in target_records:
-        fused.append(
-            _annotate_record(
-                record,
-                config.target.poly_fallback,
-                config.target.poly_max_points,
-            )
-        )
+        fused.append(_annotate_record(record))
 
     for source in config.sources:
         quota = round(source.ratio * len(target_records))
         if quota <= 0:
             continue
         source_records = load_jsonl(str(source.train_jsonl), resolve_relative=True)
-        sampled = _sample_with_replacement(source_records, quota, rng)
-        fused.extend(
-            _annotate_record(
-                record,
-                source.poly_fallback,
-                source.poly_max_points,
-            )
-            for record in sampled
+        source_seed = (
+            seed if source.seed is None else (seed ^ int(source.seed)) & 0xFFFFFFFF
         )
+        sampled = _sample_with_replacement(
+            source_records, quota, random.Random(source_seed)
+        )
+        fused.extend(_annotate_record(record) for record in sampled)
 
     if shuffle:
         rng.shuffle(fused)
@@ -233,7 +195,7 @@ def build_fused_jsonl(
 def prepare_record_for_dataset(
     record: Mapping[str, Any], spec: DatasetSpec
 ) -> Dict[str, Any]:
-    return _annotate_record(record, spec.poly_fallback, spec.poly_max_points)
+    return _annotate_record(record)
 
 
 __all__ = [

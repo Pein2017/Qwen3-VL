@@ -8,7 +8,7 @@ Modular, YAML-driven pipeline for fine-tuning Qwen3-VL on dense captioning tasks
 - **Geometry-aware**: Affine transformations preserve spatial accuracy
 - **JSON-lines first**: Grouped JSON output with geometry preserved
 
-**Pipeline**: YAML Config → ConfigLoader → SwiftSft → DenseCaptionDataset → Training Loop
+**Pipeline**: YAML Config → ConfigLoader → SwiftSft → BaseCaptionDataset (alias DenseCaptionDataset) → Training Loop
 
 ## Table of Contents
 - [Overview](#overview)
@@ -37,7 +37,7 @@ Modular, YAML-driven pipeline for fine-tuning Qwen3-VL on dense captioning tasks
 
 - YAML config is the single source of truth → `ConfigLoader` merges/validates and instantiates ms-swift `TrainArguments`.
 - `SwiftSft` initializes model and template (uses the model's native chat_template); adapters applied via `sft.prepare_model(...)`.
-- `DenseCaptionDataset` orchestrates preprocessing, mode selection, and `JSONLinesBuilder` per sample (no pairing).
+- `BaseCaptionDataset` (alias DenseCaptionDataset) orchestrates preprocessing, mode selection, and `JSONLinesBuilder` per sample (no pairing).
 - Template encodes messages, adds vision tokens, and normalizes coordinates (top-level objects → norm1000) during encoding.
 - Trainer from ms-swift runs training; checkpoints save adapters (LoRA) or merged weights depending on workflow.
 
@@ -53,7 +53,7 @@ src/
 │   │   ├── base.py        # BasePreprocessor interface
 │   │   ├── dense_caption.py  # Validation & filtering
 │   │   └── augmentation.py   # Geometry-aware augmentation
-│   ├── dense_caption.py   # DenseCaptionDataset (single-image orchestration)
+│   ├── dense_caption.py   # BaseCaptionDataset (single-image orchestration)
 │   ├── builders/           # Message format builders
 │   │   ├── base.py        # BaseBuilder interface
 │   │   └── jsonlines.py   # Minimal object-hierarchy output
@@ -75,7 +75,7 @@ src/
 
 1. **ConfigLoader** loads YAML, resolves `extends`/`inherit` chains, merges base/experiment configs, resolves prompts → `TrainArguments`
 2. **SwiftSft** initializes model, template, trainer with config
-3. **DenseCaptionDataset** constructs train/eval datasets with selected builder and augmentation
+3. **BaseCaptionDataset** constructs train/eval datasets with selected builder and augmentation
 
 ### Runner specifics (sft.py)
 - Pure YAML-driven: CLI only accepts `--config`, optional `--base_config`, and `--debug`.
@@ -445,5 +445,4 @@ These live under the `custom` section in YAML and are consumed by `src/sft.py` a
 | **MaxLengthError/OOM** | Long JSON-lines or many objects | Prefer `global_max_length` (single knob) or lower `template.max_length`; `truncation_strategy=right` (auto) |
 | **Points misalignment** | Augmentation bug | `AugmentationPreprocessor` updates images+geometries atomically; print sample to verify |
 | **Memory/performance** | Suboptimal settings | Use `attn_impl=flash_attn`, `torch_dtype=bfloat16`, `gradient_checkpointing=true`; adjust batch size; configure DeepSpeed for multi-GPU |
-
 

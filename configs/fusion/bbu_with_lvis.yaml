@@ -3,14 +3,10 @@ target:
   train_jsonl: data/bbu_full_768_poly/train.jsonl
   val_jsonl: data/bbu_full_768_poly/val.jsonl
   template: bbu_dense
-  poly_fallback: "off"
   
 sources:
   - name: lvis
-    train_jsonl: public_data/lvis/resized_32_768/train.jsonl
+    train_jsonl: public_data/lvis/rescale_32_768_poly_max_12/train.jsonl
     ratio: 0.08
     template: aux_dense
-    poly_fallback: "off"
-    poly_max_points: 12
-    poly_min_ratio: 0.2
-    max_objects_per_image: 30
+    max_objects_per_image: 5

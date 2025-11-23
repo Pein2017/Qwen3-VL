@@ -9,9 +9,8 @@ The augmentation pipeline handles 3 geometry types (bbox, poly, polyline) with p
 ### Source-Aware Augmentation Control
 
 - **Target-domain wrappers (e.g., `bbu`, `rru`)** attach the configured augmentation pipeline and curriculum scheduler. Every record flowing through those datasets is eligible for geometry/color transforms.
-- **Source-domain wrappers (e.g., `coco`, `lvis`, `objects365`, `flickr3k`)** default to clean images—`MultiSourceFusionDataset` simply omits the augmentation preprocessor for those datasets so auxiliary samples stay untouched.
+- **Source-domain wrappers (e.g., `coco`, `lvis`, `objects365`, `flickr3k`)** default to clean images— the fusion loader simply omits the augmentation preprocessor for those datasets so auxiliary samples stay untouched.
 - Wrappers can override this behavior via `params.augmentation_enabled`/`params.curriculum_enabled` if a particular dataset should opt into augmentation.
-- Poly fallback (`poly_fallback: bbox_2d`) still occurs before augmentation, ensuring each object exposes exactly one geometry field even if the source JSONL shipped polygons originally.
 
 ## Key Features
 

@@ -16,7 +16,7 @@ The goal of this module is to provide **geometry-aware, tested pipelines** for t
 - **Dataset engineering** for public vision datasets (LVIS now; Objects365 / Open Images later).
 - **Geometry-aware conversion** from source formats (e.g., COCO-style bbox + segmentation) to Qwen3-VL JSONL with:
   - `bbox_2d`: `[x1, y1, x2, y2]` in **pixel coordinates**.
-- `poly`: `[..., xn, yn]` + `poly_points` for N-point polygons. Experiments can simplify polygons in two ways via fusion config: `poly_fallback: bbox_2d` (all polys → boxes) or `poly_max_points: N` (only polys with more than N vertices are downgraded).
+- `poly`: `[..., xn, yn]` + `poly_points` for N-point polygons. Simplify polygons during conversion (e.g., `--poly-max-points N` to downgrade oversized polygons to `bbox_2d`); the dataloader consumes geometry as written.
 - **Validation & tests** to catch schema or geometry errors early.
 - **Visualization tools** to visually inspect bounding boxes and polygons.
 
@@ -53,4 +53,4 @@ As new public datasets are added (Objects365, Open Images, ...), they should fol
 ## Smart-resize (shared preprocessor)
 
 - `public_data/scripts/convert_lvis.py --smart-resize` invokes the shared `SmartResizePreprocessor` (pixel budget + grid alignment) to rewrite images and geometry. Outputs default to `public_data/lvis/resized_<factor>_<blocks>/`.
-- Datasets loaded by `DenseCaptionDataset` or `MultiSourceFusionDataset` resolve relative image paths against the JSONL parent and can optionally apply the same smart-resize guard via env (`SMART_RESIZE_GUARD=true`, `SMART_RESIZE_GUARD_OUTPUT_DIR=<dir>`), ensuring portable paths without relying on CWD or symlinks.
+- Datasets loaded by `DenseCaptionDataset` or the fusion loader resolve relative image paths against the JSONL parent and can optionally apply the same smart-resize guard via env (`SMART_RESIZE_GUARD=true`, `SMART_RESIZE_GUARD_OUTPUT_DIR=<dir>`), ensuring portable paths without relying on CWD or symlinks.
