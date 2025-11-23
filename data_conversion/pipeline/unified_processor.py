@@ -43,6 +43,7 @@ from data_conversion.utils.sanitizers import (
     strip_occlusion_tokens,
 )
 from data_conversion.utils.sorting import sort_objects_tlbr
+from data_conversion.utils.review_flagger import flag_objects_for_review
 from data_conversion.pipeline.validation_manager import (
     StructureValidator,
     ValidationManager,
@@ -506,8 +507,12 @@ class UnifiedProcessor:
                     "Preserving legacy annotation order for %s", image_path.name
                 )
 
-            # Build deterministic one-line summary from objects
-            summary_text = build_summary_from_objects(objects)
+            # Detection desc 后处理：将矛盾/不确定的标注改写为 “<type>/需复核”
+            objects = flag_objects_for_review(objects)
+
+            # Summary 直接继承处理后的 desc（含需复核）
+            summary_objects = [obj.copy() for obj in objects]
+            summary_text = build_summary_from_objects(summary_objects)
 
             # Process image (copy/resize) to match coordinate transformations
             processed_image_path, img_w, img_h = self.image_processor.process_image(

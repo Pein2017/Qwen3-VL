@@ -230,7 +230,15 @@ def _summarize_object_string(desc: str) -> str:
 
 def _type_order_key(s: str) -> Tuple[int, int, int, str]:
     """Stable ordering: type → negative-first → brand → lexicographic."""
-    type_map = {"BBU设备": 0, "螺丝、光纤插头": 1, "光纤": 2, "电线": 3, "标签": 4, "挡风板": 5}
+    # Custom ordering: BBU设备 → 挡风板 → 光纤 → 电线 → 螺丝、光纤插头 → 标签
+    type_map = {
+        "BBU设备": 0,
+        "挡风板": 1,
+        "光纤": 2,
+        "电线": 3,
+        "螺丝、光纤插头": 4,
+        "标签": 5,
+    }
     head = s.split("/", 1)[0]
     primary = type_map.get(head, 99)
     # negative-first within types

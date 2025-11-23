@@ -17,8 +17,9 @@
 5. [Validation Architecture](#validation-architecture)
 6. [Geometry & Coordinate Rules](#geometry--coordinate-rules)
 7. [Outputs](#outputs)
-8. [Raw Input Example (kept as reference)](#raw-input-example-kept-as-reference)
-9. [Output Sample](#output-sample)
+8. [Object Ordering Consistency](#object-ordering-consistency)
+9. [Raw Input Example (kept as reference)](#raw-input-example-kept-as-reference)
+10. [Output Sample](#output-sample)
 
 ---
 
@@ -123,6 +124,10 @@ NUM_WORKERS="8"  # Number of parallel workers (1=sequential, >1=parallel)
 - Hierarchical description construction:
   - Uses exact Chinese keys and a strict mapping
   - Separator rules: comma (`,`) for same-level attributes, slash (`/`) for levels/conditionals
+- Review / 需复核标记:
+  - 对含“备注”的对象，若备注出现不确定/缺失关键词（如 无法判断/疑似/未拍全/无品牌/缺少 等），重写为 `<类型>/需复核[,备注:...]`
+  - 去除噪声备注（如 “请参考学习”“建议看下操作手册中螺丝、插头的标注规范”）
+  - Summary 基于改写后的 desc 聚合，保持检测与摘要一致
 
 - Geometry normalization and canonicalization:
   - Converts V2 geometries to native formats: `bbox_2d`, `poly`, `line`
@@ -239,6 +244,19 @@ if not CoordinateManager.validate_geometry_bounds(transformed_geom, final_w, fin
 - Coordinates are clamped to image bounds after each stage
 - Works with all geometry types (bbox, poly, line, GeoJSON)
 - Individual stages can be used separately for advanced use cases
+
+---
+
+## Object Ordering Consistency
+
+- 预处理与 prompts 使用同一排序规则：先按 **Y 坐标升序**（自上到下），再按 **X 坐标升序**（自左到右）。
+- 参考点：
+  - `bbox_2d`: 左上角 `(x1, y1)`
+  - `poly`: 第一个顶点 `(x1, y1)`
+  - `line`: 最左端点（X 最小；如 X 相同取 Y 最小）
+- 默认执行 TLBR 重排；如需与历史导出保持字节级一致，可用 `--preserve_annotation_order` 或在 `DataConversionConfig` 设置 `preserve_annotation_order=True` 跳过重排。
+- 实现：`data_conversion/utils/sorting.py`；调用点：`unified_processor.py` 在写出前统一排序；prompt 描述位于 `src/config/prompts.py`。
+- 验证脚本：`verify_ordering_consistency.py`。
 
 ---
 
