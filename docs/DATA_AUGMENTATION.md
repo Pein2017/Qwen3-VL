@@ -143,6 +143,19 @@ custom:
         params: { brightness: [0.75, 1.25], contrast: [0.75, 1.25], prob: 0.5 }
       - name: gamma
         params: { gamma: [0.8, 1.3], prob: 0.3 }
+
+      # Small-object recall (single-image crop→scale→translate for tiny targets)
+      - name: small_object_zoom_paste
+        params:
+          prob: 0.2
+          max_targets: 1
+          scale: [1.4, 1.8]
+          max_size: 96          # bbox long side threshold
+          max_line_length: 128  # line length threshold
+          overlap_threshold: 0.1
+          max_attempts: 20
+          context: 4            # extra pixels around patch
+          line_buffer: 4        # buffer when computing IoU for lines
       
       # ✅ Final padding: MUST be last to ensure all images are multiple of 32
       # Applied after all size-changing operations to guarantee final alignment

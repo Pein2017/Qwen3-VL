@@ -1,0 +1,8 @@
+extends: ./last_6.yaml
+
+# Variant: DoRA on last-12 vision blocks (15-26) instead of last-6
+tuner:
+  target_regex: '^(?:model\.)?(?:language_model\.layers\.\d+\.self_attn\.(?:q_proj|v_proj)|visual\.blocks\.(?:15|16|17|18|19|20|21|22|23|24|25|26)\.attn\.qkv|visual\.(?:merger|deepstack_merger_list\.\d+)\.(?:linear_fc1|linear_fc2))$'
+
+training:
+  run_name: lvis_ratio_0.08-epoch_30-dlora-lrs_4_2_8-llm_kd_0.01-vision_kd_0.01-last_12_vision-all_llm-from_base

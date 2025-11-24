@@ -34,6 +34,8 @@
 !references/**/*.md
 !references/**/*.py
 !public_data/**
+!public_data/**/*.py
+!public_data/**/*.md
 
 # Ignore common Python cache folders
 **/__pycache__/

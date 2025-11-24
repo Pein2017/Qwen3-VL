@@ -250,6 +250,40 @@ class AugmentationPreprocessor(BasePreprocessor):
     ) -> None:
         if self.augmenter is None:
             return
+
+        def _coerce_value(current: Any, new_value: Any) -> Any:
+            """Preserve operator parameter types when applying overrides."""
+            if current is None:
+                return new_value
+            if isinstance(current, bool):
+                return bool(new_value)
+            if isinstance(current, int):
+                try:
+                    return int(round(new_value))
+                except Exception:
+                    return current
+            if isinstance(current, float):
+                try:
+                    return float(new_value)
+                except Exception:
+                    return current
+            if isinstance(current, tuple):
+                if isinstance(new_value, (list, tuple)):
+                    coerced = []
+                    for i, item in enumerate(new_value):
+                        base = current[i] if i < len(current) else (current[-1] if current else None)
+                        coerced.append(_coerce_value(base, item) if base is not None else item)
+                    return tuple(coerced)
+                return current
+            if isinstance(current, list):
+                if isinstance(new_value, (list, tuple)):
+                    coerced = []
+                    for i, item in enumerate(new_value):
+                        base = current[i] if i < len(current) else None
+                        coerced.append(_coerce_value(base, item) if base is not None else item)
+                    return coerced
+            return new_value
+
         for op in getattr(self.augmenter, "ops", []):
             name = getattr(op, "_aug_name", None)
             if not name:
@@ -259,7 +293,9 @@ class AugmentationPreprocessor(BasePreprocessor):
                 continue
             for param_name, value in params.items():
                 try:
-                    setattr(op, param_name, value)
+                    current = getattr(op, param_name, None)
+                    coerced = _coerce_value(current, value)
+                    setattr(op, param_name, coerced)
                 except Exception:
                     continue
 

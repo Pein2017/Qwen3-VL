@@ -1,4 +1,4 @@
-extends: ./pack.yaml
+extends: ./last_6.yaml
 
 training:
   output_dir: ./output/smoke/tiny_pack

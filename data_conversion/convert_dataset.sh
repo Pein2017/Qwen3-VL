@@ -41,7 +41,7 @@ export MODELSCOPE_CACHE="./modelscope/hub"
 # Required paths - YOU MUST SET THESE
 INPUT_DIR="raw_ds/bbu_scene_2.0/bbu_scene_2.0"  # e.g., "ds_v2" or "my_dataset"
 OUTPUT_DIR="data"                   # e.g., "data" or "/path/to/output"
-DATASET_NAME="bbu_full_768_poly-parallel"         # e.g., "experiment_1" or leave empty to auto-detect
+DATASET_NAME="bbu_full_768_poly-need_review"         # e.g., "experiment_1" or leave empty to auto-detect
 
 
 # Processing parameters - YOU MUST SET THESE

@@ -1,0 +1,11 @@
+- [x] Review existing augmentation ops/registry (`src/datasets/augmentation/ops.py`, `builder.py`, `geometry.py`) to align API and flush semantics.
+- [x] Implement a registered `small_object_zoom_paste` op:
+  - select small objects by size/length thresholds and optional class whitelist
+  - crop patch + scale + translate within image bounds
+  - enforce overlap/Iou limits vs existing objects; skip after N failed placements
+  - update bbox/poly/line geometries with same affine; drop if out-of-bounds/degenerate
+  - expose config: prob, scale range, max_targets, max_attempts, overlap_threshold, padding/context pixels, line stroke for overlap
+- [x] Wire op into builder registry and ensure compatibility with affine flush/barrier logic (canvas size, 32× alignment, max_pixels).
+- [x] Add unit/visual sanity checks (small synthetic examples) to cover bbox/poly/line, overlap rejection, skip-on-fail.
+- [x] Update docs (`docs/DATA_AUGMENTATION.md`) with usage/config snippet and safety notes; mention in README if needed.
+- [x] Run openspec validation for this change-id and fix any spec issues.

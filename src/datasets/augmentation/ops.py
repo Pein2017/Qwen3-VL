@@ -25,9 +25,11 @@ from ..geometry import (
     clip_polyline_to_rect,
     points_to_xyxy,
     translate,
+    transform_geometry,
     # Coverage and cropping utilities
     get_aabb,
     intersect_aabb,
+    aabb_area,
     compute_coverage,
     compute_polygon_coverage,
     translate_geometry,
@@ -896,6 +898,210 @@ class AlbumentationsColor(ImageAugmenter):
         return out_imgs, geoms
 
 
+def _aabb_iou(a: List[float], b: List[float]) -> float:
+    inter = intersect_aabb(a, b)
+    inter_area = aabb_area(inter)
+    if inter_area <= 0.0:
+        return 0.0
+    union = aabb_area(a) + aabb_area(b) - inter_area
+    return inter_area / union if union > 0 else 0.0
+
+
+def _buffer_aabb(bbox: List[float], pad: float, width: int, height: int) -> List[float]:
+    if pad <= 0:
+        return bbox
+    return [
+        max(0.0, bbox[0] - pad),
+        max(0.0, bbox[1] - pad),
+        min(float(width), bbox[2] + pad),
+        min(float(height), bbox[3] + pad),
+    ]
+
+
+@register("small_object_zoom_paste")
+class SmallObjectZoomPaste(ImageAugmenter):
+    """
+    Single-image small-object zoom-and-paste to boost recall.
+
+    Steps:
+      1) Select small objects by size/length thresholds (optional class whitelist).
+      2) Crop patch with context, scale up, and translate within the same image.
+      3) Reject placements overlapping existing annotations beyond threshold; retry a few times.
+      4) Apply identical affine (scale+translate) to bbox/poly/line; originals remain.
+    """
+
+    def __init__(
+        self,
+        prob: float = 0.2,
+        max_targets: int = 1,
+        max_attempts: int = 20,
+        scale: Tuple[float, float] = (1.4, 1.8),
+        max_size: float = 96.0,
+        max_line_length: float = 128.0,
+        context: float = 4.0,
+        overlap_threshold: float = 0.1,
+        line_buffer: float = 4.0,
+        class_whitelist: List[str] | None = None,
+    ):
+        self.prob = float(prob)
+        self.max_targets = int(max_targets)
+        self.max_attempts = int(max_attempts)
+        self.scale = (float(scale[0]), float(scale[1]))
+        self.max_size = float(max_size)
+        self.max_line_length = float(max_line_length)
+        self.context = float(context)
+        self.overlap_threshold = float(overlap_threshold)
+        self.line_buffer = float(line_buffer)
+        self.class_whitelist = list(class_whitelist) if class_whitelist else None
+        self.kind = "barrier"
+        self.allows_geometry_drops = True  # geometry count may increase; allow validation bypass
+
+    def _is_small(self, geom: Dict[str, Any]) -> bool:
+        aabb = get_aabb(geom)
+        w = aabb[2] - aabb[0]
+        h = aabb[3] - aabb[1]
+        if w <= 0 or h <= 0:
+            return False
+        if max(w, h) <= self.max_size:
+            return True
+        if "line" in geom:
+            pts = geom["line"]
+            length = 0.0
+            for i in range(0, len(pts) - 2, 2):
+                dx = pts[i + 2] - pts[i]
+                dy = pts[i + 3] - pts[i + 1]
+                length += math.hypot(dx, dy)
+            return length <= self.max_line_length
+        return False
+
+    def _class_allowed(self, desc: str) -> bool:
+        if not self.class_whitelist:
+            return True
+        head = desc.split("/", 1)[0].split(",", 1)[0].strip()
+        return any(head.startswith(t) for t in self.class_whitelist)
+
+    def _transform_geom(
+        self,
+        geom: Dict[str, Any],
+        crop_origin: Tuple[float, float],
+        scale_factor: float,
+        offset: Tuple[float, float],
+        width: int,
+        height: int,
+    ) -> Dict[str, Any] | None:
+        cx, cy = crop_origin
+        tx, ty = offset
+        M = compose_affine(
+            translate(tx, ty),
+            compose_affine(scale_matrix(scale_factor, scale_factor), translate(-cx, -cy)),
+        )
+        transformed = transform_geometry(geom, M, width=width, height=height)
+        if "line" in transformed and len(transformed["line"]) < 4:
+            return None
+        if "poly" in transformed and len(transformed["poly"]) < 6:
+            return None
+        return transformed
+
+    def _iou_too_high(
+        self,
+        new_geom: Dict[str, Any],
+        existing: List[Dict[str, Any]],
+        width: int,
+        height: int,
+    ) -> bool:
+        new_aabb = get_aabb(new_geom)
+        new_aabb = _buffer_aabb(new_aabb, self.line_buffer if "line" in new_geom else 0.0, width, height)
+        for g in existing:
+            aabb = get_aabb(g)
+            pad = self.line_buffer if "line" in g else 0.0
+            aabb = _buffer_aabb(aabb, pad, width, height)
+            if _aabb_iou(new_aabb, aabb) > self.overlap_threshold:
+                return True
+        return False
+
+    def apply(
+        self,
+        images: List[Any],
+        geoms: List[Dict[str, Any]],
+        *,
+        width: int,
+        height: int,
+        rng: Any,
+    ):
+        if not images or not geoms or rng.random() >= self.prob or self.max_targets <= 0:
+            return images, geoms
+
+        logger = get_logger("augmentation.small_object_zoom_paste")
+
+        pil_images = [_pil(img).copy() for img in images]
+        working_geoms: List[Dict[str, Any]] = list(geoms)
+
+        # Collect candidate indices
+        candidates = []
+        for idx, g in enumerate(geoms):
+            if "desc" in g and not self._class_allowed(str(g["desc"])):
+                continue
+            if self._is_small(g):
+                candidates.append(idx)
+
+        if not candidates:
+            return images, geoms
+
+        rng.shuffle(candidates)
+        targets = candidates[: self.max_targets]
+
+        for idx in targets:
+            g = geoms[idx]
+            aabb = get_aabb(g)
+            x1 = max(0.0, aabb[0] - self.context)
+            y1 = max(0.0, aabb[1] - self.context)
+            x2 = min(float(width), aabb[2] + self.context)
+            y2 = min(float(height), aabb[3] + self.context)
+            patch_w = int(round(max(1.0, x2 - x1)))
+            patch_h = int(round(max(1.0, y2 - y1)))
+            if patch_w <= 1 or patch_h <= 1:
+                continue
+
+            placed = False
+            for _ in range(self.max_attempts):
+                scale_factor = rng.uniform(self.scale[0], self.scale[1])
+                new_w = int(round(patch_w * scale_factor))
+                new_h = int(round(patch_h * scale_factor))
+                if new_w < 1 or new_h < 1 or new_w > width or new_h > height:
+                    continue
+                max_tx = width - new_w
+                max_ty = height - new_h
+                if max_tx < 0 or max_ty < 0:
+                    continue
+                tx = rng.randint(0, max_tx) if max_tx > 0 else 0
+                ty = rng.randint(0, max_ty) if max_ty > 0 else 0
+
+                transformed = self._transform_geom(
+                    g, (x1, y1), scale_factor, (tx, ty), width, height
+                )
+                if transformed is None:
+                    continue
+                if self._iou_too_high(transformed, working_geoms, width, height):
+                    continue
+
+                # Paste patch onto all images
+                for i, img in enumerate(pil_images):
+                    patch = img.crop((int(x1), int(y1), int(x1 + patch_w), int(y1 + patch_h)))
+                    if new_w != patch_w or new_h != patch_h:
+                        patch = patch.resize((new_w, new_h), Image.BICUBIC)
+                    img.paste(patch, (tx, ty))
+                    pil_images[i] = img
+
+                working_geoms.append(transformed)
+                placed = True
+                break
+
+            if not placed:
+                logger.debug("small_object_zoom_paste: no valid placement for target %d", idx)
+
+        return pil_images, working_geoms
+
+
 @register("random_crop")
 class RandomCrop(ImageAugmenter):
     """
@@ -1150,5 +1356,6 @@ __all__ = [
     "Sharpness",
     "AlbumentationsColor",
     "PadToMultiple",
+    "SmallObjectZoomPaste",
     "RandomCrop",
 ]
