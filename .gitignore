@@ -33,7 +33,6 @@
 .cursor/**
 !references/**/*.md
 !references/**/*.py
-!public_data/**
 !public_data/**/*.py
 !public_data/**/*.md
 
