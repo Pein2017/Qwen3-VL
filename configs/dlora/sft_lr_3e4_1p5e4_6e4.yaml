@@ -1,0 +1,8 @@
+extends: ./sft_base.yaml
+
+# Ablation: lower learning rates (LLM 3e-4, ViT 1.5e-4, Aligner 6e-4)
+training:
+  run_name: bbu_epoch_30-dlora-lrs_3_1.5_6-sft_baseline-last_6_vision
+  learning_rate: 3.0e-4
+  vit_lr: 1.5e-4
+  aligner_lr: 6.0e-4

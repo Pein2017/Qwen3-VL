@@ -1,0 +1,8 @@
+extends: ./sft_base.yaml
+
+# Ablation: include vision MLP (linear_fc1/linear_fc2) in last-6 blocks
+tuner:
+  target_regex: '^(?:model\.)?(?:language_model\.layers\.\d+\.self_attn\.(?:q_proj|v_proj)|visual\.blocks\.(?:21|22|23|24|25|26)\.(?:attn\.qkv|mlp\.(?:linear_fc1|linear_fc2))|visual\.(?:merger|deepstack_merger_list\.\d+)\.(?:linear_fc1|linear_fc2))$'
+
+training:
+  run_name: bbu_epoch_30-dlora-lrs_4_2_8-sft_last6_vision_mlp

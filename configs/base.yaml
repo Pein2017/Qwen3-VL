@@ -25,7 +25,7 @@ training:
   report_to: [tensorboard]
   seed: 17
   warmup_ratio: 0.1
-  max_grad_norm: 0.1
+  max_grad_norm: 0.5
   weight_decay: 0.1 
   
   # Common trainer/runtime defaults
@@ -66,8 +66,8 @@ data:
 custom:
   json_format: standard
   emit_norm: norm1000
-  train_jsonl: data/bbu_full_768_poly/train.jsonl
-  val_jsonl: data/bbu_full_768_poly/val.jsonl
+  train_jsonl: data/bbu_full_768_poly-need_review/train.jsonl
+  val_jsonl: data/bbu_full_768_poly-need_review/val.jsonl
   dump_conversation_path: output/conversation_text.txt
 
 
