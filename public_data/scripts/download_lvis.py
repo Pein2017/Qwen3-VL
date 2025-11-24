@@ -254,8 +254,8 @@ Storage Requirements:
     parser.add_argument(
         "--output_dir",
         type=str,
-        default="/public_data",
-        help="Output directory (default: /data/public_data)",
+        default=".",
+        help="Output directory relative to script location (default: ..)",
     )
 
     parser.add_argument(
@@ -274,7 +274,12 @@ Storage Requirements:
 
     args = parser.parse_args()
 
-    output_dir = os.path.abspath(args.output_dir)
+    # Resolve relative paths relative to script's directory
+    if os.path.isabs(args.output_dir):
+        output_dir = args.output_dir
+    else:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        output_dir = os.path.normpath(os.path.join(script_dir, args.output_dir))
 
     print("=" * 60)
     print("LVIS v1.0 Dataset Downloader")
