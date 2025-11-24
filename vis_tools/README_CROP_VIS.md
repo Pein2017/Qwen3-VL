@@ -9,7 +9,7 @@ The `vis_augment_compare.py` script now supports visualizing crop operations wit
 If your training config includes crop operators, the script will automatically use them:
 
 ```bash
-cd /data/Qwen3-VL
+# From repo root
 conda run -n ms python vis_tools/vis_augment_compare.py
 ```
 

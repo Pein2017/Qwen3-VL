@@ -18,16 +18,23 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Iterable, Protocol
 
+# Define repo root first
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
 # Keep ms-swift ahead of project modules (prevents huggingface.datasets shadowing)
-MS_SWIFT_PATH = Path("/data/ms-swift")
-if str(MS_SWIFT_PATH) not in sys.path:
+# Use relative path: ms-swift is typically at ../ms-swift from repo root
+# If not found, try absolute path as fallback (for environments where it's installed elsewhere)
+MS_SWIFT_PATH = REPO_ROOT.parent / "ms-swift"
+if not MS_SWIFT_PATH.exists():
+    # Fallback: try common installation location
+    MS_SWIFT_PATH = Path("/data/ms-swift")
+if MS_SWIFT_PATH.exists() and str(MS_SWIFT_PATH) not in sys.path:
     sys.path.insert(0, str(MS_SWIFT_PATH))
 
 from swift.llm import get_template  # noqa: E402
 from swift.llm.model.register import get_model_tokenizer  # noqa: E402
 from swift.plugin.loss_scale.loss_scale import TrainAllLossScale  # noqa: E402
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
 SRC_PATH = REPO_ROOT / "src"
 if str(SRC_PATH) not in sys.path:
     sys.path.insert(0, str(SRC_PATH))

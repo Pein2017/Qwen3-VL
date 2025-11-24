@@ -203,22 +203,22 @@ These experiments were conducted with **noisy/incorrect data augmentation** (sin
 ```bash
 # Last-6 LoRA (recommended)
 conda run -n ms bash /data/Qwen3-VL/scripts/train.sh \
-  config=/data/Qwen3-VL/configs/stage_3_vision_last6_lora.yaml \
+  config=configs/stage_3_vision_last6_lora.yaml \
   gpus=0
 
 # Last-6 Full
 conda run -n ms bash /data/Qwen3-VL/scripts/train.sh \
-  config=/data/Qwen3-VL/configs/stage_3_vision_last6_full.yaml \
+  config=configs/stage_3_vision_last6_full.yaml \
   gpus=0
 
 # All LoRA
 conda run -n ms bash /data/Qwen3-VL/scripts/train.sh \
-  config=/data/Qwen3-VL/configs/stage_3_vision_all_lora.yaml \
+  config=configs/stage_3_vision_all_lora.yaml \
   gpus=0
 
 # All Full
 conda run -n ms bash /data/Qwen3-VL/scripts/train.sh \
-  config=/data/Qwen3-VL/configs/stage_3_vision_all_full.yaml \
+  config=configs/stage_3_vision_all_full.yaml \
   gpus=0
 ```
 

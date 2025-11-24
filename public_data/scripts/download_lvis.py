@@ -234,7 +234,7 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Download all data to /data/public_data
+  # Download all data (defaults to parent directory of script)
   python download_lvis.py
   
   # Download only train split

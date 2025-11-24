@@ -42,7 +42,7 @@ def main() -> None:
     # Configuration (edit these)
 
     # model_path = "output/summary_merged/10-25-aug_on-full_last2_llm"
-    model_path = "output/11-23/stage_1.5_merged/lvis_ratio_0.08-last_6-checkpoint-2250"
+    model_path = "output/11-24/stage_1.5_merged/baseline-checkpoint-2070"
 
     image_paths = [
         # "demo/images/QC-20230106-0000211_16517.jpeg",

@@ -23,7 +23,7 @@ unzip train2017.zip  # 或 val2017.zip
 ### 基础用法
 
 ```bash
-cd /data/public_data
+cd public_data
 
 # 展示3张带bbox的训练图片
 conda run -n ms python vis_tools/visualize_lvis.py

@@ -100,7 +100,7 @@ Successfully implemented robust geometry-preserving augmentation for Qwen3-VL wi
 
 ### Tests
 ```bash
-cd /data/Qwen3-VL
+# From repo root
 conda run -n ms python -m pytest tests/augmentation/ tests/test_augmentation_geometry.py -v
 ```
 **Result**: 18/18 tests passing ✅
@@ -113,7 +113,7 @@ conda run -n ms python vis_tools/vis_augment_compare.py
 
 ### Validation
 ```bash
-cd /data/Qwen3-VL/openspec
+cd openspec
 openspec validate robust-geometry-aug-2025-10-27 --strict
 ```
 **Expected**: All requirements have scenarios, deltas properly formatted ✅

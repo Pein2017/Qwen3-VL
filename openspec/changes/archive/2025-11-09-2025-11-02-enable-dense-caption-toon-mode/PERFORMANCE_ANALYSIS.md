@@ -229,10 +229,13 @@ These changes require NO format modification, only prompt improvements:
 Run this to verify TOON serialization is working correctly:
 
 ```bash
-cd /data/Qwen3-VL
+# From repo root
 conda run -n ms python << 'EOF'
 import sys
-sys.path.insert(0, '/data/Qwen3-VL')
+import os
+# Add project root to path (relative to current working directory)
+_project_root = os.getcwd()
+sys.path.insert(0, _project_root)
 
 from src.datasets.builders.jsonlines import JSONLinesBuilder
 from src.datasets.builders.toon import decode_toon_payload

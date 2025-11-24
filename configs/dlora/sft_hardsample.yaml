@@ -1,0 +1,8 @@
+extends: ./sft_base.yaml
+
+# Variant: apply DoRA/LoRA to all linear modules (no target_regex filter).
+# Keeps SFT (no KD) and the same data/augmentation as sft_base.
+
+
+training:
+  run_name: epoch_30-dlora-lrs_4_2_8-sft_hardsample

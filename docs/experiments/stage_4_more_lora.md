@@ -121,13 +121,14 @@ Checkpoint the best eval loss subject to the constraint that irrelevant-image pa
 ## Launch Plan
 
 - Base configs to derive from:
-  - Stage 2: `/data/Qwen3-VL/configs/stage_2_llm_lora.yaml`
-  - Stage 3 winner: `/data/Qwen3-VL/configs/stage_3_vision_last6_lora.yaml`
+  - Stage 2: `configs/stage_2_llm_lora.yaml`
+  - Stage 3 winner: `configs/stage_3_vision_last6_lora.yaml`
 
-- Example command (replace with each variant’s config file):
+- Example command (replace with each variant's config file):
 ```bash
-conda run -n ms bash /data/Qwen3-VL/scripts/train.sh \
-  config=/abs/path/to/your_stage_4_variant.yaml \
+# From repo root
+conda run -n ms bash scripts/train.sh \
+  config=configs/your_stage_4_variant.yaml \
   gpus=0
 ```
 

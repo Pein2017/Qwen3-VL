@@ -246,7 +246,7 @@ Successfully implemented smart cropping with automatic label filtering and compl
 This change is ready for archiving:
 
 ```bash
-cd /data/Qwen3-VL
+# From repo root
 openspec archive 2025-10-27-add-smart-crop-with-label-filter --yes
 ```
 

@@ -720,3 +720,34 @@ Augmentation guidance for grounding tasks:
 - Keep `pad_to_multiple` to stabilize image grid and token counts
 
 Monitoring: track bbox/poly/line metrics separately; reduce geometric ops if poly/line drifts.
+
+## Hard-Sample Mining Curriculum (target-only, loss-based)
+
+Use this two-phase recipe when the detector plateaus but still misses rare/long-tail cases. Mining is **target-only** for fusion runs; source datasets (lvis/coco/objects365/flickr3k) stay untouched.
+
+**Phase 1 (baseline):** train normally until convergence; save a checkpoint.
+
+**Phase 2 (mining run):** resume from the checkpoint with mining enabled.
+- Collector: trainer wrapper records **per-sample loss** (masked by `labels==-100`) with `sample_id=(dataset, base_idx)` every step; updates are rank0-only to stay DeepSpeed-ZeRO2 safe.
+- Selector: after each epoch, aggregate loss (mean or EMA), pick worst-K samples in the **target pool**.
+- Sampler: rebuild the next epoch’s target schedule with weighted resampling (default 70% hard, 30% regular) while keeping epoch length and target:source ratios unchanged; augmentation still runs on every fetch.
+
+**YAML surface (proposed)**
+```yaml
+custom:
+  hard_sample_mining:
+    enabled: true
+    start_epoch: 0          # start immediately in the mining run
+    selector:
+      mode: top_k           # or percentile|threshold
+      k: 0.10               # 10% of target pool as hard
+    target_ratio: 0.7       # hard share within target draws (rest regular)
+    ema_decay: 0.9          # smooth loss before ranking
+    mine_clean: false       # keep augmentation on for hard samples
+    dump_json: false        # optional: write hard list per epoch
+```
+
+**Operational notes**
+- Works with ms-swift trainers and DeepSpeed ZeRO-2 because loss stats aggregate only on rank 0; global logging stays unchanged.
+- Dataset IDs are stable across augmentation; multiple augmented views of the same record fold into one loss stat.
+- Epoch length is constant; LR schedulers/checkpoint cadence need no changes.

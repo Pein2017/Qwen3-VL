@@ -9,8 +9,8 @@ set -euo pipefail
 # --------------------------------------------------------------------------- #
 # EDIT THESE FOR YOUR RUN
 # --------------------------------------------------------------------------- #
-RAW_ROOT="public_data/lvis/raw"              # contains annotations/ and images/
-OUTPUT_ROOT="public_data/lvis/resized_32_768_v2" # final resized images + JSONLs
+RAW_ROOT="lvis/raw"              # contains annotations/ and images/
+OUTPUT_ROOT="lvis/resized_32_768_v2" # final resized images + JSONLs
 RUN_VAL="false"                                             # set to "true" to also process val split
 FACTOR="32"                                                 # grid alignment
 MAX_BLOCKS="768"                                            # pixel budget, blocks * FACTOR^2

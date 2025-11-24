@@ -5,7 +5,7 @@
 ## 快速开始
 
 ```bash
-cd /data/public_data
+cd public_data
 bash tests/run_tests.sh
 ```
 
@@ -102,7 +102,7 @@ tests/
 
 ```bash
 # 测试10个样本（带图像验证）
-cd /data/public_data
+cd public_data
 conda run -n ms python scripts/convert_lvis.py --test --split train
 
 # 查看输出
@@ -121,7 +121,7 @@ conda activate ms  # 手动激活
 ### 问题：无法导入模块
 ```bash
 # 确保从 /data/public_data 目录运行
-cd /data/public_data
+cd public_data
 conda run -n ms python tests/test_lvis_converter.py
 ```
 

@@ -1,138 +1,83 @@
-# Public Datasets for Qwen3-VL
+# Public Data (LVIS) Pipeline - Single Source
 
-This directory provides a **complete LVIS → Qwen3-VL JSONL pipeline** plus helpers for future public datasets (Objects365, Open Images, ...).
+This README now contains **all guidance for `public_data/`**. The earlier files
+`LVIS_QUICKSTART.md`, `NEXT_STEPS.md`, `POLYGON_SUPPORT.md`, `STATUS.md`, and
+`SUMMARY.md` have been folded in here (stubs remain only to avoid dead links).
 
-Use this README as the operational guide for:
-- Downloading LVIS data
-- Converting to Qwen3-VL JSONL (bbox-only or polygon)
-- Sampling and validating subsets
-- Integrating the outputs into Qwen3-VL training / fusion
+## Scope & Prereqs
+- Focus: LVIS v1.0 -> Qwen3-VL JSONL (bbox or polygon).
+- Repo root: `/data/Qwen3-VL`; module root: `/data/Qwen3-VL/public_data`.
+- Conda env: `ms` (run commands with `conda run -n ms ...`).
+- Tools: `wget`, `unzip`; Disk: ~25 GB for LVIS+COCO plus converted JSONL.
 
-> For how these public datasets are fused with BBU training, see
-> `openspec/changes/update-geometry-poly-fusion/design.md` ("`public_data/` Integration" section).
+## Layout
+public_data/
+|-- lvis/            # raw -> processed data
+|-- scripts/         # download/convert/sample/validate CLIs
+|-- converters/      # conversion logic (bbox + polygon)
+|-- vis_tools/       # visualization helpers
+`-- tests/           # converter tests (no images required)
 
-## Environment
+## Quick Recipes
+Run from repo root unless noted.
 
-- Repo root: `/data/Qwen3-VL`
-- This module: `/data/Qwen3-VL/public_data`
-- Conda environment: `ms` (always run commands with `conda run -n ms`)
-- Disk: ~25 GB for LVIS + COCO images, plus converted JSONL
-
-## Directory Structure
-
-```text
-./
-├── lvis/                      # LVIS dataset (1203 categories, long-tail)
-│   ├── raw/                   # Original annotations + COCO images
-│   ├── processed/             # Converted JSONL files and samples
-│   ├── metadata/              # Category mappings, label lists
-│   └── stats/                 # Conversion statistics
-├── scripts/                   # Executable scripts
-│   ├── download_lvis.py       # Download LVIS annotations + COCO images
-│   ├── convert_lvis.py        # Convert LVIS → Qwen3-VL JSONL
-│   ├── sample_dataset.py      # Sampling utilities
-│   └── validate_jsonl.py      # JSONL schema / image checks
-├── converters/                # Converter modules
-│   ├── base.py                # Base converter interface
-│   ├── lvis_converter.py      # LVIS-specific converter (bbox + polygons)
-│   └── geometry.py            # Geometry helpers (bbox, bounds)
-├── configs/                   # Conversion configs (e.g., lvis.yaml)
-├── tests/                     # Converter tests
-└── vis_tools/                 # Visualization helpers (bbox + polygon overlays)
+**Smoke test (10 samples, polygon on, no smart-resize)**
+```bash
+cd public_data
+conda run -n ms python scripts/download_lvis.py --skip_images   # if annotations only
+conda run -n ms python scripts/convert_lvis.py --split train --use-polygon --test
+# For bbox-only smoke test: drop --use-polygon
 ```
 
----
-
-## End-to-End LVIS Pipeline
-
-All commands assume:
-
+**Full conversion (train + val, bbox)**
 ```bash
-cd /data/Qwen3-VL/public_data
-```
-
-### 1. Run tests (optional but recommended)
-
-```bash
-conda run -n ms bash tests/run_tests.sh
-```
-
-### 2. Download LVIS annotations + COCO 2017 images
-
-```bash
+cd public_data
 conda run -n ms python scripts/download_lvis.py
-```
-
-If you already have COCO images, you can skip downloading them:
-
-```bash
-conda run -n ms python scripts/download_lvis.py --skip_images
-mkdir -p lvis/raw/images
-ln -s /path/to/your/coco/train2017 lvis/raw/images/train2017
-ln -s /path/to/your/coco/val2017   lvis/raw/images/val2017
-```
-
-### 3. (Optional) Visualize a few samples
-
-```bash
-conda run -n ms python vis_tools/visualize_lvis.py \
-  --num_samples 5 \
-  --save \
-  --mode both
-```
-
-Outputs go to `vis_tools/output/*.png`.
-
-### 4. Convert LVIS to Qwen3-VL JSONL
-
-**BBox-only mode (faster):**
-
-```bash
 conda run -n ms python scripts/convert_lvis.py --split train
+conda run -n ms python scripts/convert_lvis.py --split val
 ```
 
-**Polygon mode (N-point polygons as `quad`):**
-
+**Polygon conversion**
 ```bash
 conda run -n ms python scripts/convert_lvis.py --split train --use-polygon
 ```
 
-You can also run a small test conversion first:
-
-```bash
-conda run -n ms python scripts/convert_lvis.py --split train --use-polygon --test
-```
-
-### 5. Create sampled subsets (optional)
-
+**Sampling (stratified 5k from full train)**
 ```bash
 conda run -n ms python scripts/sample_dataset.py \
   --input lvis/processed/train.jsonl \
   --output lvis/processed/samples/train_5k_stratified.jsonl \
   --num_samples 5000 \
-  --strategy stratified
+  --strategy stratified \
+  --stats
 ```
 
-Other strategies: `uniform`, `top_k` (see `sample_dataset.py`).
-
-### 6. Validate JSONL output
-
+**Validate bbox JSONL** (validator currently checks bbox-only)
 ```bash
 conda run -n ms python scripts/validate_jsonl.py \
-  lvis/processed/samples/train_5k_stratified.jsonl
+  lvis/processed/train.jsonl
 ```
 
-Validation checks schema, image paths, and geometry.
+**Visualize a few samples**
+```bash
+conda run -n ms python vis_tools/visualize_lvis.py --num_samples 3 --mode both --save
+```
 
----
+## Conversion Behavior (from code)
+- Input: LVIS COCO-format JSON (`lvis_v1_[split].json`) + COCO images under `lvis/raw/images/{train2017,val2017}`.
+- Output JSONL: one line per image with `images`, `objects`, `width`, `height`; stats saved as `<output>_stats.json`.
+- Bounding boxes: COCO `[x,y,w,h]` -> `[x1,y1,x2,y2]`; boxes are clipped unless `--no-clip-boxes`; min area/dim default 1 px.
+- Crowd: skipped by default (`--keep-crowd` to keep).
+- Relative paths: default; use `--absolute-paths` to keep absolute.
+- Polygons: `--use-polygon` converts each segmentation part to a `quad` + `quad_points` (N-point closed polygon). If no valid polygon, it falls back to bbox.
+- Smart resize: `--smart-resize` uses `src/datasets/preprocessors/resize.SmartResizePreprocessor` to resize images + geometry. **Caveat:** that preprocessor currently scales `bbox_2d` and `poly` fields, not `quad`; avoid combining `--smart-resize` with `--use-polygon` until `quad` scaling is added.
+- Stats counters: total/skipped images & objects; polygon mode adds `quad_converted` and `polygon_skipped`.
+- Known flag gap: `--poly-max-points` is parsed but not wired into `LVISConverter`; using it will raise a constructor error. Skip this flag for now.
 
-## JSONL Output Schema
-
-Each line in the output JSONL matches the Qwen3-VL dense-caption contract:
-
+## JSONL Schema (produced here)
 ```json
 {
-  "images": ["relative/path/to/image.jpg"],
+  "images": ["train2017/000000000001.jpg"],
   "objects": [
     {"bbox_2d": [x1, y1, x2, y2], "desc": "person"},
     {"quad": [x1, y1, ..., xn, yn], "quad_points": n, "desc": "car"}
@@ -141,58 +86,39 @@ Each line in the output JSONL matches the Qwen3-VL dense-caption contract:
   "height": 480
 }
 ```
+- Pixel coordinates; not normalized.
+- `quad` is generic N-point polygon; `quad_points` = N.
+- One image per record is expected; validator warns otherwise.
 
-Key points:
-- Coordinates are **pixel values** (not normalized).
-- `bbox_2d`: `[x1, y1, x2, y2]` derived from COCO `[x, y, w, h]`.
-- `quad`: generic N-point closed polygon (N ≥ 3) with `quad_points = N`.
-- Image paths are relative to the JSONL file if `relative_image_paths` is enabled.
+## Sampling Strategies (scripts/sample_dataset.py)
+- `stratified` (default): preserves object frequency distribution; draws per-category targets proportional to object counts.
+- `uniform`: equal samples per category.
+- `random`: dataset-wide random without replacement.
+- `top_k`: sample from top-K most frequent categories (prints top list).
+All strategies keep unique image lines; category stats printed when `--stats` is set.
 
----
+## Validation & Tests
+- `scripts/validate_jsonl.py`: checks JSON shape, bbox format, image existence (unless `--skip-image-check`). **Polygon objects are not yet validated** because the script requires `bbox_2d`; use bbox mode or add a custom check for polygons.
+- Test suite (no images needed): `cd public_data && conda run -n ms bash tests/run_tests.sh`. It exercises annotation loading, bbox conversion, polygon extraction, and format compliance.
+- Test-mode validation inside `convert_lvis.py` is lightweight and may report JSON errors because of a double-parse bug; rely on `validate_jsonl.py` for ground truth.
 
-## Polygon Support (LVIS Segmentation)
-
-When `--use-polygon` is enabled:
-
-- LVIS `segmentation` entries (one or more `[x1,y1,...]` parts) are converted to **polygon objects**:
-  - Each part becomes one object with `quad` + `quad_points`.
-  - At least 3 points (6 coords) and an even number of coords are required.
-  - Coordinates must lie within a small margin of the image bounds.
-- BBoxes are still available via `bbox_2d` when polygon conversion is disabled or when polygons are invalid.
-
-To consume these polygons in Qwen3-VL, the dense-caption preprocessor must accept N-point `quad` geometries (not just 4 points), e.g.:
-
-```python
-# Pseudocode (Qwen3-VL side)
-quad = obj["quad"]
-assert len(quad) >= 6 and len(quad) % 2 == 0
-assert "quad_points" in obj and len(quad) == obj["quad_points"] * 2
-```
-
----
-
-## Integration with Qwen3-VL Training
-
-From the repo root (`/data/Qwen3-VL`), you can point a training config to the converted LVIS JSONL:
-
+## Training Integration (example)
 ```yaml
-# Example: configs/lvis_stage1.yaml
 custom:
   train_jsonl: ./public_data/lvis/processed/samples/train_5k_stratified.jsonl
-  val_jsonl: ./public_data/lvis/processed/val.jsonl
+  val_jsonl:   ./public_data/lvis/processed/val.jsonl
   emit_norm: norm1000
   images_per_user_turn: 1
 ```
+- Templates in Qwen3-VL convert pixel coords to `norm1000`.
+- For multi-dataset fusion, see `openspec/changes/update-geometry-poly-fusion/design.md`.
 
-- Templates in Qwen3-VL are responsible for converting pixel coords → `norm1000`.
-- For multi-dataset fusion with BBU data, follow the design in
-  `openspec/changes/update-geometry-poly-fusion/design.md`.
-
----
+## Dataset Facts
+- LVIS v1.0: 1203 categories (long-tail: frequent/common/rare), ~100k train images, ~20k val, ~1.27M annotations.
+- Polygons are common and detailed (many 10-40 point contours); converter accepts any N >= 3.
 
 ## Troubleshooting
-
-- **Images not found during conversion**: check that `lvis/raw/images/train2017/` and `val2017/` exist or symlinks are correct.
-- **Conversion slow**: test with `--max_samples` or `--test` before full runs.
-- **Validation failures**: inspect errors from `scripts/validate_jsonl.py` and check `lvis/stats/` for details.
-- **Disk / memory issues**: use sampled subsets (1k/5k) instead of full LVIS for quick experiments.
+- Missing images: ensure `lvis/raw/images/train2017` and `val2017` exist (copy from your COCO install if needed).
+- Slow conversion: use `--max_samples` or `--test` first.
+- Validator failures on polygons: run bbox mode or add a temporary bbox-only pass; polygon validation is a TODO.
+- Disk pressure: sample down with `sample_dataset.py` before training.

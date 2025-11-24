@@ -506,7 +506,7 @@ logger.warning("...")
 
 ### Run Tests
 ```bash
-cd /data/Qwen3-VL
+# From repo root
 conda run -n ms python -m pytest tests/augmentation/ tests/test_augmentation_geometry.py -v
 ```
 
@@ -520,7 +520,7 @@ conda run -n ms python -m pytest tests/augmentation/ tests/test_augmentation_geo
 
 ### Visualization
 ```bash
-cd /data/Qwen3-VL
+# From repo root
 conda run -n ms python vis_tools/vis_augment_compare.py
 ```
 Outputs to `vis_out/augment_stage3_exact/` showing original vs augmented with overlaid geometry.

@@ -101,6 +101,12 @@ FusionCaptionDataset
 - Telemetry: `last_sample_debug` reports dataset, prompt source, augmentation on/off, cap applied/limit, input length; `epoch_plan` summarizes per-epoch counts/policies.
 - No online smart-resize guard; resizing only via explicit augmentation ops and offline preprocessing.
 
+#### Hard-Sample Mining (target-only, planned)
+- Mining applies **only** to the fusion target pool; source pools (lvis/coco/objects365/flickr3k) remain unchanged.
+- Each encoded sample carries stable IDs: `dataset`, `base_idx`, and `sample_id=(dataset, base_idx)`; augmentation does not alter IDs.
+- A `HardSamplePlan` (weights per `base_idx` in the target pool) is injected before `set_epoch()`; `_build_train_schedule` samples the target pool with these weights while preserving target:source ratios and total epoch length.
+- Per-sample **loss** is gathered in the trainer wrapper (rank0-only for DDP/ZeRO2), aggregated per logical sample (EMA or mean), and the worst-K become the hard pool for the next epoch.
+
 ### Implementation Details
 
 #### 1. Record Loading and Annotation

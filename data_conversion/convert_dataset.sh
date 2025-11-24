@@ -25,7 +25,10 @@ export PYTHONIOENCODING=utf-8
 
 # Environment setup
 # Prioritize current project directory to use updated code
-export PYTHONPATH=/data/Qwen3-VL:$PYTHONPATH
+# Get project root relative to this script
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH}"
 
 # Dynamically determine project root from script location
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -120,7 +123,18 @@ echo "   Parallel Workers: $NUM_WORKERS"
 echo ""
 
 # Build command arguments
-PYTHON_CMD="/root/miniconda3/envs/ms/bin/python -m data_conversion.pipeline.unified_processor"
+# Use conda run to ensure correct environment, or fallback to direct python if conda not available
+if command -v conda &> /dev/null; then
+    PYTHON_CMD="conda run -n ms python -m data_conversion.pipeline.unified_processor"
+else
+    # Fallback: try to find python in conda env
+    CONDA_PYTHON="${CONDA_PREFIX:-/root/miniconda3/envs/ms}/bin/python"
+    if [ -f "$CONDA_PYTHON" ]; then
+        PYTHON_CMD="$CONDA_PYTHON -m data_conversion.pipeline.unified_processor"
+    else
+        PYTHON_CMD="python -m data_conversion.pipeline.unified_processor"
+    fi
+fi
 ARGS="--input_dir \"$INPUT_DIR\""
 ARGS="$ARGS --output_dir \"$OUTPUT_DIR\""
 ARGS="$ARGS --dataset_name \"$DATASET_NAME\""

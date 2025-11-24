@@ -1,18 +1,16 @@
 from __future__ import annotations
 
-import sys
 from random import Random
 
 from PIL import Image
 
-sys.path.append('/data/Qwen3-VL')
+from src.datasets.augment import apply_augmentations
 from src.datasets.augmentation.base import Compose
 from src.datasets.augmentation.ops import HFlip, Rotate, Scale
-from src.datasets.augment import apply_augmentations
 
 
 def _mk_img(w=128, h=96):
-    return Image.new('RGB', (w, h), color=(80, 80, 80))
+    return Image.new("RGB", (w, h), color=(80, 80, 80))
 
 
 def test_determinism_same_seed():
@@ -31,6 +29,6 @@ def test_bounds_clamped():
     _, new_geoms = apply_augmentations([img], geoms, pipe, rng=Random(9))
     q = new_geoms[0]["quad"]
     w, h = 128, 96
-    assert all(0 <= q[i] <= (w-1) if i%2==0 else 0 <= q[i] <= (h-1) for i in range(8))
-
-
+    assert all(
+        0 <= q[i] <= (w - 1) if i % 2 == 0 else 0 <= q[i] <= (h - 1) for i in range(8)
+    )
