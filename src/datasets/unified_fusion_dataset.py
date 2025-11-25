@@ -10,7 +10,7 @@ import copy
 import random
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, MutableMapping, Optional, cast
+from typing import Any, Iterable, Literal, MutableMapping, Optional, cast
 
 from torch.utils.data import get_worker_info
 
@@ -81,7 +81,7 @@ class FusionCaptionDataset(BaseCaptionDataset):
         self._preprocessors_aug: dict[str, AugmentationPreprocessor] = {}
         self._preprocessors_cap: dict[str, ObjectCapPreprocessor] = {}
         self.epoch_plan: dict[str, dict[str, Any]] = {}
-        self._hard_sample_plan: dict[str, Any] | None = None
+        self._external_schedule: list[tuple[str, int]] | None = None
 
         self._dataset_order = [
             fusion_config.target.name,
@@ -271,11 +271,20 @@ class FusionCaptionDataset(BaseCaptionDataset):
         return _PromptResolution(user=user_prompt, system=system_prompt, source=source)
 
     def _build_train_schedule(self) -> None:
+        if self._external_schedule is not None:
+            self._schedule = list(self._external_schedule)
+            external_counts: dict[str, int] = {}
+            for name, _idx in self._schedule:
+                external_counts[name] = external_counts.get(name, 0) + 1
+            # Ensure all datasets appear in counts even if zero to keep telemetry stable
+            for name in self._dataset_order:
+                external_counts.setdefault(name, 0)
+            self._epoch_counts = external_counts
+            self._update_epoch_plan()
+            return
+
         target_pool = self._record_pools.get(self._target_name, [])
         target_count_raw = len(target_pool)
-        plan = self._hard_sample_plan or {}
-        target_epoch_size = int(plan.get("target_epoch_size") or target_count_raw)
-        target_weights_map = plan.get("weights") if isinstance(plan, dict) else None
         rng_target = random.Random(
             self._mix_seed(
                 self.seed,
@@ -284,21 +293,10 @@ class FusionCaptionDataset(BaseCaptionDataset):
                 0xA1,
             )
         )
-        target_indices_all = list(range(target_count_raw))
-        if target_weights_map:
-            target_weights = [float(target_weights_map.get(i, 1.0)) for i in target_indices_all]
-            sampled_target = rng_target.choices(target_indices_all, weights=target_weights, k=target_epoch_size)
-        else:
-            target_indices = list(target_indices_all)
-            if self._shuffle and len(target_indices) > 1:
-                rng_target.shuffle(target_indices)
-            if target_epoch_size == len(target_indices):
-                sampled_target = target_indices
-            elif target_epoch_size < len(target_indices):
-                sampled_target = target_indices[:target_epoch_size]
-            else:
-                extra = rng_target.choices(target_indices, k=target_epoch_size - len(target_indices))
-                sampled_target = target_indices + extra
+        target_indices = list(range(target_count_raw))
+        if self._shuffle and len(target_indices) > 1:
+            rng_target.shuffle(target_indices)
+        sampled_target = target_indices
 
         schedule: list[tuple[str, int]] = [
             (self._target_name, idx) for idx in sampled_target
@@ -368,8 +366,14 @@ class FusionCaptionDataset(BaseCaptionDataset):
             }
         self.epoch_plan = plan
 
-    def set_hard_sample_plan(self, plan: Optional[MutableMapping[str, Any]]) -> None:
-        self._hard_sample_plan = dict(plan) if plan is not None else None
+    def set_external_hsm_schedule(  # pyright: ignore[reportIncompatibleMethodOverride]
+        self, schedule: Optional[Iterable[tuple[str, int]]]
+    ) -> None:
+        if schedule is None:
+            self._external_schedule = None
+        else:
+            self._external_schedule = [(str(a), int(b)) for a, b in schedule]
+        self.set_epoch(self._epoch)
 
     def set_epoch(self, epoch: int) -> None:
         self._epoch = int(epoch)
@@ -380,13 +384,20 @@ class FusionCaptionDataset(BaseCaptionDataset):
             self._build_train_schedule()
 
     def __len__(self) -> int:
+        if self._external_schedule is not None:
+            return len(self._external_schedule)
         return len(self._schedule)
 
     def __getitem__(self, index: int) -> dict[str, Any]:
         if not self._schedule:
             raise IndexError("FusionCaptionDataset is empty")
 
-        dataset_name, base_idx = self._schedule[index % len(self._schedule)]
+        schedule = (
+            self._external_schedule
+            if self._external_schedule is not None
+            else self._schedule
+        )
+        dataset_name, base_idx = schedule[index % len(schedule)]
         pool = self._record_pools.get(dataset_name, [])
         record = copy.deepcopy(pool[base_idx])
         policy = self._policies[dataset_name]
@@ -537,9 +548,15 @@ class FusionCaptionDataset(BaseCaptionDataset):
                 except Exception:
                     pass
 
-    def make_target_eval_dataset(self, *, mine_clean: bool = False) -> BaseCaptionDataset:
+    def make_target_eval_dataset(
+        self, *, mine_clean: bool = False
+    ) -> BaseCaptionDataset:
         policy = self._policies[self._target_name]
-        use_aug = policy.augmentation_enabled and self._augmenter is not None and not mine_clean
+        use_aug = (
+            policy.augmentation_enabled
+            and self._augmenter is not None
+            and not mine_clean
+        )
         return BaseCaptionDataset(
             base_records=self._record_pools[self._target_name],
             template=self.template,

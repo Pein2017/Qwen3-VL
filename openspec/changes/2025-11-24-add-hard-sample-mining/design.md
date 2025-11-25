@@ -1,44 +1,31 @@
-# Design: Hard-Sample Mining Stage
+# Design: Dynamic Hard-Sample Mining (token_acc, post-70% activation)
 
 ## Goals
-- Collect per-sample **loss** (not token_acc) after augmentation and mine hard examples every epoch.
-- Reweight/duplicate mined samples in subsequent epochs, optionally downsizing the target epoch length.
-- Keep augmentation + fusion scheduling compatible; avoid invasive trainer changes; remain safe under DDP/DeepSpeed ZeRO-2.
+- 使用 **token_acc**（越低越难）作为唯一难度信号；EMA 聚合，<3 次观测用均值。
+- 保持目标集总长度不变，后 30% 训练阶段将目标样本重排为 30% hard（可重复）+ 70% 全量有放回的常规样本。
+- 源数据集按可配置比例 (`source_ratio`，默认 8% 目标长度) 追加到调度，不参与挖掘/重权。
+- 仍兼容 ms-swift/transformers Trainer、DeepSpeed ZeRO-2；最小化对 Trainer 的侵入；rank0 选池并广播 schedule。
 
-## High-Level Flow
-1) **Dataset emits sample metadata**: `sample_id` (stable per logical record), `dataset`, `base_idx`, `epoch`, `aug_seed`.
-2) **Trainer wrapper** computes per-example CE loss (masked) and hands `(sample_id, loss, step, epoch, dataset, base_idx)` to a shared tracker; rank0-only updates to stay DS-safe.
-3) **Callback** runs every epoch end (no plateau trigger):
-   - aggregates per-sample losses (EMA over batches; mean when <3 obs),
-   - selects fixed hard set (`hard_sample_size`, e.g., 500) and fixed regular set (`regular_sample_size`, e.g., 150),
-   - writes a `HardSamplePlan` (weights map + `target_epoch_size`) to the dataset.
-4) **Dataset set_epoch()** rebuilds permutation/schedule using weights; length can stay fixed or use a downsized target epoch length when configured for the mining stage.
-5) **Augmentation** still runs per-sample; mined samples are not forced clean unless configured (`mine_clean=false` default).
-
-## Data Structures
-- `HardSampleMiningConfig`: enable flag, `start_epoch`, `hard_sample_size`, `regular_sample_size`, `ema_decay`, `mine_clean`, optional `target_epoch_size` (e.g., 650 = 500 hard + 150 regular) for mining.
-- `HardSampleTracker`: maintains running per-sample loss stats (`count`, `ema`, `last_loss`), keyed by `sample_id` with side-car map to `(dataset, base_idx)` for logging; updates occur on rank 0 only (all-reduce or gather optional but not required).
-- `HardSamplePlan`: mapping `base_idx -> weight` per dataset (target-only in fusion) + metadata (`version`, `computed_at_epoch`).
+## Flow
+1) **采集**：在 `compute_loss` 包装中计算 per-sample token_acc（logits argmax vs labels，mask -100），rank0 聚合并写入 `HardSampleTracker`（sample_id, dataset, base_idx）。
+2) **激活条件**：训练进度 < `activate_after_pct`（默认 0.7）仅记录，不重排；达阈值后每轮执行挖掘。
+3) **选池**：epoch 末在目标集上按 EMA( token_acc ) 由低到高排序，取前 `hard_pool_frac`（默认 0.3）作为 hard_pool。
+4) **重建调度**：
+   - 目标：生成长度等于原目标池的序列，组成 30% hard（有放回）+ 70% 目标全量有放回常规样本。
+   - 源：追加数量为 `round(source_ratio * len(target))` 的源样本（从所有源池均匀有放回），与目标条目合并并打乱；源比例固定，不受挖掘影响。
+   - 将结果通过 `set_external_hsm_schedule` 注入数据集，DataLoader 以确定性 sampler 迭代该顺序。
+5) **日志**：每轮记录 `hsm/` 前缀的池指标（hard/regular acc mean/p90、hard_seen/regular_seen、hard_pool_coverage、hard_pool_size、schedule_len、mining_active 等）。
 
 ## Integration Points
-- **ms-swift compatibility check**: `swift/trainers/trainers.py::Trainer.compute_loss` delegates to HF then `_compute_acc`; it returns batch-mean only. Wrapping the resolved trainer to emit a per-example loss vector (for tracking) while keeping the mean for backprop preserves ZeRO-2 flows; keep `_patch_loss_function` untouched.
-- **Config**: `custom.hard_sample_mining` parsed into structured config, default disabled.
-- **sft.py**: instantiate tracker + callback when config enabled; pass plan to datasets (train only). Callback added after curriculum/fusion callbacks.
-- **Dataset**:
-  - `BaseCaptionDataset`: add `sample_id`, accept optional `hard_sample_plan`, use weighted `choices(k=len(base_records))` in `_rebuild_perm_for_epoch`, or a downsized length when `target_epoch_size` is set for mining.
-  - `FusionCaptionDataset`: maintain per-dataset plans; adjust `_build_train_schedule` to sample from weighted distributions **only for the target pool**; support optional downsized target length while keeping source pools/quotas unchanged.
-- **Trainer Wrapper**: subclass resolved trainer to override `compute_loss` → compute per-example CE (shifted labels, mask `-100`), reduce mean for training but emit vector to tracker; pop metadata from inputs before forward; keep gradient/ZeRO2 flows identical.
-- **Callback**: listens to `on_epoch_end`; updates dataset plan; logs hard counts and epoch size.
+- **Config**：`custom.hard_sample_mining` 使用新字段：`enabled`, `start_epoch`, `hard_pool_frac`, `activate_after_pct`, `source_ratio`, `ema_decay`, `log_pool_metrics`, `log_prefix`。旧模式字段已移除。
+- **Trainer**：在初始化时 attach 采集包装；训练 dataloader 改为确定性 sampler（无 shuffle），以尊重外部 schedule 顺序；rank0 选池并通过 broadcast 同步 schedule。
+- **Dataset**：
+  - `BaseCaptionDataset` / `FusionCaptionDataset` 支持 `set_external_hsm_schedule`，当存在时 `__len__`/`__getitem__` 直接使用外部顺序；不再保留 legacy 计划接口。
+  - Fusion：源/目标池保持原始内容；源 quota 在回调中按 `source_ratio` 计算。
+
+## Non-Goals / Removed
+- 不再支持基于 loss 的固定 top-K / target_epoch_size 缩容；不做 plateau 触发；不做 mine_clean/recompute_full_pass。
 
 ## Edge Cases
-- Gradient accumulation: per-sample loss computed on current microbatch; tracker stores mean per sample across repeats (mean when <3 obs, EMA otherwise if configured).
-- DDP: tracker should reduce on main process only; gather sample_ids/losses from local batch and only rank0 updates aggregator (requires distributed guard using `get_dist_setting` or `Trainer.is_world_process_zero`).
-- Memory: tracker uses dict of float stats; prune when sample never observed in last M epochs if needed (not planned initially).
-
-## Telemetry
-- Logs: `hsm/triggered`, `hsm/top_loss_mean`, `hsm/num_hard`, `hsm/weights/max`, `hsm/weights/min`.
-- No JSON dump required (per request).
-
-## Alternatives Considered
-- Modifying ms-swift Trainer to emit per-sample loss directly: rejected to avoid upstream dependency edits.
-- Changing dataset length per epoch: rejected to keep DataLoader/static sampler compatibility.
+- 小数据集：若 hard_pool 为空或不足，允许有放回补齐；仍保持目标长度。
+- DDP/ZeRO-2：仅 rank0 聚合/排序；计划通过 all_gather_object / broadcast 同步；Sampler 使用 epoch-seeded RNG 确保一致顺序。

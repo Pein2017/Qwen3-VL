@@ -269,6 +269,12 @@ class AugmentationCurriculumScheduler:
             if phase.until_percent is None:
                 raise ValueError("percent curriculum expected until_percent")
             step_boundary = max(1, int(round(total_steps * phase.until_percent)))
+            # For tiny runs (e.g., smoke tests) total_steps can be so small that
+            # multiple percent boundaries collapse to the same step. In that case
+            # gently bump the boundary forward to keep a strictly increasing
+            # sequence, capped by total_steps.
+            if step_boundary <= prev:
+                step_boundary = min(total_steps, prev + 1)
             if step_boundary <= prev:
                 raise ValueError(
                     "Resolved curriculum boundaries must be strictly increasing after scaling to steps"

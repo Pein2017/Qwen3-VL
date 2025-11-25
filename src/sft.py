@@ -4,6 +4,7 @@ import argparse
 import copy
 import logging
 import math
+import types
 import os
 import re
 from dataclasses import asdict
@@ -18,9 +19,10 @@ from swift.utils import get_dist_setting
 
 from .callbacks.fusion_epoch import FusionEpochCallback
 from .callbacks.hard_sample_mining import (
-    HardSampleMiningCallback,
+    HardSampleDynamicCallback,
     HardSampleTracker,
-    attach_hsm_compute_loss,
+    attach_hsm_compute_metrics,
+    build_hsm_dataloader,
 )
 from .config import ConfigLoader, SaveDelayConfig
 from .datasets import BaseCaptionDataset
@@ -650,7 +652,7 @@ def main():
             else getattr(dataset, "dataset_name", "dataset")
         )
         hsm_tracker = HardSampleTracker(hsm_cfg.ema_decay)
-        hsm_callback = HardSampleMiningCallback(
+        hsm_callback = HardSampleDynamicCallback(
             tracker=hsm_tracker,
             config=hsm_cfg,
             dataset=dataset,
@@ -732,9 +734,17 @@ def main():
     )
 
     if hsm_cfg and hsm_cfg.enabled and hsm_tracker is not None:
-        attach_hsm_compute_loss(trainer, hsm_tracker, hsm_cfg)
+        attach_hsm_compute_metrics(trainer, hsm_tracker, hsm_cfg)
         if hsm_callback is not None:
             hsm_callback.trainer = trainer
+
+        # Override train dataloader to honor external HSM schedule order
+        trainer._get_train_dataloader_default = trainer.get_train_dataloader
+
+        def _get_train_dataloader_hsm(self):  # type: ignore[override]
+            return build_hsm_dataloader(self, self.train_dataset, hsm_cfg.enabled)
+
+        trainer.get_train_dataloader = types.MethodType(_get_train_dataloader_hsm, trainer)
 
     # Patch DeepSpeed __del__ to avoid noisy cleanup errors (safe no-op)
     try:

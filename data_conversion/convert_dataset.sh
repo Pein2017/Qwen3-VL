@@ -197,6 +197,60 @@ if [ $EXIT_CODE -eq 0 ]; then
     echo "✅ Dataset $DATASET_NAME processed successfully!"
     echo "📁 Output: $OUTPUT_DIR/$DATASET_NAME/"
     echo "📝 Log file: convert.log"
+    echo ""
+
+    # Build tiny debug splits for quick smoke tests
+    OUTPUT_DATASET_DIR="$OUTPUT_DIR/$DATASET_NAME"
+    export OUTPUT_DATASET_DIR
+    if [ -f "$OUTPUT_DATASET_DIR/train.jsonl" ] && [ -f "$OUTPUT_DATASET_DIR/val.jsonl" ]; then
+        echo "🪄 Creating tiny debug datasets (seed: $SEED)..."
+        python - <<'PY'
+import os
+import random
+
+dataset_dir = os.environ["OUTPUT_DATASET_DIR"]
+train_path = os.path.join(dataset_dir, "train.jsonl")
+val_path = os.path.join(dataset_dir, "val.jsonl")
+
+seed_env = os.environ.get("SEED", "")
+try:
+    seed = int(seed_env)
+except (TypeError, ValueError):
+    seed = 17
+
+rng = random.Random(seed)
+
+
+def sample_file(src_path: str, dst_path: str, target_count: int) -> None:
+    if not os.path.isfile(src_path):
+        print(f"   ⚠️ Missing source: {src_path}")
+        return
+
+    with open(src_path, "r", encoding="utf-8") as src:
+        lines = src.readlines()
+
+    if not lines:
+        print(f"   ⚠️ Source empty: {src_path}")
+        open(dst_path, "w", encoding="utf-8").close()
+        return
+
+    k = min(target_count, len(lines))
+    indices = rng.sample(range(len(lines)), k)
+    indices.sort()
+
+    with open(dst_path, "w", encoding="utf-8") as dst:
+        for idx in indices:
+            dst.write(lines[idx])
+
+    print(f"   ✅ {os.path.basename(dst_path)}: {k}/{len(lines)} samples (seed={seed})")
+
+
+sample_file(train_path, os.path.join(dataset_dir, "train_tiny.jsonl"), 20)
+sample_file(val_path, os.path.join(dataset_dir, "val_tiny.jsonl"), 8)
+PY
+    else
+        echo "⚠️ train.jsonl or val.jsonl missing; skipping tiny datasets"
+    fi
     
     # Validation step has been removed for simplification
     

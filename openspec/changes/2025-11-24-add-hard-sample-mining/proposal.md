@@ -1,21 +1,20 @@
-# Proposal: Add Hard-Sample Mining to Qwen3-VL Detection SFT
+# Proposal: Dynamic Hard-Sample Mining for Qwen3-VL Detection SFT
 
 ## Why
 - Dense detection SFT plateaus after a few epochs with long-tail errors (small/rare objects).
 - Current training samples uniformly per epoch; difficult cases are not emphasized once loss stabilizes.
-- Need a built-in, YAML-driven hard-sample mining stage that re-weights or duplicates hard examples without breaking augmentation or fusion scheduling.
+- Need a built-in, YAML-driven hard-sample mining stage that reweights/duplicates hard examples without breaking augmentation or fusion scheduling.
 
 ## What
-- Collect per-sample **losses** during training (with augmentation on) and identify hard samples after convergence/plateau.
-- Persist hard-sample IDs across epochs; resample/duplicate them in subsequent epochs while keeping dataset length stable and augmentation active.
-- Provide configurable trigger (epoch N or metric plateau) and selection strategy (top-K, percentile, threshold).
-- Expose knobs under `custom.hard_sample_mining` in YAML; add a Trainer callback to orchestrate tracking + dataset reweighting.
-- Update fusion dataset schedule/_perm to honor a per-epoch hard-sample plan.
+- Collect per-sample **token_acc** during training（含增广），按 EMA 计算难度（acc 低即难）。
+- 前 70% 训练仅记录；后 30% 每轮选目标集最难 30% 作为 hard_pool，重建下一轮调度：目标长度不变 = 30% hard（可重复）+ 70% 目标全量有放回；源样本追加为目标长度的 8%，不挖掘不重权。
+- 仅目标数据集参与挖掘；源配比固定。
+- Expose knobs under `custom.hard_sample_mining` in YAML; add a Trainer callback + dataset external schedule to orchestrate tracking and resampling.
 
 ## Scope
 - Training entry `src/sft.py` (wiring, config parsing).
 - Datasets: `BaseCaptionDataset`, `FusionCaptionDataset` schedule/permutation and metadata for sample IDs.
-- Callbacks: new `HardSampleMiningCallback` (loss tracking, trigger, schedule update) that aggregates on rank0 to stay DDP/DeepSpeed safe.
+- Callbacks: new `HardSampleDynamicCallback` (token_acc tracking, epoch-end selection, schedule update) that aggregates on rank0 to stay DDP/DeepSpeed safe.
 - Config schema + docs (`docs/TRAINING_PLAYBOOK.md`, `docs/UNIFIED_FUSION_DATASET.md`), optional design note; mining applies to fusion target only.
 
 ## Non-Goals

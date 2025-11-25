@@ -101,11 +101,11 @@ FusionCaptionDataset
 - Telemetry: `last_sample_debug` reports dataset, prompt source, augmentation on/off, cap applied/limit, input length; `epoch_plan` summarizes per-epoch counts/policies.
 - No online smart-resize guard; resizing only via explicit augmentation ops and offline preprocessing.
 
-#### Hard-Sample Mining (target-only, planned)
-- Mining applies **only** to the fusion target pool; source pools (lvis/coco/objects365/flickr3k) remain unchanged.
+#### Hard-Sample Mining (target-only)
+- Mining applies **only** to the fusion target pool; source pools (lvis/coco/objects365/flickr3k) remain unchanged except for the appended quota.
 - Each encoded sample carries stable IDs: `dataset`, `base_idx`, and `sample_id=(dataset, base_idx)`; augmentation does not alter IDs.
-- A `HardSamplePlan` (weights + `target_epoch_size`) is injected before `set_epoch()`; `_build_train_schedule` samples the target pool with fixed hard/regular counts while preserving source quotas.
-- Per-sample **loss** is gathered in the trainer wrapper (rank0-only for DDP/ZeRO2), aggregated per logical sample (EMA or mean), and the worst `hard_sample_size` become the hard pool for the next epoch; `regular_sample_size` fills the rest of the downsized target epoch if set.
+- 挖掘结果通过外部 `set_external_hsm_schedule` 注入；`__getitem__` 按该顺序迭代目标与源样本，源 quotas 按 `source_ratio * target_len` 追加（默认 0.08），再整体 shuffle。
+- Per-sample **token_acc** is gathered in the trainer wrapper (rank0-only for DDP/ZeRO2), aggregated per logical sample (EMA or mean); after activation (`activate_after_pct`, 默认 0.7)，最难 `hard_pool_frac` 目标样本形成 hard_pool，下一轮目标调度为 30% hard + 70% 目标全集有放回，长度不变，然后追加源样本。
 
 ### Implementation Details
 

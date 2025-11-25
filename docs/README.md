@@ -3,7 +3,7 @@
 Status: Active — Internal Engineering
 
 ## Quick Navigation
-- **What's New** → `openspec/changes/` (latest approved proposals)
+- **Start Here (flow)** → `DATA_JSONL_CONTRACT.md` → `DATA_AND_DATASETS.md` → `DATA_AUGMENTATION.md` → `TRAINING_PLAYBOOK.md` → `INFERENCE_AND_STAGEA.md` → `STAGE_B_RUNTIME.md`
 - **Data & Datasets** → `DATA_AND_DATASETS.md` - Schema, builders, conversion pipeline
 - **Augmentation** → `DATA_AUGMENTATION.md` - Geometry transforms, telemetry, visualization hooks
 - **Training** → `TRAINING_PLAYBOOK.md`
@@ -13,8 +13,15 @@ Status: Active — Internal Engineering
 - **Stage-A & Stage-B (business)** → `STAGE_A_STAGE_B.md`, `stage-B-knowledge-Chinese.md`
 - **Public datasets** → `PUBLIC_DATA.md`
 - **Upstream Dependencies** → `UPSTREAM_DEPENDENCIES.md` - HF Qwen3-VL + ms-swift context
-- **Experiments** → `docs/experiments/` - Training comparisons, ablations
 - **Specs & governance** → `openspec/AGENTS.md`, `openspec/project.md`
+
+### Suggested Reading Order
+1. **Schema & data** — `DATA_JSONL_CONTRACT.md`, `DATA_AND_DATASETS.md`
+2. **Augmentation** — `DATA_AUGMENTATION.md`
+3. **Training** — `TRAINING_PLAYBOOK.md` (recipes/configs), `REFERENCE.md` (architecture map)
+4. **Inference & Stage-A** — `INFERENCE_AND_STAGEA.md`
+5. **Stage-B** — `STAGE_B_RUNTIME.md` (runtime), `STAGE_A_STAGE_B.md` (business context)
+6. **Ecosystem** — `PUBLIC_DATA.md`, `UNIFIED_FUSION_DATASET.md`, `UPSTREAM_DEPENDENCIES.md`
 
 ### Documentation Ownership & Directory Map
 

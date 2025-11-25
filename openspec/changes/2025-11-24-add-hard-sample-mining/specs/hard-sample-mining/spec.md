@@ -1,66 +1,62 @@
-## ADDED Requirements
+## MODIFIED Requirements
 
-### Requirement: Configurable Hard-Sample Mining Stage
-The system SHALL allow enabling hard-sample mining via YAML (`custom.hard_sample_mining`) with explicit defaults that leave training behavior unchanged when disabled.
+### Requirement: Configurable Hard-Sample Mining (Dynamic Mode)
+The system SHALL expose a YAML switch `custom.hard_sample_mining` that, when enabled, activates a **dynamic batch-level** hard-sample mining strategy; when disabled or absent, training behavior is unchanged.
 
 #### Scenario: Disabled by default
-- **WHEN** `custom.hard_sample_mining` is absent or `enabled=false`
-- **THEN** training runs exactly as today (no extra callbacks, no schedule changes)
+- **WHEN** `custom.hard_sample_mining` is omitted or `enabled=false`
+- **THEN** no mining callbacks or sampler changes are applied, and training matches current behavior.
 
-#### Scenario: Start after convergence
-- **WHEN** `custom.hard_sample_mining.start_epoch` is reached AND an **eval/loss** plateau is detected within the configured `plateau_delta`
-- **THEN** the mining stage activates and produces a hard-sample plan for the next epoch
+#### Scenario: Dynamic mode enabled
+- **WHEN** `custom.hard_sample_mining.enabled=true`
+- **THEN** the dynamic mining pipeline (token_acc tracking, hard-pool update, and fixed-ratio batch mixing) is active for the target dataset only.
 
-### Requirement: Per-sample Loss Tracking with Augmentation
-The trainer SHALL collect per-sample **loss** (masked by `labels==-100`) on the training path (with augmentation applied) and associate it with stable sample identifiers (dataset name + base index).
+### Requirement: Per-sample token_acc Tracking with EMA
+The trainer SHALL record per-sample **token_acc** (masked by `labels==-100`) with stable identifiers `(dataset, base_idx, sample_id)`, updating an EMA difficulty score; if a sample has <3 observations in an epoch, the mean of available observations SHALL be used.
 
-#### Scenario: Record losses per microbatch
-- **WHEN** a training batch finishes
-- **THEN** the system records a per-sample loss scalar (after label masking) plus `sample_id`, `dataset`, `base_idx`, `epoch`, and local step; collection works under DDP/DeepSpeed-ZeRO2 by aggregating only on rank 0 while keeping global logging unchanged
+#### Scenario: Rank-safe collection
+- **WHEN** training under DDP/DeepSpeed-ZeRO2
+- **THEN** per-sample losses are gathered in a rank-safe manner (e.g., aggregation on rank0) without duplicate updates, and identifiers remain stable across augmented views.
 
-### Requirement: Hard-Sample Selection
-The system SHALL select a fixed number of hard samples using aggregated per-sample **loss** (mean or EMA). When fewer than 3 observations exist for a sample, the mean of available observations SHALL be used.
+### Requirement: Hard-Pool Maintenance (Target-only)
+At each epoch end, the system SHALL recompute a hard pool from the **target dataset only**, selecting the highest-loss samples by a configurable fraction or count, while source datasets remain untouched.
 
-#### Scenario: Top-K selection
-- **WHEN** `hard_sample_size=500`
-- **THEN** the 500 samples with highest aggregated loss are marked as hard, ties broken deterministically by `sample_id`
+#### Scenario: Fractional pool
+- **WHEN** `hard_pool_frac=0.30` (default) and no explicit `hard_pool_k` is set
+- **THEN** the top 30% (rounded up) of target samples by EMA difficulty form the hard pool for the next epoch; ties break deterministically by `sample_id`.
 
-#### Scenario: Percentile selection
-- **WHEN** `selector.mode=percentile` with `value=0.1`
-- **THEN** all samples whose loss is in the worst 10% are marked as hard
+#### Scenario: Fixed top-K override
+- **WHEN** `hard_pool_k` is provided
+- **THEN** exactly `hard_pool_k` target samples with highest difficulty form the hard pool.
 
-### Requirement: Fixed-size Epoch Sampling (optional downsizing)
-The dataset SHALL build each mining epoch from a fixed count of hard samples and regular samples, optionally downsizing the target epoch length.
+### Requirement: Fixed-Ratio Batch Mixing after Warmup
+During training in mining mode, the sampler SHALL mix hard and regular target samples per batch using a fixed ratio implied by `hard_pool_frac`, activated only after a configurable progress threshold (`activate_after_pct`).
 
-#### Scenario: Fixed hard+regular counts
-- **WHEN** `hard_sample_size=500` and `regular_sample_size=150`
-- **THEN** each mining epoch draws 500 hard samples and 150 regular samples (with replacement when needed), while source pools keep their original quotas
+#### Scenario: Warmup then fixed ratio
+- **WHEN** `activate_after_pct=0.70`
+- **THEN** mining is inactive before 70% of epochs; after that point, batches/schedules use the fixed hard/regular mixing ratio implied by `hard_pool_frac` (e.g., 30% hard, 70% regular) for the target dataset, sources unchanged.
 
-#### Scenario: Optional target epoch size
-- **WHEN** `target_epoch_size` is provided
-- **THEN** the target schedule length equals `target_epoch_size`; otherwise it equals the sum of hard and regular draws (or the full target size if unset)
+#### Scenario: Hard pool smaller than k_hard
+- **WHEN** `k_hard` exceeds the hard-pool size
+- **THEN** sampling SHALL wrap with replacement to meet batch size and log the shortfall.
 
-#### Scenario: Fusion schedule compatibility
-- **WHEN** using `FusionCaptionDataset`
-- **THEN** the per-source quotas are preserved, hard-sample weights are applied **only to the fusion target pool**, source pools (e.g., lvis/coco/objects365/flickr3k) remain untouched, and if a downsized target length is set it adjusts only the target portion of the schedule
+### Requirement: Source-dataset Isolation
+Mining SHALL NOT upweight, downweight, or select hard samples from source datasets in fusion; only the target dataset participates in hard/regular mixing, while source quotas/ratios remain unchanged and configurable via `source_ratio`.
 
-### Requirement: Target-only Mining
-Hard-sample mining SHALL apply exclusively to the fusion target dataset; auxiliary/source datasets MUST NOT be upweighted, downweighted, or selected as hard samples.
+#### Scenario: Fusion training
+- **WHEN** fusion sources (e.g., lvis/coco/objects365/flickr3k) are present
+- **THEN** their sampling ratios are preserved exactly as configured, independent of the hard/regular split on the target dataset.
 
-#### Scenario: Skip non-target datasets
-- **WHEN** mining runs in a fusion setting with sources present
-- **THEN** only samples whose `dataset` equals `fusion_config.target.name` are eligible for hard selection or weighting; all source samples keep their original sampling policy
+### Requirement: Distributed Compatibility and Determinism
+The mining pipeline (token_acc tracking, hard-pool selection, and batch mixing) SHALL operate correctly and deterministically under distributed training, including DeepSpeed ZeRO-2.
 
-### Requirement: Distributed Compatibility
-The mining pipeline (loss collection, selection, and schedule update) SHALL function under distributed training setups, including DeepSpeed ZeRO-2.
+#### Scenario: Epoch-seeded sampling
+- **WHEN** running multi-rank training
+- **THEN** rank0 broadcasts the hard-pool and schedule; the sampler uses an epoch-seeded RNG so that all ranks draw consistent hard/regular splits per batch.
 
-#### Scenario: Rank-safe aggregation
-- **WHEN** training uses DeepSpeed ZeRO-2 with multiple ranks
-- **THEN** per-sample loss statistics are gathered or reduced in a rank-safe manner (e.g., update tracker on rank 0 only), and no duplicated updates occur across ranks
+### Requirement: Telemetry
+The system SHALL surface mining activity via standard trainer logging (e.g., TensorBoard/W&B scalars) without requiring JSON dumps of sample lists.
 
-### Requirement: Telemetry (no JSON dumps)
-The system SHALL surface mining activity via logs; JSON dump of hard lists is not required.
-
-#### Scenario: Logging
-- **WHEN** mining triggers or updates a plan
-- **THEN** logs include number of hard samples, selection mode, and weight range with prefix `hsm/*`
+#### Scenario: Per-epoch mining logs
+- **WHEN** an epoch ends in mining mode
+- **THEN** logs include at least: `hard_pool_size`, `hard_hit_rate`, `hard_pool_coverage`, `train_acc_hard_mean/p90`, `train_acc_regular_mean/p90`, and counts of hard/regular samples seen, under a configurable prefix (default `hsm/`).

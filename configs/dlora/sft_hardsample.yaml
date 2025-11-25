@@ -1,24 +1,30 @@
 extends: ./sft_base.yaml
 
-# Variant: apply DoRA/LoRA to all linear modules (no target_regex filter).
-# Keeps SFT (no KD) and the same data/augmentation as sft_base.
+# Dynamic hard-sample mining (token_acc-based), smoke-tuned paths
 
 model:
-  model: model_cache/models/Qwen/Qwen3-VL-8B-Instruct 
+  model: output/11-24/stage_1.5_merged/sft_all-checkpoint-2070
 
 training:
   output_dir: ./output/debug
   logging_dir: ./tb/debug
-  run_name: epoch_30-dlora-lrs_4_2_8-sft_hardsample
+  run_name: hsm_dynamic_debug
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 1
+  learning_rate: 2e-5
+  vit_lr: 1e-5
+  aligner_lr: 5.0e-5
+  num_train_epochs: 5
 
 custom:
-  train_jsonl: data/bbu_full_768_poly/train_tiny.jsonl
-  val_jsonl: data/bbu_full_768_poly/val_tiny.jsonl
+  train_jsonl: data/bbu_full_768_poly-need_review/train_tiny.jsonl
+  val_jsonl: data/bbu_full_768_poly-need_review/val_tiny.jsonl
   hard_sample_mining:
     enabled: true
     start_epoch: 0
-    hard_sample_size: 500
-    regular_sample_size: 150
-    target_epoch_size: 650  # downsized target epoch (500 hard + 150 regular)
+    hard_pool_frac: 0.3
+    activate_after_pct: 0.7   # start mining after 70% of epochs
     ema_decay: 0.9
-    mine_clean: false
+    source_ratio: 0.08        # append sources equal to 8% of target length
+    log_pool_metrics: true
+    log_prefix: hsm

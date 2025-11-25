@@ -173,11 +173,15 @@ logger.warning("Warning (all ranks)") # Logged on all ranks if severe
 - Keys:
   - `enabled` (bool)
   - `start_epoch` (int)
-  - `hard_sample_size` (int, e.g., 500)
-  - `regular_sample_size` (int, e.g., 150)
-  - `ema_decay` (float; exponential smoothing for loss aggregation)
-  - `mine_clean`, `recompute_full_pass` (currently parsed but not wired in callbacks)
-- Behavior: per-sample **training loss** is tracked each step; at every epoch end the callback selects the top `hard_sample_size` targets, then up to `regular_sample_size` follow-ups, and rebuilds the target schedule with weights + an auto-computed `target_epoch_size`. Mining only touches the fusion target pool; source datasets stay unchanged.
+  - `hard_pool_frac` (float; default 0.3) fraction of target pool marked hard
+  - `hard_pool_k` (int; optional) overrides fraction with exact top-K
+  - `activate_after_pct` (float; default 0.7) fraction of epochs before mining activates
+  - `source_ratio` (float; default 0.08) ratio of source samples appended relative to target length
+  - `ema_decay` (float) for EMA over token_acc
+  - `log_pool_metrics` (bool; default true) emit per-pool stats
+  - `log_prefix` (str; default `hsm`) metric namespace
+- Behavior: per-sample **token_acc** is tracked each step (post-augmentation). After activation (`activate_after_pct`), each epoch ends by picking the worst `hard_pool_frac` of target samples (by low token_acc/EMA), building the next-epoch schedule as: 30% hard + 70% resampled target (with replacement) to keep target length unchanged, plus source samples totaling `source_ratio * target_length`. Source pools are never upweighted or mined.
+  - Metrics logged each epoch (rank0): `<prefix>/train_acc_hard_mean/p90`, `<prefix>/train_acc_regular_mean/p90`, `<prefix>/hard_seen`, `<prefix>/regular_seen`, `<prefix>/hard_pool_coverage`, `<prefix>/hard_pool_size`, `<prefix>/schedule_len`, `<prefix>/mining_active`.
 
 ### Critical Implementation Details
 
@@ -222,7 +226,7 @@ All deployment instructions moved to [INFERENCE_AND_STAGEA.md](INFERENCE_AND_STA
 - Stage-A CLI guardrails and output schemas
 - Additional Stage-A implementation notes and dense/summary mixed-mode design
 
-For Stage-B rollout details (sampler config, critic/manual review, reflection flow, and GRPO experiments) see [STAGE_B_RUNTIME.md](STAGE_B_RUNTIME.md).
+For Stage-B rollout details (sampler config, critic/manual review, reflection flow) see [STAGE_B_RUNTIME.md](STAGE_B_RUNTIME.md).
 
 ## Advanced Topics & FAQ
 

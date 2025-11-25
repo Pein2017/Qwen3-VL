@@ -152,6 +152,7 @@ custom:
 
 - **BBU conversion (`data_conversion/`)**:
   - `convert_dataset.sh` wraps `data_conversion/pipeline/unified_processor.py` with environment + parameter guardrails (max pixels, resize factor, validation toggles).
+  - After `train.jsonl`/`val.jsonl` are built, the script also writes `train_tiny.jsonl` (20 samples) and `val_tiny.jsonl` (8 samples) in the same output directory using the same `SEED` for deterministic debug runs.
   - Taxonomies live in `attribute_taxonomy.json` + `hierarchical_attribute_mapping.json`; update both when new object types/attributes ship. `pipeline/summary_builder.py` and `pipeline/flexible_taxonomy_processor.py` consume these definitions.
   - Validation artifacts (`invalid_objects.jsonl`, `validation_results.json`) allow offline QA before a dataset ever reaches `src/datasets/`.
   - Coordinate sanity is centralized in `pipeline/coordinate_manager.py` (EXIF + smart-resize + clamp) and `pipeline/vision_process.py`.

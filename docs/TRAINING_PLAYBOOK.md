@@ -657,31 +657,35 @@ Augmentation guidance for grounding tasks:
 
 Monitoring: track bbox/poly/line metrics separately; reduce geometric ops if poly/line drifts.
 
-## Hard-Sample Mining Curriculum (target-only, loss-based)
+## Hard-Sample Mining (dynamic, token_acc-based)
 
-Use this two-phase recipe when the detector plateaus but still misses rare/long-tail cases. Mining is **target-only** for fusion runs; source datasets (lvis/coco/objects365/flickr3k) stay untouched.
+目标：在后 30% 训练阶段对目标数据集做动态难例上采样，同时保持源数据集占比可配置（默认 8%）。
 
-**Phase 1 (baseline):** train normally until convergence; save a checkpoint.
+- **信号**：per-sample `token_acc`（低即难），按 EMA 聚合；<3 次观测用均值。
+- **激活**：训练进度 < `activate_after_pct`（默认 0.7）仅记录；达到后每轮挖掘，使用固定 `hard_pool_frac`（默认 0.3）。
+- **选池**：可选 `hard_pool_k` 精确 top-K，否则按比例 `hard_pool_frac` 取样。
+- **调度（每个 epoch 结束后）**：
+  - 取目标集中 `hard_pool_frac` 的最难样本作为 hard_pool（token_acc 由低到高排序，ties 按 sample_id）。
+  - 下一轮目标调度：30% hard（有放回）+ 70% 目标全集有放回，长度保持与原 target 相同。
+  - 源数据：追加 `source_ratio * target_len`（默认 0.08）个源样本，有放回采样后与目标混排；源样本不参与挖掘。
+- **分布式**：rank0 选池并重建 schedule，然后广播给所有 rank；DataLoader 使用确定性 sampler（无 shuffle）。
+- **监控**：`hsm/train_acc_hard_mean/p90`, `hsm/train_acc_regular_mean/p90`, `hsm/hard_seen`, `hsm/regular_seen`, `hsm/hard_pool_coverage`, `hsm/hard_pool_size`, `hsm/schedule_len`, `hsm/mining_active`。
 
-**Phase 2 (mining run):** resume from the checkpoint with mining enabled.
-- Collector: trainer wrapper records **per-sample loss** (masked by `labels==-100`) with `sample_id=(dataset, base_idx)` every step; updates are rank0-only to stay DeepSpeed-ZeRO2 safe.
-- Selector: after each epoch, aggregate loss (mean or EMA; use mean when <3 obs), pick the worst **hard_sample_size** (e.g., 500) in the **target pool**; regular pool = next **regular_sample_size** (e.g., 150).
-- Sampler: rebuild the next epoch’s target schedule with those pools; `target_epoch_size` is computed from the selected hard/regular sets. Source quotas stay unchanged; augmentation still runs on every fetch.
-
-**YAML surface (proposed)**
+**YAML 示例**
 ```yaml
 custom:
   hard_sample_mining:
     enabled: true
-    start_epoch: 0          # start immediately in the mining run
-    hard_sample_size: 500
-    regular_sample_size: 150
-    ema_decay: 0.9          # smooth loss before ranking
-    mine_clean: false       # parsed; mining currently keeps augmentation on
-    recompute_full_pass: false  # parsed; reserved for future full-pass rescoring
-```
+    start_epoch: 0
+    hard_pool_frac: 0.3
+    activate_after_pct: 0.7   # 70% 之后启动挖掘
+    source_ratio: 0.08        # 源样本占目标长度的 8%
+    ema_decay: 0.9
+    log_pool_metrics: true
+    log_prefix: hsm
+``` 
 
 **Operational notes**
-- Works with ms-swift trainers and DeepSpeed ZeRO-2 because loss stats aggregate only on rank 0; global logging stays unchanged.
-- Dataset IDs are stable across augmentation; multiple augmented views of the same record fold into one loss stat.
-- Epoch length is constant; LR schedulers/checkpoint cadence need no changes.
+- 仅 rank0 聚合 token_acc；schedule 广播保证所有 rank 迭代顺序一致。
+- 数据集 ID 稳定（dataset/base_idx/sample_id），增广不会改变标识。
+- 目标集 epoch 长度保持不变；LR schedulers/checkpoint cadence 无需调整。

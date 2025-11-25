@@ -451,11 +451,14 @@ class TrainingConfig:
 class HardSampleMiningConfig:
     enabled: bool = False
     start_epoch: int = 0
-    hard_sample_size: int = 500
-    regular_sample_size: int = 150
+    # Dynamic mode fields
+    hard_pool_frac: float = 0.3
+    hard_pool_k: Optional[int] = None
+    activate_after_pct: float = 0.7  # fraction of total epochs after which mining turns on
     ema_decay: float = 0.9
-    mine_clean: bool = False
-    recompute_full_pass: bool = False
+    source_ratio: float = 0.08
+    log_pool_metrics: bool = True
+    log_prefix: str = "hsm"
 
     @classmethod
     def from_mapping(cls, payload: Optional[Mapping[str, Any]]) -> Optional["HardSampleMiningConfig"]:
@@ -467,28 +470,45 @@ class HardSampleMiningConfig:
         data = dict(payload)
         enabled = bool(data.pop("enabled", False))
         if not enabled:
-            return cls(enabled=False)
-
+            return None
         start_epoch = int(data.pop("start_epoch", 0))
-        hard_sample_size = int(data.pop("hard_sample_size", 500))
-        if hard_sample_size <= 0:
-            raise ValueError("custom.hard_sample_mining.hard_sample_size must be >0")
-        regular_sample_size = int(data.pop("regular_sample_size", 150))
-        if regular_sample_size < 0:
-            raise ValueError("custom.hard_sample_mining.regular_sample_size must be >=0")
 
+        # Dynamic mining fields
+        hard_pool_frac = float(data.pop("hard_pool_frac", 0.3))
+        if not (0 < hard_pool_frac <= 1):
+            raise ValueError("custom.hard_sample_mining.hard_pool_frac must be in (0,1]")
+        hard_pool_k_raw = data.pop("hard_pool_k", None)
+        hard_pool_k: Optional[int] = None
+        if hard_pool_k_raw is not None:
+            try:
+                hard_pool_k = int(hard_pool_k_raw)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("custom.hard_sample_mining.hard_pool_k must be an integer") from exc
+            if hard_pool_k <= 0:
+                raise ValueError("custom.hard_sample_mining.hard_pool_k must be > 0 when provided")
+        legacy_alpha = data.pop("alpha_start_pct", None)
+        if legacy_alpha is not None:
+            raise ValueError("custom.hard_sample_mining.alpha_start_pct is deprecated; use activate_after_pct")
+        activate_after_pct = float(data.pop("activate_after_pct", 0.7))
+        if not (0 <= activate_after_pct <= 1):
+            raise ValueError("custom.hard_sample_mining.activate_after_pct must be in [0,1]")
         ema_decay = float(data.pop("ema_decay", 0.9))
         if not (0 < ema_decay <= 1):
             raise ValueError("custom.hard_sample_mining.ema_decay must be in (0,1]")
-        mine_clean = bool(data.pop("mine_clean", False))
-        recompute_full_pass = bool(data.pop("recompute_full_pass", False))
+        source_ratio = float(data.pop("source_ratio", 0.08))
+        if source_ratio < 0:
+            raise ValueError("custom.hard_sample_mining.source_ratio must be >= 0")
+        log_pool_metrics = bool(data.pop("log_pool_metrics", True))
+        log_prefix = str(data.pop("log_prefix", "hsm")) or "hsm"
 
         return cls(
             enabled=True,
             start_epoch=start_epoch,
-            hard_sample_size=hard_sample_size,
-            regular_sample_size=regular_sample_size,
+            hard_pool_frac=hard_pool_frac,
+            hard_pool_k=hard_pool_k,
+            activate_after_pct=activate_after_pct,
             ema_decay=ema_decay,
-            mine_clean=mine_clean,
-            recompute_full_pass=recompute_full_pass,
+            source_ratio=source_ratio,
+            log_pool_metrics=log_pool_metrics,
+            log_prefix=log_prefix,
         )
