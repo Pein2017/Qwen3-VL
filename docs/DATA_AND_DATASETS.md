@@ -26,7 +26,7 @@ Each record in your training data follows this structure:
   "images": ["path/to/img1.jpg", "path/to/img2.jpg"],
   "objects": [
     {"bbox_2d": [x1, y1, x2, y2], "desc": "物体描述"},
-    {"poly": [x1, y1, x2, y2, x3, y3, x4, y4], "desc": "旋转框描述"},
+    {"poly": [x1, y1, x2, y2, x3, y3, ...], "poly_points": M, "desc": "多边形描述"},
     {"line": [x1, y1, ..., xn, yn], "line_points": N, "desc": "线段描述"}
   ],
   "width": 1920,
@@ -38,7 +38,8 @@ Each record in your training data follows this structure:
 **Key Rules**:
 - Image paths resolve relative to JSONL file directory (absolute paths also allowed)
 - Exactly ONE geometry field per object (`bbox_2d`, `poly`, or `line`)
-- For lines: `line_points` must equal number of coords ÷ 2
+- For polygons: `poly` is a flat, even-length list (≥6 values / ≥3 points). `poly_points` is optional metadata but should match `len(poly) / 2` when present.
+- For lines: `line_points` should equal number of coords ÷ 2 (optional but recommended; validation falls back to the coord count when absent)
 - Coordinates are in pixel space with original `width`/`height`
 
 ### Geometry Types
@@ -46,7 +47,7 @@ Each record in your training data follows this structure:
 | Type | Format | Use Case |
 |------|--------|----------|
 | **bbox_2d** | `[x1, y1, x2, y2]` | Axis-aligned boxes |
-| **poly** | `[x1,y1, x2,y2, x3,y3, x4,y4]` | Rotated rectangles (4 corners, clockwise); already poly-capable |
+| **poly** | `[x1,y1, x2,y2, x3,y3, ...]` | Arbitrary polygons (even-length list, ≥3 points). Use `poly_points` to record vertex count. |
 | **line** | `[x1,y1, ..., xn,yn]` + `line_points: N` | Polylines (cables, fibers) |
 
 ### Coordinate Normalization
@@ -62,7 +63,7 @@ Each record in your training data follows this structure:
   - `norm1000`: Normalized to [0, 1000]
 - Template automatically normalizes top-level `objects` to `norm1000` for grounding
 
-### Modes: Dense vs Summary vs Mixed
+### Modes: Dense vs Summary
 
 **Dense Mode** (default):
 ```json
@@ -77,7 +78,7 @@ Each record in your training data follows this structure:
 "单行汇总文本"
 ```
 Requires `summary` field in every record.
-Enable by setting `custom.use_summary: true` in the training config.
+Enable by setting `custom.use_summary: true` in the training config. Mixed dense/summary sampling is **not** implemented; the dataset runs in whichever mode `use_summary` selects.
 
 ### Summary Field Standard
 
@@ -258,7 +259,7 @@ For the universal JSONL record contract shared by all domains, see `docs/DATA_JS
 **Features**:
 - Atomic updates (image + geometries transformed together)
 - Preserves coordinate alignment
-- See [AUGMENTATION.md](AUGMENTATION.md) for details
+- See [DATA_AUGMENTATION.md](DATA_AUGMENTATION.md) for details
 - Reads standardized telemetry (`AugmentationTelemetry`) with crop coverage, kept indices, and skip reasons to audit augmentation pipelines.
 
 **Example**:
@@ -399,11 +400,11 @@ Before training:
 
 ## See Also
 
-- **Augmentation**: [AUGMENTATION.md](AUGMENTATION.md) - Geometry-aware transforms
+- **Augmentation**: [DATA_AUGMENTATION.md](DATA_AUGMENTATION.md) - Geometry-aware transforms
 - **Training**: [REFERENCE.md](REFERENCE.md#training) - Full training guide
 - **Architecture**: [README.md](README.md#architecture) - End-to-end pipeline
 - **Upstream Models**: [UPSTREAM_DEPENDENCIES.md](UPSTREAM_DEPENDENCIES.md) - HF Qwen3-VL + ms-swift background
 
 ---
 
-**Last Updated**: 2025-10-28 (v1.1.2)
+**Last Updated**: 2025-11-24 (geometry schema + links)

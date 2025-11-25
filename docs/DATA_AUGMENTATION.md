@@ -29,14 +29,13 @@ The augmentation pipeline handles 3 geometry types (bbox, poly, polyline) with p
 - Centralized geometry transform logic (no duplication)
 - <1% performance overhead
 
--### ✅ **Smart Cropping with Label Filtering** 🆕 *(v1.1 - Oct 2025)*
+### ✅ **Smart Cropping with Label Filtering** 🆕 *(v1.1 - Oct 2025)*
 - Automatic object filtering based on visibility (min_coverage threshold)
 - Geometry truncation at crop boundaries (bbox/poly/line)
 - Polygon-aware coverage for polygons (Sutherland–Hodgman clipping plus shoelace area computation) to avoid elongated false positives
 - Completeness field updates: `显示完整` → `只显示部分` for partially visible objects (structured metadata supported)
 - Skip conditions: preserves dense scenes (<4 objects) and line objects (cables/fibers)
 - Perfect visual-label alignment for dense detection captioning
-- See [Crop Quick Reference](CROP_QUICK_REFERENCE.md) and [Migration Guide](MIGRATION_SCALE_TO_CROP.md)
 
 ## Recent Updates
 
@@ -92,7 +91,7 @@ The augmentation pipeline handles 3 geometry types (bbox, poly, polyline) with p
     prob: 0.3                       # 30% of samples
 ```
 
-**Impact**: Eliminates visual-label misalignment for dense captioning tasks. See [CROP_QUICK_REFERENCE.md](CROP_QUICK_REFERENCE.md) for full details.
+**Impact**: Eliminates visual-label misalignment for dense captioning tasks.
 
 ---
 
@@ -111,7 +110,6 @@ The augmentation pipeline handles 3 geometry types (bbox, poly, polyline) with p
 - Prevents neutral padding from exceeding the token budget and diluting supervision.
 - Dense-caption labels drop nearly invisible objects, reducing hallucinations.
 - Debug/test runs can inspect augmentation telemetry without additional instrumentation.
-- Visualization tooling (`vis_tools/vis_augment_compare.py`) now overlays per-object captions alongside geometry, matching training labels.
 - Updated visualization tooling (`vis_tools/vis_augment_compare.py`) now overlays per-object captions alongside geometry, matching training captions.
 
 ---
@@ -255,7 +253,7 @@ No additional logging is emitted by default; the training loop applies the share
 - Optional `pre_flush_hook()` to modify affines before warp
 
 ### 4. Crop Operators with Label Filtering (`kind="barrier"`)
-**Examples**: `RandomCrop`, `CenterCrop`
+**Example**: `RandomCrop`
 
 **New in v1.1**: Smart cropping with automatic label filtering and completeness tracking for dense captioning tasks.
 
@@ -288,15 +286,6 @@ No additional logging is emitted by default; the training loop applies the share
     skip_if_line: true              # Skip if line objects present
     prob: 0.3                       # 30% of samples
 
-# Center crop as replacement for scale zoom-in
-- name: center_crop
-  params:
-    scale: 0.75                     # Keep 75% (= 1.33x zoom)
-    min_coverage: 0.3               # Drop if <30% visible
-    completeness_threshold: 0.95    # Mark partial if <95% visible
-    min_objects: 4                  # Skip crop if <4 objects
-    skip_if_line: true              # Preserve cable/fiber paths
-    prob: 0.25
 ```
 
 **When to Use**:
@@ -462,10 +451,10 @@ Under **axis-aligned affines** (flips, uniform scale):
 - Min/max envelope maintained
 
 ### Polygon Handling
-- Always 8 floats (4 points in clockwise order)
+- Flat, even-length list (≥6 values / ≥3 points)
 - All vertices transformed by affine
 - Clipped to image bounds
-- If clipped to non-polygon shape, fitted with minimum-area rectangle
+- After clipping the pipeline may simplify to stable corners (e.g., choose four representative points or a min-area rectangle) while preserving polygon orientation
 
 ### Polyline (Line) Handling
 - Variable-length point sequence

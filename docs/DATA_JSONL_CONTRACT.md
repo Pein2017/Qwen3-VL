@@ -15,8 +15,8 @@ Each object MUST contain exactly one geometry field plus a non-empty `desc`.
 - `desc` (str, required): Text description (domain-specific; e.g., Chinese attributes for BBU, concise English class for LVIS/COCO).
 - One geometry (required, mutually exclusive):
   - `bbox_2d`: `[x1, y1, x2, y2]` pixel coordinates.
-  - `poly`: `[[x1, y1], [x2, y2], ...]` polygon vertices (at least 4 points). Optional `poly_points` (int) may accompany for polygon complexity.
-  - `line`: `[[x1, y1], [x2, y2], ...]` polyline points. Optional `line_points` (int) may accompany.
+  - `poly`: flat list `[x1, y1, x2, y2, ...]` (even length, ≥6 values / ≥3 points). Optional `poly_points` (int) should equal `len(poly)/2` when present.
+  - `line`: flat list `[x1, y1, ..., xn, yn]`. Optional `line_points` (int) should equal `len(line)/2` when present.
 - No additional geometry fields are allowed on the same object.
 
 ## Invariants
@@ -30,7 +30,7 @@ Each object MUST contain exactly one geometry field plus a non-empty `desc`.
 {
   "images": ["images/0001.jpg"],
   "objects": [
-    {"poly": [[12, 34], [56, 34], [56, 78], [12, 78]], "desc": "设备/属性A"},
+    {"poly": [12, 34, 56, 34, 56, 78, 12, 78], "poly_points": 4, "desc": "设备/属性A"},
     {"bbox_2d": [100, 120, 180, 200], "desc": "标签/黄色"}
   ],
   "summary": "设备×1，标签×1",

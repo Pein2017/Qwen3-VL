@@ -5,12 +5,17 @@
 Purpose: Training-free verdict loop that performs ingest → rollout → selection → reflection with mission-specific guidance updates.
 
 ```bash
+# Default debug config bundled with the repo
+gpus=0 bash scripts/stage_b_run.sh
+
+# Use the production run config
 config=configs/stage_b/run.yaml gpus=0 log_level=logging \
   bash scripts/stage_b_run.sh
 ```
 
 - `GuidanceRepository` copies the global guidance file into `{output.root}/{output.run_name}/{mission}/guidance.json` so edits stay isolated until you manually promote them back.
 - The shared Qwen3-VL model (defined under `model.*`) is reused by the sampler, critic, and reflection engine to minimize VRAM footprint.
+- `stage_a_paths` must point to Stage-A JSONL files that contain `mission`, `group_id`, `label` (`pass|fail`), and a `per_image` map; the runner normalizes `image_{n}` keys automatically.
 
 ##### Config Breakdown (`src/stage_b/config.py`)
 
@@ -41,13 +46,3 @@ Each mission writes to `{output.root}/{output.run_name}/{mission}/`:
 - `CriticEngine` consumes parsed candidates + deterministic signals and emits JSON critiques with `summary`, `critique`, `issues`, and optional `uncertainty_note`. Configure prompts under `configs/stage_b/prompts/critic*.md`.
 - Manual review gating uses `manual_review.*` thresholds plus critic signals; when triggered, the selection record sets `manual_review_recommended=true` and the candidate is withheld from reflection batches.
 - Deterministic signals ensure consistent telemetry even when the critic is disabled; use them to monitor verdict consensus and label alignment.
-
-### Stage-B GRPO Experiments
-
-`scripts/run_grpo.py` is an experimental launcher for LoRA-based GRPO on Stage-B style datasets. It:
-- Loads Stage-A JSONL via `src.stage_b.dataset.load_stage_a_for_grpo`.
-- Targets only the last-K transformer blocks (`lora_last_k_blocks`) while freezing vision + aligner stacks.
-- Uses the reward functions in `src/stage_b/rewards.py` (`label_reward`, `format_reward`) with configurable weights.
-- Shares the Qwen3-VL processor/model path with Stage-B inference to stay prompt-compatible.
-
-Treat it as scaffolding: you still need ms-swift GRPO support plus curated text-only datasets, but the script documents the expected knobs and reward composition.

@@ -64,8 +64,9 @@ messages = [{
 
 #### Stage-A CLI (`src.stage_a.cli`, `scripts/stage_a_infer.sh`)
 
-- Purpose: Emit single-line summaries per image that Stage-B (and downstream BI tooling) consume.
-- Validation: `StageAConfig` enforces checkpoint paths, mission names, token budgets, and verifies input folders before any inference begins.
+- Purpose: Emit single-line summaries per image for Stage-B ingestion.
+- Input layout: `<root>/<mission>/{审核通过|审核不通过}/<group_id>/*.{jpg,jpeg,png}`. Labels are inferred from the parent directory name (`审核通过` → `pass`, `审核不通过` → `fail`).
+- Validation: `StageAConfig` checks mission choices, checkpoint path, and positive batch/max token parameters. Optional `--verify_inputs` logs image size/hash plus grid/token counts for the first item in each processed chunk; no `stage_a_complete` marker is required.
 - Launch with the script wrapper to keep mission defaults, verification flags, and device selection uniform:
 
 ```bash
@@ -73,10 +74,11 @@ mission=挡风板安装检查 gpu=0 verify_inputs=true \
   bash scripts/stage_a_infer.sh
 ```
 
-Key flags:
-- `mission` — Mission focus string (appears in output JSONL and Stage-B guidance).
-- `verify_inputs` — Checks `stage_a_complete` markers + directory contents before running.
+Key flags/env vars:
+- `mission` — Mission name (appears in output JSONL and Stage-B guidance; must be one of `SUPPORTED_MISSIONS`).
+- `verify_inputs` — Enable per-chunk logging of image hashes/grid sizes.
 - `no_mission` — Skip mission focus instructions for generic smoke tests.
+- `gpu` / `device` — Device selection (`cuda:N` or `cpu`).
 
 Output format (per group JSONL):
 
@@ -84,8 +86,7 @@ Output format (per group JSONL):
 {
   "group_id": "QC-0001",
   "mission": "挡风板安装检查",
-  "label": "审核通过",
-  "stage_a_complete": true,
+  "label": "pass",
   "images": ["img1.jpg", "img2.jpg"],
   "per_image": {
     "image_1": "BBU设备×1，光模块×3，线缆×2",
@@ -93,10 +94,11 @@ Output format (per group JSONL):
   }
 }
 ```
+Output path: `<output_dir>/<mission>_stage_a.jsonl` (defaults baked into the script).
 
 #### Stage-B Runtime
 
-Stage-B ingest/selection/reflection is documented in [STAGE_B_RUNTIME.md](STAGE_B_RUNTIME.md). That guide covers sampler grids, CriticEngine, manual-review gating, mission-specific guidance workflows, and the GRPO experimentation script.
+Stage-B ingest/selection/reflection is documented in [STAGE_B_RUNTIME.md](STAGE_B_RUNTIME.md). That guide covers sampler grids, CriticEngine, manual-review gating, and mission-specific guidance workflows.
 
 ### Deployment Tips
 
@@ -119,16 +121,12 @@ Stage-B ingest/selection/reflection is documented in [STAGE_B_RUNTIME.md](STAGE_
 
 ---
 
-## Stage‑A implementation notes (from archive)
+## Stage‑A implementation notes
 
-- Hybrid batching gives ~4–5× throughput vs sequential
-- Strict validation: non‑empty summaries; contiguous `object_{n}` indices; deterministic ordering
-- Native chat_template via HF; no custom wrapper required
-- Flat JSONL per mission enables easy downstream GRPO loading
+- Uses batched processing within each group (`batch_size` controls chunking over images).
+- Summaries are sanitized to single strings per image; `per_image` keys are normalized to `image_1`, `image_2`, ... even if the model returns JSON objects.
+- Native Hugging Face chat template is used; no custom formatting beyond mission focus text.
 
-## Dense/Summary mixed mode design (from archive)
+## Dense/Summary mode (training datasets)
 
-- Mode is chosen per sample via epoch-seeded RNG (dense vs summary)
-- Summary mode requires valid `summary` on all records
-- Selection is deterministic per epoch (seeded RNG)
-- Dataset temporarily injects the appropriate system prompt per group during encoding
+Current datasets run in a **single mode** per config: `custom.use_summary: true` enables summary-only mode; otherwise dense JSON mode is used. Mixed dense/summary sampling is not implemented.

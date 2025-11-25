@@ -6,6 +6,12 @@ extends: ./sft_base.yaml
 tuner:
   # Remove the narrow target_regex so all linear layers get DoRA adapters.
   target_regex: null
+  lora_rank: 8
+  lora_alpha: 16
 
 training:
-  run_name: epoch_30-dlora-lrs_4_2_8-sft_all
+  learning_rate: 2.0e-4
+  vit_lr: 1.0e-4
+  aligner_lr: 4.0e-4
+  run_name: epoch_30-dlora-lrs_2_1_4-sft_all-rank_8_16
+  warmup_ratio: 0.1

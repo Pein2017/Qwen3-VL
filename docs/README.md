@@ -3,7 +3,7 @@
 Status: Active — Internal Engineering
 
 ## Quick Navigation
-- **What's New** → `CHANGELOG.md` 🆕
+- **What's New** → `openspec/changes/` (latest approved proposals)
 - **Data & Datasets** → `DATA_AND_DATASETS.md` - Schema, builders, conversion pipeline
 - **Augmentation** → `DATA_AUGMENTATION.md` - Geometry transforms, telemetry, visualization hooks
 - **Training** → `TRAINING_PLAYBOOK.md`
@@ -38,8 +38,8 @@ Whenever you add or modify code in the directories above, update the associated 
 | `download.py` | `scripts/` | Download helper for internal/raw corpora (mirrors instructions in `docs/DATA_AND_DATASETS.md`). |
 | `stage_a_infer.sh` | `scripts/` | Mission-aware wrapper around `src.stage_a.cli` with guardrails for checkpoint/input directories. |
 | `stage_b_run.sh` | `scripts/` | Stage-B reflection loop launcher; wires configs to `src.stage_b.runner`. |
-| `run_grpo.py` | `scripts/` | Experimental Stage-B GRPO launcher (LLM-only LoRA fine-tuning with rewards in `src/stage_b/rewards.py`). |
-| `inspect_lora_ckpts.py` | `scripts/` | Static inspector for adapter checkpoints to verify `modules_to_save` and LoRA coverage. |
+| `debug_fusion_template_clone.py` | `scripts/` | Smoke-test for template reuse in fused datasets (regression guard for cloning bugs). |
+| `merge_stage2_lora.sh` | `scripts/` | Utility to merge staged LoRA checkpoints for deployment. |
 
 Use these scripts instead of ad-hoc commands so telemetry, logging, and environment setup stay consistent across teams.
 
@@ -60,14 +60,13 @@ Use these scripts instead of ad-hoc commands so telemetry, logging, and environm
 - Perfect visual-label alignment for dense detection captioning
 - Completeness field tracking: `显示完整` ↔ `只显示部分` updates
 - Quad rotation fix + redundancy cleanup (removed CenterCrop, Equalize)
-- See [CHANGELOG.md](CHANGELOG.md) for full details
 
 ---
 
 ## Major Change: Geometry Schema Overhaul (Nov 2025) 🚨
 
 - **Big change**: the pipeline now publishes `poly` geometry entries everywhere (replacing the previous 4-point geometry key). Internally we still emit 4-point polygons today, but the schema and prompts are ready to hold arbitrary vertex counts going forward.
-- All documentation, builders, and augmentation ops now expect `poly` (even-length list ≥8 values) as one of the three canonical geometry keys (`bbox_2d`, `poly`, `line`).
+- All documentation, builders, and augmentation ops now expect `poly` (even-length list ≥6 values / ≥3 points) as one of the three canonical geometry keys (`bbox_2d`, `poly`, `line`).
 - This change affects data conversion, dataset builders, augmentation telemetry, Stage-A/B workflows, and training prompts. Please regenerate derived artifacts and re-validate dataset probes if you re-run conversion scripts.
 
 ## Architecture Overview
@@ -124,8 +123,8 @@ Vision Encoder (ViT) → Aligner (Projector) → LLM
 | Data & Datasets | `src/datasets/`, `data_conversion/`, `src/datasets/data_details.md`, `scripts/fuse_datasets.py` |
 | Augmentation | `src/datasets/augmentation/`, `src/datasets/geometry.py`, `vis_tools/` |
 | Training Playbook & Advanced FAQ | `src/sft.py`, `scripts/train.sh`, `configs/`, `src/callbacks/`, `src/trainers/` |
-| Inference & Stage-A | `src/stage_a/`, `scripts/stage_a_infer.sh`, `scripts/inspect_lora_ckpts.py`, `src/utils/logger.py` |
-| Stage-B Runtime | `src/stage_b/`, `scripts/stage_b_run.sh`, `scripts/run_grpo.py`, `configs/stage_b/` |
+| Inference & Stage-A | `src/stage_a/`, `scripts/stage_a_infer.sh`, `src/utils/logger.py` |
+| Stage-B Runtime | `src/stage_b/`, `scripts/stage_b_run.sh`, `configs/stage_b/` |
 | Public Data | `public_data/`, `public_data/scripts/`, `public_data/tests/` |
 | Utils & Logging | `src/utils/`, `src/callbacks/` |
 

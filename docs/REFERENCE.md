@@ -168,6 +168,17 @@ logger.warning("Warning (all ranks)") # Logged on all ranks if severe
 2. Implement builder protocol (`build_messages()`)
 3. Configure in dataset initialization
 
+### Hard-Sample Mining (config surface)
+- Toggle via `custom.hard_sample_mining` in YAML.
+- Keys:
+  - `enabled` (bool)
+  - `start_epoch` (int)
+  - `hard_sample_size` (int, e.g., 500)
+  - `regular_sample_size` (int, e.g., 150)
+  - `ema_decay` (float; exponential smoothing for loss aggregation)
+  - `mine_clean`, `recompute_full_pass` (currently parsed but not wired in callbacks)
+- Behavior: per-sample **training loss** is tracked each step; at every epoch end the callback selects the top `hard_sample_size` targets, then up to `regular_sample_size` follow-ups, and rebuilds the target schedule with weights + an auto-computed `target_epoch_size`. Mining only touches the fusion target pool; source datasets stay unchanged.
+
 ### Critical Implementation Details
 
 **Adapter Preparation** (`src/sft.py`):

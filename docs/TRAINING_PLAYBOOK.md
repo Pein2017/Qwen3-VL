@@ -37,6 +37,16 @@ sft.prepare_model(...)
 
 ❌ **Common mistake**: Forgetting `prepare_model()` → full model saved instead of adapter
 
+### Config catalog (Nov 2025)
+
+- `configs/base.yaml` — Shared defaults (bf16, packing, dataset placeholders, logging cadence)
+- `configs/stage_1/{lora.yaml,full_with_kd.yaml}` — Single-domain BBU recipes (LoRA or full) with GKD monitor
+- `configs/dlora/*.yaml` — LoRA variants targeting different vision/aligner slices (with/without hard-sample mining)
+- `configs/fused_data/*.yaml` — Fusion training recipes (look for `_gkd_` variants for KD-enabled runs)
+- `configs/fusion/*.yaml` — Offline fusion builder configs for `scripts/fuse_datasets.py`
+- `configs/summary.yaml` — Summary-only training mode
+- `configs/stage_b/*.yaml` — Stage-B runtime configs (debug/run)
+
 ### Training Modes
 
 | Mode | Memory | Speed | Use Case |
@@ -108,7 +118,7 @@ training:
 
 Use Generalized Knowledge Distillation (GKD) when dense-caption SFT starts hallucinating away from the base checkpoint.
 
-- **Activation**: switch to the GKD overlays (`configs/stage_2_llm_lora_gkd.yaml`, `configs/stage_3_gkd.yaml`). They inherit the vanilla stage configs and only add:
+- **Activation**: switch to the GKD overlays (`configs/stage_1/full_with_kd.yaml`, `configs/stage_1/lora.yaml`) or the fusion variants under `configs/fused_data/*gkd*.yaml`. They inherit the vanilla stage configs and only add:
   ```yaml
   rlhf:
     rlhf_type: gkd
@@ -176,7 +186,7 @@ custom:
 - **Effect**: anchors student vision/aligner activations to the frozen teacher while leaving KL + CE to supervise the language tower.
 - **Metrics**: trainer logs `train/vision_kd_loss` / `eval/vision_kd_loss` (post-weight) so you can monitor the regularizer alongside `llm_kd_loss` and `sft_loss` contributions.
 - **Images only**: batches without `pixel_values` automatically skip the term; no special handling is required for summary-only validation shards.
-- **Preset overlay**: `configs/stage_3_gkd_visual.yaml` extends the standard Stage-3 recipe with the block above—use it as the starting point for experiments.
+- **Preset overlay**: `configs/fused_data/last_6.yaml` ships with visual KD enabled; use it as the starting point for experiments (see other `*gkd*` variants for alternative targets).
 
 #### Forward-only KD (recommended for domain migration)
 
@@ -206,7 +216,7 @@ Notes:
 - `train/llm_kd_loss` steady or slowly decreasing → healthy anchoring.
   - `train/sft_loss` aligns with prior SFT runs → no regression.
 - `eval/llm_kd_loss` jump → teacher/template mismatch (fix tokenizer/template).
-- **Smoke Test**: set `custom.sample_limit: 32` and `training.save_steps: 5` in a temporary overlay, then run `python -m src.sft --config configs/stage_3_gkd.yaml`. Verify `logging.jsonl` includes `train/llm_kd_loss`, `train/vision_kd_loss`, `train/sft_loss`, and the output directory writes checkpoints.
+- **Smoke Test**: set `custom.sample_limit: 32` and `training.save_steps: 5` in a temporary overlay, then run `python -m src.sft --config configs/stage_1/full_with_kd.yaml`. Verify `logging.jsonl` includes `train/llm_kd_loss`, `train/vision_kd_loss`, `train/sft_loss`, and the output directory writes checkpoints.
 
 ### Packing (Padding-Free Training)
 
@@ -257,7 +267,6 @@ python -m src.sft --config config.yaml --debug
 
 - `scripts/train.sh` — Preferred launcher that wraps `python -m src.sft`/`torchrun`, resolves relative configs, sets CUDA/NCCL env defaults, and toggles debug mode via `DEBUG=true`.
 - `scripts/fuse_datasets.py` — Offline fusion builder for `src/datasets/fusion.py`. Provide a YAML/JSON fusion config to pre-create deterministic JSONL mixtures for reproducibility or inspection.
-- `scripts/inspect_lora_ckpts.py` — CPU-only inspector that enumerates LoRA/module-to-save parameters in a checkpoint directory, ensuring adapter exports look correct before deployment.
 
 ---
 
@@ -523,84 +532,11 @@ References (repo code):
       res[f'{key}s'].append(value)
   ````
 
-### Dataset config: data.dataset placeholder vs custom.train_jsonl (CRITICAL)
+### Dataset config: required placeholders vs custom JSONL (CRITICAL)
 
-**IMPORTANT: `data.dataset` is NOT optional in ms-swift's standard flow, but our pipeline bypasses it entirely.**
-
-#### ms-swift's standard dataset loading (NOT used by us)
-
-When you call `SwiftSft(train_args).main()`, ms-swift's `_prepare_dataset()` method is invoked:
-
-````python
-# swift/llm/train/sft.py, lines 123-143
-@RayHelper.function(group='default')
-def _prepare_dataset(self):
-    args = self.args
-    if args.cached_dataset:
-        train_datasets, val_datasets = self._get_cached_dataset()
-    else:
-        train_datasets, val_datasets = [], []
-    if args.dataset:  # ← CRITICAL: only loads if args.dataset is non-empty
-        train_dataset, val_dataset = self._get_dataset()
-        train_dataset, val_dataset = self._encode_dataset(train_dataset, val_dataset, pre_process=pre_process)
-        train_datasets.append(train_dataset)
-        val_datasets.append(val_dataset)
-    train_dataset = DatasetLoader._concat_datasets(train_datasets)
-    val_dataset = DatasetLoader._concat_datasets(val_datasets)
-    return [train_dataset, val_dataset]
-````
-
-If `args.dataset` is empty (or `[placeholder]`), the conditional `if args.dataset:` evaluates to `False`, and `_get_dataset()` is never called. The result is `train_datasets = []`, which gets concatenated to `None`:
-
-````python
-# swift/llm/dataset/loader.py, lines 181-186
-@staticmethod
-def _concat_datasets(datasets: List[HfDataset]) -> Optional[HfDataset]:
-    if len(datasets) == 0:
-        return  # Returns None
-    if len(datasets) == 1:
-        return datasets[0]
-    return concatenate_datasets(datasets)
-````
-
-**Result**: If `data.dataset` is empty or a placeholder, ms-swift's `_prepare_dataset()` returns `[None, None]`, and the trainer receives `train_dataset=None`.
-
-#### Our pipeline: complete bypass of ms-swift's dataset loading
-
-Our `src/sft.py` **never calls** `sft.main()` or `sft.run()`. Instead, we:
-
-1. Initialize `SwiftSft(train_args)` — this only prepares model, template, and callbacks (lines 28-34 of sft.py)
-2. **Skip** `_prepare_dataset()` entirely
-3. Construct our own dataset in-process:
-   ````python
-   # src/sft.py, lines 302-315
-   dataset = DenseCaptionDataset.from_jsonl(
-       train_jsonl,
-       template=sft.template,
-       user_prompt=custom_config.user_prompt,
-       emit_norm=custom_config.emit_norm,
-       ...
-   )
-   ````
-4. Pass it directly to the trainer:
-   ````python
-   # src/sft.py, lines 524-533
-   trainer = trainer_cls(
-       model=sft.model,
-       args=train_args.training_args,
-       data_collator=data_collator,
-       train_dataset=dataset,  # ← Our dataset, not ms-swift's
-       eval_dataset=eval_dataset,
-       ...
-   )
-   ````
-
-#### Conclusion
-
-- **`data.dataset` is NOT required** for our dense captioning pipeline because we bypass ms-swift's dataset loading entirely.
-- **`data.dataset: [placeholder]` has NO effect** on our training; it is never read or used.
-- **`custom.train_jsonl` is the authoritative dataset source** for our pipeline.
-- **Recommendation**: You may safely omit `data.dataset` from configs, or keep it as `[placeholder]` for compatibility with ms-swift's CLI tools (if used separately). Either way, it does not affect our training.
+- `TrainArguments.__post_init__` (ms-swift) **requires** at least one entry in `data.dataset` or `data.cached_dataset`; otherwise it raises `ValueError: self.dataset: [], self.cached_dataset: [] ...` during config construction.
+- Our training loop bypasses ms-swift dataset loading and feeds `DenseCaptionDataset` directly, but the validation still runs. Keep `data.dataset: ["dummy"]` (and `val_dataset` if you enable eval) to satisfy the check; the placeholder is ignored after validation.
+- The real data source is `custom.train_jsonl` / `custom.val_jsonl`; do not remove those fields.
 
 ## Performance Tips (FAQ)
 
@@ -729,8 +665,8 @@ Use this two-phase recipe when the detector plateaus but still misses rare/long-
 
 **Phase 2 (mining run):** resume from the checkpoint with mining enabled.
 - Collector: trainer wrapper records **per-sample loss** (masked by `labels==-100`) with `sample_id=(dataset, base_idx)` every step; updates are rank0-only to stay DeepSpeed-ZeRO2 safe.
-- Selector: after each epoch, aggregate loss (mean or EMA), pick worst-K samples in the **target pool**.
-- Sampler: rebuild the next epoch’s target schedule with weighted resampling (default 70% hard, 30% regular) while keeping epoch length and target:source ratios unchanged; augmentation still runs on every fetch.
+- Selector: after each epoch, aggregate loss (mean or EMA; use mean when <3 obs), pick the worst **hard_sample_size** (e.g., 500) in the **target pool**; regular pool = next **regular_sample_size** (e.g., 150).
+- Sampler: rebuild the next epoch’s target schedule with those pools; `target_epoch_size` is computed from the selected hard/regular sets. Source quotas stay unchanged; augmentation still runs on every fetch.
 
 **YAML surface (proposed)**
 ```yaml
@@ -738,13 +674,11 @@ custom:
   hard_sample_mining:
     enabled: true
     start_epoch: 0          # start immediately in the mining run
-    selector:
-      mode: top_k           # or percentile|threshold
-      k: 0.10               # 10% of target pool as hard
-    target_ratio: 0.7       # hard share within target draws (rest regular)
+    hard_sample_size: 500
+    regular_sample_size: 150
     ema_decay: 0.9          # smooth loss before ranking
-    mine_clean: false       # keep augmentation on for hard samples
-    dump_json: false        # optional: write hard list per epoch
+    mine_clean: false       # parsed; mining currently keeps augmentation on
+    recompute_full_pass: false  # parsed; reserved for future full-pass rescoring
 ```
 
 **Operational notes**

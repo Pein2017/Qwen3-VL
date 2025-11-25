@@ -269,7 +269,7 @@ conda run -n ms bash /data/Qwen3-VL/scripts/train.sh \
 ## References
 
 - **Stage 2 Training**: See `docs/TRAINING.md` for Stage 2 LLM+Aligner LoRA training
-- **Data Augmentation**: See `docs/AUGMENTATION.md` for pipeline details and fixes
+- **Data Augmentation**: See `docs/DATA_AUGMENTATION.md` for pipeline details and fixes
 - **Base Configuration**: `configs/base.yaml` defines shared hyperparameters
 
 ---
@@ -278,4 +278,3 @@ conda run -n ms bash /data/Qwen3-VL/scripts/train.sh \
 **Last Updated**: October 27, 2025  
 **Author**: Qwen3-VL Training Team  
 **Status**: Completed Experiment
-

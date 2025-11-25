@@ -117,9 +117,17 @@ class BaseCaptionDataset(Dataset):
         self._epoch = 0
         self._rng = random.Random(self._seed_for_epoch(self._epoch))
         self._index_perm = list(range(len(self.base_records)))
+        self._hard_sample_plan: Dict[str, Any] | None = None
         self._rebuild_perm_for_epoch()
         self.dataset_name = dataset_name or "dataset"
         self.last_sample_debug: Dict[str, Any] = {}
+
+    @staticmethod
+    def _make_sample_id(dataset_name: str, base_idx: int) -> int:
+        import zlib
+
+        ns = zlib.crc32(dataset_name.encode("utf-8")) & 0xFFFF
+        return (ns << 32) | (int(base_idx) & 0xFFFFFFFF)
 
     @staticmethod
     def from_jsonl(
@@ -158,9 +166,29 @@ class BaseCaptionDataset(Dataset):
         return mixed
 
     def _rebuild_perm_for_epoch(self) -> None:
-        self._index_perm = list(range(len(self.base_records)))
-        if len(self._index_perm) > 1:
-            self._rng.shuffle(self._index_perm)
+        base_len = len(self.base_records)
+        plan = self._hard_sample_plan or {}
+        target_len = int(plan.get("target_epoch_size") or base_len)
+        weights_map = plan.get("weights") if isinstance(plan, MutableMapping) else None
+
+        if weights_map:
+            indices = list(range(base_len))
+            weights = [float(weights_map.get(i, 1.0)) for i in indices]
+            self._index_perm = self._rng.choices(indices, weights=weights, k=target_len)
+        else:
+            perm = list(range(base_len))
+            if len(perm) > 1:
+                self._rng.shuffle(perm)
+            if target_len == base_len:
+                self._index_perm = perm
+            elif target_len < base_len:
+                self._index_perm = perm[:target_len]
+            else:
+                extra = self._rng.choices(perm, k=target_len - base_len)
+                self._index_perm = perm + extra
+
+    def set_hard_sample_plan(self, plan: Optional[Mapping[str, Any]]) -> None:
+        self._hard_sample_plan = dict(plan) if plan is not None else None
 
     def __len__(self) -> int:
         return len(self.base_records)
@@ -253,6 +281,11 @@ class BaseCaptionDataset(Dataset):
                     info["input_ids_len"] = len(input_ids)
                 except Exception:
                     pass
+            # attach sample metadata for downstream mining
+            sample_id = self._make_sample_id(self.dataset_name, base_idx)
+            encoded["sample_id"] = sample_id
+            encoded["dataset"] = self.dataset_name
+            encoded["base_idx"] = base_idx
             self.last_sample_debug = info
             LAST_SAMPLE_DEBUG.update(info)
         except Exception:

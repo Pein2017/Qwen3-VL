@@ -3,6 +3,22 @@ extends: ./sft_base.yaml
 # Variant: apply DoRA/LoRA to all linear modules (no target_regex filter).
 # Keeps SFT (no KD) and the same data/augmentation as sft_base.
 
+model:
+  model: model_cache/models/Qwen/Qwen3-VL-8B-Instruct 
 
 training:
+  output_dir: ./output/debug
+  logging_dir: ./tb/debug
   run_name: epoch_30-dlora-lrs_4_2_8-sft_hardsample
+
+custom:
+  train_jsonl: data/bbu_full_768_poly/train_tiny.jsonl
+  val_jsonl: data/bbu_full_768_poly/val_tiny.jsonl
+  hard_sample_mining:
+    enabled: true
+    start_epoch: 0
+    hard_sample_size: 500
+    regular_sample_size: 150
+    target_epoch_size: 650  # downsized target epoch (500 hard + 150 regular)
+    ema_decay: 0.9
+    mine_clean: false

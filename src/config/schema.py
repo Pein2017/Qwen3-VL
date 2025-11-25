@@ -237,6 +237,7 @@ class CustomConfig:
     val_jsonl: Optional[str] = None
     output_variant: Literal["dense", "summary"] = "dense"
     visual_kd: VisualKDConfig = field(default_factory=VisualKDConfig.disabled)
+    hard_sample_mining: Optional["HardSampleMiningConfig"] = None
     extra: Mapping[str, Any] = field(default_factory=dict)
     fusion_config: Optional[str] = None
 
@@ -327,6 +328,8 @@ class CustomConfig:
         fusion_config = data.pop("fusion_config", None)
         visual_kd_raw = data.pop("visual_kd", None)
         visual_kd = VisualKDConfig.from_mapping(visual_kd_raw)
+        hsm_raw = data.pop("hard_sample_mining", None)
+        hsm_cfg = HardSampleMiningConfig.from_mapping(hsm_raw)
         json_format_raw = data.pop("json_format", None)
         if json_format_raw is None:
             raise ValueError("custom.json_format must be provided")
@@ -372,6 +375,7 @@ class CustomConfig:
             fusion_config=str(fusion_config) if fusion_config is not None else None,
             output_variant=prompts.output_variant,
             visual_kd=visual_kd,
+            hard_sample_mining=hsm_cfg,
             extra=extra,
         )
 
@@ -441,4 +445,50 @@ class TrainingConfig:
             deepspeed=deepspeed,
             global_max_length=global_max_length,
             extra=extra,
+        )
+
+@dataclass(frozen=True)
+class HardSampleMiningConfig:
+    enabled: bool = False
+    start_epoch: int = 0
+    hard_sample_size: int = 500
+    regular_sample_size: int = 150
+    ema_decay: float = 0.9
+    mine_clean: bool = False
+    recompute_full_pass: bool = False
+
+    @classmethod
+    def from_mapping(cls, payload: Optional[Mapping[str, Any]]) -> Optional["HardSampleMiningConfig"]:
+        if payload is None:
+            return None
+        if not isinstance(payload, Mapping):
+            raise TypeError("custom.hard_sample_mining must be a mapping when provided")
+
+        data = dict(payload)
+        enabled = bool(data.pop("enabled", False))
+        if not enabled:
+            return cls(enabled=False)
+
+        start_epoch = int(data.pop("start_epoch", 0))
+        hard_sample_size = int(data.pop("hard_sample_size", 500))
+        if hard_sample_size <= 0:
+            raise ValueError("custom.hard_sample_mining.hard_sample_size must be >0")
+        regular_sample_size = int(data.pop("regular_sample_size", 150))
+        if regular_sample_size < 0:
+            raise ValueError("custom.hard_sample_mining.regular_sample_size must be >=0")
+
+        ema_decay = float(data.pop("ema_decay", 0.9))
+        if not (0 < ema_decay <= 1):
+            raise ValueError("custom.hard_sample_mining.ema_decay must be in (0,1]")
+        mine_clean = bool(data.pop("mine_clean", False))
+        recompute_full_pass = bool(data.pop("recompute_full_pass", False))
+
+        return cls(
+            enabled=True,
+            start_epoch=start_epoch,
+            hard_sample_size=hard_sample_size,
+            regular_sample_size=regular_sample_size,
+            ema_decay=ema_decay,
+            mine_clean=mine_clean,
+            recompute_full_pass=recompute_full_pass,
         )

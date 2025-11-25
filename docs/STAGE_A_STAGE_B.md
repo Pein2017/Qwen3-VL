@@ -4,7 +4,7 @@ Business briefing on the two-stage quality control pipeline that underpins produ
 
 **Audience**: Quality operations leads, production planners, mission owners, compliance partners.
 
-**Further technical reading**: `docs/STAGE_A_TECH_GUIDE.md`, `docs/STAGE_B_RUNTIME.md`, `openspec/changes/2025-11-03-adopt-training-free-stage-b/`.
+**Further technical reading**: `docs/INFERENCE_AND_STAGEA.md`, `docs/STAGE_B_RUNTIME.md`, `openspec/changes/2025-11-03-adopt-training-free-stage-b/`.
 
 ---
 
@@ -50,7 +50,7 @@ The Stage-A/Stage-B stack addresses these by standardizing summaries, orchestrat
 
 **Operational guardrails**
 - Image catalog must stay synchronized with mission focus; onboarding checklists ensure a representative sample per verdict.
-- Data Ops verifies `stage_a_complete=true` before releasing batches to Stage-B.
+- Data Ops spot-checks Stage-A JSONL outputs before releasing batches to Stage-B.
 
 ---
 
@@ -98,8 +98,8 @@ The Stage-A/Stage-B stack addresses these by standardizing summaries, orchestrat
 
 ### Runbook: CLI Reference
 
-- **Stage-A summaries** — `scripts/stage_a_infer.sh` wraps `python -m src.stage_a.cli`, enforces the canonical mission focus prompts, and verifies that every intake folder carries `stage_a_complete=true` before emitting summaries into `output_post/stage_a/`. Override mission/device via env vars (`mission=... gpu=0`).
-- **Stage-B reflection loop** — `scripts/stage_b_run.sh` launches `python -m src.stage_b.runner` with `configs/stage_b/run.yaml` (or a mission-specific override). It writes `guidance.json`, `trajectories.jsonl`, `selections.jsonl`, and `reflection.jsonl` under `{output.root}/{output.run_name}/{mission}/`. Add `log_level=debug` when ops needs to inspect critic output.
+- **Stage-A summaries** — `scripts/stage_a_infer.sh` wraps `python -m src.stage_a.cli`, enforces supported missions, and writes `<mission>_stage_a.jsonl` under `output_post/stage_a/`. Optional `verify_inputs` logs per-chunk hashes; there is no `stage_a_complete` flag. Override mission/device via env vars (`mission=... gpu=0`).
+- **Stage-B reflection loop** — `scripts/stage_b_run.sh` launches `python -m src.stage_b.runner` (defaults to `configs/stage_b/debug.yaml`; pass `config=<path>` for `configs/stage_b/run.yaml`). It writes `guidance.json`, `trajectories.jsonl`, `selections.jsonl`, and `reflection.jsonl` under `{output.root}/{output.run_name}/{mission}/`. Add `log_level=debug` when ops needs to inspect critic output.
 - **Guidance hygiene** — The runner copies the global guidance file into each mission directory. Promote or roll back mission edits by syncing those files back into the shared guidance repo after review.
 
 ---

@@ -81,6 +81,7 @@ class FusionCaptionDataset(BaseCaptionDataset):
         self._preprocessors_aug: dict[str, AugmentationPreprocessor] = {}
         self._preprocessors_cap: dict[str, ObjectCapPreprocessor] = {}
         self.epoch_plan: dict[str, dict[str, Any]] = {}
+        self._hard_sample_plan: dict[str, Any] | None = None
 
         self._dataset_order = [
             fusion_config.target.name,
@@ -271,7 +272,10 @@ class FusionCaptionDataset(BaseCaptionDataset):
 
     def _build_train_schedule(self) -> None:
         target_pool = self._record_pools.get(self._target_name, [])
-        target_count = len(target_pool)
+        target_count_raw = len(target_pool)
+        plan = self._hard_sample_plan or {}
+        target_epoch_size = int(plan.get("target_epoch_size") or target_count_raw)
+        target_weights_map = plan.get("weights") if isinstance(plan, dict) else None
         rng_target = random.Random(
             self._mix_seed(
                 self.seed,
@@ -280,14 +284,26 @@ class FusionCaptionDataset(BaseCaptionDataset):
                 0xA1,
             )
         )
-        target_indices = list(range(target_count))
-        if self._shuffle and len(target_indices) > 1:
-            rng_target.shuffle(target_indices)
+        target_indices_all = list(range(target_count_raw))
+        if target_weights_map:
+            target_weights = [float(target_weights_map.get(i, 1.0)) for i in target_indices_all]
+            sampled_target = rng_target.choices(target_indices_all, weights=target_weights, k=target_epoch_size)
+        else:
+            target_indices = list(target_indices_all)
+            if self._shuffle and len(target_indices) > 1:
+                rng_target.shuffle(target_indices)
+            if target_epoch_size == len(target_indices):
+                sampled_target = target_indices
+            elif target_epoch_size < len(target_indices):
+                sampled_target = target_indices[:target_epoch_size]
+            else:
+                extra = rng_target.choices(target_indices, k=target_epoch_size - len(target_indices))
+                sampled_target = target_indices + extra
 
         schedule: list[tuple[str, int]] = [
-            (self._target_name, idx) for idx in target_indices
+            (self._target_name, idx) for idx in sampled_target
         ]
-        counts: dict[str, int] = {self._target_name: target_count}
+        counts: dict[str, int] = {self._target_name: len(sampled_target)}
 
         for source in self._fusion_config.sources:
             policy = self._policies[source.name]
@@ -296,7 +312,7 @@ class FusionCaptionDataset(BaseCaptionDataset):
                 raise ValueError(
                     f"Fusion source '{source.name}' is empty while ratio={source.ratio}"
                 )
-            quota = round(source.ratio * target_count)
+            quota = round(source.ratio * len(sampled_target))
             if quota <= 0 or not pool:
                 counts[source.name] = 0
                 continue
@@ -351,6 +367,9 @@ class FusionCaptionDataset(BaseCaptionDataset):
                 "prompt_source": policy.prompts.source,
             }
         self.epoch_plan = plan
+
+    def set_hard_sample_plan(self, plan: Optional[MutableMapping[str, Any]]) -> None:
+        self._hard_sample_plan = dict(plan) if plan is not None else None
 
     def set_epoch(self, epoch: int) -> None:
         self._epoch = int(epoch)
@@ -492,6 +511,10 @@ class FusionCaptionDataset(BaseCaptionDataset):
                     info["input_length"] = len(input_ids)
                 except Exception:
                     pass
+            sample_id = self._make_sample_id(dataset_name, base_idx)
+            encoded["sample_id"] = sample_id
+            encoded["dataset"] = dataset_name
+            encoded["base_idx"] = base_idx
             self.last_sample_debug = info
             LAST_SAMPLE_DEBUG.update(info)
         except Exception:
@@ -513,6 +536,26 @@ class FusionCaptionDataset(BaseCaptionDataset):
                     aug.curriculum_state = state
                 except Exception:
                     pass
+
+    def make_target_eval_dataset(self, *, mine_clean: bool = False) -> BaseCaptionDataset:
+        policy = self._policies[self._target_name]
+        use_aug = policy.augmentation_enabled and self._augmenter is not None and not mine_clean
+        return BaseCaptionDataset(
+            base_records=self._record_pools[self._target_name],
+            template=self.template,
+            user_prompt=policy.prompts.user,
+            emit_norm=self.emit_norm,
+            json_format=self.json_format,
+            augmenter=self._augmenter if use_aug else None,
+            bypass_prob=0.0 if mine_clean else self.bypass_prob,
+            curriculum_state=None,
+            use_summary=self.use_summary,
+            system_prompt_dense=self.system_prompt_dense,
+            system_prompt_summary=self.system_prompt_summary,
+            seed=self.seed,
+            dataset_name=self._target_name,
+            allow_empty=False,
+        )
 
 
 # Backward compatibility alias
