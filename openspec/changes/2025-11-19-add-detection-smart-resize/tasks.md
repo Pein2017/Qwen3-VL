@@ -1,6 +1,0 @@
-- [x] Draft spec deltas capturing the unified detection smart-resize preprocessor (pixel cap, grid factor, geometry rescale, idempotency, path handling).
-- [x] Write design notes on reusing the existing `data_conversion` smart-resize routine as a shared library callable from converters and the fusion loader.
-- [x] Implement the shared preprocessor module; expose CLI/config knobs (`max_pixels`, `image_factor`, optional disable) and ensure deterministic logging/telemetry.
-- [x] Wire LVIS/public converters to opt into the shared preprocessor; emit resized images/JSONL with updated geometry and image paths.
-- [x] Confirm unified fusion prohibits online smart-resize guards and documents offline-only resizing.
-- [ ] Validate with a small public dataset slice: check resized dimensions, geometry correctness, and reduced token count; update docs if needed.

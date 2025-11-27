@@ -38,34 +38,70 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export MODELSCOPE_CACHE="./modelscope/hub"
 
 # ============================================================================
-# MANUAL CONFIGURATION - EDIT THESE VALUES BEFORE RUNNING
+# CONFIGURATION (can be overridden via environment variables)
 # ============================================================================
 
-# Required paths - YOU MUST SET THESE
-INPUT_DIR="raw_ds/bbu_scene_2.0/bbu_scene_2.0"  # e.g., "ds_v2" or "my_dataset"
-OUTPUT_DIR="data"                   # e.g., "data" or "/path/to/output"
-DATASET_NAME="bbu_full_768_poly-need_review"         # e.g., "experiment_1" or leave empty to auto-detect
+# Mode: prod | smoke
+MODE="${MODE:-prod}"
 
+# Dataset selector: bbu | rru
+DATASET="${DATASET:-bbu}"
 
-# Processing parameters - YOU MUST SET THESE
-VAL_RATIO="0.2"                    # e.g., "0.1" for 10% validation split
-RESIZE="true"                       # "true" or "false" for image resizing
+# Processing parameters
+VAL_RATIO="${VAL_RATIO:-0.2}"
+RESIZE="${RESIZE:-true}"
+MAX_PIXELS="${MAX_PIXELS:-786432}"
+IMAGE_FACTOR="${IMAGE_FACTOR:-32}"
+LOG_LEVEL="${LOG_LEVEL:-INFO}"
+SEED="${SEED:-17}"
+STRIP_OCCLUSION="${STRIP_OCCLUSION:-true}"
+SANITIZE_TEXT="${SANITIZE_TEXT:-true}"
+STANDARDIZE_LABEL_DESC="${STANDARDIZE_LABEL_DESC:-true}"
+FAIL_FAST="${FAIL_FAST:-true}"
+NUM_WORKERS="${NUM_WORKERS:-16}"
 
-# Image resize parameters - REQUIRED (NO DEFAULTS ALLOWED)
-MAX_PIXELS="786432"                # Maximum pixels for image resizing (e.g., 786432 for 768*32*32)
-IMAGE_FACTOR="32"                  # Factor for image dimensions (e.g., 32)
+# Limit is derived from MODE unless explicitly set
+LIMIT="${LIMIT:-}"
 
-# Optional settings
-LOG_LEVEL="INFO"                    # e.g., "INFO", "DEBUG", "WARNING", "ERROR" or leave empty
-SEED="17"                         # e.g., "17" or leave empty
-STRIP_OCCLUSION="true"            # "true" to remove tokens containing '遮挡'; default disabled to preserve data
-SANITIZE_TEXT="true"              # "true" to normalize text (spaces/hyphens/fullwidth/circled numbers)
-STANDARDIZE_LABEL_DESC="true"     # "true" to map empty-like 标签/* to 标签/无法识别
-FAIL_FAST="true"                  # "true" to stop immediately on invalid samples, "false" to continue with warnings
-LIMIT="-1"                        # Limit number of images to process (e.g., "10" for 10 images, "-1" for all images)
+# ============================================================================
+# DATASET PRESETS
+# ============================================================================
 
-# Performance settings
-NUM_WORKERS="8"                   # Number of parallel workers (1=sequential, >1=parallel). Recommended: 4-8 for multi-core systems
+case "$DATASET" in
+  bbu)
+    DEFAULT_INPUT="raw_ds/bbu_scene_2.0/bbu_scene_2.0"
+    DEFAULT_NAME="bbu_full_768_poly-need_review"
+    ;;
+  rru)
+    DEFAULT_INPUT="raw_ds/rru_scene/rru_scene"
+    DEFAULT_NAME="rru_full_768_poly"
+    ;;
+  *)
+    echo "❌ Unknown DATASET: $DATASET (expected 'bbu' or 'rru')"
+    exit 1
+    ;;
+esac
+
+# ============================================================================
+# MODE PRESETS
+# ============================================================================
+
+if [ "$MODE" = "smoke" ]; then
+  OUTPUT_DIR="${OUTPUT_DIR:-data_smoke}"
+  DATASET_NAME="${DATASET_NAME:-${DEFAULT_NAME}_smoke}"
+  LIMIT="${LIMIT:--1}"
+  # For smoke tests we keep limit small if not overridden
+  if [ "$LIMIT" = "-1" ]; then
+    LIMIT="2"
+  fi
+else
+  OUTPUT_DIR="${OUTPUT_DIR:-data}"
+  DATASET_NAME="${DATASET_NAME:-$DEFAULT_NAME}"
+  LIMIT="${LIMIT:--1}"
+fi
+
+# Allow manual override of input dir after presets
+INPUT_DIR="${INPUT_DIR:-$DEFAULT_INPUT}"
 
 # Validation settings - OPTIONAL (currently hardcoded in pipeline/unified_processor.py)
 # TODO: These parameters will be configurable in a future update

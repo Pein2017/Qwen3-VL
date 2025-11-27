@@ -19,10 +19,10 @@ class TestAABBUtilities:
         geom = {"bbox_2d": [10.0, 20.0, 50.0, 60.0]}
         assert get_aabb(geom) == [10.0, 20.0, 50.0, 60.0]
 
-    def test_get_aabb_from_quad(self):
-        """get_aabb should compute min/max from quad points."""
-        # Square quad: (10,20), (50,20), (50,60), (10,60)
-        geom = {"quad": [10.0, 20.0, 50.0, 20.0, 50.0, 60.0, 10.0, 60.0]}
+    def test_get_aabb_from_poly(self):
+        """get_aabb should compute min/max from poly points."""
+        # Square poly: (10,20), (50,20), (50,60), (10,60)
+        geom = {"poly": [10.0, 20.0, 50.0, 20.0, 50.0, 60.0, 10.0, 60.0]}
         assert get_aabb(geom) == [10.0, 20.0, 50.0, 60.0]
 
     def test_get_aabb_from_line(self):
@@ -84,14 +84,14 @@ class TestCoverageComputation:
 
     def test_polygon_coverage_matches_exact_area(self):
         """Polygon coverage uses clipped polygon area rather than AABB."""
-        geom = {"quad": [0.0, 0.0, 100.0, 0.0, 100.0, 20.0, 0.0, 20.0]}
+        geom = {"poly": [0.0, 0.0, 100.0, 0.0, 100.0, 20.0, 0.0, 20.0]}
         crop = [0.0, 0.0, 20.0, 20.0]
         coverage = compute_polygon_coverage(geom, crop)
         assert pytest.approx(0.1805, abs=1e-3) == coverage
 
     def test_polygon_coverage_zero_when_clip_empty(self):
         """Elongated, rotated polygon with tiny overlap should have low coverage."""
-        geom = {"quad": [0.0, 0.0, 200.0, 40.0, 180.0, 60.0, -20.0, 20.0]}
+        geom = {"poly": [0.0, 0.0, 200.0, 40.0, 180.0, 60.0, -20.0, 20.0]}
         crop = [0.0, 0.0, 40.0, 40.0]
         coverage = compute_polygon_coverage(geom, crop)
         assert coverage < 0.2
@@ -118,11 +118,11 @@ class TestTranslateGeometry:
         result = translate_geometry(geom, -5.0, -10.0)
         assert result == {"bbox_2d": [5.0, 10.0, 45.0, 50.0]}
 
-    def test_translate_quad(self):
-        """Translating quad should shift all 4 points."""
-        geom = {"quad": [10.0, 20.0, 50.0, 20.0, 50.0, 60.0, 10.0, 60.0]}
+    def test_translate_poly(self):
+        """Translating polygon should shift all points."""
+        geom = {"poly": [10.0, 20.0, 50.0, 20.0, 50.0, 60.0, 10.0, 60.0]}
         result = translate_geometry(geom, -5.0, -10.0)
-        expected = {"quad": [5.0, 10.0, 45.0, 10.0, 45.0, 50.0, 5.0, 50.0]}
+        expected = {"poly": [5.0, 10.0, 45.0, 10.0, 45.0, 50.0, 5.0, 50.0]}
         assert result == expected
 
     def test_translate_line(self):

@@ -81,7 +81,6 @@ class FusionCaptionDataset(BaseCaptionDataset):
         self._preprocessors_aug: dict[str, AugmentationPreprocessor] = {}
         self._preprocessors_cap: dict[str, ObjectCapPreprocessor] = {}
         self.epoch_plan: dict[str, dict[str, Any]] = {}
-        self._external_schedule: list[tuple[str, int]] | None = None
 
         self._dataset_order = [
             fusion_config.target.name,
@@ -271,18 +270,6 @@ class FusionCaptionDataset(BaseCaptionDataset):
         return _PromptResolution(user=user_prompt, system=system_prompt, source=source)
 
     def _build_train_schedule(self) -> None:
-        if self._external_schedule is not None:
-            self._schedule = list(self._external_schedule)
-            external_counts: dict[str, int] = {}
-            for name, _idx in self._schedule:
-                external_counts[name] = external_counts.get(name, 0) + 1
-            # Ensure all datasets appear in counts even if zero to keep telemetry stable
-            for name in self._dataset_order:
-                external_counts.setdefault(name, 0)
-            self._epoch_counts = external_counts
-            self._update_epoch_plan()
-            return
-
         target_pool = self._record_pools.get(self._target_name, [])
         target_count_raw = len(target_pool)
         rng_target = random.Random(
@@ -366,15 +353,6 @@ class FusionCaptionDataset(BaseCaptionDataset):
             }
         self.epoch_plan = plan
 
-    def set_external_hsm_schedule(  # pyright: ignore[reportIncompatibleMethodOverride]
-        self, schedule: Optional[Iterable[tuple[str, int]]]
-    ) -> None:
-        if schedule is None:
-            self._external_schedule = None
-        else:
-            self._external_schedule = [(str(a), int(b)) for a, b in schedule]
-        self.set_epoch(self._epoch)
-
     def set_epoch(self, epoch: int) -> None:
         self._epoch = int(epoch)
         self._rng = random.Random(self._seed_for_epoch(self._epoch))
@@ -384,19 +362,17 @@ class FusionCaptionDataset(BaseCaptionDataset):
             self._build_train_schedule()
 
     def __len__(self) -> int:
-        if self._external_schedule is not None:
-            return len(self._external_schedule)
         return len(self._schedule)
 
     def __getitem__(self, index: int) -> dict[str, Any]:
         if not self._schedule:
             raise IndexError("FusionCaptionDataset is empty")
 
-        schedule = (
-            self._external_schedule
-            if self._external_schedule is not None
-            else self._schedule
-        )
+        schedule = self._schedule
+        if index >= len(schedule):
+            raise IndexError(
+                f"Requested index {index} exceeds current schedule length {len(schedule)}"
+            )
         dataset_name, base_idx = schedule[index % len(schedule)]
         pool = self._record_pools.get(dataset_name, [])
         record = copy.deepcopy(pool[base_idx])
@@ -498,38 +474,29 @@ class FusionCaptionDataset(BaseCaptionDataset):
             if key in merged:
                 encoded[key] = copy.deepcopy(merged[key])
 
-        try:
-            max_poly = 0
-            for obj in record.get("objects") or []:
-                if "poly_points" in obj:
-                    max_poly = max(max_poly, int(obj.get("poly_points") or 0))
-            info = {
-                "dataset": dataset_name,
-                "base_idx": base_idx,
-                "objects": objects_after,
-                "max_poly_points": max_poly,
-                "width": record.get("width"),
-                "height": record.get("height"),
-                "mode": mode,
-                "prompt_source": prompts.source,
-                "augmentation_enabled": was_augmented,
-                "object_cap_applied": cap_applied,
-                "object_cap_limit": policy.max_objects_per_image,
-            }
-            input_ids = encoded.get("input_ids")
-            if input_ids is not None and hasattr(input_ids, "__len__"):
-                try:
-                    info["input_length"] = len(input_ids)
-                except Exception:
-                    pass
-            sample_id = self._make_sample_id(dataset_name, base_idx)
-            encoded["sample_id"] = sample_id
-            encoded["dataset"] = dataset_name
-            encoded["base_idx"] = base_idx
-            self.last_sample_debug = info
-            LAST_SAMPLE_DEBUG.update(info)
-        except Exception:
-            pass
+        max_poly = 0
+        for obj in record.get("objects") or []:
+            if "poly_points" in obj:
+                max_poly = max(max_poly, int(obj.get("poly_points") or 0))
+
+        info = {
+            "dataset": dataset_name,
+            "base_idx": base_idx,
+            "objects": objects_after,
+            "max_poly_points": max_poly,
+            "width": record.get("width"),
+            "height": record.get("height"),
+            "mode": mode,
+            "prompt_source": prompts.source,
+            "augmentation_enabled": was_augmented,
+            "object_cap_applied": cap_applied,
+            "object_cap_limit": policy.max_objects_per_image,
+        }
+        input_ids = encoded.get("input_ids")
+        if input_ids is not None and hasattr(input_ids, "__len__"):
+            info["input_length"] = len(input_ids)
+        self.last_sample_debug = info
+        LAST_SAMPLE_DEBUG.update(info)
 
         return encoded
 

@@ -403,6 +403,178 @@
           "is_free_text": true
         }
       ]
+    },
+    "station": {
+      "chinese_label": "站点",
+      "geometry_types": [
+        "bbox_2d"
+      ],
+      "hierarchy_template": "站点,距离/[distance]",
+      "attributes": [
+        {
+          "level": 0,
+          "name": "distance",
+          "chinese_questions": [
+            "距离"
+          ],
+          "content_mapping": "distance",
+          "required": true,
+          "is_free_text": true,
+          "prefix_needed": true
+        }
+      ]
+    },
+    "rru": {
+      "chinese_label": "RRU设备",
+      "geometry_types": [
+        "poly"
+      ],
+      "hierarchy_template": "RRU设备",
+      "attributes": []
+    },
+    "rru_screw": {
+      "chinese_label": "RRU接地端",
+      "geometry_types": [
+        "bbox_2d"
+      ],
+      "hierarchy_template": "RRU接地端,安装状态/[rru_screw_tightness]",
+      "attributes": [
+        {
+          "level": 1,
+          "name": "rru_screw_tightness",
+          "chinese_questions": [
+            "RRU接地端螺丝"
+          ],
+          "content_mapping": "rru_screw_tightness",
+          "required": true,
+          "values": {
+            "紧固合格": "紧固合格",
+            "不合格": "不合格"
+          }
+        }
+      ]
+    },
+    "fastener": {
+      "chinese_label": "紧固件",
+      "geometry_types": [
+        "poly"
+      ],
+      "hierarchy_template": "紧固件,安装状态/[fastener_tightness]",
+      "attributes": [
+        {
+          "level": 1,
+          "name": "fastener_tightness",
+          "chinese_questions": [
+            "安装状态"
+          ],
+          "content_mapping": "fastener_tightness",
+          "required": true,
+          "values": {
+            "紧固合格": "紧固合格",
+            "不合格": "不合格"
+          }
+        }
+      ]
+    },
+    "lable": {
+      "chinese_label": "标签",
+      "geometry_types": [
+        "poly"
+      ],
+      "hierarchy_template": "标签,标签内容/[text_content]",
+      "attributes": [
+        {
+          "level": 1,
+          "name": "text_content",
+          "chinese_questions": [
+            "标签内容"
+          ],
+          "content_mapping": "label_text",
+          "required": true,
+          "is_free_text": true
+        }
+      ]
+    },
+    "fiber_rru": {
+      "chinese_label": "尾纤",
+      "geometry_types": [
+        "line"
+      ],
+      "hierarchy_template": "尾纤,标签/[fiber_label],套管/[fiber_protection]",
+      "attributes": [
+        {
+          "level": 1,
+          "name": "fiber_label",
+          "chinese_questions": [
+            "是否带有标签",
+            "尾纤是否标签"
+          ],
+          "content_mapping": "fiber_label",
+          "required": true,
+          "values": {
+            "标签": "有标签",
+            "没有标签": "没有标签"
+          }
+        },
+        {
+          "level": 1,
+          "name": "fiber_protection",
+          "chinese_questions": [
+            "尾纤是否进行套管保护"
+          ],
+          "content_mapping": "fiber_protection",
+          "required": true,
+          "values": {
+            "套管保护": "有套管保护",
+            "没有保护": "无套管保护"
+          }
+        }
+      ]
+    },
+    "wire_rru": {
+      "chinese_label": "接地线",
+      "geometry_types": [
+        "line"
+      ],
+      "hierarchy_template": "接地线,标签/[wire_label]",
+      "attributes": [
+        {
+          "level": 1,
+          "name": "wire_label",
+          "chinese_questions": [
+            "是否带有标签",
+            "接地线是否标签"
+          ],
+          "content_mapping": "wire_label",
+          "required": true,
+          "values": {
+            "标签": "有标签",
+            "没有标签": "没有标签"
+          }
+        }
+      ]
+    },
+    "ground_screw": {
+      "chinese_label": "地排接地端螺丝",
+      "geometry_types": [
+        "bbox_2d"
+      ],
+      "hierarchy_template": "地排接地端螺丝,安装状态/[ground_screw_tightness]",
+      "attributes": [
+        {
+          "level": 1,
+          "name": "ground_screw_tightness",
+          "chinese_questions": [
+            "地排接地端螺丝"
+          ],
+          "content_mapping": "ground_screw_tightness",
+          "required": true,
+          "values": {
+            "紧固合格": "紧固合格",
+            "不合格": "不合格"
+          }
+        }
+      ]
     }
   }
 }

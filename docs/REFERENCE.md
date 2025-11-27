@@ -18,6 +18,11 @@ Comprehensive guide for training, inference, deployment, and advanced topics.
 
 ## Architecture & Implementation
 
+### Inspection Pipeline (Stage‑1 → Stage‑2)
+- **Stage‑1 / Stage‑A (Basic Object Recognition)**: `src/stage_a/` emits per-image evidence/rare-object summaries used as inputs to Stage‑2. Runbook: `docs/INFERENCE_AND_STAGEA.md`.
+- **Stage‑2 / Stage‑B (Group Ticket Verification)**: `src/stage_b/` ingests Stage‑A JSONL + labels and returns `pass|fail` verdicts with critic/reflection logs. Runbook: `docs/STAGE_B_RUNTIME.md` and business context in `docs/STAGE_A_STAGE_B.md`.
+- **Offline preprocessing (optional)**: `data_conversion/` normalizes annotation exports into train/val/tiny JSONL and QA reports. Guide: `docs/DATA_PREPROCESSING_PIPELINE.md`.
+
 ### Source Code Layout
 
 **Training Pipeline**:
@@ -41,6 +46,13 @@ Comprehensive guide for training, inference, deployment, and advanced topics.
 - `src/utils/logger.py` - Rank-aware logging (DDP-safe)
 - `src/utils/README.md` - Utilities documentation
 - `src/callbacks/save_delay_callback.py` - `SaveDelayCallback` (checkpoint throttling)
+
+### Doc ↔ Code Cross-References
+- **Stage‑1 inference**: `src/stage_a/` ↔ `docs/INFERENCE_AND_STAGEA.md`
+- **Stage‑2 verdict loop**: `src/stage_b/` ↔ `docs/STAGE_B_RUNTIME.md`, `docs/STAGE_A_STAGE_B.md`
+- **Data preprocessing**: `data_conversion/` ↔ `docs/DATA_PREPROCESSING_PIPELINE.md`, `docs/DATA_AND_DATASETS.md` (conversion section)
+- **Fusion dataset**: `src/datasets/unified_fusion_dataset.py` ↔ `docs/UNIFIED_FUSION_DATASET.md`
+- **Training & config**: `src/sft.py`, `src/config/` ↔ `docs/TRAINING_PLAYBOOK.md`
 
 ### Key Components Deep Dive
 
@@ -168,20 +180,8 @@ logger.warning("Warning (all ranks)") # Logged on all ranks if severe
 2. Implement builder protocol (`build_messages()`)
 3. Configure in dataset initialization
 
-### Hard-Sample Mining (config surface)
-- Toggle via `custom.hard_sample_mining` in YAML.
-- Keys:
-  - `enabled` (bool)
-  - `start_epoch` (int)
-  - `hard_pool_frac` (float; default 0.3) fraction of target pool marked hard
-  - `hard_pool_k` (int; optional) overrides fraction with exact top-K
-  - `activate_after_pct` (float; default 0.7) fraction of epochs before mining activates
-  - `source_ratio` (float; default 0.08) ratio of source samples appended relative to target length
-  - `ema_decay` (float) for EMA over token_acc
-  - `log_pool_metrics` (bool; default true) emit per-pool stats
-  - `log_prefix` (str; default `hsm`) metric namespace
-- Behavior: per-sample **token_acc** is tracked each step (post-augmentation). After activation (`activate_after_pct`), each epoch ends by picking the worst `hard_pool_frac` of target samples (by low token_acc/EMA), building the next-epoch schedule as: 30% hard + 70% resampled target (with replacement) to keep target length unchanged, plus source samples totaling `source_ratio * target_length`. Source pools are never upweighted or mined.
-  - Metrics logged each epoch (rank0): `<prefix>/train_acc_hard_mean/p90`, `<prefix>/train_acc_regular_mean/p90`, `<prefix>/hard_seen`, `<prefix>/regular_seen`, `<prefix>/hard_pool_coverage`, `<prefix>/hard_pool_size`, `<prefix>/schedule_len`, `<prefix>/mining_active`.
+### Hard-Sample Mining
+- Deprecated as of 2025-11-27. Any config containing `custom.hard_sample_mining` will fail validation with guidance to remove the block and train with standard settings (packing supported).
 
 ### Critical Implementation Details
 
@@ -237,6 +237,7 @@ Operational FAQs (LR schedulers, DeepSpeed presets, augmentation pipelines, temp
 - **Training**: [TRAINING_PLAYBOOK.md](TRAINING_PLAYBOOK.md)
 - **Inference & Stage-A**: [INFERENCE_AND_STAGEA.md](INFERENCE_AND_STAGEA.md)
 - **Stage-B Runtime**: [STAGE_B_RUNTIME.md](STAGE_B_RUNTIME.md)
+- **Data preprocessing & contract**: [DATA_PREPROCESSING_PIPELINE.md](DATA_PREPROCESSING_PIPELINE.md), [DATA_JSONL_CONTRACT.md](DATA_JSONL_CONTRACT.md)
 - **Data formats & augmentation**: [DATA_AND_DATASETS.md](DATA_AND_DATASETS.md), [DATA_AUGMENTATION.md](DATA_AUGMENTATION.md)
 - **Archived docs**: `docs/archive/` (historical references, detailed technical guides)
 

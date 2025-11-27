@@ -2,7 +2,7 @@
 
 #### Stage-B Runner (`src/stage_b/runner.py`, `scripts/stage_b_run.sh`)
 
-Purpose: Training-free verdict loop that performs ingest → rollout → selection → reflection with mission-specific guidance updates.
+Purpose: Training-free verdict loop that performs ingest → rollout → selection → reflection with mission-specific guidance updates, returning canonical `pass|fail` verdicts per ticket.
 
 ```bash
 # Default debug config bundled with the repo
@@ -15,7 +15,7 @@ config=configs/stage_b/run.yaml gpus=0 log_level=logging \
 
 - `GuidanceRepository` copies the global guidance file into `{output.root}/{output.run_name}/{mission}/guidance.json` so edits stay isolated until you manually promote them back.
 - The shared Qwen3-VL model (defined under `model.*`) is reused by the sampler, critic, and reflection engine to minimize VRAM footprint.
-- `stage_a_paths` must point to Stage-A JSONL files that contain `mission`, `group_id`, `label` (`pass|fail`), and a `per_image` map; the runner normalizes `image_{n}` keys automatically.
+- `stage_a_paths` must point to Stage-A JSONL files that contain `mission`, `group_id`, `label` (`pass|fail`), and a `per_image` map; the runner normalizes `image_{n}` keys automatically. Ensure upstream Stage-A outputs adhere to `docs/DATA_JSONL_CONTRACT.md` for geometry/object structure.
 
 ##### Config Breakdown (`src/stage_b/config.py`)
 

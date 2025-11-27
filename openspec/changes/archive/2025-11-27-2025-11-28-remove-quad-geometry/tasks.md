@@ -1,0 +1,3 @@
+- [x] Draft spec delta removing `quad` geometry key (poly-only contract).
+- [x] Fail fast on `quad` input and normalize code/tests/docs to `poly`.
+- [x] Run targeted geometry/augmentation tests and OpenSpec validation.

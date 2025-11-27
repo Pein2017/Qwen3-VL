@@ -40,7 +40,7 @@ ordering for stable learning signals.
 
 | Aspect | Raw export (`raw_ds/.../*.json`) | Desired converted output (`data/{dataset}/all_samples.jsonl`) |
 | --- | --- | --- |
-| Geometry encoding | Mix of `dataList` rectangles, `markResult` quads/lines, inconsistent vertex order | Pure `bbox_2d` / `poly` / `line`, canonicalized, TL→BR ordering |
+| Geometry encoding | Mix of `dataList` rectangles, `markResult` quads/lines, inconsistent vertex order | Pure `bbox_2d` / `poly` / `line`, canonicalized：bbox TL→BR，poly 起点为最上最左顶点并按质心顺时针排序 |
 | Image orientation | EXIF metadata may rotate pixels without updating annotations | Pixel data normalized (EXIF applied), annotations adjusted to match |
 | Description text | Annotator-provided Chinese strings with optional “显示完整/只显示部分” tokens and occlusion notes | Hierarchical `desc` with sanitized tokens (completeness stripped only from screw attribute slot, remarks preserved) |
 | Object ordering | Whatever the annotation platform emitted | Strict “top-to-bottom then left-to-right” ordering for reproducible prompts |
@@ -110,6 +110,7 @@ NUM_WORKERS="8"  # Number of parallel workers (1=sequential, >1=parallel)
   - Geometry constraints:
     - `fiber`, `wire` → line geometries
     - `bbu`, `bbu_shield`, `connect_point`, `label` → poly or bbox geometries
+  - RRU 扩展：`station/rru/rru_screw/ground_screw/fastener/lable/fiber_rru/wire_rru`
 
 
 ---
@@ -191,7 +192,7 @@ The pipeline uses a two-layer validation strategy:
 
 - BBox (`bbox_2d`): `[x_min, y_min, x_max, y_max]` with `x_min < x_max`, `y_min < y_max`
 - Poly (`poly`): Even number of integers representing polygon vertices (minimum 8 for 4-point polygons, extensible to arbitrary number of points)
-  - Canonical ordering: start at top-left, then proceed clockwise (for 4-point polygons)
+  - Canonical ordering: **for all polygons** remove重复收尾→按质心顺时针排序→将“最上、再最左”顶点旋转到首位；输出顺序与可视化一致，避免交叉
 - Line (`line`): `[x1, y1, x2, y2, ...]`
   - 2-point lines: ordered lexicographically by `(x, then y)`
   - Multi-point lines: preserve path structure; choose a canonical direction so the first point is the

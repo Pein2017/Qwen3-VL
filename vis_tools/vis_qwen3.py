@@ -24,10 +24,18 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List
 
-import matplotlib.patches as patches
-import matplotlib.pyplot as plt
-import torch
-from PIL import Image
+_SKIP_VIS_DEPS = os.environ.get("QWEN3_VL_NO_VIS_DEPS") is not None
+
+if not _SKIP_VIS_DEPS:
+    import matplotlib.patches as patches
+    import matplotlib.pyplot as plt
+    import torch
+    from PIL import Image
+else:
+    patches = None  # type: ignore
+    plt = None  # type: ignore
+    torch = None  # type: ignore
+    Image = None  # type: ignore
 from transformers import (
     AutoProcessor,
     Qwen3VLForConditionalGeneration,
@@ -152,57 +160,58 @@ print(f"[INFO] Using JSON format: {json_format}")
 print("[INFO] System prompt format hint: standard")
 
 
-# ======================
-# Load model/processor
-# ======================
+if not _SKIP_VIS_DEPS:
+    # ======================
+    # Load model/processor
+    # ======================
 
-print(f"[INFO] Loading model from: {CKPT_PATH}")
-model = Qwen3VLForConditionalGeneration.from_pretrained(
-    CKPT_PATH,
-    torch_dtype=torch.bfloat16,
-    attn_implementation="flash_attention_2",
-)
-model.to(torch.device(DEVICE))  # type: ignore[arg-type]
-model.eval()
+    print(f"[INFO] Loading model from: {CKPT_PATH}")
+    model = Qwen3VLForConditionalGeneration.from_pretrained(
+        CKPT_PATH,
+        torch_dtype=torch.bfloat16,
+        attn_implementation="flash_attention_2",
+    )
+    model.to(torch.device(DEVICE))  # type: ignore[arg-type]
+    model.eval()
 
-# Enable CUDA perf/kvcache optimizations when available
-try:
-    if torch.cuda.is_available() and (
-        isinstance(DEVICE, str) and DEVICE.startswith("cuda")
-    ):
-        try:
-            torch.backends.cuda.matmul.allow_tf32 = True
-        except Exception:
-            pass
-        try:
-            torch.backends.cudnn.benchmark = True
-        except Exception:
-            pass
-        try:
-            torch.set_float32_matmul_precision("high")
-        except Exception:
-            pass
-        try:
-            # Prefer FlashAttention kernels where possible
-            torch.backends.cuda.sdp_kernel(
-                enable_flash=True, enable_mem_efficient=False, enable_math=False
-            )
-        except Exception:
-            pass
-except Exception:
-    pass
+    # Enable CUDA perf/kvcache optimizations when available
+    try:
+        if torch.cuda.is_available() and (
+            isinstance(DEVICE, str) and DEVICE.startswith("cuda")
+        ):
+            try:
+                torch.backends.cuda.matmul.allow_tf32 = True
+            except Exception:
+                pass
+            try:
+                torch.backends.cudnn.benchmark = True
+            except Exception:
+                pass
+            try:
+                torch.set_float32_matmul_precision("high")
+            except Exception:
+                pass
+            try:
+                # Prefer FlashAttention kernels where possible
+                torch.backends.cuda.sdp_kernel(
+                    enable_flash=True, enable_mem_efficient=False, enable_math=False
+                )
+            except Exception:
+                pass
+    except Exception:
+        pass
 
-# Ensure KV cache is used by default
-try:
-    model.config.use_cache = True
-except Exception:
-    pass
-try:
-    gc = getattr(model, "generation_config", None)
-    if gc is not None:
-        gc.use_cache = True
-except Exception:
-    pass
+    # Ensure KV cache is used by default
+    try:
+        model.config.use_cache = True
+    except Exception:
+        pass
+    try:
+        gc = getattr(model, "generation_config", None)
+        if gc is not None:
+            gc.use_cache = True
+    except Exception:
+        pass
 
 processor = AutoProcessor.from_pretrained(CKPT_PATH, trust_remote_code=True)
 processor.image_processor.do_resize = False

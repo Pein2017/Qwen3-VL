@@ -1,0 +1,3 @@
+- [x] Verify geometry-affine safeguards landed in code (affine accumulation, clipping, rounding).
+- [x] Confirm requirements were migrated into `specs/data-augmentation` via subsequent archives.
+- [x] Archive the change with `openspec archive 2025-10-27-robust-geometry-aug --skip-specs --yes`.

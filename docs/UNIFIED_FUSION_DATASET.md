@@ -4,7 +4,7 @@
 
 This document describes the investigation, root cause analysis, and solution for the Out-Of-Memory (OOM) issue that occurred when training with fused datasets (BBU + LVIS) using GKD (Generalized Knowledge Distillation) with `llm_kd_weight > 0`.
 
-**Solution**: Replaced `MultiSourceFusionDataset` (which cloned templates) with `FusionCaptionDataset` (formerly `UnifiedFusionDataset`, single shared template with dynamic prompt selection) and later refined it to restore per-source policies (prompt priority, augmentation/curriculum gating, object caps, deterministic per-epoch resampling, optional source eval).
+**Solution**: Replaced `MultiSourceFusionDataset` (which cloned templates) with `FusionCaptionDataset` (formerly `UnifiedFusionDataset`, single shared template with dynamic prompt selection) and later refined it to restore per-source policies (prompt priority, augmentation/curriculum gating, object caps, deterministic per-epoch resampling, optional source eval). Source JSONLs are assumed to come from the offline converters (`data_conversion/` for BBU/RRU, `public_data/` for LVIS/others) that already match `docs/DATA_JSONL_CONTRACT.md`.
 
 **Result**: OOM issue resolved. Training runs successfully with proper mask ratios (30-60% for dense captioning with many objects).
 
@@ -100,12 +100,6 @@ FusionCaptionDataset
 - Evaluation: target eval by default; optional source `val_jsonl` included (no shuffle) when present and prepared offline (no splitting inside the loader).
 - Telemetry: `last_sample_debug` reports dataset, prompt source, augmentation on/off, cap applied/limit, input length; `epoch_plan` summarizes per-epoch counts/policies.
 - No online smart-resize guard; resizing only via explicit augmentation ops and offline preprocessing.
-
-#### Hard-Sample Mining (target-only)
-- Mining applies **only** to the fusion target pool; source pools (lvis/coco/objects365/flickr3k) remain unchanged except for the appended quota.
-- Each encoded sample carries stable IDs: `dataset`, `base_idx`, and `sample_id=(dataset, base_idx)`; augmentation does not alter IDs.
-- 挖掘结果通过外部 `set_external_hsm_schedule` 注入；`__getitem__` 按该顺序迭代目标与源样本，源 quotas 按 `source_ratio * target_len` 追加（默认 0.08），再整体 shuffle。
-- Per-sample **token_acc** is gathered in the trainer wrapper (rank0-only for DDP/ZeRO2), aggregated per logical sample (EMA or mean); after activation (`activate_after_pct`, 默认 0.7)，最难 `hard_pool_frac` 目标样本形成 hard_pool，下一轮目标调度为 30% hard + 70% 目标全集有放回，长度不变，然后追加源样本。
 
 ### Implementation Details
 

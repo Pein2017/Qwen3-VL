@@ -41,11 +41,15 @@ class AnnotationSample:
     coordinates: List[float]
     grouped_attributes: Dict[str, Dict[str, str]]  # group -> attribute -> value
     description: str
+    groups: Optional[List[Dict]] = None
     original_geometry: Optional[Dict] = None
 
     def to_training_format(self) -> Dict:
         """Convert to training format with native geometry type."""
-        return {self.geometry_format: self.coordinates, "desc": self.description}
+        obj = {self.geometry_format: self.coordinates, "desc": self.description}
+        if self.groups:
+            obj["groups"] = self.groups
+        return obj
 
 
 class FlexibleTaxonomyProcessor:
@@ -101,11 +105,30 @@ class FlexibleTaxonomyProcessor:
         content = properties.get("content", {})
         geometry = feature.get("geometry", {})
         object_id = properties.get("objectId", "unknown")
+        groups_raw = properties.get("groups") or []
+        groups = []
+        for g in groups_raw:
+            gid = g.get("id")
+            name = g.get("name") or ""
+            # 标准化为最短 token：1/2
+            if gid is not None:
+                std_name = str(gid)
+            elif name.startswith("组") and name[1:].isdigit():
+                std_name = name[1:]
+            elif name.startswith("group_") and name[6:].isdigit():
+                std_name = name[6:]
+            else:
+                std_name = name or "0"
+            groups.append({"id": gid, "name": std_name})
 
-        # Determine object type
+        # Determine object type (strict; drop if unknown)
         object_type = self._determine_object_type(content, content_zh)
         if not object_type:
-            context_msg = f" (image: {image_id}, object: {object_id})" if image_id else f" (object: {object_id})"
+            context_msg = (
+                f" (image: {image_id}, object: {object_id})"
+                if image_id
+                else f" (object: {object_id})"
+            )
             logger.warning(f"Could not determine object type{context_msg}")
             return None
 
@@ -130,12 +153,28 @@ class FlexibleTaxonomyProcessor:
 
         description = standardize_label_description(description) or description
 
+        # Station: 合并为“站点距离/<v>”
+        if object_type == "station":
+            description = description.replace("站点,距离/", "站点距离/")
+
+        # 将组信息紧凑写入 desc：用逗号分层级，形如 ",组/1"
+        if groups:
+            group_ids = []
+            for g in groups:
+                name = g.get("name")
+                if name and name not in group_ids:
+                    group_ids.append(name)
+            if group_ids:
+                prefix = ",".join(f"组{gid}" for gid in group_ids) + ": "
+                description = prefix + description
+
         return AnnotationSample(
             object_type=object_type,
             geometry_format=geometry_format,
             coordinates=coordinates,
             grouped_attributes=grouped_attributes,
             description=description,
+            groups=groups if groups else None,
             original_geometry=geometry,
         )
 
@@ -143,6 +182,13 @@ class FlexibleTaxonomyProcessor:
         """Determine object type from content fields."""
         # Check content.label first
         content_label = content.get("label", "").strip()
+        # Prefer RRU-specific variants when context matches
+        if content_label == "fiber" and any(k.startswith("尾纤") for k in content_zh.keys()):
+            return "fiber_rru"
+        if content_label == "wire" and any("接地线" in k for k in content_zh.keys()):
+            return "wire_rru"
+        if content_label == "ground_screw":
+            return "ground_screw"
         for obj_type, obj_info in self.object_types.items():
             if content_label == obj_info["content_key"]:
                 return obj_type
@@ -237,7 +283,7 @@ class FlexibleTaxonomyProcessor:
             # IMPORTANT: Calculate area from ORIGINAL coordinates (before canonical ordering)
             # Canonical ordering is for consistency, but can sometimes create self-intersecting shapes
             # We validate using the original polygon shape
-            # NOTE: Raw data has 5 points for quad (4 points + 1 closing point) - we drop the closing point
+            # NOTE: Raw data may include a closing point; treat polygons as poly and drop the duplicate closing point
             orig_coords = geometry.get("coordinates", [])
             orig_area = None
             
@@ -475,6 +521,41 @@ class FlexibleTaxonomyProcessor:
         if not content_mapping:
             return None
 
+        # Generic free-text handler (covers distance、备注等)
+        if attr.get("is_free_text", False):
+            # 1) Chinese question keys
+            for question in attr.get("chinese_questions", []):
+                if question in content_zh:
+                    value = content_zh[question]
+                    if isinstance(value, list) and value:
+                        value = value[0]
+                    if value and str(value).strip():
+                        val = str(value).strip()
+                        if attr.get("name") == "distance":
+                            val = f"距离/{val}"
+                        return val
+            # 2) Direct mapping key in contentZh
+            if content_mapping in content_zh:
+                value = content_zh[content_mapping]
+                if isinstance(value, list) and value:
+                    value = value[0]
+                if value and str(value).strip():
+                    val = str(value).strip()
+                    if attr.get("name") == "distance":
+                        val = f"距离/{val}"
+                    return val
+            # 3) Fallback to content dict
+            if content_mapping in content:
+                value = content[content_mapping]
+                if isinstance(value, list) and value:
+                    value = value[0]
+                if value and str(value).strip():
+                    val = str(value).strip()
+                    if attr.get("name") == "distance":
+                        val = f"距离/{val}"
+                    return val
+
+        # Handle free text attributes with special names
         # Handle free text attributes
         if attr.get("is_free_text", False):
             # For labels, extract from multiple possible fields
@@ -661,6 +742,8 @@ class HierarchicalProcessor:
 
     def __init__(self, object_types=None, label_hierarchy: Optional[Dict] = None):
         """Initialize processor for Chinese-only processing with object type filtering."""
+        # object_types and label_hierarchy are retained for backward compatibility
+        # but no longer used to drop objects.
         self.object_types = object_types or {"bbu", "label", "fiber", "connect_point"}
         self.label_hierarchy = label_hierarchy or {}
 

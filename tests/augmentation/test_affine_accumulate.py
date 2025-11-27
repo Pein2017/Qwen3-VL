@@ -20,7 +20,7 @@ def _make_img(w: int = 64, h: int = 48) -> Image.Image:
 def _geom_samples() -> List[Dict[str, Any]]:
     return [
         {"bbox_2d": [5, 6, 25, 20]},
-        {"quad": [2, 2, 18, 4, 20, 22, 4, 18]},
+        {"poly": [2, 2, 18, 4, 20, 22, 4, 18]},
         {"line": [1, 1, 10, 2, 15, 8]},
     ]
 
@@ -113,5 +113,4 @@ def test_determinism_same_rng():
     # Pixel-by-pixel equality may not hold due to floating resample; sizes and geoms should match
     assert i1[0].size == i2[0].size
     assert g1 == g2
-
 

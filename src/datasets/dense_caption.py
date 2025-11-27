@@ -117,7 +117,6 @@ class BaseCaptionDataset(Dataset):
         self._epoch = 0
         self._rng = random.Random(self._seed_for_epoch(self._epoch))
         self._index_perm = list(range(len(self.base_records)))
-        self._external_perm: list[int] | None = None
         self._rebuild_perm_for_epoch()
         self.dataset_name = dataset_name or "dataset"
         self.last_sample_debug: Dict[str, Any] = {}
@@ -167,24 +166,12 @@ class BaseCaptionDataset(Dataset):
 
     def _rebuild_perm_for_epoch(self) -> None:
         base_len = len(self.base_records)
-        if self._external_perm is not None:
-            self._index_perm = list(self._external_perm)
-            return
         perm = list(range(base_len))
         if len(perm) > 1:
             self._rng.shuffle(perm)
         self._index_perm = perm
 
-    def set_external_hsm_schedule(self, perm: Optional[Iterable[int]]) -> None:
-        if perm is None:
-            self._external_perm = None
-        else:
-            self._external_perm = list(int(x) for x in perm)
-        self._rebuild_perm_for_epoch()
-
     def __len__(self) -> int:
-        if self._external_perm is not None:
-            return len(self._external_perm)
         return len(self.base_records)
 
     def _create_builder(self, mode: Literal["dense", "summary"]) -> JSONLinesBuilder:
@@ -254,37 +241,26 @@ class BaseCaptionDataset(Dataset):
                     pass
 
         # Track last-sample debug info for OOM/root-cause tracing
-        try:
-            objects = record.get("objects") or []
-            max_poly = 0
-            for obj in objects:
-                if "poly_points" in obj:
-                    max_poly = max(max_poly, int(obj.get("poly_points") or 0))
-            info = {
-                "dataset": self.dataset_name,
-                "base_idx": base_idx,
-                "objects": len(objects),
-                "max_poly_points": max_poly,
-                "width": record.get("width"),
-                "height": record.get("height"),
-                "mode": mode,
-            }
-            input_ids = encoded.get("input_ids")
-            if input_ids is not None and hasattr(input_ids, "__len__"):
-                try:
-                    info["input_ids_len"] = len(input_ids)
-                except Exception:
-                    pass
-            # attach sample metadata for downstream mining
-            sample_id = self._make_sample_id(self.dataset_name, base_idx)
-            encoded["sample_id"] = sample_id
-            encoded["dataset"] = self.dataset_name
-            encoded["base_idx"] = base_idx
-            self.last_sample_debug = info
-            LAST_SAMPLE_DEBUG.update(info)
-        except Exception:
-            # Best-effort; do not block training
-            pass
+        objects = record.get("objects") or []
+        max_poly = 0
+        for obj in objects:
+            if "poly_points" in obj:
+                max_poly = max(max_poly, int(obj.get("poly_points") or 0))
+
+        info = {
+            "dataset": self.dataset_name,
+            "base_idx": base_idx,
+            "objects": len(objects),
+            "max_poly_points": max_poly,
+            "width": record.get("width"),
+            "height": record.get("height"),
+            "mode": mode,
+        }
+        input_ids = encoded.get("input_ids")
+        if input_ids is not None and hasattr(input_ids, "__len__"):
+            info["input_ids_len"] = len(input_ids)
+        self.last_sample_debug = info
+        LAST_SAMPLE_DEBUG.update(info)
 
         # Attach the original conversation so RLHF/GKD trainers can re-encode.
         encoded["messages"] = conversation_messages

@@ -1,0 +1,4 @@
+- [x] Add REMOVED spec delta for hard-sample mining (config rejection and hook removal).
+- [x] Strip HSM plumbing from schema, trainer wiring, datasets, and callbacks.
+- [x] Delete HSM configs/tests/examples and clean docs to reflect removal and packed SFT usage.
+- [x] Run `openspec validate 2025-11-27-remove-hard-sample-mining --strict` and sanity checks.

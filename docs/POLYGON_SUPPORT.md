@@ -10,9 +10,15 @@ Qwen3-VL standardizes on three geometry primitives: `bbox_2d`, `poly`, and `line
 
 Each object must include exactly one of these fields plus a non-empty `desc`. Conversion scripts (LVIS, COCO, etc.) now map polygons directly to `poly` and emit `poly_points` for downstream validation. If you need rectangles instead of polygons, perform the downgrade during conversion (e.g., cap vertices with `--poly-max-points`); the dataloader no longer mutates geometry.
 
+### Vertex Ordering (all domains)
+
+- Offline converters and validators canonicalize polygon vertices to avoid self-crossing: remove duplicated closing points, sort vertices **clockwise around the centroid**, then rotate so the **top-most (then left-most) vertex is first**.
+- Lines are left as-is (no cyclic reorder). Boxes are unaffected.
+- Visualization tools in `vis_tools/` apply the same canonicalization before drawing, so converter output and on-the-fly views are consistent.
+
 ## Geometry handling
 
-Propagation happens during conversion:
+Propagation happens during conversion (see `docs/DATA_PREPROCESSING_PIPELINE.md` for the BBU/RRU converter and public converters under `public_data/`):
 
 1. The JSONL retains the geometry produced by offline converters; loaders do not alter `poly`/`bbox_2d` at runtime.
 2. To cap polygon complexity, use the conversion scripts (e.g., `public_data/scripts/convert_lvis.py --use-polygon --poly-max-points 12 ...`) so oversized polygons are downgraded before training.

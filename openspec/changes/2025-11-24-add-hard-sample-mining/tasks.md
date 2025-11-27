@@ -1,8 +1,0 @@
-- [x] Add capability spec delta for hard-sample mining (requirements + scenarios).
-- [x] Extend config schema to parse `custom.hard_sample_mining` with validation and defaults.
-- [x] Add stable sample identifiers to datasets and expose metadata needed for mining.
-- [x] Implement loss tracking + hard-sample selection (trainer wrapper + callback) and persist state across epochs.
-- [x] Update dataset scheduling/permutation to honor hard-sample weights without changing epoch length.
-- [x] Wire feature in `src/sft.py` (config plumbing, callback registration) with safe defaults.
-- [x] Update docs (training playbook and fusion dataset sections) with usage and caveats.
-- [ ] Add quick validation/smoke test or debug hook to verify mining trigger and sample weighting.

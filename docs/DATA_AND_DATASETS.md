@@ -4,6 +4,8 @@ Comprehensive guide to data format, schema, dataset builders, and preprocessing 
 
 **Source of truth**: `src/datasets/`, `src/datasets/data_details.md`, `src/datasets/geometry.py`
 
+**Raw annotation intake** is covered in `DATA_PREPROCESSING_PIPELINE.md` (how `data_conversion/` produces the train/val JSONL that feed this pipeline).
+
 ---
 
 ## Table of Contents
@@ -90,6 +92,7 @@ Format requirements (aligned with training/inference prompts):
 - Remarks only once at the end: prepend with `，备注: ...`
 - Single sentence per image: no newlines, no trailing '。', no extra spaces
 - No geometry or coordinate arrays in summary strings
+- Keep group prefixes exactly as in `desc` (e.g., `组1: 标签/xxx`), but still merge identical strings with `×N`.
 
 **Example**: `光模块×3，线缆×2，BBU设备×1，备注: 顶部有灰尘`
 
@@ -150,12 +153,17 @@ custom:
 
 ## Conversion & QA Tooling
 
+If your source is a human-annotation export, start with the intake guide (`docs/DATA_PREPROCESSING_PIPELINE.md`) and run `data_conversion/convert_dataset.sh` to produce train/val/tiny JSONL that already satisfy this contract.
+
 - **BBU conversion (`data_conversion/`)**:
   - `convert_dataset.sh` wraps `data_conversion/pipeline/unified_processor.py` with environment + parameter guardrails (max pixels, resize factor, validation toggles).
   - After `train.jsonl`/`val.jsonl` are built, the script also writes `train_tiny.jsonl` (20 samples) and `val_tiny.jsonl` (8 samples) in the same output directory using the same `SEED` for deterministic debug runs.
   - Taxonomies live in `attribute_taxonomy.json` + `hierarchical_attribute_mapping.json`; update both when new object types/attributes ship. `pipeline/summary_builder.py` and `pipeline/flexible_taxonomy_processor.py` consume these definitions.
   - Validation artifacts (`invalid_objects.jsonl`, `validation_results.json`) allow offline QA before a dataset ever reaches `src/datasets/`.
   - Coordinate sanity is centralized in `pipeline/coordinate_manager.py` (EXIF + smart-resize + clamp) and `pipeline/vision_process.py`.
+  - RRU now reuses the same pipeline: new classes/attributes (`ground_screw`, 尾纤/接地线标签与套管保护等) are defined in the taxonomy JSONs; station + distance are merged to `站点距离/<text>`; group info is encoded in `desc` via `组<id>:` prefix (no top-level `groups`). Records fail fast if any group has only one member.
+  - RRU summaries preserve the full `desc` (including组前缀/备注) and aggregate identical entries with `×N`, matching BBU dense/summary behavior while avoiding geometry text.
+  - Polygon vertices are canonicalized offline (clockwise, top-most vertex first, closing-duplicate removed) to prevent self-crossing; `vis_tools/` applies the same ordering when overlaying samples.
 - **Public datasets (`public_data/`)**:
   - See `PUBLIC_DATA.md` + `public_data/README.md` for LVIS download, conversion, sampling, visualization, and pytest coverage.
   - Each converter produces JSONL that matches this document’s schema; polygons include `poly_points`. Cap polygon complexity during conversion (e.g., `--poly-max-points 12`) if you want oversized shapes turned into `bbox_2d`.

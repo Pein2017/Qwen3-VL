@@ -1,7 +1,7 @@
 # data-augmentation Specification
 
 ## Purpose
-TBD - created by archiving change add-image-augmentation-plugin. Update Purpose after archive.
+Define the Qwen3‑VL augmentation pipeline: plugin registry, geometry-safe affine handling, clipping/cropping, padding/telemetry, and curriculum scheduling for dense-caption training/inference.
 ## Requirements
 ### Requirement: Image-level Augmentation Plugin System
 The system SHALL provide a plugin-based mechanism to apply image-level augmentations during preprocessing without modifying dataset builders.
@@ -31,15 +31,15 @@ The system SHALL provide a plugin-based mechanism to apply image-level augmentat
 - **THEN** the same sequence of augmentations and parameters is produced across runs
 
 ### Requirement: Geometry correctness after augmentation
-All geometries (bbox_2d, quad, line) SHALL remain correct and valid in the augmented image coordinate frame.
+All geometries (bbox_2d, poly, line) SHALL remain correct and valid in the augmented image coordinate frame.
 
 #### Scenario: bbox remains axis-aligned and within bounds
 - **WHEN** rotate/flip/scale are applied
 - **THEN** bbox is recomputed as the AABB of transformed corners, quantized to int, and clamped to `[0,W-1]×[0,H-1]`
 
-#### Scenario: quad preserves point order and stays in-bounds
+#### Scenario: poly preserves point order and stays in-bounds
 - **WHEN** affine transforms are applied
-- **THEN** quad points are transformed independently, quantized, and clamped; the geometry type remains `quad`
+- **THEN** poly points are transformed independently, quantized, and clamped; the geometry type remains `poly`
 
 #### Scenario: line clipping and deduplication
 - **WHEN** any affine transform pushes polyline segments outside the image
@@ -53,52 +53,47 @@ All geometries (bbox_2d, quad, line) SHALL remain correct and valid in the augme
 - **WHEN** a record has multiple images
 - **THEN** a single affine matrix is applied to all images and geometries to preserve cross-image alignment
 
-#### Scenario: fail-fast invalid input
-- **WHEN** an object contains invalid geometry (missing/extra fields) or images have mismatched sizes
-- **THEN** preprocessing raises `ValueError` with actionable message and halts (or skips augmentation when strict=false)
-
 #### Scenario: non-degenerate outputs
 - **WHEN** transformed geometries collapse below configured thresholds
-- **THEN** the record uses original images/geometries (strict=false) or raises (strict=true)
+- **THEN** the record uses original geometries (strict=false) or raises (strict=true)
 
-#### Scenario: Keep absolute pixel coordinates
+#### Scenario: keep absolute pixel coordinates
 - **WHEN** any augmentation is applied
 - **THEN** all geometry coordinates remain integer pixels in the image frame `[0, W-1]×[0, H-1]` (no normalization to 0–1000 here)
 
-#### Scenario: Delegated normalization
-- **WHEN** training/inference encoding occurs via ms‑swift/HF processor
-- **THEN** normalization to `norm1000` is handled by the processor; augmentation outputs stay in pixel space
-
 ### Requirement: Preserve geometry under affine transforms
 - The augmentation pipeline SHALL accumulate affines across sequential affine ops and apply a single transform to geometry per flush.
-- For any non-axis-aligned affine (rotation, shear, non-uniform scale about non-origin, 90° rotates), bbox inputs MUST be converted to quads by transforming their four corners; do NOT re-enclose as an axis-aligned bbox.
+- For any non-axis-aligned affine (rotation, shear, non-uniform scale about non-origin, 90° rotates), bbox inputs MUST be converted to 4-point polys by transforming their four corners; do NOT re-enclose as an axis-aligned bbox.
 - For axis-aligned affines (pure hflip/vflip, integer translate, uniform scale about origin/image center), bbox inputs MAY remain bboxes after exact transform.
-- Quads and polys MUST transform all vertices with the affine and preserve vertex identity (no re-enclosure to bbox).
+- Polys MUST transform all vertices with the affine and preserve vertex identity (no re-enclosure to bbox).
 - Lines/polylines MUST transform all vertices with the affine; clipping rules are defined separately.
+
 #### Scenario: rotate→resize_by_scale
 - WHEN input contains bbox [x1,y1,x2,y2], rotate 15° about image center, THEN resize_by_scale 0.9
-- THEN output geometry type is quad (clockwise), vertices are the transformed four corners, and the shape is clipped to new image bounds.
+- THEN output geometry type is poly (clockwise), vertices are the transformed four corners, and the shape is clipped to new image bounds.
+
 #### Scenario: axis-aligned compose
 - WHEN input contains bbox and ops are hflip THEN resize_by_scale 2.0 (aligned to multiple)
 - THEN output remains a bbox with correctly mirrored and scaled coordinates within [0..W'-1, 0..H'-1].
 
 ### Requirement: Exact polygon clipping
-- Polygons (including rotated quads) MUST be clipped against the image rectangle using Sutherland–Hodgman (convex) or an equivalent exact convex clipping algorithm.
+- Polygons (including rotated 4-point polys) MUST be clipped against the image rectangle using Sutherland–Hodgman (convex) or an equivalent exact convex clipping algorithm.
 - Clipping MUST occur in floating-point space; rounding to integer grid SHALL happen only after clipping.
 - Coordinate bounds after rounding MUST lie in [0..W-1]×[0..H-1]; self-intersections are forbidden.
+
 #### Scenario: edge crossing
-- GIVEN a rotated quad that crosses the right boundary
+- GIVEN a rotated poly that crosses the right boundary
 - WHEN clipping is applied
 - THEN resulting vertices lie on the image edge and within bounds; the polygon remains simple (non self-intersecting).
 
 ### Requirement: Clockwise ordering and degeneracy handling
-- All quads/polys MUST be clockwise ordered; duplicate or collinear vertices MUST be deduped.
+- All polys MUST be clockwise ordered; duplicate or collinear vertices MUST be deduped.
 - If fewer than 3 unique points remain after clipping, the geometry MUST be dropped:
   - **For crop operations**: Dropped objects are not included in filtered output (expected behavior)
   - **For non-crop operations**: Prefer original geometry; otherwise drop with logged warning
 
-#### Scenario: Quad clipped to <3 points by crop boundary
-- **WHEN** a quad is clipped against crop rectangle using Sutherland-Hodgman
+#### Scenario: Poly clipped to <3 points by crop boundary
+- **WHEN** a poly is clipped against crop rectangle using Sutherland-Hodgman
 - **AND** resulting polygon has <3 unique vertices
 - **THEN** the object is dropped (not included in output geometries)
 - **AND** counts towards filtered objects in logging
@@ -106,22 +101,23 @@ All geometries (bbox_2d, quad, line) SHALL remain correct and valid in the augme
 #### Scenario: collapse at corner (non-crop operations)
 - **WHEN** a very thin rotated bbox is clipped near a corner and collapses to <3 unique points
 - **AND** operation is NOT a crop (e.g., rotate, resize_by_scale)
-- **THEN** the object is preserved with clamped fallback geometry (degenerate quad at bounds)
+- **THEN** the object is preserved with clamped fallback geometry (degenerate poly at bounds)
 - **AND** a warning is logged including record index and object index
 
 ### Requirement: Minimum-area rectangle fallback
-- When `poly` is not emitted, the clipped polygon MUST be approximated by a minimum-area rectangle and output as `quad`.
+- When general polygons are not emitted (e.g., configuration chooses to approximate shapes by rectangles), the clipped polygon MUST be approximated by a minimum-area rectangle and output as a 4-point poly.
+
 #### Scenario:
-- Rotated box clipped into a pentagon (due to previous transforms). Since `poly` disabled, return the best-fit quad.
+- Rotated box clipped into a pentagon (due to previous transforms). Since free-form polys are disabled, return the best-fit 4-point poly.
 
 ### Requirement: Typed geometry value objects
-- The system SHALL provide immutable value objects for geometry: `BBox`, `Quad`, and `Polyline`.
-- Each value object MUST expose `apply_affine(M)` returning a same-type or promoted-type (e.g., `BBox.apply_affine` MAY return `Quad` for general affines).
+- The system SHALL provide immutable value objects for geometry: `BBox`, `Poly`, and `Polyline`.
+- Each value object MUST expose `apply_affine(M)` returning a same-type or promoted-type (e.g., `BBox.apply_affine` MAY return `Poly` for general affines).
 - Value objects MUST NOT access global state or image data; clipping and rounding are performed by explicit functions.
-#### Scenario: bbox rotated 30°
-- WHEN `BBox(…)
-` receives a general affine M (rotation)
-- THEN `apply_affine` returns a `Quad` with four transformed corners in clockwise order.
+
+#### Scenario: Affine application and promotion
+- **WHEN** the augmentation pipeline calls `BBox.apply_affine` with a non-axis-aligned matrix
+- **THEN** it receives a `Poly` instance with transformed vertices, preserving immutability and keeping geometry-specific logic encapsulated inside the value object.
 
 ### Requirement: Single transform entrypoint
 - A single function `transform_geometry(geom, M, width, height, policy)` MUST handle:
@@ -135,7 +131,7 @@ All geometries (bbox_2d, quad, line) SHALL remain correct and valid in the augme
 - **GIVEN** a random_crop operation with min_coverage=0.3
 - **WHEN** filtering and clipping geometries
 - **THEN** crop operator computes coverage using AABB intersection
-- **AND** clips geometries to crop boundary using Sutherland-Hodgman (quads) or Cohen-Sutherland (lines)
+- **AND** clips geometries to crop boundary using Sutherland-Hodgman (polys) or Cohen-Sutherland (lines)
 - **AND** translates results to crop coordinates
 - **AND** optionally calls transform_geometry for final clamping/validation
 
@@ -156,7 +152,7 @@ All geometries (bbox_2d, quad, line) SHALL remain correct and valid in the augme
 
 ### Requirement: Axis-aligned vs. general affine classification
 - The system MUST classify an accumulated affine as axis-aligned IFF it composes only flips, translations, and uniform scales about the origin/center with no rotation or shear (within a small numeric tolerance, e.g., |sinθ|<1e-6).
-- Axis-aligned affines MAY keep bboxes as bboxes; general affines MUST convert bboxes to quads.
+- Axis-aligned affines MAY keep bboxes as bboxes; general affines MUST convert bboxes to 4-point polys.
 #### Scenario: hflip+uniform scale
 - WHEN hflip is followed by uniform scale about center
 - THEN the transform is classified axis-aligned and bbox remains bbox after transform.
@@ -285,10 +281,10 @@ For objects that meet the visibility threshold but extend beyond the crop region
 - **THEN** bbox is clipped to [150, 100, 300, 200] (left edge truncated)
 - **AND** translated to crop coordinates [0, 100, 150, 200]
 
-#### Scenario: Quad truncation via polygon clipping
-- **WHEN** a rotated quad extends beyond crop boundary
+#### Scenario: Poly truncation via polygon clipping
+- **WHEN** a rotated poly extends beyond crop boundary
 - **AND** coverage is >=30%
-- **THEN** quad is clipped using Sutherland-Hodgman algorithm against crop rectangle
+- **THEN** the poly is clipped using Sutherland-Hodgman algorithm against the crop rectangle
 - **AND** if clipped polygon has >4 vertices, it is approximated by minimum-area rectangle
 - **AND** result is translated to crop coordinates with clockwise ordering
 
@@ -329,7 +325,7 @@ Coverage SHALL be computed as the ratio of object area inside the crop region to
 2. **Completeness**: Update "显示完整" → "只显示部分" for objects with coverage < completeness_threshold (e.g., 0.95)
 
 #### Scenario: AABB-based coverage for all geometry types
-- **WHEN** computing coverage for any geometry (bbox, quad, or line)
+- **WHEN** computing coverage for any geometry (bbox, poly, or line)
 - **THEN** the system computes the geometry's axis-aligned bounding box (AABB)
 - **AND** intersects the AABB with the crop rectangle
 - **AND** returns coverage = intersection_area / geometry_aabb_area
@@ -428,9 +424,9 @@ All retained geometries MUST be translated to the cropped image's coordinate sys
 - **THEN** bbox is translated to [x1 - x_offset, y1 - y_offset, x2 - x_offset, y2 - y_offset]
 - **AND** coordinates are clamped to [0, crop_w-1] × [0, crop_h-1]
 
-#### Scenario: Translate quad coordinates
+#### Scenario: Translate poly coordinates
 - **WHEN** crop region starts at (x_offset, y_offset)
-- **AND** a quad with 8 coordinates is retained
+- **AND** a poly with 4 or more coordinates is retained
 - **THEN** each coordinate pair (x, y) is translated to (x - x_offset, y - y_offset)
 - **AND** coordinates are clamped to crop bounds
 
@@ -486,7 +482,7 @@ Crop operators MUST handle edge cases gracefully with well-defined fallback beha
 - **AND** warning is logged with actionable guidance
 
 #### Scenario: Degenerate geometry after clipping
-- **WHEN** a quad is clipped to <3 vertices after crop boundary clipping
+- **WHEN** a poly is clipped to <3 vertices after crop boundary clipping
 - **THEN** the object is considered dropped (counts as coverage < threshold)
 - **AND** not included in output geometries
 
@@ -509,4 +505,68 @@ Crop operators MUST integrate seamlessly with existing augmentation operations (
 - **THEN** resize reduces dimensions first
 - **AND** random_crop samples from the resized dimensions
 - **AND** geometries are scaled then filtered/clipped
+
+### Requirement: Augmentation Curriculum Scheduling
+The system SHALL support a config-driven curriculum that adjusts augmentation bypass probability and numeric operator parameters over training progress without rebuilding the dataset.
+
+#### Scenario: Progress-based phase selection with linear ramps
+- **WHEN** the YAML defines `custom.augmentation.curriculum` with ordered phase boundaries keyed by `until_percent` (preferred, 0–1 or 0–100) or `until_step`
+- **THEN** effective `bypass_prob` and each overridden numeric field (e.g., op `prob`, scalar, or numeric range bounds) are linearly interpolated from the previous phase target to the current phase target over that interval (percentages resolved using trainer-reported total steps), and held at the final targets after the last phase
+
+#### Scenario: Consistent application across ranks and workers
+- **WHEN** training runs with multiple ranks and dataloader workers
+- **THEN** all workers apply identical effective curriculum parameters for a given step/epoch via shared state, avoiding drift from per-worker RNG or local phase computation
+
+#### Scenario: Fail-fast validation
+- **WHEN** the curriculum config is invalid (non-monotonic boundaries, unknown op names/fields, negative probabilities, inverted ranges)
+- **THEN** training fails before start-up with a clear error message and does not proceed
+
+### Requirement: Single-image small-object zoom-and-paste augmentation
+The augmentation system SHALL provide a registered operator that enlarges and repositions small objects within the same image while preserving geometry correctness and avoiding excessive overlap with existing annotations.
+
+#### Scenario: Select and paste small objects
+- **WHEN** the operator runs with probability `p`
+- **AND** targets objects whose bbox/line length is below configurable thresholds (optionally filtered by class whitelist)
+- **AND** crops a patch with optional context margin, scales it within a configured range, and translates it to an in-bounds location
+- **THEN** the patched image is returned with the chosen objects duplicated at the new location, and the original objects remain unchanged
+
+#### Scenario: Geometry synchronization across types
+- **WHEN** a small object is pasted
+- **THEN** its geometry (bbox, poly, or line) is transformed by the same scale+translate affine, clipped/clamped to image bounds, and kept in pixel space with a single geometry field
+- **AND** degenerate results (<2 points for line, <3 points for poly) are dropped for that pasted instance while keeping the source instance
+
+#### Scenario: Overlap and safety gating
+- **WHEN** a candidate paste location would overlap existing annotated objects beyond a configurable IoU/coverage threshold (line treated as a buffered polygon)
+- **THEN** the candidate is rejected and another placement is sampled up to a configured attempt limit
+- **AND** if no valid placement is found, the operator skips that target without altering the record
+
+#### Scenario: Bounds and canvas invariants
+- **WHEN** the operator finishes
+- **THEN** the canvas size (`width`, `height`) is unchanged, coordinates remain within `[0..W-1]×[0..H-1]`, and the op remains compatible with downstream padding/alignment (e.g., `expand_to_fit_affine`)
+
+### Requirement: Polygon geometry key only
+The system SHALL reject the `quad` geometry field; polygons MUST use the `poly` key.
+
+#### Scenario: Record contains quad
+- **WHEN** a training/eval sample includes `quad: [...]`
+- **THEN** validation FAILS with a clear message to rename the key to `poly`.
+
+#### Scenario: Multiple geometry keys including quad
+- **WHEN** an object provides `bbox_2d` and `quad` (or `poly` and `quad`)
+- **THEN** the record is rejected; only one geometry key is allowed and `quad` is disallowed.
+
+### Requirement: Augmentation Telemetry and Safety
+The augmentation pipeline SHALL emit telemetry for affine/crop safety (padding ratios, coverage, skip reasons) and enforce polygon-aware coverage during crops.
+
+#### Scenario: Crop coverage logging
+- **WHEN** `RandomCrop` runs on a sample with quads or polys
+- **THEN** it computes coverage using polygon clipping (not AABB only) and logs per-epoch coverage/skip stats via the telemetry hook.
+
+#### Scenario: Padding ratio telemetry
+- **WHEN** canvas expansion/padding aligns images to the required multiple
+- **THEN** the pipeline records the padding ratio (pad_area / final_area) in telemetry so runs can flag excessive padding.
+
+#### Scenario: Failure on missing telemetry
+- **WHEN** telemetry sink is unavailable or disabled
+- **THEN** augmentation still proceeds, but missing sinks are reported once with a warning; training is not blocked.
 

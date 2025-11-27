@@ -1,0 +1,175 @@
+# grpo-integration Specification
+
+## Purpose
+Define the Stage-A (image summary) → Stage-B (text-only GRPO) pipeline, including image ingestion/aggregation, strict two-line verdict format, reward wiring, and GRPO training/inference expectations for group-level reasoning.
+## Requirements
+### Requirement: Per-image inference and grouped aggregation
+- The Stage-A engine SHALL accept an input directory containing multiple groups with arbitrarily many images (N ≥ 1).
+- Supported extensions: {jpg, jpeg, png} (case-insensitive); files MUST be discovered deterministically with natural sort.
+- The engine SHALL run inference one image at a time to produce a Chinese single-line summary per image.
+- A group aggregator SHALL construct a single JSONL record per group with 图片_{i} keys aligned to the deterministic image order.
+- Group ID SHALL be derived from filenames using the pattern `^(QC-[A-Za-z]+-[0-9]{8}-[0-9]+)` when present; otherwise the immediate subdirectory name is used.
+- Output JSONL fields: group_id, images (list), per_image (dict by 图片_{i}), raw_texts (list), clean_texts (list), timestamp.
+
+#### Scenario: Basic directory with 3 images in one group
+- **GIVEN** files: QC-TEMP-20250118-0015956-001.jpeg, -002.jpeg, -010.jpeg
+- **WHEN** running the Stage-A engine
+- **THEN** the JSONL has one record with images length 3 and per_image keys: 图片_1, 图片_2, 图片_3
+
+#### Scenario: Multi-group directory processing
+- **GIVEN** subdirectories with different group IDs
+- **WHEN** processing recursively
+- **THEN** each group produces one JSONL record with correctly sorted 图片_{i} keys
+
+### Requirement: 图片_{i} alignment and coverage (strict validation)
+- The aggregator MUST assign 图片_{1..N} to match the sorted input order exactly.
+- If any 图片_{i} index is missing or extra relative to N, the engine SHALL raise a ValueError and abort the current group.
+- All discovered images MUST yield a non-empty cleaned summary; otherwise the engine SHALL raise ValueError and abort the group.
+
+#### Scenario: Mismatch in 图片_{i} indices
+- **GIVEN** 2 input images for a group but per_image has keys 图片_1 and 图片_3
+- **THEN** the engine raises ValueError and does not write a partial record for that group
+
+#### Scenario: Empty summary validation
+- **GIVEN** an image that returns an empty string after cleaning
+- **THEN** the engine raises ValueError for that group and writes no record
+
+### Requirement: Chinese prompting and decoding
+- The system SHALL use the model's native chat_template; no manual special tokens.
+- Prompts and responses SHALL be in Chinese; prompt wording is pluggable and may be tailored per task type.
+- The system SHALL save both raw and cleaned text per image; aggregator assembles per_image mapping without requiring model-emitted 图片_{i}.
+
+#### Scenario: Task-specific prompting
+- **GIVEN** a task_type like "BBU安装方式检查（正装）"
+- **WHEN** generating prompts
+- **THEN** the system uses mission-specific Chinese instructions
+
+<!-- Phase 2: Stage-B Group-Level Dataset -->
+
+### Requirement: One group per sample (text-only, no images)
+- Each Stage-B sample SHALL represent one group; required fields:
+  - `group_id`: string
+  - `task_type`: string in {"BBU安装方式检查（正装）","BBU接地线检查","BBU线缆布放","挡风板安装检查"}
+  - `group_label`: "通过" | "不通过"
+  - `stage_a_summaries`: dict {图片_i: 中文单行摘要}
+  - `messages`: list[dict] (system in Chinese; user includes task focus and Stage-A summaries as plain text)
+- Stage-B inputs SHALL NOT include any image data (text-only reasoning).
+
+#### Scenario: Minimal valid sample
+- **GIVEN** a JSONL record with messages referencing 图片_1..图片_k summaries
+- **WHEN** loading for GRPO training
+- **THEN** the sample contains group_label, stage_a_summaries, and messages without images
+
+#### Scenario: Stage-A to Stage-B conversion
+- **GIVEN** Stage-A output JSONL with per_image summaries
+- **WHEN** converting to Stage-B format
+- **THEN** each group becomes one text-only sample with embedded summaries in user message
+
+### Requirement: Two-line model output contract（严格两行格式）
+- Line 1 SHALL be exactly "通过" or "不通过" (verdict only, no extra characters)
+- Line 2 SHALL be "理由: <reasoning>" in Chinese natural language
+- The output MAY reference 图片_i in reasoning; no fixed vocabulary required
+- Extra lines are forbidden; trailing whitespace is allowed; empty reasoning is penalized by format/length rewards
+
+#### Scenario: Valid two-line output
+- **GIVEN** completion: `通过\n理由: 基于图片_1的安装方式符合规范`
+- **THEN** format reward is high; label reward checks line 1 against group_label
+
+#### Scenario: Invalid format (extra words in verdict)
+- **GIVEN** completion: `通过了\n理由: ...`
+- **THEN** format reward is 0; label reward ignores malformed verdict
+
+#### Scenario: Missing line 2
+- **GIVEN** completion: `通过`
+- **THEN** format reward is 0
+
+### Requirement: Reward function passthrough
+- The dataset loader MUST pass `stage_a_summaries`, `group_label`, and `task_type` to reward functions via kwargs.
+- Rewards SHALL have access to these fields for label matching and potential consistency checks.
+
+#### Scenario: Reward function receives context
+- **GIVEN** a completion generated by GRPO
+- **WHEN** computing rewards
+- **THEN** reward functions receive stage_a_summaries and group_label for scoring
+
+<!-- Phase 3: GRPO Training Integration -->
+
+### Requirement: Programmatic launcher with ms-swift GRPO trainer
+- The system SHALL provide a Python launcher (no CLI) exposing `run_grpo(config)` that constructs trainer, datasets, and rewards.
+- The launcher SHALL set `num_generations >= 2` and satisfy batch divisibility requirements.
+- Rewards SHALL be loaded via Python modules; initial v1 uses label reward and format reward only.
+
+#### Scenario: Launcher configuration
+- **GIVEN** a config dict with model path, dataset path, and reward weights
+- **WHEN** calling `run_grpo(config)`
+- **THEN** the launcher initializes GRPO trainer with correct settings
+
+#### Scenario: Reward weight mismatch validation
+- **GIVEN** 2 reward functions but 3 weights in config
+- **WHEN** initializing trainer
+- **THEN** raise ValueError at startup before training begins
+
+### Requirement: LLM-only LoRA on last-K transformer blocks
+- The system SHALL freeze ViT and Aligner components.
+- LoRA SHALL be applied only to the last K transformer blocks of the LLM (K is configurable; default K=4).
+- Verification logs SHALL confirm `freeze_vit=true`, `freeze_aligner=true`, `freeze_llm=false`, and proper Peft/SwiftModel wrapping.
+
+#### Scenario: Vision-frozen configuration sanity check
+- **GIVEN** GRPO training initialization
+- **WHEN** preparing the model
+- **THEN** logs show `freeze_vit=true`, `freeze_aligner=true`, `lora_last_k=4`, and `modules_to_save` reflects LLM-only tuning
+
+#### Scenario: Last-K block targeting
+- **GIVEN** a model with 32 transformer blocks and K=4
+- **WHEN** applying LoRA
+- **THEN** only blocks 28-31 have LoRA adapters
+
+### Requirement: Minimal reward set (v1)
+- Initial version SHALL enable only:
+  - **Label reward**: Matches "通过"/"不通过" in line 1 against `group_label`
+  - **Format reward**: Validates strict two-line structure
+- Consistency rewards (e.g., summary alignment) are deferred to v2.
+- Reward weights SHALL be configurable (default: label=1.0, format=0.2).
+
+#### Scenario: Label reward computation
+- **GIVEN** completion line 1 is "通过" and group_label is "通过"
+- **WHEN** computing label reward
+- **THEN** reward is positive (e.g., 1.0)
+
+#### Scenario: Format reward for valid structure
+- **GIVEN** completion has exactly 2 lines with correct prefixes
+- **WHEN** computing format reward
+- **THEN** reward is positive (e.g., 0.2)
+
+#### Scenario: Format reward for invalid structure
+- **GIVEN** completion has 3 lines or missing line 2
+- **WHEN** computing format reward
+- **THEN** reward is 0
+
+### Requirement: Dry-run validation
+- The system SHALL provide a minimal runnable example that loads base model and optional adapters, dataset path, registers rewards, and runs a short training dry-run.
+- Dry-run SHALL complete 1-2 steps with a tiny dataset; trainer produces reward logs and writes completions.jsonl.
+
+#### Scenario: Quick smoke test
+- **GIVEN** a tiny dataset with 4 samples
+- **WHEN** running dry-run with 2 steps
+- **THEN** training completes without errors, logs show reward values, and completions.jsonl is written
+
+<!-- Phase 4: Integration & Deployment (Future) -->
+
+### Requirement: End-to-end pipeline orchestration
+- The system SHALL support running Stage-A inference → Stage-B dataset conversion → GRPO training → Inference with trained adapter in a single workflow.
+
+#### Scenario: Full pipeline execution
+- **GIVEN** raw images in input directory
+- **WHEN** running the full pipeline
+- **THEN** Stage-A produces summaries, Stage-B converts to GRPO format, training runs, and final adapter is saved
+
+### Requirement: Model deployment and inference
+- The system SHALL support loading GRPO-trained LoRA adapters for inference on new groups.
+- Inference SHALL use the same two-line output contract.
+
+#### Scenario: Production inference with trained adapter
+- **GIVEN** a trained GRPO adapter and new Stage-A summaries
+- **WHEN** running Stage-B inference
+- **THEN** model generates two-line verdicts using the adapter

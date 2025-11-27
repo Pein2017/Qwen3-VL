@@ -3,6 +3,7 @@
 This document defines the universal JSONL format consumed by all training/eval datasets (BBU, LVIS, and future domains). Every record MUST adhere to this contract so that a single chat template pipeline can process all sources.
 
 ## Top-Level Record
+- **Provenance**: Records are typically produced either by the offline converter (`data_conversion/convert_dataset.sh`, see `docs/DATA_PREPROCESSING_PIPELINE.md`) or by domain-specific public converters. Regardless of source, they MUST match this contract.
 - `images` (list[str], required): Relative paths to image files; resolved against the JSONL directory.
 - `objects` (list[object], required): Structured annotations (see below).
 - `width` (int, required): Image width in pixels (original or post-resize if applied offline).
@@ -18,11 +19,13 @@ Each object MUST contain exactly one geometry field plus a non-empty `desc`.
   - `poly`: flat list `[x1, y1, x2, y2, ...]` (even length, ≥6 values / ≥3 points). Optional `poly_points` (int) should equal `len(poly)/2` when present.
   - `line`: flat list `[x1, y1, ..., xn, yn]`. Optional `line_points` (int) should equal `len(line)/2` when present.
 - No additional geometry fields are allowed on the same object.
+- **Groups (RRU/BBU)**: There is **no top-level `groups` key**. Group membership is encoded directly in `desc` using the prefix `组<id>:` (e.g., `组1: 标签/xxx`). Conversion fail-fast rejects samples where a declared group contains only one object.
 
 ## Invariants
 - Coordinates are pixel-space integers or floats in the source frame. Templates normalize (e.g., norm1000) during encoding.
 - Image paths remain relative in JSONL; loaders resolve them to absolute paths.
 - Geometry is validated; records with multiple geometry fields per object are rejected.
+- Polygon vertices are canonicalized offline: duplicate closing points are removed, vertices are ordered clockwise around the centroid, and the starting vertex is the top-most (then left-most) point. This prevents self-crossing orderings across converters and visualization tools.
 - Optional fields (e.g., `summary`, `poly_points`, `line_points`, `metadata`) may be absent; templates and preprocessors must tolerate absence.
 
 ## Example (with optional summary)
@@ -42,5 +45,6 @@ Each object MUST contain exactly one geometry field plus a non-empty `desc`.
 ## Current Sources (checked)
 - `data/bbu_full_768_poly/train.jsonl`: includes `summary`; objects use `poly` or `bbox_2d`.
 - `public_data/lvis/rescale_32_768_poly_max_12/train.jsonl`: same structure, no `summary`; objects may include `poly_points` metadata.
+- `data/rru_full_768_poly/all_samples.jsonl`: RRU domain; uses `bbox_2d`/`poly`/`line`, `desc` carries group prefixes (e.g., `组1:`) and merged station-distance labels (`站点距离/<text>`); `summary` aggregates identical `desc` strings with `×N` while preserving group prefixes.
 
 All future domains MUST emit this contract to remain compatible with the shared chat template pipeline.

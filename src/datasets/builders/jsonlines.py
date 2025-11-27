@@ -161,7 +161,7 @@ class JSONLinesBuilder(BaseBuilder):
                 f"Object object_{object_index} desc contains forbidden control whitespace"
             )
 
-        disallowed_patterns = (" ,", ", ", " /", "/ ", " :", ": ", "  ")
+        disallowed_patterns = (" ,", ", ", " /", "/ ", "  ")
         for pattern in disallowed_patterns:
             if pattern in desc:
                 raise ValueError(

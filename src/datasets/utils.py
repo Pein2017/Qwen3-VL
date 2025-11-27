@@ -2,7 +2,7 @@
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, MutableMapping, Tuple
 
 
 def load_jsonl(jsonl_path: str, *, resolve_relative: bool = False) -> List[Dict[str, Any]]:
@@ -48,6 +48,10 @@ def extract_object_points(obj: Dict[str, Any]) -> Tuple[str, List[float]]:
     Returns:
         Tuple of (geometry_type, points_list)
     """
+    if "quad" in obj:
+        raise ValueError(
+            "quad geometry is deprecated; replace with 'poly' (flat list of x,y)."
+        )
     if "bbox_2d" in obj:
         return "bbox_2d", list(map(float, obj["bbox_2d"]))
     if "poly" in obj:

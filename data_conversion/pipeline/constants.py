@@ -2,11 +2,9 @@
 """
 Centralized constants for the data conversion pipeline.
 
-Contains the canonical set of object types and the default label hierarchy
-fallback used by the unified processor in Chinese-only mode.
-
-Derived from `data_conversion/hierarchical_attribute_mapping.json` and
-`data_conversion/attribute_taxonomy.json`.
+These constants are kept for backward compatibility; they should not be used
+to filter objects anymore. The pipeline now accepts all objects and relies on
+validation to prune invalid entries. Taxonomy JSONs are documentation-only.
 """
 
 from typing import Dict, List, Set
@@ -20,6 +18,15 @@ OBJECT_TYPES: Set[str] = {
     "fiber",
     "wire",
     "connect_point",
+    # RRU dataset
+    "station",
+    "rru",
+    "rru_screw",
+    "ground_screw",
+    "fastener",
+    "lable",
+    "fiber_rru",
+    "wire_rru",
 }
 
 # Chinese display labels for object types (from both mapping files)
@@ -30,6 +37,15 @@ CHINESE_LABELS: Dict[str, str] = {
     "label": "标签",
     "fiber": "光纤",
     "wire": "电线",
+    # RRU dataset
+    "station": "站点",
+    "rru": "RRU设备",
+    "rru_screw": "RRU接地端",
+    "ground_screw": "地排接地端螺丝",
+    "fastener": "紧固件",
+    "lable": "标签(文本)",
+    "fiber_rru": "尾纤",
+    "wire_rru": "接地线",
 }
 
 # Reverse mapping for convenience: Chinese -> English key

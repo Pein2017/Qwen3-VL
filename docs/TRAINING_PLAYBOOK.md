@@ -41,11 +41,12 @@ sft.prepare_model(...)
 
 - `configs/base.yaml` — Shared defaults (bf16, packing, dataset placeholders, logging cadence)
 - `configs/stage_1/{lora.yaml,full_with_kd.yaml}` — Single-domain BBU recipes (LoRA or full) with GKD monitor
-- `configs/dlora/*.yaml` — LoRA variants targeting different vision/aligner slices (with/without hard-sample mining)
+- `configs/dlora/*.yaml` — LoRA variants targeting different vision/aligner slices
 - `configs/fused_data/*.yaml` — Fusion training recipes (look for `_gkd_` variants for KD-enabled runs)
 - `configs/fusion/*.yaml` — Offline fusion builder configs for `scripts/fuse_datasets.py`
 - `configs/summary.yaml` — Summary-only training mode
 - `configs/stage_b/*.yaml` — Stage-B runtime configs (debug/run)
+- Upstream data for these configs is normally produced by the annotation converter (`data_conversion/convert_dataset.sh`, see `docs/DATA_PREPROCESSING_PIPELINE.md`) or by public converters in `public_data/`. Ensure converted JSONL matches `docs/DATA_JSONL_CONTRACT.md` before training.
 
 ### Training Modes
 
@@ -657,35 +658,4 @@ Augmentation guidance for grounding tasks:
 
 Monitoring: track bbox/poly/line metrics separately; reduce geometric ops if poly/line drifts.
 
-## Hard-Sample Mining (dynamic, token_acc-based)
-
-目标：在后 30% 训练阶段对目标数据集做动态难例上采样，同时保持源数据集占比可配置（默认 8%）。
-
-- **信号**：per-sample `token_acc`（低即难），按 EMA 聚合；<3 次观测用均值。
-- **激活**：训练进度 < `activate_after_pct`（默认 0.7）仅记录；达到后每轮挖掘，使用固定 `hard_pool_frac`（默认 0.3）。
-- **选池**：可选 `hard_pool_k` 精确 top-K，否则按比例 `hard_pool_frac` 取样。
-- **调度（每个 epoch 结束后）**：
-  - 取目标集中 `hard_pool_frac` 的最难样本作为 hard_pool（token_acc 由低到高排序，ties 按 sample_id）。
-  - 下一轮目标调度：30% hard（有放回）+ 70% 目标全集有放回，长度保持与原 target 相同。
-  - 源数据：追加 `source_ratio * target_len`（默认 0.08）个源样本，有放回采样后与目标混排；源样本不参与挖掘。
-- **分布式**：rank0 选池并重建 schedule，然后广播给所有 rank；DataLoader 使用确定性 sampler（无 shuffle）。
-- **监控**：`hsm/train_acc_hard_mean/p90`, `hsm/train_acc_regular_mean/p90`, `hsm/hard_seen`, `hsm/regular_seen`, `hsm/hard_pool_coverage`, `hsm/hard_pool_size`, `hsm/schedule_len`, `hsm/mining_active`。
-
-**YAML 示例**
-```yaml
-custom:
-  hard_sample_mining:
-    enabled: true
-    start_epoch: 0
-    hard_pool_frac: 0.3
-    activate_after_pct: 0.7   # 70% 之后启动挖掘
-    source_ratio: 0.08        # 源样本占目标长度的 8%
-    ema_decay: 0.9
-    log_pool_metrics: true
-    log_prefix: hsm
-``` 
-
-**Operational notes**
-- 仅 rank0 聚合 token_acc；schedule 广播保证所有 rank 迭代顺序一致。
-- 数据集 ID 稳定（dataset/base_idx/sample_id），增广不会改变标识。
-- 目标集 epoch 长度保持不变；LR schedulers/checkpoint cadence 无需调整。
+> Note: hard-sample mining was removed (2025-11-27). Any YAML containing `custom.hard_sample_mining` now fails validation; revert to standard SFT with `training.packing: true` for efficiency.

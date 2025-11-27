@@ -55,11 +55,10 @@ def to_vis_objects(
         if "bbox_2d" in obj:
             gtype = "bbox_2d"
             pts = obj["bbox_2d"]
-        elif "poly" in obj or "quad" in obj:
+        elif "poly" in obj:
             gtype = "poly"
-            pts = obj.get("poly") or obj.get("quad")
-            # Legacy datasets may still use "quad" ordering; canonicalize to stay consistent
-            if "quad" in obj and pts:
+            pts = obj.get("poly")
+            if pts:
                 pts = canonicalize_poly(pts)
 
             # Check polygon point count and convert to bbox_2d if exceeds max_poly_points

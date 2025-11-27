@@ -1,6 +1,6 @@
 # Example: Mixed Mode (Per-sample Selection)
 # Output: Each sample randomly selects dense or summary mode
-# - Dense: minimal object hierarchy JSON with geometry (bbox_2d, quad, line) + desc
+# - Dense: minimal object hierarchy JSON with geometry (bbox_2d, poly, line) + desc
 # - Summary: single-line summary string per image
 # Example: Dense sample: {"object_1": {...}, "object_2": {...}}
 #          Summary sample: "光纤×4，标签×2"
@@ -112,4 +112,3 @@ custom:
       # ❌ NO random_crop - would remove objects and make count summaries incorrect
       # ❌ NO scale zoom-in - would crop objects out of frame
       # ❌ NO aggressive color ops - could make objects unrecognizable
-

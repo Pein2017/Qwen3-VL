@@ -2,6 +2,11 @@
 
 ## Inference
 
+### Where Stage‑A Fits
+- Stage‑A is the **single-image basic object recognition** stage (rare/long-tail objects included) that produces structured evidence for Stage‑B.
+- Outputs are consumed by `src/stage_b/runner.py` to decide `pass|fail` per ticket, so keep summary formatting stable and aligned with `docs/DATA_JSONL_CONTRACT.md`.
+- Train/refresh Stage‑A models with data produced by `data_conversion/` (see `docs/DATA_PREPROCESSING_PIPELINE.md`) to ensure schema alignment.
+
 ### Checkpoints
 
 **Adapter-Based** (Recommended for Development):
@@ -80,7 +85,7 @@ Key flags/env vars:
 - `no_mission` — Skip mission focus instructions for generic smoke tests.
 - `gpu` / `device` — Device selection (`cuda:N` or `cpu`).
 
-Output format (per group JSONL):
+Output format (per group JSONL — matches `docs/DATA_JSONL_CONTRACT.md` semantics for objects/geometry):
 
 ```json
 {

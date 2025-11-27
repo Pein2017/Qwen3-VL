@@ -4,7 +4,6 @@ import argparse
 import copy
 import logging
 import math
-import types
 import os
 import re
 from dataclasses import asdict
@@ -18,12 +17,6 @@ from swift.trainers import TrainerFactory
 from swift.utils import get_dist_setting
 
 from .callbacks.fusion_epoch import FusionEpochCallback
-from .callbacks.hard_sample_mining import (
-    HardSampleDynamicCallback,
-    HardSampleTracker,
-    attach_hsm_compute_metrics,
-    build_hsm_dataloader,
-)
 from .config import ConfigLoader, SaveDelayConfig
 from .datasets import BaseCaptionDataset
 from .datasets.augmentation.curriculum import AugmentationCurriculumScheduler
@@ -135,18 +128,10 @@ def main():
         args.config, args.base_config
     )
     custom_config = training_config.custom
-    hsm_cfg = custom_config.hard_sample_mining
-    hsm_cfg = custom_config.hard_sample_mining
     # Append run_name to output_dir and logging_dir to form final paths
     try:
         run_name = getattr(train_args, "run_name", None)
         training_args = getattr(train_args, "training_args", None)
-
-        if hsm_cfg and hsm_cfg.enabled and training_args is not None:
-            try:
-                setattr(training_args, "remove_unused_columns", False)
-            except Exception:
-                pass
 
         # Resolve and update output_dir
         base_output_dir = getattr(train_args, "output_dir", None)
@@ -643,22 +628,6 @@ def main():
             )
             logger.info(f"Validation dataset size: {len(eval_dataset)}")
 
-    hsm_tracker = None
-    hsm_callback = None
-    if hsm_cfg and hsm_cfg.enabled:
-        target_dataset_name = (
-            dataset._target_name
-            if hasattr(dataset, "_target_name")
-            else getattr(dataset, "dataset_name", "dataset")
-        )
-        hsm_tracker = HardSampleTracker(hsm_cfg.ema_decay)
-        hsm_callback = HardSampleDynamicCallback(
-            tracker=hsm_tracker,
-            config=hsm_cfg,
-            dataset=dataset,
-            target_dataset=target_dataset_name,
-        )
-
     # Sample printing disabled to avoid dumping labels/ids
 
     # CRITICAL: Apply tuner (LoRA/adapters) before creating trainer
@@ -688,8 +657,6 @@ def main():
         )
     if fusion_callback is not None:
         callbacks.append(fusion_callback)
-    if hsm_callback is not None:
-        callbacks.append(hsm_callback)
     save_delay_cfg = getattr(train_args, "save_delay_config", None)
     from .callbacks import SaveDelayCallback
 
@@ -732,19 +699,6 @@ def main():
         template=sft.template,
         **trainer_kwargs,
     )
-
-    if hsm_cfg and hsm_cfg.enabled and hsm_tracker is not None:
-        attach_hsm_compute_metrics(trainer, hsm_tracker, hsm_cfg)
-        if hsm_callback is not None:
-            hsm_callback.trainer = trainer
-
-        # Override train dataloader to honor external HSM schedule order
-        trainer._get_train_dataloader_default = trainer.get_train_dataloader
-
-        def _get_train_dataloader_hsm(self):  # type: ignore[override]
-            return build_hsm_dataloader(self, self.train_dataset, hsm_cfg.enabled)
-
-        trainer.get_train_dataloader = types.MethodType(_get_train_dataloader_hsm, trainer)
 
     # Patch DeepSpeed __del__ to avoid noisy cleanup errors (safe no-op)
     try:

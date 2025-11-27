@@ -237,7 +237,6 @@ class CustomConfig:
     val_jsonl: Optional[str] = None
     output_variant: Literal["dense", "summary"] = "dense"
     visual_kd: VisualKDConfig = field(default_factory=VisualKDConfig.disabled)
-    hard_sample_mining: Optional["HardSampleMiningConfig"] = None
     extra: Mapping[str, Any] = field(default_factory=dict)
     fusion_config: Optional[str] = None
 
@@ -329,7 +328,10 @@ class CustomConfig:
         visual_kd_raw = data.pop("visual_kd", None)
         visual_kd = VisualKDConfig.from_mapping(visual_kd_raw)
         hsm_raw = data.pop("hard_sample_mining", None)
-        hsm_cfg = HardSampleMiningConfig.from_mapping(hsm_raw)
+        if hsm_raw is not None:
+            raise ValueError(
+                "custom.hard_sample_mining has been removed; delete this block to continue with standard SFT."
+            )
         json_format_raw = data.pop("json_format", None)
         if json_format_raw is None:
             raise ValueError("custom.json_format must be provided")
@@ -375,7 +377,6 @@ class CustomConfig:
             fusion_config=str(fusion_config) if fusion_config is not None else None,
             output_variant=prompts.output_variant,
             visual_kd=visual_kd,
-            hard_sample_mining=hsm_cfg,
             extra=extra,
         )
 
@@ -445,70 +446,4 @@ class TrainingConfig:
             deepspeed=deepspeed,
             global_max_length=global_max_length,
             extra=extra,
-        )
-
-@dataclass(frozen=True)
-class HardSampleMiningConfig:
-    enabled: bool = False
-    start_epoch: int = 0
-    # Dynamic mode fields
-    hard_pool_frac: float = 0.3
-    hard_pool_k: Optional[int] = None
-    activate_after_pct: float = 0.7  # fraction of total epochs after which mining turns on
-    ema_decay: float = 0.9
-    source_ratio: float = 0.08
-    log_pool_metrics: bool = True
-    log_prefix: str = "hsm"
-
-    @classmethod
-    def from_mapping(cls, payload: Optional[Mapping[str, Any]]) -> Optional["HardSampleMiningConfig"]:
-        if payload is None:
-            return None
-        if not isinstance(payload, Mapping):
-            raise TypeError("custom.hard_sample_mining must be a mapping when provided")
-
-        data = dict(payload)
-        enabled = bool(data.pop("enabled", False))
-        if not enabled:
-            return None
-        start_epoch = int(data.pop("start_epoch", 0))
-
-        # Dynamic mining fields
-        hard_pool_frac = float(data.pop("hard_pool_frac", 0.3))
-        if not (0 < hard_pool_frac <= 1):
-            raise ValueError("custom.hard_sample_mining.hard_pool_frac must be in (0,1]")
-        hard_pool_k_raw = data.pop("hard_pool_k", None)
-        hard_pool_k: Optional[int] = None
-        if hard_pool_k_raw is not None:
-            try:
-                hard_pool_k = int(hard_pool_k_raw)
-            except (TypeError, ValueError) as exc:
-                raise ValueError("custom.hard_sample_mining.hard_pool_k must be an integer") from exc
-            if hard_pool_k <= 0:
-                raise ValueError("custom.hard_sample_mining.hard_pool_k must be > 0 when provided")
-        legacy_alpha = data.pop("alpha_start_pct", None)
-        if legacy_alpha is not None:
-            raise ValueError("custom.hard_sample_mining.alpha_start_pct is deprecated; use activate_after_pct")
-        activate_after_pct = float(data.pop("activate_after_pct", 0.7))
-        if not (0 <= activate_after_pct <= 1):
-            raise ValueError("custom.hard_sample_mining.activate_after_pct must be in [0,1]")
-        ema_decay = float(data.pop("ema_decay", 0.9))
-        if not (0 < ema_decay <= 1):
-            raise ValueError("custom.hard_sample_mining.ema_decay must be in (0,1]")
-        source_ratio = float(data.pop("source_ratio", 0.08))
-        if source_ratio < 0:
-            raise ValueError("custom.hard_sample_mining.source_ratio must be >= 0")
-        log_pool_metrics = bool(data.pop("log_pool_metrics", True))
-        log_prefix = str(data.pop("log_prefix", "hsm")) or "hsm"
-
-        return cls(
-            enabled=True,
-            start_epoch=start_epoch,
-            hard_pool_frac=hard_pool_frac,
-            hard_pool_k=hard_pool_k,
-            activate_after_pct=activate_after_pct,
-            ema_decay=ema_decay,
-            source_ratio=source_ratio,
-            log_pool_metrics=log_pool_metrics,
-            log_prefix=log_prefix,
         )

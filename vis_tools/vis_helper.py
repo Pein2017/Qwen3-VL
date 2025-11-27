@@ -57,6 +57,8 @@ def draw_objects(ax, img: Image.Image, objects: List[Dict[str, Any]], color_map:
             ax.add_patch(patches.Rectangle((x1, y1), x2 - x1, y2 - y1, fill=False, edgecolor=color, linewidth=2))
             label_x, label_y = x1, y1
         elif gtype == "poly" and len(pts_px) >= 8 and len(pts_px) % 2 == 0:
+            # Ensure visualization uses canonical ordering (same as pipeline)
+            pts_px = canonicalize_poly(pts_px)
             poly_coords = [(pts_px[i], pts_px[i + 1]) for i in range(0, len(pts_px), 2)]
             poly = patches.Polygon(poly_coords, closed=True, fill=False, edgecolor=color, linewidth=2, linestyle="--", alpha=0.9)
             ax.add_patch(poly)

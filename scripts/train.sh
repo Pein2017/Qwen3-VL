@@ -23,7 +23,7 @@ export PYTHONPATH="${REPO_DIR}${PYTHONPATH:+:$PYTHONPATH}"
 
 CONDA_ENV="${CONDA_ENV:-ms}"
 CONFIG_RAW="${config:-debug}"
-DEBUG="${DEBUG:-false}"
+DEBUG="${debug:-false}"
 
 # GPU configuration
 CUDA_VISIBLE_DEVICES="${gpus:-0}"

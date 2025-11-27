@@ -14,7 +14,7 @@ tuner:
   freeze_vit: false
   freeze_aligner: false
   target_modules: [all-linear]
-  target_regex: '^(?:model\.)?(?:language_model\.layers\.\d+\.self_attn\.(?:q_proj|v_proj)|visual\.blocks\.(?:21|22|23|24|25|26)\.attn\.qkv|visual\.(?:merger|deepstack_merger_list\.\d+)\.(?:linear_fc1|linear_fc2))$'
+  target_regex: null
   modules_to_save: []
   lora_rank: 16
   lora_alpha: 32
@@ -23,7 +23,7 @@ tuner:
 
 training:
   output_dir: ./output/11-24/stage_1.5
-  run_name: epoch_30-dlora-lrs_4_2_8-sft_base
+  run_name: epoch_30-dlora-lrs_4_2_8-sft_all
   num_train_epochs: 30
   per_device_train_batch_size: 2
   per_device_eval_batch_size: 4

@@ -25,13 +25,14 @@ except Exception:  # pragma: no cover
 # ============================================================================
 # Configuration
 # ============================================================================
-input_path = "data/bbu_full_768_poly/all_samples.jsonl"  # Path to JSONL (e.g., data/bbu_full_768/all_samples.jsonl)
+input_path = "data/bbu_full_768_poly-need_review/all_samples.jsonl"  # Path to JSONL (e.g., data/bbu_full_768/all_samples.jsonl)
 output_dir = "vis_out/debug"  # Directory to save visualizations
 limit = 20  # Max number of samples to visualize (0 means all)
 dpi = 120  # Matplotlib savefig DPI
 color_by = "type"  # Color by object type or full desc prefix ("type" or "desc")
 # Filter by image filename (set to None to visualize all, or a substring to match)
 filter_image_name = "QC-20231218-0025165_4127784"  # Set to None to disable filtering
+filter_image_name = None
 
 
 def read_jsonl(path: Path) -> Iterable[Dict[str, Any]]:
@@ -51,11 +52,10 @@ def to_vis_objects(
         if "bbox_2d" in obj:
             gtype = "bbox_2d"
             pts = obj["bbox_2d"]
-        elif "poly" in obj or "quad" in obj:
+        elif "poly" in obj:
             gtype = "poly"
-            pts = obj.get("poly") or obj.get("quad")
-            # Legacy datasets may still use "quad" ordering; canonicalize to stay consistent
-            if "quad" in obj and pts:
+            pts = obj.get("poly")
+            if pts:
                 pts = canonicalize_poly(pts)
         elif "line" in obj:
             gtype = "line"

@@ -8,6 +8,7 @@ Merged SampleExtractor directly into UnifiedProcessor to eliminate redundancy.
 
 import logging
 import sys
+import re
 from multiprocessing import Pool, cpu_count
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -128,6 +129,9 @@ class UnifiedProcessor:
         self.config = config
         self.input_dir = Path(config.input_dir)
         self.output_dir = config.get_dataset_output_dir()
+        self.is_rru = "rru" in str(self.input_dir).lower() or (
+            getattr(config, "dataset_name", "") and "rru" in config.dataset_name.lower()
+        )
 
         # Initialize components - no token mapping needed for Chinese-only
 
@@ -308,6 +312,9 @@ class UnifiedProcessor:
         - If no remark is detected, return desc unchanged.
         """
         try:
+            # 如果包含组信息，直接跳过改写以避免把组当作备注
+            if "组/" in (desc or ""):
+                return desc
             parts = [p for p in (desc or "").split("/") if p != ""]
             if not parts:
                 return desc
@@ -499,6 +506,32 @@ class UnifiedProcessor:
                 )
                 return None
 
+            # 组完整性检查：任一组只有1个成员则判定异常
+            group_counts = {}
+            for obj in objects:
+                for g in obj.get("groups") or []:
+                    gid = g.get("name") or g.get("id")
+                    if gid is None:
+                        continue
+                    group_counts[gid] = group_counts.get(gid, 0) + 1
+            if any(cnt == 1 for cnt in group_counts.values()):
+                msg = f"Group integrity failed (singleton group) in {json_path.name}"
+                logger.error(msg)
+                if self.config.fail_fast:
+                    raise ValueError(msg)
+                invalid_sample = {
+                    "sample_id": str(json_path.name),
+                    "reason": "group_singleton",
+                    "image_path": str(image_path),
+                    "json_path": str(json_path),
+                }
+                self.invalid_samples.append(invalid_sample)
+                return None
+
+            # 输出前去掉 groups 字段，组信息已写入 desc
+            for obj in objects:
+                obj.pop("groups", None)
+
             # Sort objects unless compatibility mode requests preserving the original order
             if not getattr(self.config, "preserve_annotation_order", False):
                 objects = sort_objects_tlbr(objects)
@@ -511,8 +544,11 @@ class UnifiedProcessor:
             objects = flag_objects_for_review(objects)
 
             # Summary 直接继承处理后的 desc（含需复核）
-            summary_objects = [obj.copy() for obj in objects]
-            summary_text = build_summary_from_objects(summary_objects)
+            if self.is_rru:
+                summary_text = self._build_simple_summary(objects)
+            else:
+                summary_objects = [obj.copy() for obj in objects]
+                summary_text = build_summary_from_objects(summary_objects)
 
             # Process image (copy/resize) to match coordinate transformations
             processed_image_path, img_w, img_h = self.image_processor.process_image(
@@ -937,17 +973,17 @@ class UnifiedProcessor:
                 initializer=_init_worker,
                 initargs=(self.config, self.label_hierarchy)
             ) as pool:
-                # Use imap_unordered for better performance (order doesn't matter for validation)
+                # Use ordered imap to preserve input ordering for deterministic outputs
                 if tqdm is not None:
                     results = list(tqdm(
-                        pool.imap_unordered(_process_sample_worker, json_files),
+                        pool.imap(_process_sample_worker, json_files),
                         total=len(json_files),
                         desc=f"Processing samples ({max_workers} workers)",
                         unit="sample"
                     ))
                 else:
                     logger.info(f"Processing {len(json_files)} samples with {max_workers} workers...")
-                    results = list(pool.imap_unordered(_process_sample_worker, json_files))
+                    results = list(pool.imap(_process_sample_worker, json_files))
 
             # Post-process results: validate and filter
             logger.info("📋 Validating processed samples...")
@@ -1254,6 +1290,29 @@ class UnifiedProcessor:
             )
 
         return result
+
+    def _build_simple_summary(self, objects: List[Dict]) -> str:
+        """
+        RRU 汇总：按 desc 完整字符串聚合计数（包含组/备注等全部信息）。
+        形式：desc×N，使用中文逗号分隔；N=1 时不附 ×N。
+        """
+        if not objects:
+            return "无关图片"
+        counts = {}
+        for obj in objects:
+            desc = obj.get("desc", "") or ""
+            desc = desc.strip()
+            if desc:
+                counts[desc] = counts.get(desc, 0) + 1
+        if not counts:
+            return "无关图片"
+        parts = []
+        for desc, n in counts.items():
+            if n == 1:
+                parts.append(desc)
+            else:
+                parts.append(f"{desc}×{n}")
+        return "，".join(parts)
 
 
 # TeacherSelector has been extracted to data_conversion.teacher_selector

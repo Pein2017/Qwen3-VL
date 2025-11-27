@@ -54,7 +54,6 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 from data_conversion.utils.exif_utils import get_exif_transform
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -131,7 +130,9 @@ class CoordinateManager:
                 return None
 
     @staticmethod
-    def _dimensions_close(a: Optional[int], b: Optional[int], tolerance: int = 2) -> bool:
+    def _dimensions_close(
+        a: Optional[int], b: Optional[int], tolerance: int = 2
+    ) -> bool:
         """
         Helper to compare dimensions with small tolerance (accounts for rounding).
         """
@@ -200,8 +201,7 @@ class CoordinateManager:
         ):
             return float("inf")
         return abs(
-            (float(width_a) / float(height_a))
-            - (float(width_b) / float(height_b))
+            (float(width_a) / float(height_a)) - (float(width_b) / float(height_b))
         )
 
     @classmethod
@@ -653,8 +653,8 @@ class CoordinateManager:
                     smart_resize,
                 )
 
-                _, _, _, final_w, final_h, _ = CoordinateManager.get_exif_transform_matrix(
-                    image_path
+                _, _, _, final_w, final_h, _ = (
+                    CoordinateManager.get_exif_transform_matrix(image_path)
                 )
                 if smart_resize_factor is None or max_pixels is None:
                     raise ValueError(
@@ -671,8 +671,8 @@ class CoordinateManager:
                 )
                 return sample_data, resize_w, resize_h
             else:
-                _, _, _, final_w, final_h, _ = CoordinateManager.get_exif_transform_matrix(
-                    image_path
+                _, _, _, final_w, final_h, _ = (
+                    CoordinateManager.get_exif_transform_matrix(image_path)
                 )
                 return sample_data, final_w, final_h
 
@@ -684,10 +684,13 @@ class CoordinateManager:
             )
         first_bbox = sample_data["objects"][0]["bbox_2d"]
         _, final_width, final_height = CoordinateManager.transform_bbox_complete(
-            first_bbox, image_path, json_width, json_height,
+            first_bbox,
+            image_path,
+            json_width,
+            json_height,
             enable_smart_resize=enable_smart_resize,
             smart_resize_factor=smart_resize_factor,
-            max_pixels=max_pixels
+            max_pixels=max_pixels,
         )
 
         # Process all objects
@@ -698,10 +701,13 @@ class CoordinateManager:
                 continue
 
             transformed_bbox, _, _ = CoordinateManager.transform_bbox_complete(
-                obj["bbox_2d"], image_path, json_width, json_height,
+                obj["bbox_2d"],
+                image_path,
+                json_width,
+                json_height,
                 smart_resize_factor=smart_resize_factor,
                 max_pixels=max_pixels,
-                enable_smart_resize=enable_smart_resize
+                enable_smart_resize=enable_smart_resize,
             )
 
             # Validate transformed coordinates
@@ -1461,9 +1467,7 @@ class CoordinateManager:
                 preferred_format in ["poly", "auto"]
             ):
                 # Poly annotation: extract polygon coordinates from Quad/Polygon/Square GeoJSON geometry types
-                poly_coords = CoordinateManager.extract_poly_coordinates(
-                    geometry_input
-                )
+                poly_coords = CoordinateManager.extract_poly_coordinates(geometry_input)
                 if poly_coords:
                     result["poly"] = poly_coords
                     if preferred_format == "poly":
@@ -1501,7 +1505,7 @@ class CoordinateManager:
         Applies canonical ordering starting from top-left vertex as specified in the prompt:
         "poly 排序参考点：使用第一个顶点 (x1, y1) 作为该对象的排序位置"
         Sorting rule: "首先按 Y 坐标（纵向）从小到大排列（图像上方优先），Y 坐标相同时按 X 坐标（横向）从小到大排列（图像左方优先）"
-        
+
         Detects and rejects degenerate polygons (triangles stored as quads with duplicate vertices).
         """
         coordinates = geometry.get("coordinates", [])
@@ -1537,15 +1541,17 @@ class CoordinateManager:
             if len(raw_coords) < 8:
                 logger.warning(
                     f"Degenerate polygon detected: has less than 4 unique points after removing closing point "
-                    f"({len(raw_coords)} coordinates = {len(raw_coords)//2} points). "
+                    f"({len(raw_coords)} coordinates = {len(raw_coords) // 2} points). "
                     f"Original had {len(raw_coords) + 2} coordinates. Rejecting degenerate polygon."
                 )
                 return []
 
             # Check for duplicate vertices (degenerate quad: triangle stored as quad with duplicate vertex)
-            points_list = [(raw_coords[i], raw_coords[i + 1]) for i in range(0, len(raw_coords), 2)]
+            points_list = [
+                (raw_coords[i], raw_coords[i + 1]) for i in range(0, len(raw_coords), 2)
+            ]
             unique_points = list(set(points_list))
-            
+
             if len(unique_points) < len(points_list):
                 logger.warning(
                     f"Degenerate polygon detected: {len(points_list)} points but only {len(unique_points)} unique points. "
@@ -1571,7 +1577,9 @@ class CoordinateManager:
     # =========================================================================
 
     @staticmethod
-    def _close_polygon(poly_coords: Union[List[float], List[int]]) -> Union[List[float], List[int]]:
+    def _close_polygon(
+        poly_coords: Union[List[float], List[int]],
+    ) -> Union[List[float], List[int]]:
         """
         Close a polygon by adding the first point at the end if not already closed.
 
@@ -1620,9 +1628,17 @@ class CoordinateManager:
                 obj["line"], width, height
             )
         elif "poly" in obj:
-            normalized_obj["poly"] = CoordinateManager.normalize_poly_coordinates(
+            poly_norm = CoordinateManager.normalize_poly_coordinates(
                 obj["poly"], width, height
             )
+            if len(poly_norm) >= 8 and len(poly_norm) % 2 == 0:
+                pts = [
+                    (float(poly_norm[i]), float(poly_norm[i + 1]))
+                    for i in range(0, len(poly_norm), 2)
+                ]
+                ordered = CoordinateManager.canonical_poly_ordering(pts)
+                poly_norm = [int(coord) for p in ordered for coord in p]
+            normalized_obj["poly"] = poly_norm
         else:
             logger.warning(f"Object missing geometry type: {obj}")
 
@@ -1755,7 +1771,7 @@ class CoordinateManager:
 
         # Convert to points and canonicalize whenever we have at least 4 vertices
         points = [
-            (clamped_coords[i], clamped_coords[i + 1])
+            (float(clamped_coords[i]), float(clamped_coords[i + 1]))
             for i in range(0, len(clamped_coords), 2)
         ]
         try:
@@ -1879,17 +1895,10 @@ class CoordinateManager:
         points: List[Tuple[float, float]],
     ) -> List[Tuple[float, float]]:
         """
-        Apply canonical ordering consistent with vis_tools canonicalize_quad.
-
-        For 4-point polygons we reuse the centroid-quadrant heuristic that
-        classifies TL/TR/BR/BL, falling back to Y/X sorting when quadrants
-        collapse (matches legacy dataset ordering). This ensures new
-        conversions remain byte-identical to the historical quad ordering,
-        avoiding regressions when comparing against prior exports.
-
-        For polygons with >4 vertices we preserve the more general clockwise
-        ordering using centroid angles. Duplicate closing vertices are stripped
-        before processing.
+        Unified polygon ordering (quads and multi-vertex):
+        - drop duplicated closing point
+        - sort all vertices clockwise around centroid
+        - rotate so the top-most then left-most vertex is first
         """
         import math
 
@@ -1912,64 +1921,38 @@ class CoordinateManager:
                 "Polygon must retain at least 4 vertices after closing-point removal."
             )
 
-        if len(cleaned_points) == 4:
-            # Ported from vis_tools/vis_helper.canonicalize_quad (centroid heuristics)
-            pts = cleaned_points
-            cx = sum(p[0] for p in pts) / 4.0
-            cy = sum(p[1] for p in pts) / 4.0
-
-            def classify_corner(p: Tuple[float, float]) -> Tuple[int, float]:
-                x, y = p
-                if x <= cx and y <= cy:
-                    return (0, -(x + y))
-                elif x >= cx and y <= cy:
-                    return (1, x - y)
-                elif x >= cx and y >= cy:
-                    return (2, x + y)
-                else:
-                    return (3, -x + y)
-
-            ordered = sorted(pts, key=classify_corner)
-            quadrant_ids = {classify_corner(p)[0] for p in ordered}
-            if len(quadrant_ids) != 4:
-                sorted_by_y = sorted(pts, key=lambda p: p[1])
-                top = sorted(sorted_by_y[:2], key=lambda p: p[0])
-                bottom = sorted(sorted_by_y[2:], key=lambda p: p[0])
-                ordered = [top[0], top[1], bottom[1], bottom[0]]
-            return ordered
-
-        # General polygon (>=5 vertices): order by angle around centroid, clockwise
         cx = sum(p[0] for p in cleaned_points) / len(cleaned_points)
         cy = sum(p[1] for p in cleaned_points) / len(cleaned_points)
 
         def angle_key(p: Tuple[float, float]) -> Tuple[float, float, float]:
-            angle = math.atan2(p[1] - cy, p[0] - cx)
+            angle = math.atan2(p[1] - cy, p[0] - cx)  # CCW
             normalized = (angle + 2 * math.pi) % (2 * math.pi)
             return (-normalized, p[1], p[0])
 
-        ordered_general = sorted(cleaned_points, key=angle_key)
+        ordered = sorted(cleaned_points, key=angle_key)
 
-        # Ensure clockwise orientation (negative signed area). If counter-clockwise,
-        # reverse to maintain deterministic ordering.
-        area_sum = 0.0
-        for i in range(len(ordered_general)):
-            j = (i + 1) % len(ordered_general)
-            area_sum += ordered_general[i][0] * ordered_general[j][1]
-            area_sum -= ordered_general[j][0] * ordered_general[i][1]
-        if area_sum > 0:
-            ordered_general = list(reversed(ordered_general))
+        top_left_idx = min(
+            range(len(ordered)),
+            key=lambda i: (ordered[i][1], ordered[i][0]),
+        )
+        ordered = ordered[top_left_idx:] + ordered[:top_left_idx]
 
-        return ordered_general
+        return ordered
 
     # Backwards compatibility alias (prefer canonical_poly_ordering)
     _canonical_poly_ordering = canonical_poly_ordering
 
+
 # Backward-compatibility re-exports for external callers.
 # These keep older imports like `from data_conversion.coordinate_manager import FormatConverter` working
 # while the actual implementations live in dedicated modules.
-from data_conversion.pipeline.format_converter import FormatConverter as _FormatConverter
-from data_conversion.pipeline.validation_manager import (
+from data_conversion.pipeline.format_converter import (
+    FormatConverter as _FormatConverter,  # noqa: E402
+)
+from data_conversion.pipeline.validation_manager import (  # noqa: E402
     DataValidator as _DataValidator,
+)
+from data_conversion.pipeline.validation_manager import (
     StructureValidator as _StructureValidator,
 )
 

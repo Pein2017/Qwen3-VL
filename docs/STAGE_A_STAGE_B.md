@@ -2,6 +2,10 @@
 
 Business briefing on the two-stage quality control pipeline that underpins production-grade group verdicts.
 
+**Stage‑1 (Stage‑A)** focuses on **single-image basic object recognition** (including rare/long-tail items) and produces structured evidence per image.
+
+**Stage‑2 (Stage‑B)** consumes that evidence plus labels to **verify installation criteria at the group/ticket level** and issues a binary `Pass`/`Fail` verdict with rationale.
+
 **Audience**: Quality operations leads, production planners, mission owners, compliance partners.
 
 **Further technical reading**: `docs/INFERENCE_AND_STAGEA.md`, `docs/STAGE_B_RUNTIME.md`, `openspec/changes/2025-11-03-adopt-training-free-stage-b/`.
@@ -40,8 +44,8 @@ The Stage-A/Stage-B stack addresses these by standardizing summaries, orchestrat
 | What | Business Interpretation |
 | ---- | ---------------------- |
 | Input | Mission folders with “审核通过/审核不通过” splits and photo groups (`QC-{mission}-{date}-{id}`) curated by labeling ops. |
-| Process | Frozen vision-language model drafts neutral, per-image observations. |
-| Output | JSONL feed of observation packets—each group has structured descriptions, label provenance, timestamp, and completion flag. |
+| Process | Frozen vision-language model drafts neutral, per-image observations with explicit coverage for rare/long-tail objects. |
+| Output | JSONL feed of observation packets—each group has structured per-image descriptions, label provenance, timestamp, and completion flag. |
 
 **Why it matters**
 - Creates an explainable narrative for each image, so Stage-B and human auditors can reason about defects.
@@ -60,7 +64,7 @@ The Stage-A/Stage-B stack addresses these by standardizing summaries, orchestrat
 | ---- | ---------------------- |
 | Input | Stage-A summaries + ground-truth labels + current mission guidance. |
 | Process | Samples multiple verdict drafts, scores them with deterministic signals, convenes an LLM “reflection” to propose guidance edits, and applies approved changes. |
-| Output | Final verdicts (JSONL), trajectories for audit, reflection log summarizing guidance shifts, updated mission-specific guidance repository. |
+| Output | Final binary verdicts (`pass` / `fail`) in JSONL, trajectories for audit, reflection log summarizing guidance shifts, updated mission-specific guidance repository. |
 
 **Experiences = living policy**
 - Guidance entries (`[G0]`, `[G1]`, …) are policy snippets the model reads before making a decision.
@@ -77,8 +81,9 @@ The Stage-A/Stage-B stack addresses these by standardizing summaries, orchestrat
 
 ## 5. End-to-End Operating Model
 
-1. **Data Intake (Field Ops)**
+1. **Data Intake & Preprocessing (Field Ops + Data Ops)**
    - Capture mission-tagged photo groups, confirm label quality, drop into intake bucket.
+   - Optional: normalize new annotation exports via `data_conversion/convert_dataset.sh` (see `docs/DATA_PREPROCESSING_PIPELINE.md`) before training or refreshing Stage‑A models.
 2. **Stage-A Run (ML Ops)**
    - Schedule nightly or on-demand summarization; publish Stage-A JSONL with completion report.
 3. **Pre-Flight Checks (Quality PM)**

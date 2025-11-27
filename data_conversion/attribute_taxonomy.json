@@ -80,6 +80,88 @@
         "poly"
       ],
       "content_key": "label"
+    },
+    "station": {
+      "chinese_label": "站点",
+      "aliases": [
+        "站点位置"
+      ],
+      "geometry_types": [
+        "bbox_2d"
+      ],
+      "content_key": "station"
+    },
+    "rru": {
+      "chinese_label": "RRU设备",
+      "aliases": [
+        "RRU"
+      ],
+      "geometry_types": [
+        "poly"
+      ],
+      "content_key": "rru"
+    },
+    "rru_screw": {
+      "chinese_label": "RRU接地端",
+      "aliases": [
+        "RRU接地端螺丝"
+      ],
+      "geometry_types": [
+        "bbox_2d"
+      ],
+      "content_key": "rru_screw"
+    },
+    "ground_screw": {
+      "chinese_label": "地排接地端螺丝",
+      "aliases": [
+        "地排接地端"
+      ],
+      "geometry_types": [
+        "bbox_2d"
+      ],
+      "content_key": "ground_screw"
+    },
+    "fastener": {
+      "chinese_label": "紧固件",
+      "aliases": [
+        "螺栓",
+        "螺钉"
+      ],
+      "geometry_types": [
+        "poly"
+      ],
+      "content_key": "fastener"
+    },
+    "lable": {
+      "chinese_label": "标签",
+      "aliases": [
+        "标签文本"
+      ],
+      "geometry_types": [
+        "poly"
+      ],
+      "content_key": "lable"
+    },
+    "fiber_rru": {
+      "chinese_label": "尾纤",
+      "aliases": [
+        "光纤尾缆",
+        "尾纤线"
+      ],
+      "geometry_types": [
+        "line"
+      ],
+      "content_key": "fiber"
+    },
+    "wire_rru": {
+      "chinese_label": "接地线",
+      "aliases": [
+        "地线"
+      ],
+      "geometry_types": [
+        "line"
+      ],
+      "content_key": "wire"
     }
   },
   "attribute_groups": {

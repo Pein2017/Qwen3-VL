@@ -125,9 +125,8 @@ class LVISConverter(BaseConverter):
         print("    Category distribution:")
         for freq, count in sorted(self.stats["categories"].items()):
             print(f"      {freq}: {count} categories")
-        print(
-            f"    Polygon mode: {'enabled (N-point polygons → quad)' if self.use_polygon else 'disabled (bbox only)'}"
-        )
+        mode_str = "enabled (N-point polygons → poly)" if self.use_polygon else "disabled (bbox only)"
+        print(f"    Polygon mode: {mode_str}")
 
     def _build_image_map(self, images: List[Dict]) -> None:
         """Build image ID to metadata mapping."""
@@ -285,14 +284,10 @@ class LVISConverter(BaseConverter):
         Extract polygon geometries from LVIS segmentation.
 
         LVIS segmentation format: [[x1,y1,x2,y2,...], [part2...]]
-        Converts all polygons to quad format (arbitrary N points).
-
-        Note: 'quad' here represents any closed polygon, not just 4 points.
-        - bbox_2d: 2 points (implicit rectangle)
-        - quad: N points (N >= 3, closed polygon)
+        Converts all polygons to poly format (arbitrary N points).
 
         Returns:
-            List of polygon objects (as 'quad') or None
+            List of polygon objects (as 'poly') or None
         """
         segmentation = ann.get("segmentation")
 
@@ -335,15 +330,15 @@ class LVISConverter(BaseConverter):
                     self.stats["polygon_skipped"] += 1
                     continue
 
-                # Success: add as 'quad' (generic polygon)
+                # Success: add as 'poly' (generic polygon)
                 polygons.append(
                     {
-                        "quad": coords,
-                        "quad_points": num_points,  # Track number of points
+                        "poly": coords,
+                        "poly_points": num_points,  # Track number of points
                         "desc": category_name,
                     }
                 )
-                self.stats["quad_converted"] += 1
+                self.stats["poly_converted"] = self.stats.get("poly_converted", 0) + 1
 
             except (ValueError, TypeError):
                 self.stats["polygon_skipped"] += 1

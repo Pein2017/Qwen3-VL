@@ -69,9 +69,9 @@ conda run -n ms python vis_tools/visualize_lvis.py --num_samples 3 --mode both -
 - Bounding boxes: COCO `[x,y,w,h]` -> `[x1,y1,x2,y2]`; boxes are clipped unless `--no-clip-boxes`; min area/dim default 1 px.
 - Crowd: skipped by default (`--keep-crowd` to keep).
 - Relative paths: default; use `--absolute-paths` to keep absolute.
-- Polygons: `--use-polygon` converts each segmentation part to a `quad` + `quad_points` (N-point closed polygon). If no valid polygon, it falls back to bbox.
-- Smart resize: `--smart-resize` uses `src/datasets/preprocessors/resize.SmartResizePreprocessor` to resize images + geometry. **Caveat:** that preprocessor currently scales `bbox_2d` and `poly` fields, not `quad`; avoid combining `--smart-resize` with `--use-polygon` until `quad` scaling is added.
-- Stats counters: total/skipped images & objects; polygon mode adds `quad_converted` and `polygon_skipped`.
+- Polygons: `--use-polygon` converts each segmentation part to a `poly` (N-point closed polygon). If no valid polygon, it falls back to bbox.
+- Smart resize: `--smart-resize` uses `src/datasets/preprocessors/resize.SmartResizePreprocessor` to resize images + geometry. **Caveat:** that preprocessor currently scales `bbox_2d` and `poly` fields; `quad` is no longer accepted.
+- Stats counters: total/skipped images & objects; polygon mode adds `poly_converted` and `polygon_skipped`.
 - Known flag gap: `--poly-max-points` is parsed but not wired into `LVISConverter`; using it will raise a constructor error. Skip this flag for now.
 
 ## JSONL Schema (produced here)
@@ -80,14 +80,14 @@ conda run -n ms python vis_tools/visualize_lvis.py --num_samples 3 --mode both -
   "images": ["train2017/000000000001.jpg"],
   "objects": [
     {"bbox_2d": [x1, y1, x2, y2], "desc": "person"},
-    {"quad": [x1, y1, ..., xn, yn], "quad_points": n, "desc": "car"}
+    {"poly": [x1, y1, ..., xn, yn], "poly_points": n, "desc": "car"}
   ],
   "width": 640,
   "height": 480
 }
 ```
 - Pixel coordinates; not normalized.
-- `quad` is generic N-point polygon; `quad_points` = N.
+- `poly` is the generic N-point polygon; `poly_points` = N.
 - One image per record is expected; validator warns otherwise.
 
 ## Sampling Strategies (scripts/sample_dataset.py)

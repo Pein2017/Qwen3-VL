@@ -23,18 +23,18 @@ def test_parse_prediction_valid_bbox_2d():
     assert result[0]["points"] == [100, 200, 300, 400]
 
 
-def test_parse_prediction_valid_quad_nested():
-    """Test parsing valid quad object with nested coordinate pairs."""
+def test_parse_prediction_valid_poly_nested():
+    """Test parsing valid polygon object with nested coordinate pairs."""
     json_text = json.dumps({
         "object_1": {
             "desc": "天线/杆塔/完好",
-            "quad": [[0, 0], [50, 0], [50, 30], [0, 30]]
+            "poly": [[0, 0], [50, 0], [50, 30], [0, 30]]
         }
     })
     result = parse_prediction(json_text)
     assert len(result) == 1
     assert result[0]["desc"] == "天线/杆塔/完好"
-    assert result[0]["type"] == "quad"
+    assert result[0]["type"] == "poly"
     assert result[0]["points"] == [0, 0, 50, 0, 50, 30, 0, 30]
 
 
@@ -98,7 +98,7 @@ def test_parse_prediction_rejects_multiple_geometry_keys():
         "object_1": {
             "desc": "混合几何",
             "bbox_2d": [100, 200, 300, 400],
-            "quad": [[0, 0], [50, 0], [50, 30], [0, 30]]
+            "poly": [[0, 0], [50, 0], [50, 30], [0, 30]]
         }
     })
     result = parse_prediction(json_text)
@@ -138,7 +138,7 @@ def test_parse_prediction_multiple_objects():
         },
         "object_2": {
             "desc": "天线/杆塔",
-            "quad": [[0, 0], [50, 0], [50, 30], [0, 30]]
+            "poly": [[0, 0], [50, 0], [50, 30], [0, 30]]
         },
         "object_3": {
             "desc": "光纤/有保护",
@@ -165,12 +165,12 @@ def test_parse_prediction_invalid_json():
     assert len(result) == 0
 
 
-def test_parse_prediction_flat_quad_coordinates():
-    """Test parsing quad with flat coordinates (should be flattened correctly)."""
+def test_parse_prediction_flat_poly_coordinates():
+    """Test parsing polygon with flat coordinates (should be flattened correctly)."""
     json_text = json.dumps({
         "object_1": {
             "desc": "天线/杆塔",
-            "quad": [0, 0, 50, 0, 50, 30, 0, 30]
+            "poly": [0, 0, 50, 0, 50, 30, 0, 30]
         }
     })
     result = parse_prediction(json_text)
@@ -180,4 +180,3 @@ def test_parse_prediction_flat_quad_coordinates():
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
-

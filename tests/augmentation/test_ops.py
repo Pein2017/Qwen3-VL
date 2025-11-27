@@ -29,12 +29,12 @@ def test_hflip_bbox_and_line_pixel_space():
     assert len(ln) >= 4 and all(isinstance(v, int) for v in ln)
 
 
-def test_rotate_quad_preserves_type_and_bounds():
+def test_rotate_poly_preserves_type_and_bounds():
     img = _mk_img()
-    geoms = [{"quad": [10, 10, 40, 10, 40, 20, 10, 20]}]
+    geoms = [{"poly": [10, 10, 40, 10, 40, 20, 10, 20]}]
     pipe = Compose([Rotate(10.0, 1.0)])
     _, new_geoms = apply_augmentations([img], geoms, pipe, rng=Random(123))
-    q = new_geoms[0]["quad"]
+    q = new_geoms[0]["poly"]
     assert len(q) == 8 and all(
         0 <= v <= 63 if i % 2 == 0 else 0 <= v <= 47 for i, v in enumerate(q)
     )

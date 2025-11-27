@@ -48,8 +48,8 @@ bash tests/run_tests.sh
 **示例输出**：
 ```json
 {
-  "quad": [327.26, 354.04, 329.51, 338.67, ...],
-  "quad_points": 35,
+  "poly": [327.26, 354.04, 329.51, 338.67, ...],
+  "poly_points": 35,
   "desc": "person"
 }
 ```
@@ -57,8 +57,8 @@ bash tests/run_tests.sh
 ### ✅ Test 4: Qwen3-VL Format Compliance
 - 验证输出格式符合 DATA_AND_DATASETS.md 规范
 - 检查必需字段：`images`, `objects`, `width`, `height`
-- 验证几何类型：`bbox_2d`, `quad`（N点多边形）
-- 验证 `quad_points` 字段一致性
+- 验证几何类型：`bbox_2d`, `poly`（N点多边形）
+- 验证 `poly_points` 字段一致性
 
 ## 多边形统计（前20张图）
 
@@ -136,4 +136,3 @@ conda run -n ms python tests/test_lvis_converter.py
 
 Total: 4/4 tests passed
 ```
-

@@ -3,36 +3,37 @@
 Status: Active — Internal Engineering
 
 ## Quick Navigation
-- **Start Here (flow)** → `DATA_JSONL_CONTRACT.md` → `DATA_AND_DATASETS.md` → `DATA_AUGMENTATION.md` → `TRAINING_PLAYBOOK.md` → `INFERENCE_AND_STAGEA.md` → `STAGE_B_RUNTIME.md`
-- **Data & Datasets** → `DATA_AND_DATASETS.md` - Schema, builders, conversion pipeline
-- **Augmentation** → `DATA_AUGMENTATION.md` - Geometry transforms, telemetry, visualization hooks
-- **Training** → `TRAINING_PLAYBOOK.md`
-- **Inference & Stage-A** → `INFERENCE_AND_STAGEA.md`
-- **Stage-B Runtime** → `STAGE_B_RUNTIME.md`
-- **Reference overview** → `REFERENCE.md` - Architecture plus doc index
-- **Stage-A & Stage-B (business)** → `STAGE_A_STAGE_B.md`, `stage-B-knowledge-Chinese.md`
+- **Intake & preprocessing** → `DATA_PREPROCESSING_PIPELINE.md` (annotation → JSONL) → `DATA_JSONL_CONTRACT.md`
+- **Data & datasets** → `DATA_AND_DATASETS.md` (schema/builders/conversion), `DATA_AUGMENTATION.md` (geometry transforms)
+- **Training & fusion** → `TRAINING_PLAYBOOK.md`, `UNIFIED_FUSION_DATASET.md`
+- **Stage‑1 (object recognition)** → `INFERENCE_AND_STAGEA.md`
+- **Stage‑2 (group verdicts)** → `STAGE_B_RUNTIME.md`
+- **Business pipeline & guidance** → `STAGE_A_STAGE_B.md`, `stage-B-knowledge-Chinese.md`
+- **Reference overview** → `REFERENCE.md`
 - **Public datasets** → `PUBLIC_DATA.md`
-- **Upstream Dependencies** → `UPSTREAM_DEPENDENCIES.md` - HF Qwen3-VL + ms-swift context
+- **Upstream dependencies** → `UPSTREAM_DEPENDENCIES.md`
 - **Specs & governance** → `openspec/AGENTS.md`, `openspec/project.md`
 
 ### Suggested Reading Order
-1. **Schema & data** — `DATA_JSONL_CONTRACT.md`, `DATA_AND_DATASETS.md`
+1. **Intake → schema** — `DATA_PREPROCESSING_PIPELINE.md`, `DATA_JSONL_CONTRACT.md`, `DATA_AND_DATASETS.md`
 2. **Augmentation** — `DATA_AUGMENTATION.md`
-3. **Training** — `TRAINING_PLAYBOOK.md` (recipes/configs), `REFERENCE.md` (architecture map)
-4. **Inference & Stage-A** — `INFERENCE_AND_STAGEA.md`
-5. **Stage-B** — `STAGE_B_RUNTIME.md` (runtime), `STAGE_A_STAGE_B.md` (business context)
-6. **Ecosystem** — `PUBLIC_DATA.md`, `UNIFIED_FUSION_DATASET.md`, `UPSTREAM_DEPENDENCIES.md`
+3. **Training & fusion** — `TRAINING_PLAYBOOK.md`, `UNIFIED_FUSION_DATASET.md`, `REFERENCE.md`
+4. **Stage‑1 inference** — `INFERENCE_AND_STAGEA.md`
+5. **Stage‑2 runtime** — `STAGE_B_RUNTIME.md`, `STAGE_A_STAGE_B.md`
+6. **Ecosystem** — `PUBLIC_DATA.md`, `UPSTREAM_DEPENDENCIES.md`
 
 ### Documentation Ownership & Directory Map
 
 | Directory | Primary doc(s) | Scope |
 |-----------|----------------|-------|
-| `src/` | `TRAINING_PLAYBOOK.md`, `INFERENCE_AND_STAGEA.md`, `REFERENCE.md` | Core training/inference implementation (`src/sft.py`, datasets, trainers). |
-| `data_conversion/` | `DATA_AND_DATASETS.md` (Conversion section) | Unified processor for BBU annotations, taxonomy JSONs, resize/validation helpers. |
-| `public_data/` | `PUBLIC_DATA.md` | LVIS and future auxiliary datasets (download, convert, sample, validate, visualize). |
-| `vis_tools/` | `DATA_AUGMENTATION.md`, `vis_tools/README_CROP_VIS.md` | Visualization/debug scripts for augmentation, eval dumps, Qwen3-VL outputs. |
-| `scripts/` | `TRAINING_PLAYBOOK.md`, `INFERENCE_AND_STAGEA.md`, `STAGE_B_RUNTIME.md` | Canonical entrypoints: training, inference, Stage-A/B launchers, dataset fusion. |
+| `src/` | `REFERENCE.md`, `TRAINING_PLAYBOOK.md` | Core training/inference implementation (`src/sft.py`, datasets, trainers). |
+| `src/stage_a/` | `INFERENCE_AND_STAGEA.md`, `STAGE_A_STAGE_B.md` | Stage‑1 per-image object recognition and summary emission. |
+| `src/stage_b/` | `STAGE_B_RUNTIME.md`, `STAGE_A_STAGE_B.md` | Stage‑2 verdict loop (rollout, critic, selection, reflection). |
+| `data_conversion/` | `DATA_PREPROCESSING_PIPELINE.md`, `DATA_AND_DATASETS.md` (Conversion section) | Optional offline preprocessing from annotation exports; taxonomy, resize, validation. |
+| `public_data/` | `PUBLIC_DATA.md` | LVIS and auxiliary datasets (download, convert, sample, validate, visualize). |
+| `scripts/` | `scripts/README.md`, `TRAINING_PLAYBOOK.md`, `INFERENCE_AND_STAGEA.md`, `STAGE_B_RUNTIME.md` | Canonical entrypoints: training, inference, Stage‑A/B launchers, dataset fusion. |
 | `openspec/` | `openspec/AGENTS.md`, `openspec/project.md` | Change-management specs and proposal workflow. |
+| `vis_tools/` | `DATA_AUGMENTATION.md`, `vis_tools/README_CROP_VIS.md` | Visualization/debug scripts for augmentation and QA spot checks. |
 
 Whenever you add or modify code in the directories above, update the associated doc in the same PR to keep the handbook current.
 
@@ -51,6 +52,10 @@ Whenever you add or modify code in the directories above, update the associated 
 Use these scripts instead of ad-hoc commands so telemetry, logging, and environment setup stay consistent across teams.
 
 ## Recent Updates
+
+### v1.1.3 - RRU Support & Canonical Polygons (Nov 2025) 🛰️
+- Unified converter now handles RRU raw annotations: taxonomy additions (`ground_screw`, 尾纤/接地线标签与套管保护, 站点距离/*), group membership encoded in `desc` via `组<id>:` prefix (no `groups` field). Summaries keep the full `desc` and aggregate identical strings with ×N.
+- Polygon vertices are canonicalized offline (clockwise, top-most then left-most first) and `vis_tools` mirrors the ordering to avoid self-crossing during visualization.
 
 ### v1.1.2 - Config & Telemetry Contracts (Oct 2025) 📐
 - YAML loader now builds frozen dataclasses (`TrainingConfig`, `CustomConfig`, `SaveDelayConfig`, `VisualKDConfig`) with early validation and deterministic merging.

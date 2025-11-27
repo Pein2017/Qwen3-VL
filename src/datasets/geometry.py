@@ -849,7 +849,7 @@ def translate_geometry(geom: Dict[str, Any], dx: float, dy: float) -> Dict[str, 
         x1, y1, x2, y2 = geom["bbox_2d"]
         return {"bbox_2d": [x1 + dx, y1 + dy, x2 + dx, y2 + dy]}
     elif "poly" in geom:
-        pts = geom["poly"]
+        pts = geom.get("poly") or []
         translated = []
         for i in range(0, len(pts), 2):
             translated.append(pts[i] + dx)
