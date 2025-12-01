@@ -1,0 +1,7 @@
+- [ ] Add fusion wrapper for text-only chat datasets (source domain, no aug/cap).
+- [ ] Add chat prompts entry for fusion prompt resolver.
+- [ ] Allow JSONLinesBuilder to pass through pre-authored `messages` records.
+- [ ] Create fusion config mixing BBU + LVIS + chat (COIG-CQIA).
+- [ ] Create derived training YAML pointing to the new fusion config.
+- [ ] Update data/docs note for text-only fusion support.
+- [ ] Run `openspec validate add-language-fusion-wrapper --strict`.

@@ -16,6 +16,7 @@ guidance:
 output:
   root: output_post/stage_b
   run_name: debug
+  group_report: true
 
 sampler:
   samples_per_decode: 2
@@ -23,50 +24,56 @@ sampler:
   grid:
     - temperature: 0.1
       top_p: 0.9
-      max_new_tokens: 512
+      max_new_tokens: 128
       seed: 42
-      stop: []
-    - temperature: 0.5
-      top_p: 0.95
-      max_new_tokens: 512
+      no_repeat_ngram_size: 6
+      stop:
+        - "assistant"
+        - "<|im_end|>"
+        - "<|endoftext|>"
+        - "</s>"
+      repetition_penalty: 1.05
+    - temperature: 0.2
+      top_p: 0.9
+      max_new_tokens: 128
       seed: 43
-      stop: []
-    - temperature: 0.9
-      top_p: 1.0
-      max_new_tokens: 512
+      no_repeat_ngram_size: 6
+      stop:
+        - "assistant"
+        - "<|im_end|>"
+        - "<|endoftext|>"
+        - "</s>"
+      repetition_penalty: 1.05
+    - temperature: 0.3
+      top_p: 0.9
+      max_new_tokens: 128
       seed: null
-      stop: []
-
-signals:
-  store_confidence: true
-  enable_consistency: true
-
-critic:
-  enabled: true
-  prompt_path: configs/prompts/stage_b_critic.txt
-  temperature: 0.2
-  top_p: 0.9
-  max_new_tokens: 512
-  max_candidates: 6
-  summary_max_chars: 200
-  critique_max_chars: 300
+      no_repeat_ngram_size: 6
+      stop:
+        - "assistant"
+        - "<|im_end|>"
+        - "<|endoftext|>"
+        - "</s>"
+      repetition_penalty: 1.05
 
 reflection:
   prompt_path: configs/prompts/stage_b_reflection_prompt.txt
   batch_size: 8
-  allow_uncertain: true
-  eligibility_policy: selected_mismatch_or_all_wrong
   max_operations: 3
-  change_cap_per_epoch: 10
 
   temperature: 0.3  # Higher temperature for more diverse guidance entries
   top_p: 0.9  # Higher top_p for more diverse sampling
-  max_new_tokens: 2048  # Allow longer responses for multiple guidance entries
-  max_reflection_length: 8192  # Max input length for reflection prompts
+  repetition_penalty: 1.05
+  max_new_tokens: 2560  # Allow longer responses for multiple guidance entries
+  max_reflection_length: 12000  # Max input length for reflection prompts
+  token_budget: 12000
+  require_rule_for_conflicts: true
+  treat_keep_conflict_as_noise: false
 
 selection:
   policy: top_label
-  tie_break: confidence
+  tie_break: temperature
 
 runner:
   epochs: 1
+  rollout_batch_size: 16  # 批量生成提速；可按显存调整

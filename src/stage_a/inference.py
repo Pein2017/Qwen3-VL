@@ -251,23 +251,57 @@ def load_model_processor(
     # Lower values = faster inference but lower image quality
     # 786432 = 1024×768 equivalent (good balance)
     # Default Qwen3-VL is 12845056 (very high resolution)
-    if hasattr(processor, "image_processor") and hasattr(
-        processor.image_processor, "max_pixels"
-    ):
-        processor.image_processor.max_pixels = max_pixels
-        logger.info(f"Set max_pixels={max_pixels} for image preprocessing")
+    # Enforce pixel budget on the image processor (Qwen2VLImageProcessorFast)
+    ip = getattr(processor, "image_processor", None)
+    if ip is not None:
+        try:
+            # Qwen fast processor expects pixel budgets via the size dict
+            #   size["shortest_edge"] = min_pixels, size["longest_edge"] = max_pixels
+            if not hasattr(ip, "size") or not isinstance(ip.size, dict):
+                ip.size = {}
+
+            # Preserve any explicit min_pixels if provided; otherwise fall back to existing size or default 56*56
+            min_pix = getattr(ip, "min_pixels", None)
+            if min_pix is None:
+                min_pix = ip.size.get("shortest_edge", 56 * 56)
+
+            ip.size["shortest_edge"] = int(min_pix)
+            ip.size["longest_edge"] = int(max_pixels)
+
+            # Mirror onto convenience attributes when present
+            try:
+                ip.min_pixels = int(min_pix)
+            except Exception:
+                pass
+            try:
+                ip.max_pixels = int(max_pixels)
+            except Exception:
+                pass
+
+            logger.info(
+                "Set pixel budget: min_pixels=%s max_pixels=%s (size=%s)",
+                ip.size.get("shortest_edge"),
+                ip.size.get("longest_edge"),
+                ip.size,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to set pixel budget on image_processor; continuing with defaults",
+                exc_info=False,
+            )
     else:
-        logger.warning(f"Could not set max_pixels (processor may not support it)")
+        logger.warning("Could not set max_pixels (processor may not support it)")
     # Log critical image processor settings for alignment diagnostics
     try:
         ip = getattr(processor, "image_processor", None)
         logger.info(
-            "ImageProcessor settings: do_resize=%s, patch_size=%s, merge_size=%s, min_pixels=%s, max_pixels=%s",
+            "ImageProcessor settings: do_resize=%s, patch_size=%s, merge_size=%s, min_pixels=%s, max_pixels=%s, size=%s",
             getattr(ip, "do_resize", None),
             getattr(ip, "patch_size", None),
             getattr(ip, "merge_size", None),
             getattr(ip, "min_pixels", None),
             getattr(ip, "max_pixels", None),
+            getattr(ip, "size", None),
         )
     except Exception:
         pass
@@ -320,9 +354,18 @@ def infer_one_image(
     # Respect max_pixels by passing images_kwargs explicitly (Qwen2VLImageProcessorFast)
     _img_kwargs = {}
     try:
-        mp = getattr(getattr(processor, "image_processor", None), "max_pixels", None)
-        if mp is not None:
-            _img_kwargs["max_pixels"] = int(mp)
+        ip = getattr(processor, "image_processor", None)
+        if ip is not None:
+            if isinstance(getattr(ip, "size", None), dict):
+                min_pix = ip.size.get("shortest_edge")
+                max_pix = ip.size.get("longest_edge")
+            else:
+                min_pix = getattr(ip, "min_pixels", None)
+                max_pix = getattr(ip, "max_pixels", None)
+            if min_pix is not None:
+                _img_kwargs["min_pixels"] = int(min_pix)
+            if max_pix is not None:
+                _img_kwargs["max_pixels"] = int(max_pix)
     except Exception:
         pass
     inputs = processor(
@@ -494,9 +537,18 @@ def infer_batch(
     # Batch encode with padding
     _img_kwargs = {}
     try:
-        mp = getattr(getattr(processor, "image_processor", None), "max_pixels", None)
-        if mp is not None:
-            _img_kwargs["max_pixels"] = int(mp)
+        ip = getattr(processor, "image_processor", None)
+        if ip is not None:
+            if isinstance(getattr(ip, "size", None), dict):
+                min_pix = ip.size.get("shortest_edge")
+                max_pix = ip.size.get("longest_edge")
+            else:
+                min_pix = getattr(ip, "min_pixels", None)
+                max_pix = getattr(ip, "max_pixels", None)
+            if min_pix is not None:
+                _img_kwargs["min_pixels"] = int(min_pix)
+            if max_pix is not None:
+                _img_kwargs["max_pixels"] = int(max_pix)
     except Exception:
         pass
     inputs = processor(

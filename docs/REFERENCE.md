@@ -19,8 +19,8 @@ Comprehensive guide for training, inference, deployment, and advanced topics.
 ## Architecture & Implementation
 
 ### Inspection Pipeline (Stage‑1 → Stage‑2)
-- **Stage‑1 / Stage‑A (Basic Object Recognition)**: `src/stage_a/` emits per-image evidence/rare-object summaries used as inputs to Stage‑2. Runbook: `docs/INFERENCE_AND_STAGEA.md`.
-- **Stage‑2 / Stage‑B (Group Ticket Verification)**: `src/stage_b/` ingests Stage‑A JSONL + labels and returns `pass|fail` verdicts with critic/reflection logs. Runbook: `docs/STAGE_B_RUNTIME.md` and business context in `docs/STAGE_A_STAGE_B.md`.
+- **Stage‑1 / Stage‑A (Basic Object Recognition)**: `src/stage_a/` emits per-image evidence/rare-object summaries used as inputs to Stage‑2. Runbook: `docs/STAGE_B_RUNTIME.md` (Stage-A section).
+- **Stage‑2 / Stage‑B (Group Ticket Verification)**: `src/stage_b/` ingests Stage‑A JSONL + labels and returns `pass|fail` verdicts with **prompt-only rollouts** (four-line output with evidence JSON arrays) plus optional reflection updates. No CriticEngine; manual-review and failure queues live under each mission run dir. Runbook: `docs/STAGE_B_RUNTIME.md` and business context in `docs/STAGE_A_STAGE_B.md`.
 - **Offline preprocessing (optional)**: `data_conversion/` normalizes annotation exports into train/val/tiny JSONL and QA reports. Guide: `docs/DATA_PREPROCESSING_PIPELINE.md`.
 
 ### Source Code Layout
@@ -48,7 +48,7 @@ Comprehensive guide for training, inference, deployment, and advanced topics.
 - `src/callbacks/save_delay_callback.py` - `SaveDelayCallback` (checkpoint throttling)
 
 ### Doc ↔ Code Cross-References
-- **Stage‑1 inference**: `src/stage_a/` ↔ `docs/INFERENCE_AND_STAGEA.md`
+- **Stage‑1 inference**: `src/stage_a/` ↔ `docs/STAGE_B_RUNTIME.md`
 - **Stage‑2 verdict loop**: `src/stage_b/` ↔ `docs/STAGE_B_RUNTIME.md`, `docs/STAGE_A_STAGE_B.md`
 - **Data preprocessing**: `data_conversion/` ↔ `docs/DATA_PREPROCESSING_PIPELINE.md`, `docs/DATA_AND_DATASETS.md` (conversion section)
 - **Fusion dataset**: `src/datasets/unified_fusion_dataset.py` ↔ `docs/UNIFIED_FUSION_DATASET.md`
@@ -220,13 +220,11 @@ Keep configs under `configs/` in sync with the playbook when making behavioral c
 
 ## Inference
 
-All deployment instructions moved to [INFERENCE_AND_STAGEA.md](INFERENCE_AND_STAGEA.md):
+Runtime/deployment instructions for Stage-A summaries and the Stage-B verdict loop live in [STAGE_B_RUNTIME.md](STAGE_B_RUNTIME.md):
 - Adapter vs merged checkpoints, export commands, and decoding tips
 - Dense captioning usage examples
 - Stage-A CLI guardrails and output schemas
-- Additional Stage-A implementation notes and dense/summary mixed-mode design
-
-For Stage-B rollout details (sampler config, critic/manual review, reflection flow) see [STAGE_B_RUNTIME.md](STAGE_B_RUNTIME.md).
+- Stage-B sampler/selection/manual-review/reflection flow (prompt-only, no CriticEngine)
 
 ## Advanced Topics & FAQ
 
@@ -235,8 +233,7 @@ Operational FAQs (LR schedulers, DeepSpeed presets, augmentation pipelines, temp
 ## Additional Resources
 
 - **Training**: [TRAINING_PLAYBOOK.md](TRAINING_PLAYBOOK.md)
-- **Inference & Stage-A**: [INFERENCE_AND_STAGEA.md](INFERENCE_AND_STAGEA.md)
-- **Stage-B Runtime**: [STAGE_B_RUNTIME.md](STAGE_B_RUNTIME.md)
+- **Stage-A & Stage-B runtime**: [STAGE_B_RUNTIME.md](STAGE_B_RUNTIME.md)
 - **Data preprocessing & contract**: [DATA_PREPROCESSING_PIPELINE.md](DATA_PREPROCESSING_PIPELINE.md), [DATA_JSONL_CONTRACT.md](DATA_JSONL_CONTRACT.md)
 - **Data formats & augmentation**: [DATA_AND_DATASETS.md](DATA_AND_DATASETS.md), [DATA_AUGMENTATION.md](DATA_AUGMENTATION.md)
 - **Archived docs**: `docs/archive/` (historical references, detailed technical guides)

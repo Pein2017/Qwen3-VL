@@ -3,6 +3,7 @@
 import base64
 import json
 import os
+import copy
 from typing import Any, Dict, Iterable, List, Literal, Mapping, Optional, Tuple
 
 from ..contracts import ConversationRecord, validate_conversation_record
@@ -78,6 +79,13 @@ class JSONLinesBuilder(BaseBuilder):
             )
 
         record = validate_conversation_record(records_list[0])
+
+        # Pass-through for pre-authored chat records (text-only fusion sources).
+        if record.get("messages"):
+            return {
+                "messages": copy.deepcopy(record["messages"]),
+                **({"metadata": copy.deepcopy(record["metadata"])} if "metadata" in record else {}),
+            }
 
         user_contents: List[Dict[str, Any]] = []
         objects_out: Dict[str, List[Any]] = {"ref": [], "bbox": [], "image_id": []}

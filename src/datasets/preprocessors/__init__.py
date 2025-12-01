@@ -3,7 +3,6 @@
 from .augmentation import AugmentationPreprocessor
 from .base import BasePreprocessor
 from .dense_caption import DenseCaptionPreprocessor
-
 from .resize import (
     SmartResizeParams,
     SmartResizePreprocessor,
@@ -12,6 +11,7 @@ from .resize import (
 )
 from .object_cap import ObjectCapPreprocessor
 from .sequential import SequentialPreprocessor
+from .summary_labels import SummaryLabelNormalizer
 
 __all__ = [
     "BasePreprocessor",
@@ -23,4 +23,5 @@ __all__ = [
     "smart_resize_params_from_env",
     "ObjectCapPreprocessor",
     "SequentialPreprocessor",
+    "SummaryLabelNormalizer",
 ]

@@ -1,17 +1,16 @@
 from __future__ import annotations
 
-import shutil
 import importlib.util
+import shutil
 from pathlib import Path
 from types import SimpleNamespace
 
 from transformers.trainer_callback import TrainerCallback, TrainerControl, TrainerState
 from transformers.trainer_utils import SaveStrategy
 
-
 _FINAL_CKPT_SPEC = importlib.util.spec_from_file_location(
     "_final_checkpoint_under_test",
-    Path(__file__).resolve().parents[1] / "src/trainers/final_checkpoint.py",
+    Path(__file__).resolve().parents[1] / "src/callbacks/final_checkpoint.py",
 )
 assert _FINAL_CKPT_SPEC is not None and _FINAL_CKPT_SPEC.loader is not None
 _final_ckpt_module = importlib.util.module_from_spec(_FINAL_CKPT_SPEC)
@@ -53,7 +52,9 @@ class _BaseTrainer:
                 self._checkpoint_steps.append(int(suffix))
 
     # -- Hooks expected by FinalCheckpointMixin ---------------------------------
-    def add_callback(self, callback: TrainerCallback) -> None:  # pragma: no cover - trivial
+    def add_callback(
+        self, callback: TrainerCallback
+    ) -> None:  # pragma: no cover - trivial
         self._callbacks.append(callback)
 
     def _save_checkpoint(self, model, trial, metrics=None):  # noqa: ANN001, D401, PLR0912
@@ -98,7 +99,9 @@ def test_final_checkpoint_bypasses_save_total_limit(tmp_path: Path) -> None:
     checkpoints = sorted(p.name for p in tmp_path.glob("checkpoint-*"))
     assert checkpoints == ["checkpoint-100", "checkpoint-200", "checkpoint-250"]
     assert trainer.args.save_total_limit == 2  # restored after the forced save
-    assert trainer._limit_snapshots[-1] is None  # rotation was suspended during the forced save
+    assert (
+        trainer._limit_snapshots[-1] is None
+    )  # rotation was suspended during the forced save
 
 
 def test_final_checkpoint_respects_save_strategy_no(tmp_path: Path) -> None:

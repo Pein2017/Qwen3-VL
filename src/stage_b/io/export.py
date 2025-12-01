@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List
 
 from ..types import SelectionResult, TrajectoryWithSignals
+from ..utils.chinese import normalize_spaces, to_simplified
 
 logger = logging.getLogger(__name__)
 
@@ -24,9 +25,24 @@ def serialize_trajectory(
     reflection_cycle: int,
     guidance_step: int,
 ) -> Dict[str, object]:
+    if item.parsed is None:
+        raise ValueError("Cannot serialize trajectory with None parsed field")
+
     base = item.parsed.base
     decode = base.decode
     signals = item.signals
+
+    # Normalize text and reason fields as safety net
+    normalized_text = base.response_text
+    if normalized_text:
+        normalized_text = to_simplified(normalized_text)
+        normalized_text = normalize_spaces(normalized_text)
+
+    normalized_reason = item.parsed.reason
+    if normalized_reason:
+        normalized_reason = to_simplified(normalized_reason)
+        normalized_reason = normalize_spaces(normalized_reason)
+
     return {
         "group_id": base.group_id,
         "mission": base.mission,
@@ -41,45 +57,34 @@ def serialize_trajectory(
                 "seed": decode.seed,
                 "stop": list(decode.stop),
             },
-            "text": base.response_text,
+            "text": normalized_text,
             "verdict": item.parsed.verdict,
-            "reason": item.parsed.reason,
-            "confidence": item.parsed.confidence,
+            "reason": normalized_reason,
             "format_ok": item.parsed.format_ok,
             "created_at": base.created_at.isoformat(),
-            "signals": {
-                "label_match": signals.label_match,
-                "self_consistency": signals.self_consistency,
-                "confidence": signals.confidence,
-                "conflict_flag": signals.conflict_flag,
-                "needs_manual_review": signals.needs_manual_review,
-            },
-            "critic": (
-                {
-                    "summary": item.critic.summary,
-                    "critique": item.critic.critique,
-                    "verdict": item.critic.verdict,
-                    "needs_recheck": item.critic.needs_recheck,
-                    "evidence_sufficiency": item.critic.evidence_sufficiency,
-                    "recommended_action": item.critic.recommended_action,
-                }
-                if item.critic
-                else None
-            ),
             "warnings": list(item.warnings),
+            "label_match": signals.label_match if signals else False,
         },
     }
 
 
 def serialize_selection(item: SelectionResult) -> Dict[str, object]:
+    label_match = bool(item.label_match) if item.label_match is not None else False
+
+    # Normalize reason field as safety net
+    normalized_reason = item.reason
+    if normalized_reason:
+        normalized_reason = to_simplified(normalized_reason)
+        normalized_reason = normalize_spaces(normalized_reason)
+
     return {
         "group_id": item.group_id,
         "mission": item.mission,
         "result": {
             "verdict": item.verdict,
-            "reason": item.reason,
-            "confidence": item.confidence,
-            "label_match": item.label_match,
+            "reason": normalized_reason,
+            "vote_strength": item.vote_strength,
+            "label_match": label_match,
             "selected_candidate": item.selected_candidate,
             "guidance_step": item.guidance_step,
             "reflection_change": item.reflection_change,

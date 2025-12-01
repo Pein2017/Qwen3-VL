@@ -253,6 +253,18 @@ class FlickrDatasetWrapper(PublicDetectionDatasetWrapper):
     default_name = "flickr3k"
 
 
+@register_dataset_wrapper("chat")
+class ChatDatasetWrapper(DatasetWrapper):
+    """Text-only chat source to preserve language capacity."""
+
+    default_name = "chat"
+    domain: DatasetDomain = "source"
+    template_id = "chatml"
+    supports_augmentation = False
+    supports_curriculum = False
+    default_max_objects_per_image = None
+
+
 __all__ = [
     "DatasetWrapper",
     "register_dataset_wrapper",

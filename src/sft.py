@@ -316,6 +316,9 @@ def main():
 
     # Extract mode control parameters
     use_summary = bool(custom_config.use_summary)
+    summary_label_grouping = bool(
+        getattr(custom_config, "summary_label_grouping", False)
+    )
 
     # Prepare system prompts for the selected mode
     # The system prompt is set on the template by ConfigLoader.resolve_prompts
@@ -340,6 +343,27 @@ def main():
     else:
         logger.info("Dense mode only (custom.use_summary=false)")
 
+    summary_preprocessor = None
+    if summary_label_grouping:
+        if not use_summary:
+            logger.warning(
+                "custom.summary_label_grouping is true but use_summary is false; "
+                "label grouping will be ignored."
+            )
+        else:
+            try:
+                from .datasets.preprocessors import SummaryLabelNormalizer
+
+                summary_preprocessor = SummaryLabelNormalizer()
+                logger.info(
+                    "Summary label grouping enabled: 标签/* (except 无法识别) → 标签/可以识别 with count aggregation."
+                )
+            except Exception as exc:
+                raise ValueError(
+                    "Failed to initialize SummaryLabelNormalizer "
+                    "(custom.summary_label_grouping=true)."
+                ) from exc
+
     dataset_seed = 42
     dataset: Any
     fusion_callback: FusionEpochCallback | None = None
@@ -360,6 +384,7 @@ def main():
             use_summary=use_summary,
             system_prompt_dense=system_prompt_dense,
             system_prompt_summary=system_prompt_summary,
+            preprocessor=summary_preprocessor,
             seed=dataset_seed,
             sample_limit=train_sample_limit,
             split="train",
@@ -376,6 +401,7 @@ def main():
             augmenter=augmenter,
             bypass_prob=bypass_prob,
             curriculum_state=curriculum_state,
+            preprocessor=summary_preprocessor,
             sample_limit=train_sample_limit,
             use_summary=use_summary,
             system_prompt_dense=system_prompt_dense,
@@ -582,47 +608,44 @@ def main():
     eval_dataset = None
     val_jsonl = custom_config.val_jsonl
     if fusion_config_obj:
-        target_val_path = val_jsonl or (
-            str(fusion_config_obj.target.val_jsonl)
-            if fusion_config_obj.target.val_jsonl is not None
-            else None
-        )
+        target_val_path = val_jsonl
         has_source_val = any(src.val_jsonl is not None for src in fusion_config_obj.sources)
         if target_val_path:
             logger.info(
-                "Loading fusion validation dataset: "
-                f"target={target_val_path or 'none'}, sources_with_val={has_source_val}"
+                "Loading fusion validation dataset with override target val_jsonl: "
+                f"{target_val_path}; sources_with_val={has_source_val}"
             )
-            from .datasets.unified_fusion_dataset import FusionCaptionDataset
-
-            eval_dataset = FusionCaptionDataset(
-                fusion_config=fusion_config_obj,
-                base_template=sft.template,
-                user_prompt=custom_config.user_prompt,
-                emit_norm=custom_config.emit_norm,
-                json_format=custom_config.json_format,
-                augmenter=None,  # No augmentation for validation
-                bypass_prob=0.0,
-                curriculum_state=None,
-                use_summary=use_summary,
-                system_prompt_dense=system_prompt_dense,
-                system_prompt_summary=system_prompt_summary,
-                seed=dataset_seed,
-                shuffle=False,
-                sample_limit=val_sample_limit,
-                split="eval",
-                target_eval_jsonl=target_val_path,
-                include_source_eval=True,
-            )
-            logger.info(f"Validation dataset size: {len(eval_dataset)}")
-        elif has_source_val:
+        else:
             logger.info(
-                "Skipping fusion validation dataset: source val_jsonl present but no target val_jsonl provided"
+                "Loading fusion validation dataset using per-target val_jsonl from config; "
+                f"sources_with_val={has_source_val}"
             )
+
+        from .datasets.unified_fusion_dataset import FusionCaptionDataset
+
+        eval_dataset = FusionCaptionDataset(
+            fusion_config=fusion_config_obj,
+            base_template=sft.template,
+            user_prompt=custom_config.user_prompt,
+            emit_norm=custom_config.emit_norm,
+            json_format=custom_config.json_format,
+            augmenter=None,  # No augmentation for validation
+            bypass_prob=0.0,
+            curriculum_state=None,
+            use_summary=use_summary,
+            system_prompt_dense=system_prompt_dense,
+            system_prompt_summary=system_prompt_summary,
+            preprocessor=summary_preprocessor,
+            seed=dataset_seed,
+            shuffle=False,
+            sample_limit=val_sample_limit,
+            split="eval",
+            target_eval_jsonl=target_val_path,
+            include_source_eval=False,
+        )
+        logger.info(f"Validation dataset size: {len(eval_dataset)}")
     else:
         eval_path_fallback = val_jsonl
-        if fusion_config_obj and fusion_config_obj.target.val_jsonl and not eval_path_fallback:
-            eval_path_fallback = str(fusion_config_obj.target.val_jsonl)
         if eval_path_fallback:
             logger.info(f"Loading validation dataset: {eval_path_fallback}")
             eval_dataset = BaseCaptionDataset.from_jsonl(
@@ -637,6 +660,7 @@ def main():
                 use_summary=use_summary,
                 system_prompt_dense=system_prompt_dense,
                 system_prompt_summary=system_prompt_summary,
+                preprocessor=summary_preprocessor,
                 seed=dataset_seed,
             )
             logger.info(f"Validation dataset size: {len(eval_dataset)}")

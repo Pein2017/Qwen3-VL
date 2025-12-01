@@ -6,6 +6,8 @@ This document describes the investigation, root cause analysis, and solution for
 
 **Solution**: Replaced `MultiSourceFusionDataset` (which cloned templates) with `FusionCaptionDataset` (formerly `UnifiedFusionDataset`, single shared template with dynamic prompt selection) and later refined it to restore per-source policies (prompt priority, augmentation/curriculum gating, object caps, deterministic per-epoch resampling, optional source eval). Source JSONLs are assumed to come from the offline converters (`data_conversion/` for BBU/RRU, `public_data/` for LVIS/others) that already match `docs/DATA_JSONL_CONTRACT.md`.
 
+**New (multi-target)**: Fusion now accepts multiple target datasets. Targets can optionally carry `ratio`; per-epoch quotas follow `base = floor(min(len_i / ratio_i))`, `quota_i = round(base * ratio_i)` (no ratios → full coverage). Source quotas are still `round(source_ratio * total_target_quota)`.
+
 **Result**: OOM issue resolved. Training runs successfully with proper mask ratios (30-60% for dense captioning with many objects).
 
 ---

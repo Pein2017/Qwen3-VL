@@ -1,0 +1,4 @@
+- [x] Add reflection.engine config switch with default "llm" and deterministic option.
+- [x] Implement deterministic reflection path that updates guidance without LLM parsing.
+- [x] Wire configs (debug/run) to use deterministic engine.
+- [x] Validate change with `openspec validate deterministic-reflection --strict`.

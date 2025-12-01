@@ -1,8 +1,0 @@
-extends: ./last_6.yaml
-
-# Variant: also tune vision MLP (linear_fc1/fc2) in last-6 blocks
-tuner:
-  target_regex: '^(?:model\.)?(?:language_model\.layers\.\d+\.self_attn\.(?:q_proj|v_proj)|visual\.blocks\.(?:21|22|23|24|25|26)\.(?:attn\.qkv|mlp\.(?:linear_fc1|linear_fc2))|visual\.(?:merger|deepstack_merger_list\.\d+)\.(?:linear_fc1|linear_fc2))$'
-
-training:
-  run_name: lvis_ratio_0.08-epoch_30-dlora-lrs_4_2_8-llm_kd_0.01-vision_kd_0.01-last_6_vision_mlp

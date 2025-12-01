@@ -92,6 +92,7 @@ Format requirements (aligned with training/inference prompts):
 - Keep `desc` exactly as annotated（含备注、组前缀等），不把备注另行拆出
 - Single sentence per image: no newlines, no trailing '。', no extra spaces
 - No geometry or coordinate arrays in summary strings
+- Optional training toggle: set `custom.summary_label_grouping: true` to collapse all 标签/* entries that are not `标签/无法识别` into `标签/可以识别×N` while preserving the `无法识别` count separately.
 - Conversion is fail-fast: if a sample has no objects or all `desc` are空/缺失，`build_summary_from_objects` raises `ValueError` and the sample is rejected.
 
 **Example**: `光模块×3，线缆×2，BBU设备/需复核,备注:无法判断品牌×1`
@@ -174,10 +175,11 @@ If your source is a human-annotation export, start with the intake guide (`docs/
 
 ## Multi-Dataset Fusion
 
-When you want BBU dense-caption training to consume auxiliary detection datasets (LVIS, COCO, etc.), provide a `custom.fusion_config` (YAML/JSON). The unified fusion loader mixes:
+When you want BBU/RRU multi-target dense-caption training to consume auxiliary detection datasets (LVIS, COCO, etc.), provide a `custom.fusion_config` (YAML/JSON). The unified fusion loader mixes:
 
-- **Target dataset** (required): consumed exactly once per epoch and treated as the primary domain. Evaluation defaults to the target `val_jsonl` unless a legacy fallback is used.
-- **Auxiliary sources**: each entry declares the dataset wrapper (e.g., `coco`, `lvis`, `objects365`) plus a `ratio`. Each epoch samples `round(ratio * N_target)` records **with replacement**, errors if the source pool is empty, and shuffles deterministically using the fusion seed and optional per-dataset seed.
+- **Targets (one or more)**: declare under `targets:`. Optional per-target `ratio` enables balancing: compute `base = floor(min(len_i / ratio_i))`, then `quota_i = round(base * ratio_i)` for each target. If no ratios are provided, every target is fully covered each epoch. Target indices are shuffled deterministically per epoch. Evaluation concatenates all target `val_jsonl` splits (no sources).
+- **Auxiliary sources**: each entry declares the dataset wrapper (e.g., `coco`, `lvis`, `objects365`) plus a `ratio`. Each epoch samples `round(ratio * N_target_total)` records **with replacement**, where `N_target_total` is the sum of target quotas for that epoch. Errors if the source pool is empty; shuffles deterministically using the fusion seed and optional per-dataset seed.
+- **Text-only sources**: you can add a chat-only auxiliary (`dataset: chat`, `template: chatml`) that points to a JSONL with pre-authored `messages` only (e.g., `public_data/coig_cqia/coig_cqia_merged.jsonl`). Chat sources skip augmentation/curriculum, reuse their own prompts, and are mixed by ratio like any other source.
 - **Per-dataset fields** (target and sources): `name`, `train_jsonl`, optional `val_jsonl`, `template`, optional `user_prompt`/`system_prompt` override, `augmentation_enabled`, `curriculum_enabled`, `max_objects_per_image`, optional `seed`. Sources default to **no augmentation/curriculum** and a **64 object cap**; targets inherit global augmentation/curriculum and can opt into a cap.
 - **Prompt priority**: `default < domain (wrapper template) < dataset-specific override`, applied to both system and user prompts per sample while keeping a single shared template instance.
 - **Object caps**: applied deterministically after augmentation and before encoding. Sources cap by default; targets may opt in via `max_objects_per_image`.

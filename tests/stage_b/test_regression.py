@@ -57,6 +57,15 @@ def test_verdict_normalisation_chinese_aliases():
     assert normalize_verdict("不通过") == "fail"
 
 
+def test_verdict_normalisation_review_aliases():
+    """Test that review/uncertain verdicts fall back to canonical labels."""
+    assert normalize_verdict("需复核") == "fail"
+    assert normalize_verdict("需要复核") == "fail"
+    assert normalize_verdict("无法判断") == "fail"
+    assert normalize_verdict("通过需要复核") == "pass"
+    assert normalize_verdict("通过需复核") == "pass"
+
+
 def test_verdict_normalisation_mixed_language_trajectories(tmp_path):
     """Test label_match computation with mixed English/Chinese verdicts."""
     from src.stage_b.config import SignalsConfig
@@ -329,4 +338,3 @@ def test_json_parse_failure_fatal_with_debug_info(tmp_path):
     assert engine._last_debug_info is not None
     assert "parse_error" in engine._last_debug_info
     assert "raw_response" in engine._last_debug_info
-

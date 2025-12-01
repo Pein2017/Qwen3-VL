@@ -33,8 +33,15 @@ class DatasetSpec:
 
 
 @dataclass(frozen=True)
+class TargetSpec(DatasetSpec):
+    """Target dataset description with optional ratio for balancing."""
+
+    ratio: Optional[float] = None
+
+
+@dataclass(frozen=True)
 class AuxiliarySpec(DatasetSpec):
     ratio: float = 0.0
 
 
-__all__ = ["DatasetSpec", "AuxiliarySpec", "FALLBACK_OPTIONS"]
+__all__ = ["DatasetSpec", "TargetSpec", "AuxiliarySpec", "FALLBACK_OPTIONS"]

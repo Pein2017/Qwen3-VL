@@ -4,6 +4,8 @@
 - Stage-A：逐图片的客观事实归纳（摘要）
 - Stage-B：基于多图摘要与业务规则的组级判定与反思更新
 
+Stage-B 现为“prompt-only”流程：模型输出固定两行（Verdict/Reason），不再运行 CriticEngine，也不使用证据数组或置信度/自洽度信号；无法解析的样本会进入 `manual_review_queue.jsonl`，解析失败会写入 `failure_malformed.jsonl` 以便改进提示。
+
 业务目标：
 - 最大化与历史人工审核一致性（主指标：Label Match）
 - 控制“人工判不通过而 AI 判通过”的比例 < 5%（硬约束）
@@ -96,6 +98,7 @@
 4) Selection：依据策略选择最终判定（如 top_semantic，平分时按置信度/温度打破平局）
 5) Reflection：批处理近期轨迹，分析 wins/losses 与 GT 差异，融合 CriticEngine 评述，提出结构化 guidance 变更提案
 6) Guidance Repository：落库与快照；通过留存与回滚策略保障可治理性
+- LLM 输出协议：Rollout 仍用三行判定格式；Critic/Reflection 改为逐行 `KEY: value` 文本协议（无 JSON），由解析器转为内部结构后再写 JSONL 日志。
 
 产物与目录结构（概览）：
 - selections.jsonl：最终选择的判定结果与分数
@@ -109,7 +112,7 @@
 - summary_confidence（摘要质量启发式：是否出现关键要素、是否存在互相矛盾的条目）
 - semantic_advantage（相对优势分，综合理由质量与一致性）
 - needs_recheck / label_contradiction（用于人工加审阈值）
-- critic_summary / critic_critique（CriticEngine 生成的结构化评述，用于反思阶段的决策增强）
+- （已移除 CriticEngine，暂无 critic_summary / critic_critique 信号）
 
 ---
 
@@ -153,7 +156,7 @@
 - 双重噪声：Stage-A 与人工标签均可能有偏；通过多候选 + 确定性信号 + 反思提案缓解
 - 误放行控制：标签为 fail 时强制输出 fail；对高风险 mission 设置更高的选择阈值或强制人工复核；同时保留模型原始 verdict/reason + conflict/uncertainty 信号，便于反思寻找缺项或标注噪声
 - 冲突/不确定反馈：`conflict_flag` 表示与标签矛盾或守护信号触发；`needs_manual_review`/`uncertainty_notes` 记录模糊表述并驱动反思/人工复核
-- 指标退化监控：持续追踪 semantic_advantage 与 confidence 分布，异常时冻结 guidance 变更并回滚到上个快照
+- 指标退化监控：持续追踪 semantic_advantage 与 verdict/Reason 分布，异常时冻结 guidance 变更并回滚到上个快照
 - 词表与格式漂移：严守 `DATA_AND_DATASETS.md` 摘要规范；新增检查点须同步更新属性映射与摘要生成
 
 ---
@@ -162,7 +165,7 @@
 
 - Mission：任务/条目（如挡风板安装检查）
 - Guidance（经验库）：供模型读取的编号规则片段（[G0]、[G1]…）
-- Reflection（反思）：基于近期表现自动提出的规则增量修改
+- Reflection（反思）：基于近期表现自动提出的规则增量修改，运行时采用“三段式 JSON-only”（summary→critique→batch update），仅对冲突/部分正确批次生效，产物落盘可复用
 - Verdict（判定）：组级“通过/不通过”与理由
 - Stage-A 摘要：每图单行事实归纳，Stage-B 的事实基础
 

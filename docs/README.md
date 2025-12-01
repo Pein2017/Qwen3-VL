@@ -6,8 +6,8 @@ Status: Active — Internal Engineering
 - **Intake & preprocessing** → `DATA_PREPROCESSING_PIPELINE.md` (annotation → JSONL) → `DATA_JSONL_CONTRACT.md`
 - **Data & datasets** → `DATA_AND_DATASETS.md` (schema/builders/conversion), `DATA_AUGMENTATION.md` (geometry transforms)
 - **Training & fusion** → `TRAINING_PLAYBOOK.md`, `UNIFIED_FUSION_DATASET.md`
-- **Stage‑1 (object recognition)** → `INFERENCE_AND_STAGEA.md`
-- **Stage‑2 (group verdicts)** → `STAGE_B_RUNTIME.md`
+- **Stage‑1 (object recognition)** → `STAGE_B_RUNTIME.md` (Stage-A section)
+- **Stage‑2 (group verdicts)** → `STAGE_B_RUNTIME.md` (Stage-B section)
 - **Business pipeline & guidance** → `STAGE_A_STAGE_B.md`, `stage-B-knowledge-Chinese.md`
 - **Reference overview** → `REFERENCE.md`
 - **Public datasets** → `PUBLIC_DATA.md`
@@ -18,8 +18,8 @@ Status: Active — Internal Engineering
 1. **Intake → schema** — `DATA_PREPROCESSING_PIPELINE.md`, `DATA_JSONL_CONTRACT.md`, `DATA_AND_DATASETS.md`
 2. **Augmentation** — `DATA_AUGMENTATION.md`
 3. **Training & fusion** — `TRAINING_PLAYBOOK.md`, `UNIFIED_FUSION_DATASET.md`, `REFERENCE.md`
-4. **Stage‑1 inference** — `INFERENCE_AND_STAGEA.md`
-5. **Stage‑2 runtime** — `STAGE_B_RUNTIME.md`, `STAGE_A_STAGE_B.md`
+4. **Stage‑1 inference** — `STAGE_B_RUNTIME.md` (Stage-A section)
+5. **Stage‑2 runtime** — `STAGE_B_RUNTIME.md` (Stage-B section), `STAGE_A_STAGE_B.md`
 6. **Ecosystem** — `PUBLIC_DATA.md`, `UPSTREAM_DEPENDENCIES.md`
 
 ### Documentation Ownership & Directory Map
@@ -27,11 +27,11 @@ Status: Active — Internal Engineering
 | Directory | Primary doc(s) | Scope |
 |-----------|----------------|-------|
 | `src/` | `REFERENCE.md`, `TRAINING_PLAYBOOK.md` | Core training/inference implementation (`src/sft.py`, datasets, trainers). |
-| `src/stage_a/` | `INFERENCE_AND_STAGEA.md`, `STAGE_A_STAGE_B.md` | Stage‑1 per-image object recognition and summary emission. |
-| `src/stage_b/` | `STAGE_B_RUNTIME.md`, `STAGE_A_STAGE_B.md` | Stage‑2 verdict loop (rollout, critic, selection, reflection). |
+| `src/stage_a/` | `STAGE_B_RUNTIME.md`, `STAGE_A_STAGE_B.md` | Stage‑1 per-image object recognition and summary emission. |
+| `src/stage_b/` | `STAGE_B_RUNTIME.md`, `STAGE_A_STAGE_B.md` | Stage‑2 verdict loop（rollout、selection、reflection）。 |
 | `data_conversion/` | `DATA_PREPROCESSING_PIPELINE.md`, `DATA_AND_DATASETS.md` (Conversion section) | Optional offline preprocessing from annotation exports; taxonomy, resize, validation. |
 | `public_data/` | `PUBLIC_DATA.md` | LVIS and auxiliary datasets (download, convert, sample, validate, visualize). |
-| `scripts/` | `scripts/README.md`, `TRAINING_PLAYBOOK.md`, `INFERENCE_AND_STAGEA.md`, `STAGE_B_RUNTIME.md` | Canonical entrypoints: training, inference, Stage‑A/B launchers, dataset fusion. |
+| `scripts/` | `scripts/README.md`, `TRAINING_PLAYBOOK.md`, `STAGE_B_RUNTIME.md` | Canonical entrypoints: training, inference, Stage‑A/B launchers, dataset fusion. |
 | `openspec/` | `openspec/AGENTS.md`, `openspec/project.md` | Change-management specs and proposal workflow. |
 | `vis_tools/` | `DATA_AUGMENTATION.md`, `vis_tools/README_CROP_VIS.md` | Visualization/debug scripts for augmentation and QA spot checks. |
 
@@ -135,7 +135,7 @@ Vision Encoder (ViT) → Aligner (Projector) → LLM
 | Data & Datasets | `src/datasets/`, `data_conversion/`, `src/datasets/data_details.md`, `scripts/fuse_datasets.py` |
 | Augmentation | `src/datasets/augmentation/`, `src/datasets/geometry.py`, `vis_tools/` |
 | Training Playbook & Advanced FAQ | `src/sft.py`, `scripts/train.sh`, `configs/`, `src/callbacks/`, `src/trainers/` |
-| Inference & Stage-A | `src/stage_a/`, `scripts/stage_a_infer.sh`, `src/utils/logger.py` |
+| Stage-A Runtime (in `STAGE_B_RUNTIME.md`) | `src/stage_a/`, `scripts/stage_a_infer.sh`, `src/utils/logger.py` |
 | Stage-B Runtime | `src/stage_b/`, `scripts/stage_b_run.sh`, `configs/stage_b/` |
 | Public Data | `public_data/`, `public_data/scripts/`, `public_data/tests/` |
 | Utils & Logging | `src/utils/`, `src/callbacks/` |

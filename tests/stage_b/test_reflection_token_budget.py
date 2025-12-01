@@ -100,7 +100,7 @@ def _make_record(group_id: str, mission: str, label: str, reason: str, *,
 
 def _engine_with_budget(budget: int) -> ReflectionEngine:
     cfg = ReflectionConfig(
-        prompt_path=__import__("pathlib").Path("configs/prompts/stage_b_critic.txt"),
+        prompt_path=__import__("pathlib").Path("configs/prompts/stage_b_reflection_prompt.txt"),
         batch_size=8,
         allow_uncertain=True,
         token_budget=budget,
@@ -150,4 +150,3 @@ def test_prioritization_keeps_contradictions_first():
     kept = int(m.group(1)) if m else 0
     assert kept == 1, "expected only one record due to budget"
     assert "HAS_CONTRA" in prompt, "highest-priority contradictory record should be kept"
-

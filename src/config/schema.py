@@ -224,6 +224,7 @@ class CustomConfig:
     emit_norm: AllowedNorm
     json_format: AllowedJsonFormat
     use_summary: bool = False
+    summary_label_grouping: bool = False
     system_prompt_summary: Optional[str] = None
     augmentation: Optional[Mapping[str, Any]] = None
     augmentation_curriculum: Optional[Mapping[str, Any]] = None
@@ -309,6 +310,10 @@ class CustomConfig:
             if use_summary_raw is None
             else _parse_bool(use_summary_raw, "custom.use_summary")
         )
+        summary_label_grouping_raw = data.pop("summary_label_grouping", False)
+        summary_label_grouping = _parse_bool(
+            summary_label_grouping_raw, "custom.summary_label_grouping"
+        )
         system_prompt_summary = data.pop("system_prompt_summary", None)
         if "images_per_user_turn" in data:
             raise ValueError(
@@ -355,6 +360,7 @@ class CustomConfig:
             emit_norm=cast("AllowedNorm", emit_norm_value),
             json_format=json_format,
             use_summary=use_summary,
+            summary_label_grouping=summary_label_grouping,
             system_prompt_summary=system_prompt_summary,
             augmentation=augmentation
             if isinstance(augmentation, Mapping)

@@ -319,7 +319,7 @@ class ExpandToFitAffine(ImageAugmenter):
             if scaled:
                 S = scale_matrix(scale_x, scale_y)
                 M_total = compose_affine(S, M_total)
-                logger.warning(
+                logger.debug(
                     "ExpandToFitAffine: Canvas ({0}×{1} = {2} pixels) exceeds max_pixels={3}. "
                     "Scaled down to {4}×{5} = {6} pixels (scale_x={7:.4f}, scale_y={8:.4f}). "
                     "Consider reducing rotation/scale augmentation strength.".format(

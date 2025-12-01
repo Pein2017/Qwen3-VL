@@ -37,6 +37,10 @@ def normalize_verdict(verdict: Union[str, GroupLabel, None]) -> Optional[GroupLa
         return "pass"
     if cleaned in {"不通过", "未通过", "不通过。"}:
         return "fail"
+    if cleaned in {"需复核", "需要复核", "无法判断", "无法判定", "待复核"}:
+        return "fail"
+    if cleaned in {"通过需复核", "通过需要复核", "通过需要复核。", "通过需复核。"}:
+        return "pass"
 
     # English variants
     if cleaned in {"pass", "pass."}:

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
@@ -21,6 +22,7 @@ from .types import (
     ParsedTrajectory,
     Trajectory,
 )
+from .utils.chinese import normalize_spaces, to_simplified
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +34,18 @@ _ASSISTANT_MARKERS: Sequence[str] = (
     "Assistant\n",
     "Assistant:",
     "Assistant",
+    "<im_start>assistant\n",
+    "<|im_start|>assistant\n",
+)
+
+_DEFAULT_STOP: Tuple[str, ...] = (
+    "\nassistant",
+    "assistant\n",
+    "assistant:",
+    "Assistant:",
+    "<|endoftext|>",
+    "</s>",
+    "<|im_end|>",
 )
 
 
@@ -54,68 +68,90 @@ def _normalize_verdict(text: str) -> Optional[GroupLabel]:
         return "pass"
     if cleaned in {"不通过", "fail", "未通过", "不通过。"}:
         return "fail"
+    if any(
+        term in cleaned for term in ["复核", "不确定", "无法判断", "无法判定", "待复核"]
+    ):
+        return "fail"
+    if cleaned in {"通过需复核", "通过需要复核", "通过需要复核。", "通过需复核。"}:
+        return "pass"
     return None
 
 
-def _parse_confidence(text: str) -> Optional[float]:
-    stripped = text.strip()
-    if not stripped:
-        return None
-    if ":" in stripped:
-        _, value = stripped.split(":", 1)
-    elif "：" in stripped:
-        _, value = stripped.split("：", 1)
-    else:
-        value = stripped
-    value = value.strip().rstrip("。")
-    if not value:
-        return None
-    try:
-        confidence = float(value)
-    except ValueError:
-        return None
-    if confidence > 1.0:
-        # assume percentage style
-        confidence /= 100.0
-    if confidence < 0:
-        confidence = 0.0
-    if confidence > 1:
-        confidence = 1.0
-    return confidence
-
-
-def _parse_three_line_response(
+def _parse_two_line_response(
     response: str,
-) -> Tuple[bool, Optional[GroupLabel], Optional[str], Optional[float]]:
-    stripped = _trim_assistant_prefix(response).strip()
-    lines = [line.strip() for line in stripped.splitlines() if line.strip()]
-    if len(lines) < 3:
-        return False, None, None, None
+) -> Tuple[bool, Optional[GroupLabel], Optional[str]]:
+    """Parse minimal two-line protocol: Verdict + Reason."""
 
-    verdict_line, reason_line, confidence_line = lines[0], lines[1], lines[2]
+    text = _trim_assistant_prefix(response).strip()
+    if not text:
+        return False, None, None
 
-    # Verdict parsing
-    if ":" in verdict_line or "：" in verdict_line:
-        verdict_text = verdict_line.split(":", 1)[-1]
-        verdict_text = verdict_text.split("：", 1)[-1] if "：" in verdict_line else verdict_text
-    else:
-        verdict_text = verdict_line
-    verdict = _normalize_verdict(verdict_text)
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return False, None, None
 
-    # Reason parsing
-    if reason_line.lower().startswith("reason") or reason_line.startswith("理由"):
-        reason = reason_line.split(":", 1)[-1]
-        reason = reason.split("：", 1)[-1] if "：" in reason_line else reason
-        reason = reason.strip()
-    else:
-        reason = reason_line
-    reason = reason or None
+    verdict = None
+    reason = None
 
-    # Confidence parsing
-    confidence = _parse_confidence(confidence_line)
+    for line in lines:
+        lower = line.lower()
+        if verdict is None and (
+            lower.startswith(("verdict", "判定", "结论"))
+            or line.startswith(("通过", "不通过"))
+        ):
+            parts = re.split(r"[:：]", line, maxsplit=1)
+            verdict_text = parts[1].strip() if len(parts) == 2 else line.strip()
+            verdict = _normalize_verdict(verdict_text)
+            continue
+        if reason is None and lower.startswith(("reason", "理由")):
+            parts = re.split(r"[:：]", line, maxsplit=1)
+            reason = parts[1].strip() if len(parts) == 2 else line.strip()
+            continue
 
-    format_ok = all([verdict is not None, reason is not None, confidence is not None])
-    return format_ok, verdict, reason, confidence
+    if verdict is None:
+        # Try fallback: first token containing 通过/不通过
+        for line in lines:
+            match = re.search(r"(通过|不通过)", line)
+            if match:
+                verdict = _normalize_verdict(match.group(1))
+                break
+
+    if reason is None:
+        # Use first non-verdict line as reason fallback
+        for line in lines:
+            if "通过" in line or "不通过" in line:
+                continue
+            reason = line.strip()
+            break
+
+    format_ok = verdict is not None and reason is not None
+    return format_ok, verdict, reason
+
+
+def _fallback_coerce(
+    response: str,
+) -> Tuple[bool, Optional[GroupLabel], Optional[str]]:
+    """Best-effort salvage when two-line parsing fails.
+
+    - Infer verdict from first verdict keyword; default to fail.
+    - Use the first non-empty line (trimmed to 200 chars) as reason.
+    """
+
+    verdict_candidates = re.findall(r"(通过|不通过)", response)
+    verdict: Optional[GroupLabel] = (
+        _normalize_verdict(verdict_candidates[0]) if verdict_candidates else "fail"
+    )
+
+    reason = None
+    for line in response.splitlines():
+        text = line.strip()
+        if text:
+            reason = text[:200]
+            break
+    if reason is None:
+        reason = "empty_response"
+
+    return True, verdict, reason
 
 
 class RolloutSampler:
@@ -166,15 +202,38 @@ class RolloutSampler:
         )
 
         inputs = {key: value.to(self.device) for key, value in encoded.items()}
+        input_len = inputs["input_ids"].shape[1]
 
         do_sample = decode.temperature is not None and decode.temperature > 0
+        stop_tokens = decode.stop if decode.stop else _DEFAULT_STOP
+        # Treat common chat terminators as EOS to hard-stop generation
+        stop_token_ids = []
+        for token in stop_tokens:
+            try:
+                ids = self.tokenizer.encode(token, add_special_tokens=False)
+            except Exception:
+                ids = []
+            if len(ids) == 1:
+                stop_token_ids.append(ids[0])
+
+        eos_ids: List[int] = []
+        if self.tokenizer.eos_token_id is not None:
+            eos_token_id = self.tokenizer.eos_token_id
+            if isinstance(eos_token_id, int):
+                eos_ids.append(eos_token_id)
+        for tid in stop_token_ids:
+            if tid not in eos_ids:
+                eos_ids.append(tid)
         generator_kwargs = {
             "max_new_tokens": decode.max_new_tokens,
             "temperature": decode.temperature if do_sample else None,
             "top_p": decode.top_p,
             "do_sample": do_sample,
-            "pad_token_id": self.tokenizer.pad_token_id or self.tokenizer.eos_token_id,
-            "eos_token_id": self.tokenizer.eos_token_id,
+            "repetition_penalty": decode.repetition_penalty,
+            "no_repeat_ngram_size": decode.no_repeat_ngram_size,
+            "pad_token_id": self.tokenizer.pad_token_id
+            or (eos_ids[0] if eos_ids else None),
+            "eos_token_id": eos_ids or None,
             "return_dict_in_generate": True,
         }
         generator_kwargs = {k: v for k, v in generator_kwargs.items() if v is not None}
@@ -185,23 +244,28 @@ class RolloutSampler:
         with torch.no_grad():
             generation = self.model.generate(**inputs, **generator_kwargs)  # type: ignore[operator]
 
-        sequences = generation.sequences if hasattr(generation, "sequences") else generation
+        sequences = (
+            generation.sequences if hasattr(generation, "sequences") else generation
+        )
         sequences = sequences.to("cpu")
-
-        attention_mask = encoded.get("attention_mask")
-        if attention_mask is not None:
-            prompt_lengths = attention_mask.sum(dim=1)
-        else:
-            prompt_lengths = torch.full(
-                (sequences.size(0),),
-                sequences.size(1),
-                dtype=torch.long,
-            )
 
         outputs: List[str] = []
         for idx in range(sequences.size(0)):
-            prompt_length = int(prompt_lengths[idx].item())
-            generated_ids = sequences[idx, prompt_length:]
+            generated_ids = sequences[idx, input_len:]
+
+            # Optionally truncate at stop token ids (robust to specials removal)
+            if stop_token_ids:
+                try:
+                    stop_pos = next(
+                        pos
+                        for pos, tid in enumerate(generated_ids.tolist())
+                        if tid in stop_token_ids
+                    )
+                except StopIteration:
+                    stop_pos = None
+                if stop_pos is not None:
+                    generated_ids = generated_ids[:stop_pos]
+
             text = self.tokenizer.decode(
                 generated_ids,
                 skip_special_tokens=True,
@@ -214,10 +278,10 @@ class RolloutSampler:
                     trimmed = trimmed[len(marker) :]
                     break
 
-            if decode.stop:
-                for token in decode.stop:
+            if stop_tokens:
+                for token in stop_tokens:
                     pos = trimmed.find(token)
-                    if pos != -1:
+                    if pos > 0:
                         trimmed = trimmed[:pos]
                         break
 
@@ -257,33 +321,81 @@ class RolloutSampler:
                 for ticket, response_text in zip(tickets, responses):
                     candidate_index = counters[ticket.group_id]
                     counters[ticket.group_id] += 1
+
+                    # Normalize response text (convert to simplified Chinese and normalize spaces)
+                    normalized_response_text = to_simplified(response_text)
+                    normalized_response_text = normalize_spaces(
+                        normalized_response_text
+                    )
+
                     base = Trajectory(
                         group_id=ticket.group_id,
                         mission=ticket.mission,
                         candidate_index=candidate_index,
                         decode=decode,
-                        response_text=response_text,
+                        response_text=normalized_response_text,
                         created_at=current_time,
                     )
-                    format_ok, verdict, reason, confidence = _parse_three_line_response(
-                        response_text
+                    format_ok, verdict, reason = _parse_two_line_response(
+                        normalized_response_text
                     )
 
-                    if not format_ok and self.config.format_filter:
-                        logger.debug(
-                            f"Discarding candidate {candidate_index} for {ticket.group_id} due to format violation"
+                    if not format_ok:
+                        logger.warning(
+                            "Rollout parse failed (group=%s, cand=%d), raw response=%.300s",
+                            ticket.group_id,
+                            candidate_index,
+                            normalized_response_text,
                         )
-                        continue
+                        format_ok, verdict, reason = _fallback_coerce(
+                            normalized_response_text
+                        )
+                        logger.warning(
+                            "Salvaged malformed rollout candidate (group=%s, cand=%d)",
+                            ticket.group_id,
+                            candidate_index,
+                        )
+
+                    # Convert traditional Chinese to simplified Chinese and normalize spaces
+                    if reason:
+                        reason = to_simplified(reason)
+                        reason = normalize_spaces(reason)
 
                     per_group[ticket.group_id].append(
                         ParsedTrajectory(
                             base=base,
                             verdict=verdict,
                             reason=reason,
-                            confidence=confidence,
                             format_ok=format_ok,
                         )
                     )
+
+        # Safety net: if a group ended with zero candidates (all filtered), synthesize one
+        now = datetime.now(timezone.utc)
+        for ticket in tickets:
+            if per_group[ticket.group_id]:
+                continue
+            logger.warning(
+                "Sampler yielded zero valid candidates after filtering; injecting fallback for %s",
+                ticket.group_id,
+            )
+            decode = self.config.grid[0]
+            base = Trajectory(
+                group_id=ticket.group_id,
+                mission=ticket.mission,
+                candidate_index=0,
+                decode=decode,
+                response_text="sampling_failed",
+                created_at=now,
+            )
+            per_group[ticket.group_id].append(
+                ParsedTrajectory(
+                    base=base,
+                    verdict="fail",
+                    reason="sampling_failed",
+                    format_ok=True,
+                )
+            )
 
         return per_group
 

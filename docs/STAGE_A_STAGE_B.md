@@ -8,7 +8,7 @@ Business briefing on the two-stage quality control pipeline that underpins produ
 
 **Audience**: Quality operations leads, production planners, mission owners, compliance partners.
 
-**Further technical reading**: `docs/INFERENCE_AND_STAGEA.md`, `docs/STAGE_B_RUNTIME.md`, `openspec/changes/2025-11-03-adopt-training-free-stage-b/`.
+**Further technical reading**: `docs/STAGE_B_RUNTIME.md` (combined runtime), `openspec/changes/2025-11-03-adopt-training-free-stage-b/`.
 
 ---
 
@@ -63,13 +63,13 @@ The Stage-A/Stage-B stack addresses these by standardizing summaries, orchestrat
 | What | Business Interpretation |
 | ---- | ---------------------- |
 | Input | Stage-A summaries + ground-truth labels + current mission guidance. |
-| Process | Samples multiple verdict drafts, scores them with deterministic signals, convenes an LLM “reflection” to propose guidance edits, and applies approved changes. |
-| Output | Final binary verdicts (`pass` / `fail`) in JSONL, trajectories for audit, reflection log summarizing guidance shifts, updated mission-specific guidance repository. |
+| Process | Prompt-only rollouts that must emit evidence JSON arrays; majority vote selection; non-explainable or malformed cases are pushed to manual-review/failure queues; reflection (prompt-only) updates guidance with small edits. |
+| Output | Final binary verdicts (`pass` / `fail`) in JSONL, trajectories for audit, reflection log, manual-review queue, and updated mission-specific guidance repository. |
 
 **Experiences = living policy**
 - Guidance entries (`[G0]`, `[G1]`, …) are policy snippets the model reads before making a decision.
 - Reflection analyzes recent wins/losses and requests incremental edits (add, revise, retire rules).
-- Each applied change records rationale, evidence group ids, and reflection id for traceability.
+- Each applied change records rationale, evidence group ids, and reflection id for traceability；在确定性模式下，应用一条保守 upsert 经验（倾向人工复核/不通过）以覆盖矛盾样本。
 - Guidance updates are applied to mission-specific files; promotion to global guidance requires manual review and deployment.
 
 **Business value**
@@ -90,7 +90,7 @@ The Stage-A/Stage-B stack addresses these by standardizing summaries, orchestrat
    - Review Stage-A quality spot-check, confirm guidance file is populated, sign off on batch release.
 4. **Stage-B Loop (Reflection Steward)**
    - Start run, monitor per-batch dashboards (label match, semantic consistency).
-   - Approve or veto reflection proposals flagged as “uncertain” before they are applied (configurable).
+   - 在 legacy LLM 模式下，可对“uncertain” 反思提案进行人工审批；确定性模式无需审批（自动保守处理）。
 5. **Verdict Handoff (Business Owner)**
    - Consume selections feed; annotate exceptions needing human escalation.
    - Update downstream systems (MES, supplier notifications, billing adjustments).
@@ -101,11 +101,7 @@ The Stage-A/Stage-B stack addresses these by standardizing summaries, orchestrat
 - High-volume missions: run Stage-A continuously, Stage-B hourly with 32-record reflection batches.
 - Low-volume missions: Stage-A weekly, Stage-B on demand with manual approval of guidance edits.
 
-### Runbook: CLI Reference
-
-- **Stage-A summaries** — `scripts/stage_a_infer.sh` wraps `python -m src.stage_a.cli`, enforces supported missions, and writes `<mission>_stage_a.jsonl` under `output_post/stage_a/`. Optional `verify_inputs` logs per-chunk hashes; there is no `stage_a_complete` flag. Override mission/device via env vars (`mission=... gpu=0`).
-- **Stage-B reflection loop** — `scripts/stage_b_run.sh` launches `python -m src.stage_b.runner` (defaults to `configs/stage_b/debug.yaml`; pass `config=<path>` for `configs/stage_b/run.yaml`). It writes `guidance.json`, `trajectories.jsonl`, `selections.jsonl`, and `reflection.jsonl` under `{output.root}/{output.run_name}/{mission}/`. Add `log_level=debug` when ops needs to inspect critic output.
-- **Guidance hygiene** — The runner copies the global guidance file into each mission directory. Promote or roll back mission edits by syncing those files back into the shared guidance repo after review.
+> Run commands and config details live in `docs/STAGE_B_RUNTIME.md` to keep this page focused on business operations.
 
 ---
 
@@ -115,7 +111,7 @@ The Stage-A/Stage-B stack addresses these by standardizing summaries, orchestrat
 - **Escalation Rate**: Percentage of groups routed to manual review; target <5% for stable missions.
 - **Time to Verdict**: Intake to final verdict SLA (hours). Stage-B automation keeps this <4h on average.
 - **Guidance Churn**: Count of applied reflections per week; spikes trigger policy review.
-- **Confidence Distribution**: Monitor for drift—sustained low confidence may indicate prompt or data issues.
+- **Verdict/Reason Drift**: Monitor verdict分布与 Reason 关键要素是否异常；持续偏移时检查 prompt 和数据。
 - **Supplier Impact**: Number of adverse decisions per supplier; feed into commercial scorecards.
 
 Each KPI is reported via `reflection.jsonl` and `selections.jsonl` exports. Analytics teams tie these into Tableau/Looker dashboards.

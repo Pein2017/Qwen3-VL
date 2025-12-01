@@ -38,10 +38,8 @@ def attach_signals(
     for candidate in candidates:
         if isinstance(candidate, ParsedTrajectory):
             verdict_value = candidate.verdict
-            confidence_input = candidate.confidence
         else:
             verdict_value = cast(TrajectoryWithSignals, candidate).verdict
-            confidence_input = cast(TrajectoryWithSignals, candidate).confidence
 
         label_match = None
         if verdict_value is not None:
@@ -58,14 +56,12 @@ def attach_signals(
         else:
             self_consistency = None
 
-        confidence_value = confidence_input if config.store_confidence else None
         needs_manual_review = False
         conflict_flag = label_match is False
 
         signals = DeterministicSignals(
             label_match=label_match,
             self_consistency=self_consistency,
-            confidence=confidence_value,
             conflict_flag=conflict_flag,
             needs_manual_review=needs_manual_review,
         )
@@ -79,7 +75,6 @@ def attach_signals(
                     candidate_index=flat.candidate_index,
                     verdict=flat.verdict,
                     reason=flat.reason,
-                    confidence=flat.confidence,
                     signals=signals,
                     warnings=flat.warnings,
                 )

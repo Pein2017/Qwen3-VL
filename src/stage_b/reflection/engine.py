@@ -10,7 +10,7 @@ import re
 import uuid
 from collections import Counter
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Set
 
 import torch
 from transformers import PreTrainedModel, PreTrainedTokenizerBase
@@ -18,19 +18,23 @@ from transformers import PreTrainedModel, PreTrainedTokenizerBase
 from src.config.missions import STAGE_B_MISSION_FOCUS
 
 from ..config import ReflectionConfig
-from ..io.guidance import GuidanceRepository
+from ..io.guidance import GuidanceRepository, MissionGuidanceError
 from ..sampling.prompts import _render_summaries
 from ..types import (
+    DeterministicSignals,
     ExperienceBundle,
     ExperienceCandidate,
+    ExperienceMetadata,
     ExperienceOperation,
     ExperienceRecord,
     GroupTicket,
+    MissionGuidance,
     ReflectionAction,
     ReflectionOutcome,
     ReflectionProposal,
     TrajectoryWithSignals,
 )
+from ..utils.chinese import normalize_spaces, to_simplified
 
 logger = logging.getLogger(__name__)
 
@@ -57,44 +61,565 @@ class ReflectionEngine:
         self._last_debug_info: Optional[Dict[str, Any]] = None
         self._group_id_mapping: Dict[str, str] = {}
         self._epoch_change_counts: Dict[Tuple[str, int], int] = {}
+        # Auxiliary queues
+        base_dir = reflection_log.parent if reflection_log else None
+        self._wishlist_path = base_dir / "prompt_wishlist.jsonl" if base_dir else None
+        self._noise_path = (
+            base_dir / "label_or_stageA_noise.jsonl" if base_dir else None
+        )
         self._validate_template(self.prompt_template)
 
     def _validate_template(self, template: str) -> None:
-        """Validate that the reflection prompt template satisfies required hints.
+        """Basic sanity check for reflection system prompt."""
+        if not template.strip():
+            raise ValueError("Reflection prompt template must be non-empty")
 
-        - Must contain required placeholders: {mission}, {focus}, {experiences}, {bundle}
-        - Must mention strict JSON output requirement
-        - Must mention merge in allowed ops (upsert|remove|merge)
-        - If max_operations is set, must mention the budget symbol 'K'
-        """
-        # Check for required placeholders (warn-only to allow stub prompts in tests)
-        required_placeholders = ["{mission}", "{focus}", "{experiences}", "{bundle}"]
-        missing = [p for p in required_placeholders if p not in template]
-        if missing:
-            logger.warning(
-                f"Reflection prompt template missing placeholders: {', '.join(missing)}"
+    # ------------------------------------------------------------------
+    # Three-stage reflection (summary -> critique -> batch update)
+    # ------------------------------------------------------------------
+    def _cache_dir(self) -> Path:
+        if self.reflection_log is None:
+            raise ValueError("reflection_log path is required for three_stage pipeline")
+        cache_dir = self.reflection_log.parent / "reflection_cache"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        return cache_dir
+
+    def _cycle_paths(self, epoch: int, reflection_cycle: int) -> Dict[str, Path]:
+        base = self._cache_dir()
+        prefix = f"epoch{epoch}_cycle{reflection_cycle}"
+        return {
+            "summary": base / f"{prefix}_summary.json",
+            "critique": base / f"{prefix}_critique.json",
+            "plan": base / f"{prefix}_plan.json",
+        }
+
+    def _write_json(
+        self, path: Path, payload: Mapping[str, Any] | Sequence[Any]
+    ) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8") as fh:
+            json.dump(payload, fh, ensure_ascii=False, indent=2)
+
+    @staticmethod
+    def _append_jsonl(path: Path, payload: Mapping[str, Any]) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(payload, ensure_ascii=False))
+            fh.write("\n")
+
+    def _record_aux_logs(
+        self,
+        wishlist_entries: Sequence[Mapping[str, Any]],
+        noise_entries: Sequence[Mapping[str, Any]],
+    ) -> None:
+        if self._wishlist_path:
+            for entry in wishlist_entries:
+                self._append_jsonl(self._wishlist_path, entry)
+        if self._noise_path:
+            for entry in noise_entries:
+                self._append_jsonl(self._noise_path, entry)
+
+    def _read_json(self, path: Path) -> Mapping[str, Any]:
+        with path.open("r", encoding="utf-8") as fh:
+            return json.load(fh)
+
+    def _bundle_conflict_eligible(
+        self, bundle: ExperienceBundle
+    ) -> Tuple[bool, Optional[str]]:
+        """Eligibility: selected mismatch OR mixed label_match OR conflict/needs_review."""
+        has_selected_mismatch = False
+        has_mixed = False
+        for rec in bundle.records:
+            label_vals = []
+            for cand in rec.candidates:
+                sig = cand.signals
+                if sig is not None:
+                    if sig.conflict_flag or sig.needs_manual_review:
+                        return True, None
+                    label_vals.append(sig.label_match)
+                if (
+                    rec.winning_candidate is not None
+                    and cand.candidate_index == rec.winning_candidate
+                ):
+                    if sig is not None and sig.label_match is False:
+                        has_selected_mismatch = True
+            if any(v is True for v in label_vals) and any(
+                v is False for v in label_vals
+            ):
+                has_mixed = True
+        if has_selected_mismatch or has_mixed:
+            return True, None
+        return False, "non_conflict_bundle"
+
+    def _build_summary_payload(self, bundle: ExperienceBundle) -> Dict[str, Any]:
+        records = []
+        for rec in bundle.records:
+            rec_entry = {
+                "group_id": rec.ticket.group_id,
+                "label": rec.ticket.label,
+                "winning_candidate": rec.winning_candidate,
+            }
+            cand_entries = []
+            for cand in rec.candidates:
+                sig = cand.signals
+                cand_entries.append(
+                    {
+                        "candidate_index": cand.candidate_index,
+                        "verdict": cand.verdict,
+                        "reason": cand.reason,
+                        "label_match": sig.label_match if sig else None,
+                        "conflict_flag": sig.conflict_flag if sig else False,
+                        "needs_manual_review": sig.needs_manual_review
+                        if sig
+                        else False,
+                        "summary": cand.summary,
+                        "critique": cand.critique,
+                    }
+                )
+            rec_entry["candidates"] = cand_entries
+            records.append(rec_entry)
+        return {
+            "mission": bundle.mission,
+            "guidance_step": bundle.guidance_step,
+            "reflection_cycle": bundle.reflection_cycle,
+            "records": records,
+        }
+
+    def _load_or_build_summary(
+        self, summary_path: Path, bundle: ExperienceBundle
+    ) -> Mapping[str, Any]:
+        if summary_path.exists():
+            return self._read_json(summary_path)
+        payload = self._build_summary_payload(bundle)
+        self._write_json(summary_path, payload)
+        return payload
+
+    @staticmethod
+    def _reject_experience_text(text: str) -> bool:
+        """Heuristic to block Stage-A style summaries leaking into guidance."""
+        if "×" in text:
+            return True
+        if "标签/" in text:
+            return True
+        return False
+
+    def _compact_guidance(self, mission: str) -> Optional[MissionGuidance]:
+        """Dedup, normalize, reindex experiences G0..Gn."""
+        guidance_map = self.guidance_repo.load()
+        if mission not in guidance_map:
+            return None
+        current = guidance_map[mission]
+        seen_texts = set()
+        new_experiences: Dict[str, str] = {}
+        new_metadata: Dict[str, ExperienceMetadata] = {}
+
+        def _normalize(text: str) -> str:
+            return " ".join(text.strip().split())
+
+        for _, (key, text) in enumerate(current.experiences.items()):
+            norm = _normalize(text)
+            if self._reject_experience_text(norm):
+                raise MissionGuidanceError(
+                    f"Experience text appears to be Stage-A summary: {text!r}"
+                )
+            if norm in seen_texts:
+                continue
+            seen_texts.add(norm)
+            new_key = f"G{len(new_experiences)}"
+            new_experiences[new_key] = norm
+            if key in current.metadata:
+                meta = current.metadata[key]
+                new_metadata[new_key] = meta
+        if not new_experiences:
+            raise MissionGuidanceError("Compaction would remove all experiences")
+        compacted = MissionGuidance(
+            mission=current.mission,
+            focus=current.focus,
+            experiences=new_experiences,
+            step=current.step,
+            updated_at=current.updated_at,
+            metadata=new_metadata,
+        )
+        # Snapshot then write
+        self.guidance_repo._create_snapshot()
+        guidance_map = dict(guidance_map)
+        guidance_map[mission] = compacted
+        self.guidance_repo._write(guidance_map)
+        self.guidance_repo.invalidate()
+        return compacted
+
+    def _generate_three_stage_ops(
+        self, summary_payload: Mapping[str, Any], *, bundle: ExperienceBundle
+    ) -> List[dict]:
+        guidance_map = self.guidance_repo.load()
+        current = guidance_map.get(bundle.mission)
+        if current is None:
+            raise MissionGuidanceError(f"Mission {bundle.mission} guidance not found")
+        experiences_lines = [
+            f"[{key}] {text}" for key, text in sorted(current.experiences.items())
+        ]
+        case_lines: List[str] = []
+        for rec in bundle.records:
+            gid = rec.ticket.group_id
+            label = rec.ticket.label
+            win = rec.winning_candidate
+            case_lines.append(f"- group_id: {gid}; gt: {label}; winning: {win}")
+            for cand in rec.candidates:
+                sig = cand.signals
+                match = sig.label_match if sig else None
+                case_lines.append(
+                    f"  cand#{cand.candidate_index}: verdict={cand.verdict} match={match} reason={cand.reason}"
+                )
+
+        prompt = (
+            "你是规则反思助手。请仅输出 JSON 数组，不要输出其他任何文本或 Markdown。\n"
+            "每个元素字段: group_id, action(add_rule|ask_more_info|abstain_noise|keep), why, missing_evidence(list,可空), new_rule(仅 add_rule)。\n"
+            "当且仅当现有证据已部分支持 GT 且缺少明确要点时，才提出 add_rule+new_rule；若需要更多材料，用 ask_more_info 并写 missing_evidence；疑似噪声用 abstain_noise；否则 keep。\n"
+            f"最多 {self.config.max_operations or 3} 条；禁止使用样本细节或包含“×/标签/”。\n\n"
+            "EXPERIENCES:\n"
+            + "\n".join(experiences_lines)
+            + "\n\nCASES:\n"
+            + "\n".join(case_lines)
+        )
+
+        messages = [
+            {"role": "system", "content": self.prompt_template},
+            {"role": "user", "content": prompt},
+        ]
+        chat_prompt = self.tokenizer.apply_chat_template(
+            messages, add_generation_prompt=True, tokenize=False
+        )
+        assert isinstance(chat_prompt, str), (
+            "apply_chat_template must return string when tokenize=False"
+        )
+
+        encoded = self.tokenizer(
+            chat_prompt,
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+            max_length=self.config.max_reflection_length,
+        )
+        inputs = {k: v.to(self.device) for k, v in encoded.items()}
+
+        with torch.no_grad():
+            generate_kwargs = {
+                "max_new_tokens": self.config.max_new_tokens,
+                "temperature": self.config.temperature,
+                "top_p": self.config.top_p,
+                "do_sample": True,
+                "pad_token_id": self.tokenizer.pad_token_id
+                or self.tokenizer.eos_token_id,
+                "eos_token_id": self.tokenizer.eos_token_id,
+            }
+            output = self.model.generate(  # type: ignore[call-overload]
+                **inputs,
+                **generate_kwargs,
+            )
+        prompt_length = inputs["input_ids"].size(1)
+        generated_tokens = output[0, prompt_length:]
+        response = self.tokenizer.decode(
+            generated_tokens, skip_special_tokens=True
+        ).strip()
+        # Normalize response immediately after generation
+        response = to_simplified(response)
+        response = normalize_spaces(response)
+        # Strict JSON only
+        try:
+            parsed = json.loads(response)
+            if not isinstance(parsed, list):
+                raise ValueError("critique JSON is not a list")
+            return parsed
+        except Exception as exc:
+            self._last_debug_info = {
+                "raw_response": response[:500],
+                "parse_error": str(exc),
+            }
+            raise
+
+    def _ops_from_json(
+        self, ops_json: Sequence[Mapping[str, Any]], *, bundle: ExperienceBundle
+    ) -> Tuple[
+        Tuple[ExperienceOperation, ...],
+        List[Mapping[str, Any]],
+        List[Mapping[str, Any]],
+    ]:
+        """Parse counterfactual reflection JSON into ops + auxiliary queues."""
+
+        record_by_gid = {rec.ticket.group_id: rec for rec in bundle.records}
+        ops: List[ExperienceOperation] = []
+        wishlist: List[Mapping[str, Any]] = []
+        noise: List[Mapping[str, Any]] = []
+        max_ops = self.config.max_operations or len(ops_json)
+
+        # Pre-compute conflict status per group so we can reason independently of
+        # what the reflection LLM decides to do for each entry.
+        conflict_gids: List[str] = []
+        conflict_status: Dict[str, Dict[str, bool]] = {}
+        for rec in bundle.records:
+            signals = [
+                cand.signals for cand in rec.candidates if cand.signals is not None
+            ]
+            has_true = any(sig.label_match is True for sig in signals)
+            has_false = any(sig.label_match is False for sig in signals)
+            selected_mismatch = False
+            if rec.winning_candidate is not None:
+                for cand in rec.candidates:
+                    sig = cand.signals
+                    if (
+                        sig is not None
+                        and cand.candidate_index == rec.winning_candidate
+                    ):
+                        selected_mismatch = sig.label_match is False
+                        break
+            all_wrong = has_false and not has_true
+            if has_false:
+                conflict_gids.append(rec.ticket.group_id)
+            conflict_status[rec.ticket.group_id] = {
+                "has_true": has_true,
+                "has_false": has_false,
+                "selected_mismatch": selected_mismatch,
+                "all_wrong": all_wrong,
+            }
+
+        # Track which actions the LLM proposed per group so we can identify
+        # conflicts where it effectively did "nothing" (keep) and force
+        # a conservative rule instead of labelling them as pure noise.
+        per_gid_actions: Dict[str, Set[str]] = {}
+
+        def _as_list(obj: object) -> List[str]:
+            if isinstance(obj, Sequence) and not isinstance(obj, (str, bytes)):
+                return [str(x).strip() for x in obj if str(x).strip()]
+            if obj is None:
+                return []
+            return [str(obj).strip()] if str(obj).strip() else []
+
+        for entry in ops_json:
+            if not isinstance(entry, Mapping):
+                continue
+            action = str(entry.get("action", "")).strip().lower()
+            gid = str(entry.get("group_id", "")).strip()
+            why = str(entry.get("why", "")).strip()
+            missing = _as_list(entry.get("missing_evidence"))[:3]
+            new_rule = str(entry.get("new_rule", "")).strip()
+            if not gid or gid not in record_by_gid:
+                continue
+            rec = record_by_gid[gid]
+            per_gid_actions.setdefault(gid, set()).add(action or "keep")
+
+            status = conflict_status.get(gid, {})
+            has_true = status.get("has_true", False)
+            has_false = status.get("has_false", False)
+            selected_mismatch = status.get("selected_mismatch", False)
+            all_wrong = status.get("all_wrong", False)
+            has_contradiction = has_true and has_false
+
+            if action == "add_rule":
+                if len(ops) >= max_ops:
+                    continue
+                if not new_rule:
+                    continue
+                if self._reject_experience_text(new_rule):
+                    continue
+                # Allow longer guidance sentences; soft-cap to avoid runaway generations
+                if len(new_rule) > 120:
+                    new_rule = new_rule[:120]
+                # 允许在标签不符或存在矛盾时也添加规则，用于对冲全错/选错的场景
+                allow_add = (
+                    has_true or all_wrong or has_contradiction or selected_mismatch
+                )
+                if not allow_add:
+                    noise.append(
+                        {
+                            "mission": bundle.mission,
+                            "group_id": gid,
+                            "label": rec.ticket.label,
+                            "reason": "no_supporting_or_conflict_signal",
+                            "why": why,
+                        }
+                    )
+                    continue
+                ops.append(
+                    ExperienceOperation(
+                        op="upsert",
+                        key=None,
+                        text=new_rule,
+                        rationale="add_rule",
+                        evidence=(gid,),
+                        merged_from=None,
+                    )
+                )
+            elif action == "ask_more_info":
+                wishlist.append(
+                    {
+                        "mission": bundle.mission,
+                        "group_id": gid,
+                        "label": rec.ticket.label,
+                        "missing_evidence": missing,
+                        "why": why,
+                    }
+                )
+            elif action == "abstain_noise":
+                noise.append(
+                    {
+                        "mission": bundle.mission,
+                        "group_id": gid,
+                        "label": rec.ticket.label,
+                        "reason": "abstain_noise",
+                        "why": why,
+                    }
+                )
+            else:  # keep or unknown
+                # Legacy behaviour: optionally treat keep-on-conflict as noise/wishlist.
+                # When treat_keep_conflict_as_noise is False (default), these samples
+                # are left for the conflict policy below to handle (no auto-noise).
+                if self.config.treat_keep_conflict_as_noise:
+                    if all_wrong or (selected_mismatch and not has_true):
+                        noise.append(
+                            {
+                                "mission": bundle.mission,
+                                "group_id": gid,
+                                "label": rec.ticket.label,
+                                "reason": "auto_keep_mismatch",
+                                "why": why or "标签与候选全不符，视为噪声或需人工复核",
+                            }
+                        )
+                    elif selected_mismatch and has_true:
+                        wishlist.append(
+                            {
+                                "mission": bundle.mission,
+                                "group_id": gid,
+                                "label": rec.ticket.label,
+                                "missing_evidence": missing
+                                or [
+                                    f"补充能支撑标签为 {rec.ticket.label} 的关键部件近景/安装状态"
+                                ],
+                                "why": why or "标签与当前判定不一致，需要补充证据澄清",
+                            }
+                        )
+
+        # Conflict guardrail: for conflicting groups, always ensure a rule
+        # exists (unless LLM already proposed add_rule). This prevents
+        # conflicts from being silently marked as noise/keep.
+        if self.config.require_rule_for_conflicts and max_ops != 0:
+            for gid, status in conflict_status.items():
+                is_conflict = status.get("all_wrong", False) or status.get(
+                    "selected_mismatch", False
+                )
+                if not is_conflict:
+                    continue
+                actions = per_gid_actions.get(gid, set())
+                # Only skip when add_rule 已出现；ask_more_info/abstain_noise/keep
+                # 仍会触发保守规则注入，以覆盖 GT 与模型冲突场景。
+                if "add_rule" in actions:
+                    continue
+                if len(ops) >= max_ops:
+                    break
+                # Reuse the generic conservative rule text; duplicates will be
+                # merged via GuidanceRepository._build_updated_guidance.
+                rule_text = (
+                    "当关键部件缺失、未按要求安装或不可见/模糊/遮挡时，判定不通过或需人工复核；证据不足时不放行"
+                )
+                ops.append(
+                    ExperienceOperation(
+                        op="upsert",
+                        key=None,
+                        text=rule_text,
+                        rationale="forced_conflict_rule",
+                        evidence=(gid,),
+                        merged_from=None,
+                    )
+                )
+
+        # Backwards-compatible safety net when conflict forcing is disabled:
+        # if no operations were produced but conflicts/mismatches exist, inject
+        # a single conservative rule using the first conflicting group as seed.
+        if (
+            not self.config.require_rule_for_conflicts
+            and not ops
+            and conflict_gids
+            and max_ops != 0
+        ):
+            rule_text = (
+                "当关键部件缺失、未按要求安装或不可见/模糊/遮挡时，判定不通过或需人工复核；证据不足时不放行"
+            )
+            ops.append(
+                ExperienceOperation(
+                    op="upsert",
+                    key=None,
+                    text=rule_text,
+                    rationale="auto_conflict_fail",
+                    evidence=tuple(conflict_gids[:1]),
+                    merged_from=None,
+                )
             )
 
-        # Check for strict JSON output requirement
-        if "JSON" not in template and "json" not in template:
-            logger.warning("Reflection prompt template does not mention JSON requirement")
+        return tuple(ops), wishlist, noise
 
-        # Require mention of merge operation in allowed ops
-        if "upsert|remove|merge" not in template:
-            name = Path(self.config.prompt_path).name
-            if name == "stage_b_reflection_prompt.txt":
-                raise ValueError("Reflection prompt template must include allowed ops 'upsert|remove|merge'")
-            logger.warning("Reflection prompt template missing allowed ops 'upsert|remove|merge' hint")
+    def _build_plan_payload(
+        self,
+        critique_json: Sequence[Mapping[str, Any]],
+        *,
+        bundle: ExperienceBundle,
+        reflection_id: str,
+    ) -> Dict[str, Any]:
+        operations, wishlist_entries, noise_entries = self._ops_from_json(
+            critique_json, bundle=bundle
+        )
+        evidence_ids = tuple(rec.ticket.group_id for rec in bundle.records)
+        action = "refine" if operations else "noop"
+        proposal = ReflectionProposal(
+            action=ReflectionAction(action),  # type: ignore[arg-type]
+            summary="three_stage critique",
+            critique="json_ops",
+            operations=operations,
+            evidence_group_ids=evidence_ids,
+            uncertainty_note=None,
+            text=None,
+        )
+        ops_serializable = [
+            {
+                "op": op.op,
+                "key": op.key,
+                "text": op.text,
+                "rationale": op.rationale,
+                "evidence": list(op.evidence),
+                "merged_from": list(op.merged_from) if op.merged_from else None,
+            }
+            for op in operations
+        ]
+        payload = {
+            "reflection_id": reflection_id,
+            "proposal": proposal,
+            "operations": operations,
+            "raw_ops": critique_json,
+            "ops_serializable": ops_serializable,
+            "wishlist_entries": wishlist_entries,
+            "noise_entries": noise_entries,
+        }
+        return payload
 
-        # If budgets are configured, require a 'K' mention to signal cap to the model
-        if self.config.max_operations is not None and "K" not in template:
-            # For canonical template name, treat as error; otherwise warn
-            name = Path(self.config.prompt_path).name
-            if name == "stage_b_reflection_prompt.txt":
-                raise ValueError("Reflection prompt template must mention budget symbol 'K' when max_operations is set")
-            logger.warning("Reflection template missing budget symbol 'K' while max_operations is set")
+    @staticmethod
+    def _plan_to_json(plan_payload: Mapping[str, Any]) -> Mapping[str, Any]:
+        proposal = plan_payload["proposal"]
+        return {
+            "reflection_id": plan_payload.get("reflection_id"),
+            "raw_ops": plan_payload.get("raw_ops"),
+            "wishlist_entries": plan_payload.get("wishlist_entries"),
+            "noise_entries": plan_payload.get("noise_entries"),
+            "proposal": {
+                "action": proposal.action,
+                "summary": proposal.summary,
+                "critique": proposal.critique,
+                "operations": plan_payload.get("ops_serializable"),
+                "evidence_group_ids": list(proposal.evidence_group_ids),
+                "uncertainty_note": proposal.uncertainty_note,
+            },
+        }
 
-    def _check_eligibility(self, bundle: ExperienceBundle) -> Tuple[bool, Optional[str]]:
+    def _check_eligibility(
+        self, bundle: ExperienceBundle
+    ) -> Tuple[bool, Optional[str]]:
         """
         Check if bundle is eligible for reflection according to configured policy.
 
@@ -119,8 +644,12 @@ class ReflectionEngine:
         if policy == "contradictions_or_all_wrong":
             for record in bundle.records:
                 has_true = any(c.signals.label_match is True for c in record.candidates)
-                has_false = any(c.signals.label_match is False for c in record.candidates)
-                all_wrong = all(c.signals.label_match is False for c in record.candidates)
+                has_false = any(
+                    c.signals.label_match is False for c in record.candidates
+                )
+                all_wrong = all(
+                    c.signals.label_match is False for c in record.candidates
+                )
                 if (has_true and has_false) or all_wrong:
                     return True, None
             return False, "No contradictions and no all-wrong groups"
@@ -182,25 +711,32 @@ class ReflectionEngine:
     ) -> ExperienceRecord:
         experience_candidates = []
         for item in candidates:
-            # Extract critic insights if available
-            summary_text = None
-            critique_text = None
-            if item.critic is not None:
-                summary_text = item.critic.summary
-                critique_text = item.critic.critique
-
-            if item.parsed is not None and item.signals is not None:
-                experience_candidates.append(
-                    ExperienceCandidate(
-                        candidate_index=item.parsed.base.candidate_index,
-                        verdict=item.parsed.verdict,
-                        reason=item.parsed.reason,
-                        confidence=item.signals.confidence,
-                        signals=item.signals,
-                        summary=summary_text,
-                        critique=critique_text,
-                    )
+            if item.parsed is None:
+                continue
+            # fallback signals
+            signals = item.signals
+            if signals is None:
+                signals = DeterministicSignals(
+                    label_match=(
+                        item.parsed.verdict == ticket.label
+                        if item.parsed.verdict
+                        else None
+                    ),
+                    self_consistency=None,
+                    conflict_flag=False,
+                    needs_manual_review=False,
                 )
+
+            experience_candidates.append(
+                ExperienceCandidate(
+                    candidate_index=item.parsed.base.candidate_index,
+                    verdict=item.parsed.verdict,
+                    reason=item.parsed.reason,
+                    signals=signals,
+                    summary=None,
+                    critique=None,
+                )
+            )
         return ExperienceRecord(
             ticket=ticket,
             candidates=tuple(experience_candidates),
@@ -232,196 +768,163 @@ class ReflectionEngine:
         epoch: int,
         log: bool = True,
     ) -> ReflectionOutcome:
+        return self._reflect_three_stage(bundle, epoch=epoch, log=log)
+
+    # ------------------------------------------------------------------
+    # Deterministic reflection (no LLM, rule-based experience update)
+    # ------------------------------------------------------------------
+    def _reflect_three_stage(
+        self, bundle: ExperienceBundle, *, epoch: int, log: bool
+    ) -> ReflectionOutcome:
         reflection_id = uuid.uuid4().hex[:12]
         guidance_step_before = bundle.guidance_step
         guidance_step_after = bundle.guidance_step
-        operations: Tuple[ExperienceOperation, ...] = ()
         ineligible_reason: Optional[str] = None
         warnings: List[str] = []
-        proposal: Optional[ReflectionProposal] = None
+        operations: Tuple[ExperienceOperation, ...] = ()
+        applied = False
 
-        # Check eligibility using configured policy
-        eligible_for_reflection, eligibility_reason = self._check_eligibility(bundle)
-
-        if not eligible_for_reflection:
-            evidence_ids = tuple(record.ticket.group_id for record in bundle.records)
+        eligible, reason = self._bundle_conflict_eligible(bundle)
+        if not eligible:
+            ineligible_reason = reason
             proposal = ReflectionProposal(
                 action=ReflectionAction("noop"),
-                summary="Skipped ineligible batch",
-                critique=f"Bundle not eligible for reflection: {eligibility_reason}",
-                operations=(),
-                evidence_group_ids=evidence_ids,
-                uncertainty_note="ineligible_batch",
+                summary="Skipped non-conflict bundle",
+                critique=reason,
+                operations=tuple(),
+                evidence_group_ids=tuple(rec.ticket.group_id for rec in bundle.records),
+                uncertainty_note=reason,
+                text=None,
+            )  # type: ignore
+            outcome = ReflectionOutcome(
+                reflection_id=reflection_id,
+                mission=bundle.mission,
+                proposal=proposal,
+                applied=False,
+                guidance_step_before=guidance_step_before,
+                guidance_step_after=guidance_step_after,
+                operations=tuple(),
+                eligible=False,
+                applied_epoch=None,
+                ineligible_reason=ineligible_reason,
+                warnings=tuple(warnings),
+            )
+            if log:
+                self._append_log(outcome, epoch=epoch)
+            return outcome
+
+        paths = self._cycle_paths(epoch, bundle.reflection_cycle)
+
+        # Stage 1: summary (deterministic)
+        summary_payload = self._load_or_build_summary(paths["summary"], bundle)
+
+        # Stage 2: critique (LLM JSON)
+        critique_json: Optional[List[dict]] = None
+        if paths["critique"].exists():
+            try:
+                stored = self._read_json(paths["critique"])
+                if isinstance(stored, list):
+                    critique_json = stored
+            except Exception:
+                critique_json = None
+        if critique_json is None:
+            try:
+                critique_json = self._generate_three_stage_ops(
+                    summary_payload, bundle=bundle
+                )
+                self._write_json(paths["critique"], critique_json)
+            except Exception as exc:
+                ineligible_reason = f"generation_error: {exc}"
+                warnings.append("generation_error")
+        if critique_json is None:
+            proposal = ReflectionProposal(
+                action=ReflectionAction("noop"),
+                summary="Generation error",
+                critique=ineligible_reason,
+                operations=tuple(),
+                evidence_group_ids=tuple(rec.ticket.group_id for rec in bundle.records),
+                uncertainty_note="generation_error",
+                text=None,
+            )  # type: ignore
+            outcome = ReflectionOutcome(
+                reflection_id=reflection_id,
+                mission=bundle.mission,
+                proposal=proposal,
+                applied=False,
+                guidance_step_before=guidance_step_before,
+                guidance_step_after=guidance_step_after,
+                operations=tuple(),
+                eligible=False,
+                applied_epoch=None,
+                ineligible_reason=ineligible_reason,
+                warnings=tuple(warnings),
+            )
+            if log:
+                self._append_log(outcome, epoch=epoch)
+            return outcome
+
+        # Stage 3: batch update plan
+        try:
+            plan_payload = self._build_plan_payload(
+                critique_json, bundle=bundle, reflection_id=reflection_id
+            )
+            self._write_json(paths["plan"], self._plan_to_json(plan_payload))
+            proposal = plan_payload["proposal"]  # type: ignore[index]
+            operations = plan_payload["operations"]  # type: ignore[index]
+            wishlist_entries = plan_payload.get("wishlist_entries", [])  # type: ignore[arg-type]
+            noise_entries = plan_payload.get("noise_entries", [])  # type: ignore[arg-type]
+        except Exception as exc:
+            ineligible_reason = f"generation_error: {exc}"
+            warnings.append("generation_error")
+            proposal = ReflectionProposal(
+                action=ReflectionAction("noop"),
+                summary="Generation error",
+                critique=str(exc),
+                operations=tuple(),
+                evidence_group_ids=tuple(rec.ticket.group_id for rec in bundle.records),
+                uncertainty_note="generation_error",
                 text=None,
             )  # type: ignore[call-arg]
-            logger.debug(
-                f"Skipping reflection for mission {bundle.mission}: {eligibility_reason}"
+            outcome = ReflectionOutcome(
+                reflection_id=reflection_id,
+                mission=bundle.mission,
+                proposal=proposal,
+                applied=False,
+                guidance_step_before=guidance_step_before,
+                guidance_step_after=guidance_step_after,
+                operations=tuple(),
+                eligible=False,
+                applied_epoch=None,
+                ineligible_reason=ineligible_reason,
+                warnings=tuple(warnings),
             )
-            eligible = False
-            ineligible_reason = eligibility_reason
-        else:
-            # Initialize eligibility for this branch
-            eligible = True
-            # If epoch cap is already exhausted, skip generation and mark ineligible
-            if self.config.change_cap_per_epoch is not None:
-                used_so_far = self._epoch_change_counts.get((bundle.mission, epoch), 0)
-                if used_so_far >= self.config.change_cap_per_epoch:
-                    ineligible_reason = "Epoch change cap reached"
-                    eligible = False
-                    operations = tuple()
-                    proposal = ReflectionProposal(
-                        action=ReflectionAction("noop"),
-                        summary="Epoch cap exhausted",
-                        critique=None,
-                        operations=tuple(),
-                        evidence_group_ids=tuple(
-                            r.ticket.group_id for r in bundle.records
-                        ),
-                        uncertainty_note=None,
-                        text=None,
-                    )  # type: ignore
+            if log:
+                self._append_log(outcome, epoch=epoch)
+            return outcome
 
-            if eligible:
-                # Manual review strategy for all-wrong groups
-                if getattr(self.config, "all_wrong_strategy", "reflect_diagnose") == "manual_review":
-                    any_all_wrong = any(all(c.signals.label_match is False for c in r.candidates) for r in bundle.records)
-                    if any_all_wrong:
-                        ineligible_reason = "all_wrong_manual_review"
-                        eligible = False
-                        operations = tuple()
-                        proposal = ReflectionProposal(  # type: ignore[call-arg]
-                            action=ReflectionAction("noop"),
-                            summary="All-wrong manual review",
-                            critique="Flagged for 人工复核",
-                            operations=tuple(),
-                            evidence_group_ids=tuple(r.ticket.group_id for r in bundle.records),
-                            uncertainty_note="all_wrong_manual_review",
-                            text=None,
-                        )
-                # Otherwise, run reflection to propose operations
-                if eligible:
-                    gen_error: Optional[str] = None
-                    try:
-                        proposal = self._generate_reflection(bundle)
-                        operations = proposal.operations
-                        eligible = (
-                            proposal.action == "refine"
-                            and bool(operations)
-                            and (
-                                self.config.allow_uncertain or not proposal.uncertainty_note
-                            )
-                        )
-                        if not eligible and proposal.action == "refine":
-                            if not operations:
-                                ineligible_reason = "No operations in proposal"
-                            elif (
-                                proposal.uncertainty_note
-                                and not self.config.allow_uncertain
-                            ):
-                                ineligible_reason = (
-                                    f"Uncertainty gating: {proposal.uncertainty_note}"
-                                )
-                            else:
-                                ineligible_reason = "Proposal validation failed"
+        # Record wishlist/noise suggestions even if no guidance is applied
+        self._record_aux_logs(wishlist_entries or [], noise_entries or [])
 
-                        if proposal.action == "refine" and not operations:
-                            logger.warning(
-                                f"Reflection for mission {bundle.mission} produced no operations; treating as noop"
-                            )
-                            eligible = False
+        evidence_ids = tuple(rec.ticket.group_id for rec in bundle.records)
 
-                        if (
-                            proposal.action == "refine"
-                            and proposal.uncertainty_note
-                            and not self.config.allow_uncertain
-                        ):
-                            logger.info(
-                                f"Skipping reflection for mission {bundle.mission} due to uncertainty gating"
-                            )
-
-                        # Budget enforcement
-                        if proposal.action == "refine" and eligible and operations:
-                            # Per-cycle max operations
-                            if (
-                                self.config.max_operations is not None
-                                and len(operations) > self.config.max_operations
-                            ):
-                                warnings.append(
-                                    f"truncated_by_max_operations: {len(operations)} -> {self.config.max_operations}"
-                                )
-                                operations = tuple(operations[: self.config.max_operations])
-                            # Per-epoch change cap per mission
-                            if self.config.change_cap_per_epoch is not None:
-                                used_so_far = self._epoch_change_counts.get(
-                                    (bundle.mission, epoch), 0
-                                )
-                                remaining = self.config.change_cap_per_epoch - used_so_far
-                                if remaining <= 0:
-                                    eligible = False
-                                    ineligible_reason = "Epoch change cap reached"
-                                    operations = ()
-                                    warnings.append(
-                                        f"epoch_cap_exhausted: used={used_so_far} cap={self.config.change_cap_per_epoch}"
-                                    )
-                                elif len(operations) > remaining:
-                                    warnings.append(
-                                        f"truncated_by_epoch_cap: {len(operations)} -> {remaining} (used={used_so_far}, cap={self.config.change_cap_per_epoch})"
-                                    )
-                                    operations = tuple(operations[:remaining])
-                    except Exception as exc:
-                            # Generation failed (likely due to test-time mocks). Create a noop proposal and mark ineligible.
-                            gen_error = str(exc)
-                            evidence_ids = tuple(r.ticket.group_id for r in bundle.records)
-                            proposal = ReflectionProposal(
-                                action=ReflectionAction("noop"),
-                                summary="Generation error",
-                                critique=gen_error,
-                                operations=tuple(),
-                                evidence_group_ids=evidence_ids,
-                                uncertainty_note="generation_error",
-                                text=None,
-                            )  # type: ignore
-                            operations = tuple()
-                            eligible = False
-                            ineligible_reason = "Generation error"
-                            warnings.append("generation_error")
-
-        assert proposal is not None, "proposal should be set by this point"
-        if proposal.action != "noop":
-                logger.info(
-                    f"Reflection proposal for mission {bundle.mission}: action={proposal.action}, eligible={eligible}, ops={len(operations)}"
-                )
-
-        # Apply operations if eligible
-        applied = False
-        if eligible and operations:
+        if proposal.action == "refine" and operations:
             try:
                 updated_guidance = self.guidance_repo.apply_reflection(
                     mission=bundle.mission,
                     proposal=proposal,
                     reflection_id=reflection_id,
-                    source_group_ids=list(proposal.evidence_group_ids),
+                    source_group_ids=evidence_ids,
                     applied_epoch=epoch,
                     operations=operations,
                 )
                 guidance_step_after = updated_guidance.step
+                # Compact after apply
+                self._compact_guidance(bundle.mission)
                 applied = True
-                logger.info(
-                    f"Applied reflection for mission {bundle.mission}: step {guidance_step_before} -> {guidance_step_after}"
-                )
-            except Exception as exc:  # pragma: no cover - defensive logging
-                logger.warning(
-                    f"Failed to apply reflection for mission {bundle.mission}: {exc}",
-                    exc_info=True,
-                )
+            except Exception as exc:  # pragma: no cover - defensive
+                ineligible_reason = str(exc)
+                warnings.append("apply_failed")
 
-        # Update per-epoch change counters if applied
-        if applied and self.config.change_cap_per_epoch is not None:
-            key = (bundle.mission, epoch)
-            prev = self._epoch_change_counts.get(key, 0)
-            self._epoch_change_counts[key] = prev + len(operations)
-
-        assert proposal is not None, "proposal should always be set"
         outcome = ReflectionOutcome(
             reflection_id=reflection_id,
             mission=bundle.mission,
@@ -430,47 +933,183 @@ class ReflectionEngine:
             guidance_step_before=guidance_step_before,
             guidance_step_after=guidance_step_after,
             operations=operations,
-            eligible=eligible,
+            eligible=True,
             applied_epoch=epoch if applied else None,
             ineligible_reason=ineligible_reason,
             warnings=tuple(warnings),
         )
 
         if log:
-            # Attach candidate summaries/critique for provenance
-            try:
-                self._last_debug_info = {
-                    "records": [
-                        {
-                            "group_id": rec.ticket.group_id,
-                            "winning_candidate": rec.winning_candidate,
-                            "candidates": [
-                                {
-                                    "candidate_index": c.candidate_index,
-                                    "label_match": c.signals.label_match,
-                                }
-                                for c in rec.candidates
-                            ],
-                        }
-                        for rec in bundle.records
-                    ]
-                }
-            except Exception:
-                pass
+            self._last_debug_info = {
+                "cache_paths": {k: str(v) for k, v in paths.items()},
+                "summary_cached": paths["summary"].exists(),
+                "critique_cached": paths["critique"].exists(),
+            }
             self._append_log(outcome, epoch=epoch)
         return outcome
 
+    def _reflect_deterministic(
+        self, bundle: ExperienceBundle, *, epoch: int, log: bool
+    ) -> ReflectionOutcome:
+        # Deterministic path currently only used when config.engine == "deterministic";
+        # keep a defensive definition of auto_text before any usage.
+        auto_text = (
+            "[AUTO] 矛盾/全错/冲突样本：优先标记人工复核；关键挡风板/BBU要素缺失或不确定时，"
+            "倾向不通过或降低置信，并在 Reason 中写明证据不足。"
+        )
+        guidance_map = self.guidance_repo.load()
+        current_guidance = guidance_map.get(bundle.mission)
+        if current_guidance is None:
+            raise ValueError(f"Guidance for mission {bundle.mission} not found")
+
+        reflection_id = uuid.uuid4().hex[:12]
+        guidance_step_before = current_guidance.step
+        guidance_step_after = current_guidance.step
+        warnings: List[str] = []
+
+        eligible, ineligible_reason = self._check_eligibility(bundle)
+
+        # No per-epoch cap in simplified pipeline
+
+        evidence_ids = tuple(rec.ticket.group_id for rec in bundle.records)
+
+        if not eligible:
+            proposal = ReflectionProposal(
+                action=ReflectionAction("noop"),
+                summary="Skipped ineligible batch",
+                critique=ineligible_reason or "No contradictions",
+                operations=tuple(),
+                evidence_group_ids=evidence_ids,
+                uncertainty_note="ineligible_batch",
+                text=None,
+            )  # type: ignore[call-arg]
+            outcome = ReflectionOutcome(
+                reflection_id=reflection_id,
+                mission=bundle.mission,
+                proposal=proposal,
+                applied=False,
+                guidance_step_before=guidance_step_before,
+                guidance_step_after=guidance_step_after,
+                operations=tuple(),
+                eligible=False,
+                applied_epoch=None,
+                ineligible_reason=ineligible_reason,
+                warnings=tuple(warnings),
+            )
+            if log:
+                self._append_log(outcome, epoch=epoch)
+            return outcome
+
+        # Deduplicate deterministic rule: if identical text already exists, skip
+        if (
+            current_guidance.experiences
+            and auto_text in current_guidance.experiences.values()
+        ):
+            proposal = ReflectionProposal(
+                action=ReflectionAction("noop"),
+                summary="Duplicate auto guidance detected; skipping",
+                critique="deterministic_conflict_rule already present",
+                operations=tuple(),
+                evidence_group_ids=evidence_ids,
+                uncertainty_note="duplicate_auto_text",
+                text=None,
+            )  # type: ignore[call-arg]
+            outcome = ReflectionOutcome(
+                reflection_id=reflection_id,
+                mission=bundle.mission,
+                proposal=proposal,
+                applied=False,
+                guidance_step_before=guidance_step_before,
+                guidance_step_after=guidance_step_after,
+                operations=tuple(),
+                eligible=False,
+                applied_epoch=None,
+                ineligible_reason="duplicate_auto_text",
+                warnings=tuple(warnings),
+            )
+            if log:
+                self._append_log(outcome, epoch=epoch)
+            return outcome
+
+        # Auto-upsert conservative guidance
+        operations: Tuple[ExperienceOperation, ...] = (
+            ExperienceOperation(
+                op="upsert",  # type: ignore[arg-type]
+                key=None,
+                text=auto_text,
+                rationale="deterministic_conflict_rule",
+                evidence=evidence_ids,
+                merged_from=None,
+            ),
+        )
+
+        proposal = ReflectionProposal(
+            action=ReflectionAction("refine"),
+            summary="deterministic guidance update",
+            critique="auto-generated from contradictions/conflicts",
+            operations=operations,
+            evidence_group_ids=evidence_ids,
+            uncertainty_note=None,
+            text=None,
+        )  # type: ignore[call-arg]
+
+        applied = False
+        try:
+            updated_guidance = self.guidance_repo.apply_reflection(
+                mission=bundle.mission,
+                proposal=proposal,
+                reflection_id=reflection_id,
+                source_group_ids=list(proposal.evidence_group_ids),
+                applied_epoch=epoch,
+                operations=operations,
+            )
+            guidance_step_after = updated_guidance.step
+            applied = True
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.warning(
+                f"Failed to apply deterministic reflection for mission {bundle.mission}: {exc}",
+                exc_info=True,
+            )
+            warnings.append("apply_failed")
+
+        outcome = ReflectionOutcome(
+            reflection_id=reflection_id,
+            mission=bundle.mission,
+            proposal=proposal,
+            applied=applied,
+            guidance_step_before=guidance_step_before,
+            guidance_step_after=guidance_step_after,
+            operations=operations,
+            eligible=True,
+            applied_epoch=epoch if applied else None,
+            ineligible_reason=None,
+            warnings=tuple(warnings),
+        )
+
+        if log:
+            self._append_log(outcome, epoch=epoch)
+        return outcome
 
     def _generate_reflection(self, bundle: ExperienceBundle) -> ReflectionProposal:
         reflection_prompt = self._build_reflection_prompt(bundle)
+        messages = [
+            {"role": "system", "content": self.prompt_template},
+            {"role": "user", "content": reflection_prompt},
+        ]
+        chat_prompt = self.tokenizer.apply_chat_template(
+            messages, add_generation_prompt=True, tokenize=False
+        )
+        assert isinstance(chat_prompt, str), (
+            "apply_chat_template must return string when tokenize=False"
+        )
 
-        prompt_length_chars = len(reflection_prompt)
+        prompt_length_chars = len(chat_prompt)
         logger.debug(
             f"Reflection prompt length: {prompt_length_chars} chars, max_reflection_length: {self.config.max_reflection_length}"
         )
 
         encoded_full = self.tokenizer(
-            reflection_prompt,
+            chat_prompt,
             return_tensors="pt",
             padding=True,
             truncation=False,
@@ -485,7 +1124,7 @@ class ReflectionEngine:
             )
 
         encoded = self.tokenizer(
-            reflection_prompt,
+            chat_prompt,
             return_tensors="pt",
             padding=True,
             truncation=True,
@@ -523,6 +1162,9 @@ class ReflectionEngine:
         )
 
         response = self.tokenizer.decode(generated_tokens, skip_special_tokens=True)
+        # Normalize response immediately after generation
+        response = to_simplified(response)
+        response = normalize_spaces(response)
         response_with_special = self.tokenizer.decode(
             generated_tokens, skip_special_tokens=False
         )
@@ -543,8 +1185,16 @@ class ReflectionEngine:
                 f"Long reflection response ({len(response)} chars), first 500 chars: {response[:500]}"
             )
 
-        return self._parse_reflection_response(response, bundle)
-
+        try:
+            return self._parse_reflection_response(response, bundle)
+        except Exception as exc:
+            logger.warning(
+                "Reflection parse failed (mission=%s): %s; raw=%.500s",
+                bundle.mission,
+                exc,
+                response,
+            )
+            raise
 
     def _build_reflection_prompt(self, bundle: ExperienceBundle) -> str:
         """Build reflection prompt with token-budgeted packing and prioritization.
@@ -644,32 +1294,26 @@ class ReflectionEngine:
             if all_wrong:
                 lines.append("  特殊: 全部候选与标签不一致（all-wrong）")
 
-            summaries_dict = ticket.summaries.as_dict()
-            if summaries_dict:
-                summaries_text = _render_summaries(summaries_dict)
-                for line in summaries_text.split("\n"):
-                    lines.append(f"    {line}")
-            else:
-                lines.append("    （无）")
-            lines.append("")
+            # 不再引入逐图摘要，改由候选 Reason 承担证据
             for cand in rec.candidates:
                 signals = cand.signals
                 label_match_str = (
-                    "✓" if signals.label_match else "✗" if signals.label_match is False else "?"
+                    "✓"
+                    if signals.label_match
+                    else "✗"
+                    if signals.label_match is False
+                    else "?"
                 )
-                confidence_str = f"{cand.confidence:.2f}" if cand.confidence is not None else "-"
                 lines.append(
-                    f"  {cand.candidate_index}: {cand.verdict} | {cand.reason} | 匹配{label_match_str} 置信{confidence_str}"
+                    f"  {cand.candidate_index}: {cand.verdict} | {cand.reason} | 匹配{label_match_str}"
                 )
                 # Critic insights are now properly wired from ExperienceCandidate
                 summary_text = cand.summary
                 critique_text = cand.critique
-                if not summary_text or not critique_text:
-                    logger.debug(
-                        f"No critic output for candidate {cand.candidate_index} in group {rec.ticket.group_id} (critic may be disabled)"
-                    )
                 lines.append(f"    摘要: {summary_text if summary_text else '（无）'}")
-                lines.append(f"    评述: {critique_text if critique_text else '（无）'}")
+                lines.append(
+                    f"    评述: {critique_text if critique_text else '（无）'}"
+                )
             lines.append("")
             return "\n".join(lines)
 
@@ -677,8 +1321,8 @@ class ReflectionEngine:
         indexed_records = list(enumerate(bundle.records, start=1))
         sorted_records = sorted(indexed_records, key=lambda t: (-_priority(t[1]), t[0]))
 
-        # Prepare preamble text used in token counting
-        preamble_text = f"{self.prompt_template}\n\n" + "\n".join(preamble_lines)
+        # Prepare preamble text used in token counting (user content only; system prompt counted separately)
+        preamble_text = "\n".join(preamble_lines)
 
         # Greedy packing under token budget (initial, without stats header)
         included: list[tuple[int, ExperienceRecord, str]] = []
@@ -686,7 +1330,10 @@ class ReflectionEngine:
         for idx, rec in sorted_records:
             block = _record_block(len(included) + 1, rec)
             trial_text = running_text + f"批次: {len(included) + 1} 组\n\n" + block
-            if _count_tokens_local(trial_text) <= self.config.token_budget:
+            if (
+                _count_tokens_local(f"{self.prompt_template}\n\n{trial_text}")
+                <= self.config.token_budget
+            ):
                 included.append((idx, rec, block))
                 running_text = running_text + f"批次: {len(included)} 组\n\n" + block
             else:
@@ -716,16 +1363,31 @@ class ReflectionEngine:
 
         # Assemble final text and trim tail until within budget
         kept_blocks = [blk for _, _, blk in included]
-        bundle_lines: list[str] = preamble_lines + [f"批次: {len(kept_blocks)} 组", ""] + stats_lines + kept_blocks
+        bundle_lines: list[str] = (
+            preamble_lines
+            + [f"批次: {len(kept_blocks)} 组", ""]
+            + stats_lines
+            + kept_blocks
+        )
         bundle_summary = "\n".join(bundle_lines)
-        full_prompt = f"{self.prompt_template}\n\n{bundle_summary}"
+        system_plus = f"{self.prompt_template}\n\n{bundle_summary}"
+        full_prompt = system_plus
 
         # Trim if still exceeding budget (stats/preamble may push over)
-        while len(kept_blocks) > 1 and _count_tokens_local(full_prompt) > self.config.token_budget:
+        while (
+            len(kept_blocks) > 1
+            and _count_tokens_local(full_prompt) > self.config.token_budget
+        ):
             kept_blocks.pop()
-            bundle_lines = preamble_lines + [f"批次: {len(kept_blocks)} 组", ""] + stats_lines + kept_blocks
+            bundle_lines = (
+                preamble_lines
+                + [f"批次: {len(kept_blocks)} 组", ""]
+                + stats_lines
+                + kept_blocks
+            )
             bundle_summary = "\n".join(bundle_lines)
-            full_prompt = f"{self.prompt_template}\n\n{bundle_summary}"
+            system_plus = f"{self.prompt_template}\n\n{bundle_summary}"
+            full_prompt = system_plus
 
         # Update group-id mapping for parser (use kept order 1..K)
         self._group_id_mapping.clear()
@@ -741,281 +1403,251 @@ class ReflectionEngine:
                 f"reflection_token_budget_trim: kept={len(kept_blocks)} dropped={trimmed} budget={self.config.token_budget} tokens={final_tokens}"
             )
 
-        return full_prompt
+        return bundle_summary
 
     def _parse_reflection_response(
         self, response: str, bundle: ExperienceBundle
     ) -> ReflectionProposal:
-        def _extract_all_json_objects(text: str) -> List[Tuple[str, int]]:
-            json_objects = []
-            i = 0
-            while i < len(text):
-                start_idx = text.find("{", i)
-                if start_idx == -1:
-                    break
+        def _clean_line(line: str) -> str:
+            return line.strip().strip("`").strip()
 
-                brace_count = 0
-                json_start = start_idx
-                for j in range(start_idx, len(text)):
-                    if text[j] == "{":
-                        brace_count += 1
-                    elif text[j] == "}":
-                        brace_count -= 1
-                        if brace_count == 0:
-                            json_text = text[json_start : j + 1]
-                            json_objects.append((json_text, json_start))
-                            i = j + 1
-                            break
-                else:
-                    i = start_idx + 1
+        def _parse_csv(value: str) -> Tuple[str, ...]:
+            parts = re.split(r"[，,]\s*|\s+", value.strip())
+            cleaned = [
+                self._resolve_group_identifier(p) for p in parts if p and p.strip()
+            ]
+            return tuple(cleaned)
 
-            return json_objects
+        def _strip_quotes(value: str) -> str:
+            v = value.strip()
+            if len(v) >= 2 and v[0] == v[-1] and v[0] in {'"', "'"}:
+                return v[1:-1]
+            return v
 
-        json_text = None
-        json_candidates = []
+        def _is_valid_key(key: Optional[str]) -> bool:
+            if key is None:
+                return True
+            return bool(re.fullmatch(r"G\d+", key))
 
-        code_block_match = re.search(r"```(?:json)?\s*", response)
-        if code_block_match:
-            start_pos = code_block_match.end()
-            end_pos = response.find("```", start_pos)
-            if end_pos != -1:
-                code_content = response[start_pos:end_pos].strip()
-                json_candidates.extend(_extract_all_json_objects(code_content))
+        def _parse_operation_line(line: str) -> ExperienceOperation:
+            text = line.lstrip("-").strip().lstrip("[").rstrip("]")
+            if not text:
+                raise ValueError("Empty operation line")
+            tokens = text.split(None, 1)
+            op_raw = tokens[0].lower()
+            if op_raw not in {"upsert", "remove", "merge"}:
+                raise ValueError(f"Unsupported operation type: {op_raw}")
+            remainder = tokens[1] if len(tokens) > 1 else ""
+            kv_pairs = dict(
+                (m.group(1).lower(), _strip_quotes(m.group(2)))
+                for m in re.finditer(r"(\w+)=([^ ]+|\"[^\"]+\")", remainder)
+            )
 
-        json_candidates.extend(_extract_all_json_objects(response))
+            key_val = kv_pairs.get("key")
+            if not key_val:
+                raise ValueError(f"Operation {op_raw} missing key")
+            if not _is_valid_key(key_val):
+                raise ValueError(f"Invalid experience key '{key_val}', only G* allowed")
 
-        valid_json_objects = []
-        for candidate_text, _ in json_candidates:
-            try:
-                parsed = json.loads(candidate_text)
-                if "error" in parsed:
-                    logger.debug(f"Skipping error JSON object: {candidate_text[:200]}")
-                    continue
-                if "action" in parsed:
-                    valid_json_objects.append((candidate_text, parsed, True))
-                else:
-                    valid_json_objects.append((candidate_text, parsed, False))
-            except json.JSONDecodeError:
+            evidence_raw = kv_pairs.get("evidence")
+            evidence_ids = _parse_csv(evidence_raw) if evidence_raw else ()
+
+            merged_from_raw = kv_pairs.get("merged_from")
+            if merged_from_raw:
+                merged_from_candidates = tuple(
+                    s for s in _parse_csv(merged_from_raw) if s
+                )
+                for mk in merged_from_candidates:
+                    if not _is_valid_key(mk):
+                        raise ValueError(
+                            f"Invalid merged_from key '{mk}', only G* allowed"
+                        )
+                merged_from_val: Optional[Tuple[str, ...]] = merged_from_candidates
+            else:
+                merged_from_val = None
+
+            text_val = kv_pairs.get("text")
+            rationale_val = kv_pairs.get("rationale")
+
+            # Convert traditional Chinese to simplified Chinese and normalize spaces
+            if text_val:
+                text_val = to_simplified(text_val)
+                text_val = normalize_spaces(text_val)
+            if rationale_val:
+                rationale_val = to_simplified(rationale_val)
+                rationale_val = normalize_spaces(rationale_val)
+
+            if op_raw == "remove":
+                text_val = None
+
+            return ExperienceOperation(
+                op=op_raw,  # type: ignore[arg-type]
+                key=key_val,
+                text=text_val,
+                rationale=rationale_val,
+                evidence=evidence_ids,
+                merged_from=merged_from_val,
+            )
+
+        # Normalize: split by newline, then by semicolon into atomic segments
+        segments: List[str] = []
+        for line in response.splitlines():
+            if not line.strip():
+                continue
+            for seg in re.split(r"[;；]\s*", line):
+                seg_clean = _clean_line(seg)
+                if seg_clean:
+                    segments.append(seg_clean)
+
+        action_raw: Optional[str] = None
+        summary_raw: Optional[str] = None
+        critique_raw: Optional[str] = None
+        uncertainty_raw: Optional[str] = None
+        evidence_ids: Optional[Tuple[str, ...]] = None
+        operations: List[ExperienceOperation] = []
+
+        in_operations = False
+        for line in segments:
+            upper = line.upper()
+            if upper.startswith("OPERATIONS"):
+                in_operations = True
+                # Parse inline ops if present after '='
+                if "=" in line:
+                    _, inline = line.split("=", 1)
+                    inline = inline.strip()
+                    if inline.startswith("["):
+                        inline = inline[1:]
+                    if inline.endswith("]"):
+                        inline = inline[:-1]
+                    for op_text in re.split(r"[;；]\s*", inline):
+                        op_text = op_text.strip()
+                        if not op_text:
+                            continue
+                        try:
+                            operations.append(_parse_operation_line(op_text))
+                        except Exception as exc:
+                            self._last_debug_info = {
+                                "mission": bundle.mission,
+                                "raw_response": response,
+                                "parse_error": f"operation_error: {exc}",
+                            }
+                            raise
                 continue
 
-        reflection_json = None
-        for candidate_text, parsed, has_action in valid_json_objects:
-            if has_action:
-                json_text = candidate_text
-                reflection_json = parsed
-                break
+            if in_operations:
+                # stop if closing bracket
+                if line.strip() in {"]", "[", "END"}:
+                    in_operations = False
+                    continue
+                # accept lines with or without leading dash
+                if re.match(
+                    r"^(?:-?\s*)?(UPSERT|REMOVE|MERGE)\b", line, flags=re.IGNORECASE
+                ):
+                    try:
+                        operations.append(_parse_operation_line(line))
+                    except Exception as exc:
+                        self._last_debug_info = {
+                            "mission": bundle.mission,
+                            "raw_response": response,
+                            "parse_error": f"operation_error: {exc}",
+                        }
+                        raise
+                    continue
 
-        if json_text is None and valid_json_objects:
-            json_text, reflection_json, _ = valid_json_objects[0]
+            parts = re.split(r"\s*[:：=]\s*", line, maxsplit=1)
+            if len(parts) != 2:
+                continue
+            key, value = parts[0].strip().upper(), parts[1].strip()
 
-        if not json_text or reflection_json is None:
-            response_preview = response[:500] if len(response) > 500 else response
-            response_suffix = response[-200:] if len(response) > 200 else response
+            if key == "ACTION":
+                action_raw = value.lower()
+            elif key == "SUMMARY":
+                summary_raw = value
+            elif key == "CRITIQUE":
+                critique_raw = value
+            elif key == "UNCERTAINTY":
+                uncertainty_raw = value
+            elif key == "EVIDENCE_GROUP_IDS":
+                evidence_ids = _parse_csv(value)
+            elif key == "OPERATIONS":
+                in_operations = True
+                continue
 
-            # Check for truncation (missing closing brace)
-            truncated = False
-            if json_candidates:
-                # Check if any candidate appears truncated
-                for cand_text, _ in json_candidates:
-                    if cand_text.count("{") > cand_text.count("}"):
-                        truncated = True
-                        break
-
-            error_msg = (
-                f"Could not parse valid reflection JSON from response. "
-                f"Found {len(json_candidates)} JSON candidates, but none had 'action' field. "
-                f"Response length: {len(response)} chars"
-            )
-
-            if truncated:
-                error_msg += " (TRUNCATED - missing closing braces)"
-
-            logger.error(
-                f"{error_msg}\n"
-                f"Response start (first 500 chars):\n{response_preview}\n"
-                f"Response end (last 200 chars):\n{response_suffix}"
-            )
-
-            if json_candidates:
-                logger.debug(f"JSON candidates found: {len(json_candidates)}")
-                for idx, (cand_text, _) in enumerate(json_candidates[:5]):
-                    logger.debug(
-                        f"  Candidate {idx} (first 300 chars): {cand_text[:300]}"
-                    )
-            if valid_json_objects:
-                logger.debug(
-                    f"Found {len(valid_json_objects)} valid JSON objects without 'action' field:"
-                )
-                for idx, (cand_text, parsed, _) in enumerate(valid_json_objects[:3]):
-                    logger.debug(
-                        f"  Valid JSON {idx} (first 300 chars): {cand_text[:300]}\n  Parsed keys: {list(parsed.keys())}"
-                    )
-
-            # Store debug info for callers/tests to inspect
+        if action_raw:
+            # tolerate accidental "refine|noop" by taking the first valid token
+            tokens = re.split(r"[|;/,\s]+", action_raw)
+            for token in tokens:
+                token_clean = token.strip()
+                if token_clean in {"refine", "noop"}:
+                    if token_clean != action_raw:
+                        logger.warning(
+                            "Reflection ACTION contained options (%s); coercing to %s",
+                            action_raw,
+                            token_clean,
+                        )
+                    action_raw = token_clean
+                    break
+        if not action_raw or action_raw not in {"refine", "noop"}:
             self._last_debug_info = {
-                "timestamp": bundle.records[0].ticket.group_id
-                if bundle.records
-                else "unknown",
                 "mission": bundle.mission,
-                "response_length": len(response),
-                "json_candidates_count": len(json_candidates),
-                "truncated": truncated,
                 "raw_response": response,
-                "json_candidates": [cand[0][:500] for cand in json_candidates[:5]],
-                "parse_error": "No valid JSON with 'action' field found",
+                "parse_error": f"missing or invalid ACTION ({action_raw})",
             }
+            raise ValueError("Reflection response missing ACTION line")
 
-            # Treat as fatal error (no fallback to text parsing)
-            raise ValueError(
-                f"No valid JSON: {error_msg}"
-            )
-
-        parsed = reflection_json
-
-        action_raw = str(parsed.get("action", "noop")).lower()
-        uncertainty_note_misc = None
         if action_raw not in {"refine", "noop"}:
-            logger.warning(
-                f"Invalid action {action_raw}, using noop (only 'refine' and 'noop' are supported)"
-            )
-            uncertainty_note_misc = f"Invalid action '{action_raw}', defaulting to noop"
-            action_raw = "noop"
-        action: ReflectionAction = action_raw  # type: ignore[assignment]
+            self._last_debug_info = {
+                "mission": bundle.mission,
+                "raw_response": response,
+                "parse_error": f"invalid action {action_raw}",
+            }
+            raise ValueError(f"Invalid reflection action: {action_raw}")
 
-        summary_raw = parsed.get("summary")
-        summary_value = (
-            str(summary_raw).strip()
-            if isinstance(summary_raw, str) and summary_raw.strip()
-            else None
-        )
+        if action_raw == "refine" and not operations:
+            self._last_debug_info = {
+                "mission": bundle.mission,
+                "raw_response": response,
+                "parse_error": "refine without operations",
+            }
+            raise ValueError("Refine action requires at least one operation")
 
-        critique_raw = parsed.get("critique")
-        critique_value = (
-            str(critique_raw).strip()
-            if isinstance(critique_raw, str) and critique_raw.strip()
-            else None
-        )
-
-        text = parsed.get("text")
-        text_value = str(text).strip() if text is not None else None
-        if text_value == "" or text_value == "null":
-            text_value = None
-
-        evidence_raw = parsed.get("evidence_group_ids")
-        if evidence_raw is None:
+        if evidence_ids is None:
             evidence_group_ids = tuple(
                 record.ticket.group_id for record in bundle.records
             )
-        elif isinstance(evidence_raw, Sequence) and not isinstance(
-            evidence_raw, (str, bytes)
-        ):
-            mapped_ids = [self._resolve_group_identifier(item) for item in evidence_raw]
-            evidence_group_ids = tuple(mapped_ids)
         else:
-            evidence_group_ids = tuple(
-                record.ticket.group_id for record in bundle.records
-            )
+            evidence_group_ids = evidence_ids
 
-        operations_payload = parsed.get("operations")
-        operations: List[ExperienceOperation] = []
-        if isinstance(operations_payload, Sequence) and not isinstance(
-            operations_payload, (str, bytes)
-        ):
-            for entry in operations_payload:
-                if not isinstance(entry, Mapping):
-                    continue
-                op_type_raw = str(entry.get("op", "upsert")).lower()
-                op_type: str
-                if op_type_raw in {"remove", "delete"}:
-                    op_type = "remove"
-                elif op_type_raw in {"upsert", "update", "add"}:
-                    op_type = "upsert"
-                elif op_type_raw in {"merge"}:
-                    op_type = "merge"
-                else:
-                    logger.debug(f"Ignoring unsupported operation type: {op_type_raw}")
-                    continue
-
-                key_raw = entry.get("key")
-                key_value = (
-                    str(key_raw).strip()
-                    if isinstance(key_raw, (str, int)) and str(key_raw).strip()
-                    else None
-                )
-
-                text_raw = entry.get("text")
-                text_value_op = (
-                    str(text_raw).strip()
-                    if text_raw is not None and str(text_raw).strip()
-                    else None
-                )
-
-                rationale_raw = entry.get("rationale")
-                rationale_value = (
-                    str(rationale_raw).strip()
-                    if isinstance(rationale_raw, str) and rationale_raw.strip()
-                    else None
-                )
-
-                evidence_entry = entry.get("evidence")
-                if isinstance(evidence_entry, Sequence) and not isinstance(
-                    evidence_entry, (str, bytes)
-                ):
-                    evidence_ids = tuple(
-                        self._resolve_group_identifier(item) for item in evidence_entry
-                    )
-                else:
-                    evidence_ids = ()
-
-                merged_from_raw = entry.get("merged_from")
-                if isinstance(merged_from_raw, Sequence) and not isinstance(
-                    merged_from_raw, (str, bytes)
-                ):
-                    merged_from_val: Tuple[str, ...] | None = tuple(
-                        str(m).strip() for m in merged_from_raw if str(m).strip()
-                    )
-                elif isinstance(merged_from_raw, str) and merged_from_raw.strip():
-                    merged_from_val = (merged_from_raw.strip(),)
-                else:
-                    merged_from_val = None
-
-                operations.append(
-                    ExperienceOperation(
-                        op=op_type,  # type: ignore[arg-type]
-                        key=key_value,
-                        text=text_value_op if op_type in {"upsert", "merge"} else None,
-                        rationale=rationale_value,
-                        evidence=evidence_ids,
-                        merged_from=merged_from_val,
-                    )
-                )
-
-        # Require structured JSON operations; no fallback to text parsing
-        if not operations:
-            logger.warning(
-                "Reflection proposal has no operations; treating as noop. "
-                "Structured JSON operations list is required."
-            )
-
-        uncertainty_note = parsed.get("uncertainty_note")
         uncertainty_value = (
-            str(uncertainty_note).strip()
-            if uncertainty_note is not None and str(uncertainty_note).strip()
+            uncertainty_raw.strip()
+            if uncertainty_raw and uncertainty_raw.strip()
             else None
         )
 
-        final_uncertainty = uncertainty_note_misc or uncertainty_value
+        # Convert traditional Chinese to simplified Chinese and normalize spaces
+        summary_final = None
+        if summary_raw and summary_raw.strip():
+            summary_final = to_simplified(summary_raw.strip())
+            summary_final = normalize_spaces(summary_final)
+        critique_final = None
+        if critique_raw and critique_raw.strip():
+            critique_final = to_simplified(critique_raw.strip())
+            critique_final = normalize_spaces(critique_final)
+        uncertainty_final = None
+        if uncertainty_value:
+            uncertainty_final = to_simplified(uncertainty_value)
+            uncertainty_final = normalize_spaces(uncertainty_final)
 
         self._last_debug_info = None
 
         return ReflectionProposal(
-            action=action,
-            summary=summary_value,
-            critique=critique_value,
+            action=action_raw,  # type: ignore[arg-type]
+            summary=summary_final,
+            critique=critique_final,
             operations=tuple(operations),
             evidence_group_ids=evidence_group_ids,
-            uncertainty_note=final_uncertainty,
-            text=text_value,
+            uncertainty_note=uncertainty_final,
+            text=None,
         )  # type: ignore[call-arg]
 
     def _append_log(self, outcome: ReflectionOutcome, *, epoch: int) -> None:

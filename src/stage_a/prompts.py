@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Mission-dependent prompt builder for Stage-A inference.
-
+"""Mission-dependent prompt builder for Stag
 Directly imports SYSTEM_PROMPT_SUMMARY from training to ensure alignment.
 Adds mission-specific focus context to user prompt.
 """

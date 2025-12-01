@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import logging
 import shutil
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Mapping, MutableMapping, Optional, Sequence, Union, cast
@@ -262,6 +263,11 @@ class GuidanceRepository:
         source_group_ids: Sequence[str],
         operations: Sequence[ExperienceOperation],
     ) -> MissionGuidance:
+        def _is_valid_key(key: Optional[str]) -> bool:
+            if key is None:
+                return True
+            return bool(re.fullmatch(r"G\d+", key))
+
         experiences = dict(current.experiences)
         metadata = dict(current.metadata)
         now = _now()
@@ -277,6 +283,13 @@ class GuidanceRepository:
                 )
 
             key = (op.key or "").strip() or None
+            if not _is_valid_key(key):
+                logger.warning(
+                    "Skipping operation with invalid key '%s' for mission %s (only G* allowed)",
+                    key,
+                    current.mission,
+                )
+                continue
 
             if normalized_op == "remove":
                 if key is None:
@@ -295,12 +308,25 @@ class GuidanceRepository:
             if not text:
                 continue
 
-            if key is None:
-                key = self._next_experience_key(experiences)
-            else:
-                key = str(key)
+            # If the same guidance text already exists, reuse its key and
+            # merge metadata instead of skipping the update. This allows new
+            # reflection batches to contribute additional evidence group_ids
+            # without duplicating experiences.
+            existing_key: Optional[str] = None
+            for k, v in experiences.items():
+                if v == text:
+                    existing_key = k
+                    break
 
-            experiences[key] = text
+            if existing_key is not None:
+                target_key = existing_key
+            else:
+                if key is None:
+                    key = self._next_experience_key(experiences)
+                else:
+                    key = str(key)
+                target_key = key
+                experiences[target_key] = text
 
             # Build combined sources (proposal evidence + fallback group ids)
             combined_sources = []
@@ -312,6 +338,18 @@ class GuidanceRepository:
                     seen_sources.add(source_str)
 
             rationale = (op.rationale or "").strip() or None
+
+            # If metadata already exists for this key, merge sources and
+            # prefer the new rationale when provided.
+            existing_meta = metadata.get(target_key)
+            if existing_meta is not None:
+                for source in existing_meta.sources:
+                    source_str = str(source)
+                    if source_str and source_str not in seen_sources:
+                        combined_sources.append(source_str)
+                        seen_sources.add(source_str)
+                if rationale is None:
+                    rationale = existing_meta.rationale
 
             # If this is a merge, remove merged_from keys without reindexing
             if normalized_op == "merge" and op.merged_from:
@@ -334,7 +372,7 @@ class GuidanceRepository:
                             f"merge operation skipped missing source key '{mkey_str}' in mission {current.mission}"
                         )
 
-            metadata[key] = ExperienceMetadata(
+            metadata[target_key] = ExperienceMetadata(
                 updated_at=now,
                 reflection_id=reflection_id,
                 sources=tuple(combined_sources),

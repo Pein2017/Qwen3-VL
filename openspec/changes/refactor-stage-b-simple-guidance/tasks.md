@@ -1,0 +1,8 @@
+- [ ] Create simplified Stage-B config (e.g., `configs/stage_b/debug.yaml`) with rollout grid, batch size=4 default, no critic/confidence knobs.
+- [ ] Implement prompt-output parser enforcing JSON-array evidence fields; route malformed outputs to `failure` log and manual-review queue.
+- [ ] Simplify selection to majority vote with tie-breakers (temperature/ordering); drop deterministic signals and confidence usage.
+- [ ] Update reflection to only consume explainable mismatches, emit ≤3 micro-guidance ops, and append to mission guidance in run dir.
+- [ ] Write new artifacts (`manual_review_queue.jsonl`, `failure_malformed.jsonl`) alongside guidance/trajectories/reflection.
+- [ ] Remove critic integration and related config/plumbing from Stage-B runtime and docs.
+- [ ] Refresh docs: `docs/STAGE_B_RUNTIME.md`, `docs/STAGE_A_STAGE_B.md`, `stage-B-knowledge-Chinese.md`, `docs/REFERENCE.md` to match simplified flow and artifacts.
+- [ ] Validate with `openspec validate refactor-stage-b-simple-guidance --strict` and adjust as needed.

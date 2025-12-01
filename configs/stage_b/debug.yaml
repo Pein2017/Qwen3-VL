@@ -1,11 +1,10 @@
 stage_a_paths:
-  - output_post/stage_a/挡风板安装检查_stage_a.jsonl
-  # /output_post/stage_a/BBU接地线检查_stage_a.jsonl
+  - output_post/stage_a/挡风板安装检查_stage_a_tiny.jsonl
 
 seed: 17
 
 model:
-  model_name_or_path: output/11-27/summary_merged/checkpoint-345
+  model_name_or_path: output/11-24/stage_1.5_merged/baseline-checkpoint-2070
   torch_dtype: bfloat16
   device_map: auto
 
@@ -15,66 +14,69 @@ guidance:
 
 output:
   root: output_post/stage_b
-  run_name: debug
+  run_name: debug-0.1-0.3-0.5
+  group_report: true
 
 sampler:
-  samples_per_decode: 1  # Debug: 每个 decode 配置采样 3 个候选，增加多样性
+  samples_per_decode: 1
   format_filter: true
   grid:
-    # Debug: 多个温度配置，用于观察不同随机性下的行为
+    - temperature: 0.001
+      top_p: 0.9
+      max_new_tokens: 1024
+      seed: 42
+      repetition_penalty: 1.05
+      stop:
+        - "assistant"
+        - "<|im_end|>"
+        - "<|endoftext|>"
+        - "</s>"
     - temperature: 0.3
       top_p: 0.9
-      max_new_tokens: 256  # 保持较短以加快调试
-      seed: 41
-      stop: []
-    - temperature: 0.7
-      top_p: 0.95
-      max_new_tokens: 256
-      seed: 42
-      stop: []
-    - temperature: 1.0
-      top_p: 1.0
-      max_new_tokens: 256
+      max_new_tokens: 1024
       seed: 43
-      stop: []
+      repetition_penalty: 1.05
+      stop:
+        - "assistant"
+        - "<|im_end|>"
+        - "<|endoftext|>"
+        - "</s>"
+    - temperature: 0.5
+      top_p: 0.9
+      max_new_tokens: 1024
+      seed: null
+      repetition_penalty: 1.05
+      stop:
+        - "assistant"
+        - "<|im_end|>"
+        - "<|endoftext|>"
+        - "</s>"
 
-signals:
-  store_confidence: true
-  enable_consistency: true
-
-critic:
-  enabled: true
-  prompt_path: configs/prompts/stage_b_critic.txt
-  temperature: 0.2
-  top_p: 0.9
-  max_new_tokens: 512
-  max_candidates: 5  # Debug: evaluate top 5 candidates only
-  summary_max_chars: 200
-  critique_max_chars: 300
 
 reflection:
   prompt_path: configs/prompts/stage_b_reflection_prompt.txt
   batch_size: 4  # Debug: 保持较小批次，便于观察每次反思
-  allow_uncertain: true
-  eligibility_policy: contradictions_or_all_wrong  # Debug: 更偏向利用矛盾样本和全错样本
-  max_operations: 5  # Debug: 略微放宽，每次最多 5 条经验修改
-  change_cap_per_epoch: 30  # Debug: 提高每个 epoch 的修改上限以观察指导演化
+  max_operations: 3  # Debug: 每次最多 3 条经验修改
 
-  temperature: 0.3  # Higher temperature for more diverse guidance entries
+  temperature: 0.001  # Higher temperature for more diverse guidance entries
   top_p: 0.9  # Higher top_p for more diverse sampling
-  max_new_tokens: 1024  # Debug: reduced from 2048 for faster generation
-  max_reflection_length: 10000  # Debug: reduced from 8192 for faster processing
+  repetition_penalty: 1.05
+  max_new_tokens: 2048  # Allow longer responses to avoid truncation (G1 case)
+  max_reflection_length: 12000  # Larger packed context
+  token_budget: 12000  # Allow larger packed context to avoid dropping records
+  require_rule_for_conflicts: true
+  treat_keep_conflict_as_noise: false  # Do not auto-mark keep-on-conflict as noise; rely on conflict rules instead
 
 selection:
   policy: top_label
-  tie_break: confidence
+  tie_break: temperature
 
 
 manual_review:
   enabled: true
   min_verdict_agreement: 0.8  # fraction of candidates sharing the same verdict
-  min_confidence: 0.85        # average confidence for majority verdict
   min_self_consistency: 0.8   # average self_consistency for majority verdict
 
 runner:
-  epochs: 2  # Debug: 多轮迭代以观察指导规则收敛趋势
+  epochs: 2 # Tiny smoke: 单轮
+  rollout_batch_size: 1  

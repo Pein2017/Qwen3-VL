@@ -15,6 +15,7 @@ from src.datasets.fusion import FusionConfig
 from src.datasets.preprocessors.augmentation import AugmentationPreprocessor
 from src.datasets.unified_fusion_dataset import (
     FusionCaptionDataset,
+    fusion_pack_group_key,
     UnifiedFusionDataset,
 )
 
@@ -323,10 +324,20 @@ def test_unified_fusion_includes_optional_source_eval(tmp_path: Path) -> None:
         split="eval",
     )
 
-    assert len(dataset) == 3  # 1 target + 2 source eval samples
-    assert dataset.aux_quota["src_eval"] == 2
-    assert dataset.epoch_plan["src_eval"]["augmentation"] is False
+    assert len(dataset) == 1  # target-only eval
+    assert dataset.aux_quota == {}
+    assert dataset.epoch_plan["target"]["augmentation"] is False
 
 
 def test_unified_fusion_alias_points_to_fusion_class() -> None:
     assert UnifiedFusionDataset is FusionCaptionDataset
+
+
+def test_fusion_pack_group_key_respects_domain() -> None:
+    rec_target = {"metadata": {"_fusion_domain": "target"}}
+    rec_source = {"metadata": {"_fusion_domain": "source"}}
+    rec_missing = {"metadata": {}}
+
+    assert fusion_pack_group_key(rec_target) == "target"
+    assert fusion_pack_group_key(rec_source) == "source"
+    assert fusion_pack_group_key(rec_missing) == "target"

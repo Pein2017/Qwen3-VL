@@ -1,10 +1,10 @@
 extends: ../base.yaml
 
-# Common Stage 1.5 recipe: DoRA on all LLM layers (q_proj & v_proj only),
-# DoRA on last-6 Vision blocks (21-26, qkv only), DoRA on all aligner MLP layers.
+# Common Stage 1.5 recipe: DoRA on last-6 LLM blocks (30-35, q_proj & v_proj only),
+# DoRA on all Vision blocks (0-26, qkv only), DoRA on all aligner MLP layers.
 
 model:
-  model: output/11-24/stage_1.5_merged/sft_all-checkpoint-2070  
+  model: output/11-24/stage_1.5_merged/baseline-checkpoint-2070   
 
 tuner:
   train_type: lora
@@ -14,7 +14,11 @@ tuner:
   freeze_vit: false
   freeze_aligner: false
   target_modules: [all-linear]
-  target_regex: null
+  # LLM: last-6 decoder layers (30-35), attention q_proj & v_proj only (no k_proj / o_proj, no MLP).
+  # Vision: all blocks (0-26), attention qkv only (no proj, no MLP).
+  # Aligner: merger & deepstack_merger_list MLPs (linear_fc1/fc2) fully tuned with DoRA.
+  # Output: lm_head for downstream vocabulary adaptation (e.g., BBU terms).
+  target_regex: '^(?:model\.)?(?:language_model\.layers\.(?:30|31|32|33|34|35)\.self_attn\.(?:q_proj|v_proj)|visual\.blocks\.(?:[0-9]|1[0-9]|2[0-6])\.attn\.qkv|visual\.(?:merger|deepstack_merger_list\.\d+)\.(?:linear_fc1|linear_fc2))$|^lm_head$'
   modules_to_save: []
   lora_rank: 16
   lora_alpha: 32
@@ -23,15 +27,15 @@ tuner:
 
 training:
   output_dir: ./output/11-27/res_1024
-  run_name: epoch_10-sft_base-LRs_1_2_4
-  num_train_epochs: 10
-  per_device_train_batch_size: 2
-  per_device_eval_batch_size: 4
+  run_name: epoch_30-sft_base-LRs_2_1_6-resume_from_sft_base-last_6_llm-with_lm_head
+  num_train_epochs: 30
+  per_device_train_batch_size: 4
+  per_device_eval_batch_size: 8
   effective_batch_size: 32
   optimizer: multimodal
-  learning_rate: 1.0e-5
-  vit_lr: 2.0e-5
-  aligner_lr: 4.0e-5
+  learning_rate: 2.0e-4
+  vit_lr: 1.0e-4
+  aligner_lr: 6.0e-4
   lr_scheduler_kwargs:
     min_lr: 1.0e-7
   packing: true
@@ -44,7 +48,7 @@ training:
   eval_steps: 40
   save_steps: 10
   save_total_limit: 2
-  save_delay_steps: 600
+  save_delay_steps: 1800
   logging_dir: ./tb/11-27/res_1024
   logging_steps: 10
   logging_first_step: true
@@ -111,7 +115,7 @@ custom:
 
   augmentation_curriculum:
     phases:
-      - until_percent: 10
+      - until_percent: 5
         bypass_prob: 1.0
         ops: {}
       - until_percent: 20

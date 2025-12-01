@@ -10,7 +10,7 @@ import copy
 import random
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Literal, MutableMapping, Optional, cast
+from typing import Any, Iterable, Literal, Mapping, MutableMapping, Optional, cast
 
 from torch.utils.data import get_worker_info
 
@@ -18,8 +18,8 @@ from ..config.prompts import USER_PROMPT_SUMMARY, get_template_prompts
 from .builders import JSONLinesBuilder
 from .contracts import validate_conversation_record
 from .dense_caption import LAST_SAMPLE_DEBUG, BaseCaptionDataset
-from .fusion import FusionConfig
-from .fusion_types import DatasetSpec
+from .fusion import FusionConfig, _compute_target_quotas
+from .fusion_types import DatasetSpec, TargetSpec
 from .preprocessors import AugmentationPreprocessor, ObjectCapPreprocessor
 from .utils import load_jsonl
 
@@ -55,6 +55,7 @@ class FusionCaptionDataset(BaseCaptionDataset):
         augmenter: Optional[Any],
         bypass_prob: float,
         curriculum_state: Optional[MutableMapping[str, Any]],
+        preprocessor: Optional[Any] = None,
         use_summary: bool,
         system_prompt_dense: Optional[str],
         system_prompt_summary: Optional[str],
@@ -63,7 +64,7 @@ class FusionCaptionDataset(BaseCaptionDataset):
         sample_limit: Optional[int] = None,
         split: Literal["train", "eval"] = "train",
         target_eval_jsonl: Optional[str] = None,
-        include_source_eval: bool = True,
+        include_source_eval: bool = False,
     ):
         self._fusion_config = fusion_config
         self._split: Literal["train", "eval"] = split
@@ -71,7 +72,7 @@ class FusionCaptionDataset(BaseCaptionDataset):
         self.bypass_prob = float(bypass_prob)
         self.curriculum_state = curriculum_state
         self._shuffle = bool(shuffle)
-        self._include_source_eval = bool(include_source_eval)
+        self._include_source_eval = False  # target-only eval per policy
         self._sample_limit = sample_limit
         self._epoch = 0
         self._schedule: list[tuple[str, int]] = []
@@ -82,48 +83,53 @@ class FusionCaptionDataset(BaseCaptionDataset):
         self._preprocessors_cap: dict[str, ObjectCapPreprocessor] = {}
         self.epoch_plan: dict[str, dict[str, Any]] = {}
 
+        self._target_names = [t.name for t in fusion_config.targets]
         self._dataset_order = [
-            fusion_config.target.name,
+            *self._target_names,
             *[src.name for src in fusion_config.sources],
         ]
-        self._target_name = fusion_config.target.name
+        self._primary_target = self._target_names[0]
 
         default_system_prompt = system_prompt_dense
         # Load pools for the selected split
-        target_path: Optional[Path]
-        if split == "eval":
-            if target_eval_jsonl:
-                target_path = Path(target_eval_jsonl)
-            else:
-                target_path = fusion_config.target.val_jsonl
+        if split == "eval" and target_eval_jsonl is not None:
+            override_target_path = Path(target_eval_jsonl)
         else:
-            target_path = fusion_config.target.train_jsonl
-        if target_path is None:
-            raise ValueError("Target split is required for FusionCaptionDataset")
+            override_target_path = None
 
-        target_records = self._load_records(
-            target_path, limit=sample_limit if split == "train" else sample_limit
-        )
-        if not target_records:
-            raise ValueError("FusionCaptionDataset requires at least one target record")
-        self._record_pools[self._target_name] = [
-            self._annotate_record(rec, fusion_config.target) for rec in target_records
-        ]
+        for target in fusion_config.targets:
+            if split == "eval":
+                target_path = override_target_path or target.val_jsonl
+            else:
+                target_path = target.train_jsonl
+            if target_path is None:
+                raise ValueError(f"Target '{target.name}' split is required")
 
-        # Build prompt/policy for target
-        target_prompts = self._resolve_prompts(
-            fusion_config.target,
-            default_user_prompt=user_prompt,
-            default_system_prompt=default_system_prompt,
-        )
-        self._policies[self._target_name] = _DatasetPolicy(
-            spec=fusion_config.target,
-            prompts=target_prompts,
-            augmentation_enabled=fusion_config.target.supports_augmentation,
-            curriculum_enabled=fusion_config.target.supports_curriculum,
-            max_objects_per_image=fusion_config.target.max_objects_per_image,
-            seed=fusion_config.target.seed,
-        )
+            target_records = self._load_records(
+                target_path, limit=sample_limit if split == "train" else sample_limit
+            )
+            if not target_records:
+                raise ValueError(
+                    f"FusionCaptionDataset requires at least one record for target '{target.name}'"
+                )
+            self._record_pools[target.name] = [
+                self._annotate_record(rec, target) for rec in target_records
+            ]
+
+            # Build prompt/policy for target
+            target_prompts = self._resolve_prompts(
+                target,
+                default_user_prompt=user_prompt,
+                default_system_prompt=default_system_prompt,
+            )
+            self._policies[target.name] = _DatasetPolicy(
+                spec=target,
+                prompts=target_prompts,
+                augmentation_enabled=target.supports_augmentation,
+                curriculum_enabled=target.supports_curriculum,
+                max_objects_per_image=None,  # targets stay uncapped
+                seed=target.seed,
+            )
 
         # Sources
         for source in fusion_config.sources:
@@ -135,8 +141,8 @@ class FusionCaptionDataset(BaseCaptionDataset):
             self._policies[source.name] = _DatasetPolicy(
                 spec=source,
                 prompts=policy,
-                augmentation_enabled=source.supports_augmentation,
-                curriculum_enabled=source.supports_curriculum,
+                augmentation_enabled=False,  # sources remain clean
+                curriculum_enabled=False,
                 max_objects_per_image=source.max_objects_per_image,
                 seed=source.seed,
             )
@@ -147,10 +153,9 @@ class FusionCaptionDataset(BaseCaptionDataset):
                 continue
 
             if split == "eval":
-                if not include_source_eval or source.val_jsonl is None:
-                    self._record_pools[source.name] = []
-                    continue
-                source_path = source.val_jsonl
+                # Target-only eval: ignore source splits even if provided
+                self._record_pools[source.name] = []
+                continue
             else:
                 source_path = source.train_jsonl
 
@@ -175,14 +180,14 @@ class FusionCaptionDataset(BaseCaptionDataset):
             emit_norm=emit_norm,
             json_format=json_format,
             augmenter=None,
-            preprocessor=None,
+            preprocessor=preprocessor,
             bypass_prob=bypass_prob,
             curriculum_state=curriculum_state,
             use_summary=use_summary,
             system_prompt_dense=system_prompt_dense,
             system_prompt_summary=system_prompt_summary,
             seed=seed,
-            dataset_name=self._target_name,
+            dataset_name=self._primary_target,
             allow_empty=True,
         )
 
@@ -200,7 +205,11 @@ class FusionCaptionDataset(BaseCaptionDataset):
                         self.curriculum_state if policy.curriculum_enabled else None
                     ),
                 )
-            if policy.max_objects_per_image is not None:
+            if (
+                policy.max_objects_per_image is not None
+                and self._split == "train"
+                and policy.spec.domain == "source"
+            ):
                 self._preprocessors_cap[name] = ObjectCapPreprocessor(
                     policy.max_objects_per_image
                 )
@@ -258,8 +267,16 @@ class FusionCaptionDataset(BaseCaptionDataset):
         default_system_prompt: Optional[str],
     ) -> _PromptResolution:
         domain_system, domain_user = get_template_prompts(spec.template)
-        user_prompt = spec.prompt_user or domain_user or default_user_prompt
-        system_prompt = spec.prompt_system or domain_system or default_system_prompt
+        user_prompt = (
+            spec.prompt_user
+            if spec.prompt_user is not None
+            else (domain_user if domain_user is not None else default_user_prompt)
+        )
+        system_prompt = (
+            spec.prompt_system
+            if spec.prompt_system is not None
+            else (domain_system if domain_system is not None else default_system_prompt)
+        )
 
         if spec.prompt_user or spec.prompt_system:
             source = "dataset"
@@ -270,25 +287,38 @@ class FusionCaptionDataset(BaseCaptionDataset):
         return _PromptResolution(user=user_prompt, system=system_prompt, source=source)
 
     def _build_train_schedule(self) -> None:
-        target_pool = self._record_pools.get(self._target_name, [])
-        target_count_raw = len(target_pool)
-        rng_target = random.Random(
-            self._mix_seed(
-                self.seed,
-                self._epoch,
-                self._policies[self._target_name].seed or 0,
-                0xA1,
-            )
+        target_pool_sizes = {
+            name: len(self._record_pools.get(name, [])) for name in self._target_names
+        }
+        target_quotas, _ = _compute_target_quotas(
+            self._fusion_config.targets, target_pool_sizes
         )
-        target_indices = list(range(target_count_raw))
-        if self._shuffle and len(target_indices) > 1:
-            rng_target.shuffle(target_indices)
-        sampled_target = target_indices
 
-        schedule: list[tuple[str, int]] = [
-            (self._target_name, idx) for idx in sampled_target
-        ]
-        counts: dict[str, int] = {self._target_name: len(sampled_target)}
+        schedule: list[tuple[str, int]] = []
+        counts: dict[str, int] = {}
+
+        for target in self._fusion_config.targets:
+            pool = self._record_pools.get(target.name, [])
+            quota = target_quotas.get(target.name, 0)
+            if quota <= 0:
+                counts[target.name] = 0
+                continue
+            rng_target = random.Random(
+                self._mix_seed(
+                    self.seed,
+                    self._epoch,
+                    self._policies[target.name].seed or 0,
+                    0xA1,
+                )
+            )
+            indices = list(range(len(pool)))
+            if self._shuffle and len(indices) > 1:
+                rng_target.shuffle(indices)
+            sampled_target = indices[:quota]
+            counts[target.name] = len(sampled_target)
+            schedule.extend((target.name, idx) for idx in sampled_target)
+
+        total_target_quota = sum(counts.get(name, 0) for name in self._target_names)
 
         for source in self._fusion_config.sources:
             policy = self._policies[source.name]
@@ -297,7 +327,7 @@ class FusionCaptionDataset(BaseCaptionDataset):
                 raise ValueError(
                     f"Fusion source '{source.name}' is empty while ratio={source.ratio}"
                 )
-            quota = round(source.ratio * len(sampled_target))
+            quota = round(source.ratio * total_target_quota)
             if quota <= 0 or not pool:
                 counts[source.name] = 0
                 continue
@@ -321,10 +351,11 @@ class FusionCaptionDataset(BaseCaptionDataset):
         schedule: list[tuple[str, int]] = []
         counts: dict[str, int] = {}
 
-        for name in self._dataset_order:
-            pool = self._record_pools.get(name, [])
-            counts[name] = len(pool)
-            schedule.extend((name, idx) for idx in range(len(pool)))
+        # Eval is target-only (all targets concatenated, deterministic order)
+        for target_name in self._target_names:
+            pool = self._record_pools.get(target_name, [])
+            counts[target_name] = len(pool)
+            schedule.extend((target_name, idx) for idx in range(len(pool)))
 
         self._schedule = schedule
         self._epoch_counts = counts
@@ -417,7 +448,12 @@ class FusionCaptionDataset(BaseCaptionDataset):
             was_augmented = True
 
         cap_pre = self._preprocessors_cap.get(dataset_name)
-        if cap_pre is not None and policy.max_objects_per_image is not None:
+        if (
+            self._split == "train"
+            and policy.spec.domain == "source"
+            and cap_pre is not None
+            and policy.max_objects_per_image is not None
+        ):
             if hasattr(cap_pre, "rng"):
                 cap_pre.rng = rng_local
             capped = cap_pre(record)
@@ -432,6 +468,16 @@ class FusionCaptionDataset(BaseCaptionDataset):
             )
         else:
             objects_after = len(record.get("objects") or [])
+
+        if self.mode == "summary" and self.preprocessor is not None:
+            if hasattr(self.preprocessor, "rng"):
+                self.preprocessor.rng = rng_local
+            processed_summary = self.preprocessor(record)
+            if processed_summary is None:
+                raise ValueError(
+                    "Summary preprocessor removed the record; dataset does not duplicate samples"
+                )
+            record = processed_summary
 
         # Build conversation
         mode = self.mode
@@ -503,7 +549,11 @@ class FusionCaptionDataset(BaseCaptionDataset):
     @property
     def aux_quota(self) -> dict[str, int]:
         """Per-epoch auxiliary sample counts for debugging/telemetry."""
-        return {k: v for k, v in self._epoch_counts.items() if k != self._target_name}
+        return {
+            k: v
+            for k, v in self._epoch_counts.items()
+            if self._policies.get(k, None) and self._policies[k].spec.domain == "source"
+        }
 
     def set_curriculum_state(self, state: MutableMapping[str, Any]) -> None:
         self.curriculum_state = state
@@ -518,14 +568,13 @@ class FusionCaptionDataset(BaseCaptionDataset):
     def make_target_eval_dataset(
         self, *, mine_clean: bool = False
     ) -> BaseCaptionDataset:
-        policy = self._policies[self._target_name]
+        primary = self._primary_target
+        policy = self._policies[primary]
         use_aug = (
-            policy.augmentation_enabled
-            and self._augmenter is not None
-            and not mine_clean
+            policy.augmentation_enabled and self._augmenter is not None and not mine_clean
         )
         return BaseCaptionDataset(
-            base_records=self._record_pools[self._target_name],
+            base_records=self._record_pools[primary],
             template=self.template,
             user_prompt=policy.prompts.user,
             emit_norm=self.emit_norm,
@@ -537,9 +586,23 @@ class FusionCaptionDataset(BaseCaptionDataset):
             system_prompt_dense=self.system_prompt_dense,
             system_prompt_summary=self.system_prompt_summary,
             seed=self.seed,
-            dataset_name=self._target_name,
+            dataset_name=primary,
             allow_empty=False,
         )
+
+
+def fusion_pack_group_key(record: Mapping[str, Any]) -> str:
+    """Return packing group key (domain) for a fusion sample.
+
+    Ensures packed sequences keep target and source records separate.
+    """
+
+    meta = record.get("metadata") if isinstance(record, Mapping) else None
+    if isinstance(meta, Mapping):
+        domain = meta.get("_fusion_domain")
+        if domain is not None:
+            return str(domain)
+    return "target"
 
 
 # Backward compatibility alias

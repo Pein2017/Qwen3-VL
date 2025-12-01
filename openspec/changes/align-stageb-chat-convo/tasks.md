@@ -1,0 +1,5 @@
+- [x] Confirm scope against proposal (chat-style prompts for Stage-B critic/reflection; rollout already chat-based).
+- [x] Update critic prompt construction to use chat messages + `apply_chat_template(add_generation_prompt=True)`.
+- [x] Update reflection prompt construction/generation to use chat messages with assistant turn.
+- [x] Keep/output parsing unchanged; ensure no stop tokens reintroduced inadvertently.
+- [x] Run `openspec validate align-stageb-chat-convo --strict`.

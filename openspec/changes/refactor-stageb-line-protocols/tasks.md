@@ -1,0 +1,7 @@
+- [x] Read existing Stage-B prompts and parsers (rollout, critic, reflection) to capture current behavior.
+- [x] Define line-based output protocols for Critic and Reflection (keys, allowed values, operation syntax) and document examples.
+- [x] Implement line-protocol parsers in `src/stage_b/critic/engine.py` and `src/stage_b/reflection/engine.py`, converting to existing dataclasses before persistence.
+- [x] Update Critic/Reflection prompt templates to instruct line outputs and disable JSON fences; stop tokens unchanged (not needed for current templates).
+- [x] Add metrics/logs for format violations; remove or harden rollouts’ `_fallback_coerce` path.
+- [x] Update docs (`docs/STAGE_B_RUNTIME.md`, `docs/REFERENCE.md`, `stage-B-knowledge-Chinese.md`) to describe the new protocols and clarify that storage remains JSONL.
+- [x] Run or outline validation (unit tests or dry-run) and `openspec validate refactor-stageb-line-protocols --strict`.

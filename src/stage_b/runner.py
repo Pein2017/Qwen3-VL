@@ -8,6 +8,7 @@ import argparse
 import json
 import logging
 import random
+from datetime import datetime
 from collections import defaultdict
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -17,20 +18,20 @@ from tqdm import tqdm
 from transformers import AutoProcessor, AutoTokenizer, Qwen3VLForConditionalGeneration
 
 from .config import StageBConfig, load_stage_b_config
-from .critic import CriticEngine
 from .ingest import ingest_stage_a
-from .io.guidance import GuidanceRepository
 from .io.export import serialize_selection, serialize_trajectory
+from .io.group_report import build_group_report
+from .io.guidance import GuidanceRepository
 from .reflection import ReflectionEngine
 from .rollout import RolloutSampler
-from .sampling.prompts import _render_summaries
-from .signals import attach_signals
 from .types import (
-    DeterministicSignals,
     ExperienceRecord,
     GroupTicket,
+    Trajectory,
+    ParsedTrajectory,
     TrajectoryWithSignals,
 )
+from .types import DeterministicSignals
 from .utils.seed import seed_everything
 
 logger = logging.getLogger("stage_b.runner")
@@ -137,26 +138,9 @@ def _append_jsonl(path: Path, payload: dict) -> None:
         fh.write("\n")
 
 
-def _merge_signals_with_critic(
-    signals: DeterministicSignals, critic_output
-) -> DeterministicSignals:
-    """Propagate critic uncertainty into deterministic signals without new rules."""
-
-    needs_review = signals.needs_manual_review
-    if critic_output is not None:
-        needs_review = needs_review or bool(
-            critic_output.needs_recheck
-            or critic_output.evidence_sufficiency is False
-            or critic_output.recommended_action == "人工复核"
-        )
-
-    return DeterministicSignals(
-        label_match=signals.label_match,
-        self_consistency=signals.self_consistency,
-        confidence=signals.confidence,
-        conflict_flag=signals.conflict_flag,
-        needs_manual_review=needs_review,
-    )
+def _chunked(seq: List, size: int):
+    for i in range(0, len(seq), size):
+        yield seq[i : i + size]
 
 
 def _setup_mission_guidance(
@@ -206,10 +190,10 @@ def _setup_mission_guidance(
     return repo
 
 
-
-
 def run_all(config: StageBConfig, log_level: str = "logging") -> None:
     _configure_logging(log_level)
+
+    logger.info("Stage-B starting with three-stage reflection pipeline")
 
     seed_everything(config.seed)
 
@@ -239,30 +223,15 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
     model, tokenizer, processor = _load_model(config)
     sampler = RolloutSampler(model=model, tokenizer=tokenizer, config=config.sampler)
 
-    # Initialize CriticEngine if enabled (shares model with sampler and reflection)
-    critic_engine = None
-    if config.critic.enabled:
-        logger.info("Initializing CriticEngine with shared model")
-        critic_engine = CriticEngine(
-            config=config.critic,
-            model=model,
-            processor=processor,
-            tokenizer=tokenizer,
-        )
-
     # Process each mission separately
     total_selections = 0
     processed_missions = 0
     for mission, mission_tickets in training_by_mission.items():
         if not mission_tickets:
-            logger.warning(
-                f"Skipping mission {mission} because no tickets available"
-            )
+            logger.warning(f"Skipping mission {mission} because no tickets available")
             continue
 
-        logger.info(
-            f"Processing mission: {mission} ({len(mission_tickets)} tickets)"
-        )
+        logger.info(f"Processing mission: {mission} ({len(mission_tickets)} tickets)")
 
         processed_missions += 1
 
@@ -305,128 +274,195 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                 total=len(ordered_indices),
                 desc=f"Stage-B epoch {epoch}/{config.runner.epochs} [{mission}]",
                 unit="group",
+                mininterval=0.1,  # Update at least every 0.1 seconds
+                maxinterval=1.0,  # Force update every 1 second max
             )
 
             reflection_cycle = 0
             pending_records: List[ExperienceRecord] = []
             last_reflection_id: Optional[str] = None
 
-            for position, index in enumerate(ordered_indices, start=1):
-                ticket = mission_tickets[index]
+            manual_review_path = mission_dir / "manual_review_queue.jsonl"
+            failure_path = mission_dir / "failure_malformed.jsonl"
+
+            epoch_tickets = [mission_tickets[i] for i in ordered_indices]
+
+            for batch in _chunked(epoch_tickets, config.runner.rollout_batch_size):
                 guidance_map = mission_guidance_repo.load()
-                guidance = guidance_map[ticket.mission]
 
-                logger.info(
-                    f"Sampling group {ticket.group_id} (mission={ticket.mission}) at guidance.step={guidance.step}"
+                logger.debug(
+                    "Rollout batch len=%d (configured=%d), grid=%d, samples_per_decode=%d",
+                    len(batch),
+                    config.runner.rollout_batch_size,
+                    len(config.sampler.grid),
+                    config.sampler.samples_per_decode,
                 )
 
+                parsed_map = sampler.generate_for_batch(batch, guidance_map)
 
-                parsed_map = sampler.generate_for_batch([ticket], guidance_map)
-                parsed_candidates = parsed_map.get(ticket.group_id, [])
-                if not parsed_candidates:
-                    raise RuntimeError(
-                        f"Sampler produced no valid candidates for group {ticket.group_id}"
+                for ticket in batch:
+                    guidance = guidance_map[ticket.mission]
+
+                    logger.info(
+                        f"Sampling group {ticket.group_id} (mission={ticket.mission}) at guidance.step={guidance.step}"
                     )
 
-                scored_candidates = attach_signals(
-                    ticket, parsed_candidates, config.signals
-                )
-
-                # Evaluate candidates with CriticEngine if enabled
-                if critic_engine is not None:
-                    # Extract parsed and signals (guaranteed non-None from attach_signals)
-                    parsed_candidates_list = []
-                    signals_list_for_critic = []
-                    for c in scored_candidates:
-                        if c.parsed is not None and c.signals is not None:
-                            parsed_candidates_list.append(c.parsed)
-                            signals_list_for_critic.append(c.signals)
-                    
-                    stage_a_summary = _render_summaries(ticket.summaries.as_dict())
-
-                    critic_outputs = critic_engine.evaluate(
-                        group_id=ticket.group_id,
-                        mission=ticket.mission,
-                        candidates=parsed_candidates_list,
-                        signals=signals_list_for_critic,
-                        stage_a_summary=stage_a_summary,
-                    )
-                    # Attach critic outputs to candidates
-                    enriched_candidates = []
-                    for candidate, critic_output in zip(
-                        scored_candidates, critic_outputs
-                    ):
-                        merged_signals = _merge_signals_with_critic(
-                            candidate.signals, critic_output  # type: ignore[arg-type]
+                    parsed_candidates = parsed_map.get(ticket.group_id, [])
+                    if not parsed_candidates:
+                        logger.warning(
+                            "No parsed candidates for %s; queuing manual review",
+                            ticket.group_id,
                         )
-                        enriched_candidates.append(
-                            TrajectoryWithSignals(
-                                parsed=candidate.parsed,
-                                signals=merged_signals,
-                                critic=critic_output,
+                        fallback_base = None
+                        if config.sampler.grid:
+                            fallback_base = Trajectory(
+                                group_id=ticket.group_id,
+                                mission=ticket.mission,
+                                candidate_index=0,
+                                decode=config.sampler.grid[0],
+                                response_text="format_error",
+                                created_at=datetime.now(),
                             )
+                        fallback_parsed = ParsedTrajectory(
+                            base=fallback_base
+                            if fallback_base
+                            else Trajectory(
+                                group_id=ticket.group_id,
+                                mission=ticket.mission,
+                                candidate_index=0,
+                                decode=config.sampler.grid[0],
+                                response_text="format_error",
+                                created_at=datetime.now(),
+                            ),
+                            verdict="fail",
+                            reason="format_error",
+                            format_ok=False,
                         )
-                    scored_candidates = enriched_candidates
+                        parsed_candidates = [fallback_parsed]
 
-                # Select final verdict
-                from src.stage_b.scoring.selection import select_for_group
+                    wrapped_candidates: List[TrajectoryWithSignals] = []
+                    for cand in parsed_candidates:
+                        if not cand.format_ok:
+                            failure_entry = {
+                                "group_id": ticket.group_id,
+                                "mission": ticket.mission,
+                                "reason": "format_error",
+                                "raw_text": cand.base.response_text,
+                            }
+                            _append_jsonl(failure_path, failure_entry)
+                            manual_entry = {
+                                "group_id": ticket.group_id,
+                                "mission": ticket.mission,
+                                "label": ticket.label,
+                                "model_verdict": None,
+                                "reason": "format_error",
+                            }
+                            _append_jsonl(manual_review_path, manual_entry)
+                            continue
 
-                selection = select_for_group(
-                    ticket,
-                    scored_candidates,
-                    guidance_step=guidance.step,
-                    reflection_cycle=reflection_cycle,
-                    reflection_change=last_reflection_id,
-                    config=config.selection,
-                    manual_review=config.manual_review,
-                )
+                        label_match = cand.verdict == ticket.label if cand.verdict is not None else False
+                        signals = DeterministicSignals(
+                            label_match=label_match,
+                            self_consistency=None,
+                            conflict_flag=label_match is False,
+                            needs_manual_review=False,
+                        )
+                        wrapped_candidates.append(
+                            TrajectoryWithSignals(parsed=cand, signals=signals)
+                        )
 
-                # Write trajectories with critic outputs (already attached above)
-                for candidate in scored_candidates:
-                    trajectory_payload = serialize_trajectory(
-                        candidate,
-                        reflection_cycle=reflection_cycle,
-                        guidance_step=guidance.step,
-                    )
-                    trajectory_payload["epoch"] = epoch
-                    _append_jsonl(trajectories_path, trajectory_payload)
+                    if not wrapped_candidates:
+                        # nothing usable for this group
+                        continue
 
-                selection_payload = serialize_selection(selection)
-                selection_payload["epoch"] = epoch
-                _append_jsonl(selections_path, selection_payload)
-                mission_selection_count += 1
+                    # Select final verdict
+                    from src.stage_b.scoring.selection import select_for_group
 
-                if not selection.manual_review_recommended:
+                    try:
+                        selection = select_for_group(
+                            ticket,
+                            wrapped_candidates,
+                            guidance_step=guidance.step,
+                            reflection_cycle=reflection_cycle,
+                            reflection_change=last_reflection_id,
+                            config=config.selection,
+                            manual_review=config.manual_review,
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        failure_entry = {
+                            "group_id": ticket.group_id,
+                            "mission": ticket.mission,
+                            "reason": f"selection_error: {exc}",
+                        }
+                        _append_jsonl(failure_path, failure_entry)
+                        manual_entry = {
+                            "group_id": ticket.group_id,
+                            "mission": ticket.mission,
+                            "label": ticket.label,
+                            "model_verdict": None,
+                            "reason": "selection_error",
+                        }
+                        _append_jsonl(manual_review_path, manual_entry)
+                        continue
+
+                    if selection.needs_manual_review:
+                        manual_entry = {
+                            "group_id": ticket.group_id,
+                            "mission": ticket.mission,
+                            "label": ticket.label,
+                            "model_verdict": selection.verdict,
+                            "reason": ",".join(selection.warnings)
+                            if selection.warnings
+                            else "needs_manual_review",
+                        }
+                        _append_jsonl(manual_review_path, manual_entry)
+
+                    # Write trajectories
+                    for candidate in wrapped_candidates:
+                        trajectory_payload = serialize_trajectory(
+                            candidate,
+                            reflection_cycle=reflection_cycle,
+                            guidance_step=guidance.step,
+                        )
+                        trajectory_payload["epoch"] = epoch
+                        _append_jsonl(trajectories_path, trajectory_payload)
+
+                    selection_payload = serialize_selection(selection)
+                    selection_payload["epoch"] = epoch
+                    _append_jsonl(selections_path, selection_payload)
+                    mission_selection_count += 1
+
+                    # Two-line protocol: always forward usable candidates to reflection
                     record = reflection_engine.build_record(
                         ticket,
-                        scored_candidates,
+                        wrapped_candidates,
                         selection.selected_candidate,
                         guidance.step,
                     )
                     pending_records.append(record)
 
-                # Trigger reflection when batch is full
-                if len(pending_records) >= config.reflection.batch_size:
-                    bundle = reflection_engine.build_bundle(
-                        pending_records,
-                        reflection_cycle=reflection_cycle,
-                    )
-                    outcome = reflection_engine.reflect(
-                        bundle,
-                        epoch=epoch,
-                        log=True,
-                    )
+                    # Trigger reflection when batch is full
+                    if len(pending_records) >= config.reflection.batch_size:
+                        bundle = reflection_engine.build_bundle(
+                            pending_records,
+                            reflection_cycle=reflection_cycle,
+                        )
+                        outcome = reflection_engine.reflect(
+                            bundle,
+                            epoch=epoch,
+                            log=True,
+                        )
 
-                    last_reflection_id = (
-                        outcome.reflection_id if outcome.applied else None
-                    )
-                    pending_records.clear()
-                    reflection_cycle += 1
+                        last_reflection_id = (
+                            outcome.reflection_id if outcome.applied else None
+                        )
+                        pending_records.clear()
+                        reflection_cycle += 1
 
-                epoch_progress.update(1)
-                epoch_progress.set_postfix(
-                    {"group": ticket.group_id, "verdict": selection.verdict}
-                )
+                    epoch_progress.update(1)
+                    epoch_progress.set_postfix(
+                        {"group": ticket.group_id, "verdict": selection.verdict}
+                    )
 
             epoch_progress.close()
 
@@ -450,6 +486,16 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
         logger.info(
             f"Completed mission {mission}: {mission_selection_count} selections"
         )
+
+        if config.output.group_report:
+            stage_a_path = config.stage_a_paths[0] if config.stage_a_paths else None
+            try:
+                report_path = build_group_report(mission_dir, stage_a_path)
+                logger.info("Wrote grouped report to %s", report_path)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Failed to build group report for %s: %s", mission, exc
+                )
 
     logger.info(
         f"Completed Stage-B pipeline across {config.runner.epochs} epoch(s) and {processed_missions} mission(s): {total_selections} total selections"

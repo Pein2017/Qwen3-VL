@@ -1,0 +1,7 @@
+- [x] Validate scope against existing Stage-B specs (`stage-b-training-free`) and note required deltas.
+- [x] Update prompts to two-line protocol (system/user) and remove evidence instructions.
+- [x] Rewrite rollout parsing to two-line protocol; delete evidence parsing, fallback, and markers; simplify `ParsedTrajectory` structure.
+- [x] Prune evidence fields from types, selection, reflection inputs/outputs, and exporters; adapt logic to use verdict+reason only.
+- [x] Update configs/docs references to old four-line format; ensure debug config aligns.
+- [x] Run a small Stage-B debug run; verify zero parse warnings and new output schema; capture sample artifacts.
+- [x] Run `openspec validate refactor-stageb-two-line-protocol --strict`.

@@ -16,7 +16,7 @@ export PYTHONPATH="${REPO_DIR}${PYTHONPATH:+:$PYTHONPATH}"
 # Default configuration (can be overridden via environment variable)
 CONFIG_PATH="${config:-configs/stage_b/debug.yaml}"
 CONDA_ENV="ms"
-LOG_LEVEL="${log_level:-logging}"
+LOG_LEVEL="${log_level:-debug}"
 
 case "${LOG_LEVEL,,}" in
   debug|logging|warning)
@@ -60,9 +60,9 @@ echo ""
 cd "${REPO_DIR}"
 export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}
 # Force unbuffered Python output so tqdm/logging flush progressively
-PYTHONUNBUFFERED=1
-export PYTHONUNBUFFERED
+export PYTHONUNBUFFERED=1
 # Run with any additional arguments (e.g., --step all)
 # Note: Additional args can override defaults (e.g., --log-level warning)
-exec conda run -n "${CONDA_ENV}" python -u -m src.stage_b.runner "${ARGS[@]}" "$@"
+# Pass PYTHONUNBUFFERED explicitly to conda run to ensure it's inherited
+exec conda run -n "${CONDA_ENV}" --no-capture-output python -u -m src.stage_b.runner "${ARGS[@]}" "$@"
 

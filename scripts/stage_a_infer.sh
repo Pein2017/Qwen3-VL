@@ -6,31 +6,32 @@ set -euo pipefail
 # Example: mission=BBU安装方式检查（正装） gpu=1 bash scripts/stage_a_infer.sh
 
 # Fixed configuration
-CHECKPOINT="output/11-27/summary_merged/checkpoint-345"
+CHECKPOINT="output/11-30/summary_merged/epoch_10-lr_2e-4-bs_32-res_1024"
 INPUT_DIR="group_data/bbu_scene_2.0_order"
 OUTPUT_DIR="output_post/stage_a"
 
 # Environment variable overrides (lowercase)
-MISSION="${mission:-挡风板安装检查}"
-gpu_id="${gpu:-0}"
+MISSION="${mission:-BBU线缆布放要求}"
+gpu_id="${gpu:-7}"
 no_mission_flag="${no_mission:-true}"
 verify_flag="${verify_inputs:-true}"
 if [[ "$gpu_id" == "cpu" ]]; then
   DEVICE="cpu"
+  export CUDA_VISIBLE_DEVICES=""
 else
-  DEVICE="cuda:${gpu_id}"
+  # When CUDA_VISIBLE_DEVICES is set, the specified GPU becomes cuda:0
+  export CUDA_VISIBLE_DEVICES=$gpu_id
+  DEVICE="cuda:0"
 fi
 
 # Fixed parameters
 BATCH_SIZE="16"
-MAX_PIXELS="786432"
+MAX_PIXELS="1048576"
 MAX_NEW_TOKENS="1024"
 TEMPERATURE="0.0001"
 TOP_P="1.0"
 REP_PENALTY="1.05"
 LOG_LEVEL="INFO"
-
-export CUDA_VISIBLE_DEVICES=$gpu_id
 
 # Print configuration
 echo "=================================="

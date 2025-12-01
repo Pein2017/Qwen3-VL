@@ -80,6 +80,8 @@ class ExperienceOperation:
 
 GroupLabel = Literal["pass", "fail"]
 ChineseVerdict = Literal["通过", "不通过"]
+
+
 class ReflectionAction(str):
     """String subclass for reflection actions ('refine' or 'noop')."""
     pass
@@ -150,6 +152,8 @@ class DecodeConfig:
     max_new_tokens: int
     seed: Optional[int] = None
     stop: Tuple[str, ...] = field(default_factory=tuple)
+    repetition_penalty: float = 1.0
+    no_repeat_ngram_size: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -171,39 +175,17 @@ class ParsedTrajectory:
     base: Trajectory
     verdict: Optional[GroupLabel]
     reason: Optional[str]
-    confidence: Optional[float]
     format_ok: bool
 
 
 @dataclass(frozen=True)
 class DeterministicSignals:
-    """Deterministic sidecar metrics used for reflection context.
-
-    These are minimal signals used for selection tie-breaking only.
-    The CriticEngine provides LLM-based evaluation.
-    """
+    """Minimal signals retained for compatibility (not used for selection)."""
 
     label_match: Optional[bool]
     self_consistency: Optional[float]
-    confidence: Optional[float]
     conflict_flag: bool = False
     needs_manual_review: bool = False
-
-
-@dataclass(frozen=True)
-class CriticOutput:
-    """LLM-generated per-candidate evaluation from CriticEngine.
-
-    Keys are English; string values are Chinese per project policy.
-    """
-
-    summary: str
-    critique: str
-    # Minimal P1.11 schema fields actually used by selection.
-    verdict: Optional[ChineseVerdict] = None  # "通过" | "不通过"
-    needs_recheck: Optional[bool] = None
-    evidence_sufficiency: Optional[bool] = None
-    recommended_action: Optional[Literal["通过", "不通过", "人工复核"]] = None
 
 
 @dataclass(frozen=True)
@@ -212,7 +194,7 @@ class TrajectoryWithSignals:
 
     Supports two initialization styles:
     1) parsed-style: provide 'parsed=ParsedTrajectory(...)' and 'signals=...'
-    2) flat-style: provide 'candidate_index', 'verdict', 'reason', 'confidence', and 'signals'
+    2) flat-style: provide 'candidate_index', 'verdict', 'reason', and 'signals'
        (used in some tests/utilities that don't need the full base trajectory)
     """
 
@@ -220,14 +202,11 @@ class TrajectoryWithSignals:
     parsed: Optional[ParsedTrajectory] = None
     # Common signals
     signals: Optional[DeterministicSignals] = None
-    # Optional critic artifacts
-    critic: Optional[CriticOutput] = None
     warnings: Tuple[str, ...] = field(default_factory=tuple)
     # Flat style (lightweight view used in some tests)
     candidate_index: Optional[int] = None
     verdict: Optional[str] = None
     reason: Optional[str] = None
-    confidence: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -238,7 +217,7 @@ class SelectionResult:
     mission: str
     verdict: GroupLabel
     reason: str
-    confidence: Optional[float]
+    vote_strength: Optional[float]
     label_match: Optional[bool]
     selected_candidate: int
     guidance_step: int
@@ -260,7 +239,6 @@ class ExperienceCandidate:
     candidate_index: int
     verdict: Optional[GroupLabel]
     reason: Optional[str]
-    confidence: Optional[float]
     signals: DeterministicSignals
     # Critic insights (populated from CriticOutput when available)
     summary: Optional[str] = None
@@ -319,7 +297,6 @@ class ReflectionOutcome:
 
 __all__ = [
     "ChineseVerdict",
-    "CriticOutput",
     "DecodeConfig",
     "DeterministicSignals",
     "ExperienceMetadata",

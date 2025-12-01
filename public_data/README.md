@@ -63,6 +63,16 @@ conda run -n ms python scripts/validate_jsonl.py \
 conda run -n ms python vis_tools/visualize_lvis.py --num_samples 3 --mode both --save
 ```
 
+**Download COIG-CQIA to JSONL (ModelScope)**
+```bash
+cd public_data
+conda run -n ms python scripts/download_coig_cqia.py \
+  --subsets coig_pc zhihu \
+  --sample 2000 \
+  --merge
+# outputs to public_data/coig_cqia/*.jsonl (merged file optional)
+```
+
 ## Conversion Behavior (from code)
 - Input: LVIS COCO-format JSON (`lvis_v1_[split].json`) + COCO images under `lvis/raw/images/{train2017,val2017}`.
 - Output JSONL: one line per image with `images`, `objects`, `width`, `height`; stats saved as `<output>_stats.json`.
