@@ -160,6 +160,10 @@ def select_for_group(
     if parsed.reason is None or not parsed.reason.strip():
         raise ValueError("Chosen trajectory is missing rationale text")
 
+    conflict_flag = bool(signals.conflict_flag) if signals is not None else False
+    needs_manual_review_flag = (
+        bool(signals.needs_manual_review) if signals is not None else False
+    )
     # Conservative override: rely on LLM-only critic signals when available
     final_verdict = parsed.verdict
     warnings: List[str] = []
@@ -176,12 +180,22 @@ def select_for_group(
         if needs_recheck is True:
             final_verdict = "fail"
             warnings.append("conservative_override: needs_recheck=true")
+            needs_manual_review_flag = True
         elif evidence_sufficiency is False:
             final_verdict = "fail"
             warnings.append("conservative_override: evidence_sufficiency=false")
+            needs_manual_review_flag = True
         elif recommended_action == "人工复核":
             final_verdict = "fail"
             warnings.append("conservative_override: recommended_action=人工复核")
+            needs_manual_review_flag = True
+
+    # Label fail is never allowed to pass (label-alignment priority)
+    if ticket.label == "fail" and final_verdict != "fail":
+        final_verdict = "fail"
+        conflict_flag = True
+        needs_manual_review_flag = True
+        warnings.append("label_fail_override")
 
     return SelectionResult(
         group_id=parsed.base.group_id,
@@ -198,6 +212,8 @@ def select_for_group(
         eligible=eligible,
         ineligible_reason=ineligible_reason,
         warnings=tuple(warnings),
+        conflict_flag=conflict_flag,
+        needs_manual_review=needs_manual_review_flag,
     )
 
 

@@ -51,6 +51,8 @@ def serialize_trajectory(
                 "label_match": signals.label_match,
                 "self_consistency": signals.self_consistency,
                 "confidence": signals.confidence,
+                "conflict_flag": signals.conflict_flag,
+                "needs_manual_review": signals.needs_manual_review,
             },
             "critic": (
                 {
@@ -86,6 +88,8 @@ def serialize_selection(item: SelectionResult) -> Dict[str, object]:
             "eligible": item.eligible,
             "ineligible_reason": item.ineligible_reason,
             "warnings": list(item.warnings),
+            "conflict_flag": item.conflict_flag,
+            "needs_manual_review": item.needs_manual_review,
         },
     }
 

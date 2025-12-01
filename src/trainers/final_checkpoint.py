@@ -68,7 +68,17 @@ class FinalCheckpointMixin:
         trainer = cast("_TrainerBase", self)
 
         save_strategy = getattr(args, "save_strategy", SaveStrategy.NO)
-        if save_strategy == SaveStrategy.NO:
+        # Normalize loose string inputs such as "none" or "NO".
+        try:
+            save_strategy_enum = SaveStrategy(save_strategy)
+        except Exception:
+            save_strategy_enum = (
+                SaveStrategy.NO
+                if str(save_strategy).lower() in ("no", "none")
+                else SaveStrategy.STEPS
+            )
+
+        if save_strategy_enum == SaveStrategy.NO:
             logger.debug("Final checkpoint skipped because save_strategy is 'no'.")
             return
 

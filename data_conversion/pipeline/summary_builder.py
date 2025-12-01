@@ -1,19 +1,15 @@
 #!/usr/bin/env python3
 """
-Deterministic summary builder for BBU QC dataset.
+Deterministic summary builder for BBU/rru QC dataset (raw-desc mode).
 
-Constructs a one-line Chinese summary from a list of objects with hierarchical
-`desc` strings, following fixed business rules. This precomputes the summary
-at data conversion time to avoid generation during training.
+Current rule set (2025-11):
+- Do NOT parse/canonicalize; use the raw `desc` string as the grouping key.
+- Count identical desc values, sort by desc length (asc), tie-break by first appearance.
+- Emit `desc×N` segments joined with '，'.
+- Fail-fast: raises `ValueError` when objects list is empty or all desc are empty/blank.
 
-Rules (high level):
-- Parse each `desc` by levels: '/' separates levels, ',' (or '，') separates same-level tokens
-- Object types: BBU设备, 挡风板, 螺丝、光纤插头, 标签, 光纤, 电线
-- Fiber bend: use full-width parentheses for the negative form; accept half-width legacy
-- Label readability: summarize to 标签/可以识别 or 标签/无法识别
-- Aggregate counts and output segments with '×N', joined by '，'
-- Append combined 备注 (if present) at the end as '备注: ...'
-- Fallback when nothing extracted: '电线捆扎整齐，光纤弯曲合理，标签/可以识别'
+Legacy parsing helpers remain below for reference/compatibility but are not used by the
+active build_summary_from_objects implementation.
 """
 
 from __future__ import annotations
@@ -269,44 +265,40 @@ def _type_order_key(s: str) -> Tuple[int, int, int, str]:
 
 
 def build_summary_from_objects(objects: List[Dict[str, Any]]) -> str:
-    """Build one-line summary by per-object canonical string + counting.
+    """Build one-line summary by grouping on the raw `desc` strings.
 
-    Outputs segments like: 'BBU/华为/无需挡风板×1，连接点/合规×3，光纤/蛇形管/弯曲合理×2' ...
+    - No parsing/canonicalization: use the full desc as the grouping key.
+    - Count identical desc values.
+    - Sort by string length (ascending); ties keep first appearance order.
+    - Emit segments like: 'BBU设备/需复核,备注:无法判断品牌×1，标签/无法识别×2'.
     """
-    # Per-object canonical strings
-    object_summaries: List[str] = []
-    for o in objects or []:
-        s = _summarize_object_string(str(o.get("desc", "")))
-        if s:
-            object_summaries.append(s)
+    if not objects:
+        raise ValueError("build_summary_from_objects: no objects provided (fail-fast)")
 
-    if not object_summaries:
-        # Fallback minimal positive phrasing
-        summary = "，".join(["电线捆扎整齐", "光纤弯曲合理", "标签/可以识别"])
-        # Append remarks if any
-        remarks = _collect_remarks(objects or [])
-        if remarks:
-            remark_str = "；".join(remarks)
-            summary = f"{summary}，备注: {remark_str}" if summary else f"备注: {remark_str}"
-        return summary
+    descs: List[str] = []
+    for obj in objects:
+        desc = obj.get("desc", "")
+        if not isinstance(desc, str):
+            desc = str(desc)
+        desc = desc.strip()
+        if desc:
+            descs.append(desc)
 
-    # Count identical strings (set + counting)
+    if not descs:
+        raise ValueError("build_summary_from_objects: objects missing non-empty desc (fail-fast)")
+
+    first_seen: Dict[str, int] = {}
     counts: Dict[str, int] = {}
-    for s in object_summaries:
-        counts[s] = counts.get(s, 0) + 1
+    for idx, desc in enumerate(descs):
+        if desc not in first_seen:
+            first_seen[desc] = idx
+            counts[desc] = 0
+        counts[desc] += 1
 
-    # Sort keys with stable policy
-    keys_sorted = sorted(counts.keys(), key=_type_order_key)
-    segments = [f"{k}×{counts[k]}" for k in keys_sorted]
+    # Stable sort: length first, then first appearance index to preserve input order for ties
+    sorted_descs = sorted(counts.keys(), key=lambda d: (len(d), first_seen[d]))
+    segments = [f"{d}×{counts[d]}" for d in sorted_descs]
 
     summary = "，".join(segments)
-
-    # Merge remarks at the end
-    remarks = _collect_remarks(objects or [])
-    if remarks:
-        remark_str = "；".join(remarks)
-        summary = f"{summary}，备注: {remark_str}" if summary else f"备注: {remark_str}"
-
-    # Cleanup special characters
     summary = summary.replace("<", "").replace(">", "").replace("[", "").replace("]", "")
     return summary

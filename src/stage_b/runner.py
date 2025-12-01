@@ -25,7 +25,12 @@ from .reflection import ReflectionEngine
 from .rollout import RolloutSampler
 from .sampling.prompts import _render_summaries
 from .signals import attach_signals
-from .types import ExperienceRecord, GroupTicket, TrajectoryWithSignals
+from .types import (
+    DeterministicSignals,
+    ExperienceRecord,
+    GroupTicket,
+    TrajectoryWithSignals,
+)
 from .utils.seed import seed_everything
 
 logger = logging.getLogger("stage_b.runner")
@@ -130,6 +135,28 @@ def _append_jsonl(path: Path, payload: dict) -> None:
     with path.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(payload, ensure_ascii=False))
         fh.write("\n")
+
+
+def _merge_signals_with_critic(
+    signals: DeterministicSignals, critic_output
+) -> DeterministicSignals:
+    """Propagate critic uncertainty into deterministic signals without new rules."""
+
+    needs_review = signals.needs_manual_review
+    if critic_output is not None:
+        needs_review = needs_review or bool(
+            critic_output.needs_recheck
+            or critic_output.evidence_sufficiency is False
+            or critic_output.recommended_action == "人工复核"
+        )
+
+    return DeterministicSignals(
+        label_match=signals.label_match,
+        self_consistency=signals.self_consistency,
+        confidence=signals.confidence,
+        conflict_flag=signals.conflict_flag,
+        needs_manual_review=needs_review,
+    )
 
 
 def _setup_mission_guidance(
@@ -329,10 +356,13 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                     for candidate, critic_output in zip(
                         scored_candidates, critic_outputs
                     ):
+                        merged_signals = _merge_signals_with_critic(
+                            candidate.signals, critic_output  # type: ignore[arg-type]
+                        )
                         enriched_candidates.append(
                             TrajectoryWithSignals(
                                 parsed=candidate.parsed,
-                                signals=candidate.signals,
+                                signals=merged_signals,
                                 critic=critic_output,
                             )
                         )

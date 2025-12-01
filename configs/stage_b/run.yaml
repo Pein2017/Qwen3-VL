@@ -54,7 +54,6 @@ critic:
 reflection:
   prompt_path: configs/prompts/stage_b_reflection_prompt.txt
   batch_size: 8
-  apply_if_delta: 0.05
   allow_uncertain: true
   eligibility_policy: selected_mismatch_or_all_wrong
   max_operations: 3

@@ -15,6 +15,7 @@ from swift.llm.train.rlhf import SwiftRLHF
 from swift.llm.train.sft import SwiftSft
 from swift.trainers import TrainerFactory
 from swift.utils import get_dist_setting
+from transformers.trainer_utils import SaveStrategy
 
 from .callbacks.fusion_epoch import FusionEpochCallback
 from .config import ConfigLoader, SaveDelayConfig
@@ -37,8 +38,20 @@ def resolve_trainer_cls(train_args):
     else:
         trainer_cls = TrainerFactory.get_trainer_cls(train_args)
 
+    # Skip forced final checkpoint in debug-style runs where the user requested no saves.
+    save_strategy = getattr(train_args, "save_strategy", None)
+    try:
+        save_strategy_enum = SaveStrategy(save_strategy) if save_strategy is not None else SaveStrategy.NO
+    except Exception:
+        # Accept loose string values like "none"/"NO"/"No".
+        save_strategy_enum = (
+            SaveStrategy.NO
+            if str(save_strategy).lower() in ("no", "none")
+            else SaveStrategy.STEPS
+        )
+
     save_last_epoch = getattr(train_args, "save_last_epoch", True)
-    if save_last_epoch:
+    if save_last_epoch and save_strategy_enum != SaveStrategy.NO:
         return with_final_checkpoint(trainer_cls)
     return trainer_cls
 

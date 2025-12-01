@@ -5,7 +5,7 @@ stage_a_paths:
 seed: 17
 
 model:
-  model_name_or_path: output_4b/summary_merged/10-31
+  model_name_or_path: output/11-27/summary_merged/checkpoint-345
   torch_dtype: bfloat16
   device_map: auto
 
@@ -18,7 +18,7 @@ output:
   run_name: debug
 
 sampler:
-  samples_per_decode: 3  # Debug: 每个 decode 配置采样 3 个候选，增加多样性
+  samples_per_decode: 1  # Debug: 每个 decode 配置采样 3 个候选，增加多样性
   format_filter: true
   grid:
     # Debug: 多个温度配置，用于观察不同随机性下的行为
@@ -55,7 +55,6 @@ critic:
 reflection:
   prompt_path: configs/prompts/stage_b_reflection_prompt.txt
   batch_size: 4  # Debug: 保持较小批次，便于观察每次反思
-  apply_if_delta: 0.0  # Debug: 关闭 uplift 门限，便于快速探索经验更新
   allow_uncertain: true
   eligibility_policy: contradictions_or_all_wrong  # Debug: 更偏向利用矛盾样本和全错样本
   max_operations: 5  # Debug: 略微放宽，每次最多 5 条经验修改

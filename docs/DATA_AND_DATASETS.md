@@ -86,15 +86,15 @@ Enable by setting `custom.use_summary: true` in the training config. Mixed dense
 
 Format requirements (aligned with training/inference prompts):
 - Use Chinese comma '，' between items (object entries)
-- Group identical items with `×N` (full-width ×, no space before N)
-- Preserve visual order: 自上到下、再从左到右（线对象以最左端点为起点）
-- Inside an object entry, keep taxonomy with slashes: 类型/属性[,属性]/[条件属性]
-- Remarks only once at the end: prepend with `，备注: ...`
+- Group strictly by the raw `desc` text; do not rewrite/canonicalize
+- Merge identical desc into `desc×N` (full-width ×, no space)
+- Ordering: sort by `len(desc)` ascending; ties keep first appearance order
+- Keep `desc` exactly as annotated（含备注、组前缀等），不把备注另行拆出
 - Single sentence per image: no newlines, no trailing '。', no extra spaces
 - No geometry or coordinate arrays in summary strings
-- Keep group prefixes exactly as in `desc` (e.g., `组1: 标签/xxx`), but still merge identical strings with `×N`.
+- Conversion is fail-fast: if a sample has no objects or all `desc` are空/缺失，`build_summary_from_objects` raises `ValueError` and the sample is rejected.
 
-**Example**: `光模块×3，线缆×2，BBU设备×1，备注: 顶部有灰尘`
+**Example**: `光模块×3，线缆×2，BBU设备/需复核,备注:无法判断品牌×1`
 
 ---
 

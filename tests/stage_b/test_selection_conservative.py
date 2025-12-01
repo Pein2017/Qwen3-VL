@@ -42,3 +42,39 @@ def test_conservative_override_to_fail_on_needs_recheck():
     assert selection.verdict == "fail"
     assert any("needs_recheck=true" in w for w in selection.warnings)
 
+
+def test_label_fail_override_blocks_pass():
+    base = Trajectory(
+        group_id="g2",
+        mission="M",
+        candidate_index=0,
+        decode=DecodeConfig(temperature=0.7, top_p=0.9, max_new_tokens=32),
+        response_text="Verdict: 通过",
+        created_at=datetime.utcnow(),
+    )
+    parsed = ParsedTrajectory(
+        base=base,
+        verdict="pass",  # type: ignore[arg-type]
+        reason="看起来合规",
+        confidence=0.8,
+        format_ok=True,
+    )
+    signals = DeterministicSignals(
+        label_match=False,
+        self_consistency=1.0,
+        confidence=0.8,
+        conflict_flag=True,
+    )
+    ticket = GroupTicket(group_id="g2", mission="M", label="fail", summaries=StageASummaries(per_image={}))
+    selection = select_for_group(
+        ticket,
+        [TrajectoryWithSignals(parsed=parsed, signals=signals)],
+        guidance_step=1,
+        reflection_cycle=0,
+        reflection_change=None,
+        config=SelectionConfig(policy="top_label", tie_break="confidence"),
+        manual_review=ManualReviewConfig(),
+    )
+    assert selection.verdict == "fail"
+    assert selection.conflict_flag is True
+    assert any("label_fail_override" in w for w in selection.warnings)

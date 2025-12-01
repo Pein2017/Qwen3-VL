@@ -186,6 +186,8 @@ class DeterministicSignals:
     label_match: Optional[bool]
     self_consistency: Optional[float]
     confidence: Optional[float]
+    conflict_flag: bool = False
+    needs_manual_review: bool = False
 
 
 @dataclass(frozen=True)
@@ -247,6 +249,8 @@ class SelectionResult:
     eligible: Optional[bool] = None
     ineligible_reason: Optional[str] = None
     warnings: Tuple[str, ...] = field(default_factory=tuple)
+    conflict_flag: bool = False
+    needs_manual_review: bool = False
 
 
 @dataclass(frozen=True)

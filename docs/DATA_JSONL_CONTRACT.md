@@ -8,7 +8,7 @@ This document defines the universal JSONL format consumed by all training/eval d
 - `objects` (list[object], required): Structured annotations (see below).
 - `width` (int, required): Image width in pixels (original or post-resize if applied offline).
 - `height` (int, required): Image height in pixels.
-- `summary` (str, optional): Single-line summary text (present on BBU; may be absent on public sources).
+- `summary` (str, optional): Single-line summary text (present on BBU; may be absent on public sources). When present, it is built by grouping **raw `desc` strings** (no canonicalization), merging identical entries into `desc×N`, sorted by `len(desc)` ascending with first-appearance tiebreak. Conversion is fail-fast: missing objects or empty `desc` raise `ValueError` during build.
 - `metadata` (object, optional): Free-form metadata; fusion injects `_fusion_source`, `_fusion_template`, `_fusion_domain` here at load time.
 
 ## Objects
@@ -45,6 +45,6 @@ Each object MUST contain exactly one geometry field plus a non-empty `desc`.
 ## Current Sources (checked)
 - `data/bbu_full_768_poly/train.jsonl`: includes `summary`; objects use `poly` or `bbox_2d`.
 - `public_data/lvis/rescale_32_768_poly_max_12/train.jsonl`: same structure, no `summary`; objects may include `poly_points` metadata.
-- `data/rru_full_768_poly/all_samples.jsonl`: RRU domain; uses `bbox_2d`/`poly`/`line`, `desc` carries group prefixes (e.g., `组1:`) and merged station-distance labels (`站点距离/<text>`); `summary` aggregates identical `desc` strings with `×N` while preserving group prefixes.
+- `data/rru_full_768_poly/all_samples.jsonl`: RRU domain; uses `bbox_2d`/`poly`/`line`, `desc` carries group prefixes (e.g., `组1:`) and merged station-distance labels (`站点距离/<text>`); `summary` aggregates identical raw `desc` strings with `×N` (length-first ordering) while preserving group prefixes and remarks.
 
 All future domains MUST emit this contract to remain compatible with the shared chat template pipeline.

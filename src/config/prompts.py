@@ -36,6 +36,7 @@ DATASET_PRIOR_RULES = {
     "bbu": (
         "- 可能混杂无关内容（如施工图纸、杂物等），仅识别与任务相关的对象。\n"
         "- 爱立信品牌BBU：不安装挡风板。\n"
+        "- 一个华为挡风板对应着一个黄色箭头。如果有两个黄色箭头，那通常意为着存在两个挡风板。"
         "- 仅当存在两台BBU时，在两台BBU之间安装挡风板；单台BBU无需安装。\n"
         "- 螺丝/挡风板与本体强关联，不会远离对应设备；BBU端光纤插头多为蓝白色且插在 BBU 设备上。\n"
         "- 标签通常为黄色纸质，贴在插头处或电线上。\n"
@@ -118,14 +119,13 @@ def build_summary_system_prompt(*, dataset: str | None = None) -> str:
         "你是图像摘要助手。只返回一行中文摘要文本，不要任何解释或额外符号。若图片与任务无关或目标不可见，必须返回“无关图片”。\n\n"
         "输出要求：\n"
         "1) 单行摘要覆盖该图片中检测到的所有相关对象。\n"
-        "2) 相同对象必须合并计数，使用“对象描述×N”（×为全角乘号、紧贴N不留空格）；各条目之间仅用中文逗号'，'分隔。\n"
-        "   若检测到“<类型>/需复核”，需单独成条目计数，可优先列出以便审核；不要将需复核对象改写为合格/正确。\n"
-        "   其他对象条目按“自上到下、再从左到右”的出现顺序（线对象以最左端点为起点）。\n"
-        "3) 对象描述沿用密集标注的层级规范：类型/属性[,属性]/[条件属性]；如需备注，仅在末尾追加一次“，备注: ...”。\n"
-        "4) 单句输出：整行不得换行，不要在末尾加句号'。'，不要多余空格或首尾分隔符。\n"
-        "5) 仅输出摘要文本；不得返回 JSON 或其它包装结构。\n\n"
+        "2) 使用对象的 desc 原文作为分组键，不拆分或改写；相同 desc 合并为“desc×N”（×为全角乘号、紧贴N不留空格）。\n"
+        "3) 排序：先按 desc 字数从少到多；若字数相同，保留首次出现的先后顺序。条目之间仅用中文逗号'，'分隔。\n"
+        "4) desc 中若含“备注: …”保持原样放在该条目内部，不要额外拆出独立备注。\n"
+        "5) 单句输出：整行不得换行，不要在末尾加句号'。'，不要多余空格或首尾分隔符。\n"
+        "6) 仅输出摘要文本；不得返回 JSON 或其它包装结构。\n\n"
         "决策规则（严格二选一）：\n"
-        "- 若存在与任务相关的任意目标：仅输出若干条“类型/属性[,属性]/[条件属性]×N”，条目用中文逗号'，'分隔。\n"
+        "- 若存在与任务相关的任意目标：输出若干条“desc×N”，条目用中文逗号'，'分隔。\n"
         "- 否则：严格输出“无关图片”。\n"
         "禁止输出：无法判断、证明文件、文件、文档、报告、图纸、票据等；以上情形一律视为“无关图片”。\n"
         "不确定/遮挡/模糊时不要猜测，输出“无关图片”。\n\n"
@@ -152,8 +152,8 @@ USER_PROMPT_JSON = (
 )
 
 USER_PROMPT_SUMMARY = (
-    "请对每张图片输出一行中文摘要：相同对象合并为“对象描述×N”（×为全角乘号、紧贴N不留空格），条目之间仅用中文逗号'，'分隔，并按“自上到下、再从左到右”排序。"
-    "对象描述沿用密集标注的类型/属性[,属性]/[条件属性]层级，如需备注，仅在末尾追加一次“，备注: ...”。整行必须为单句：不得换行，不要句号'。'结尾。只返回摘要文本，不要坐标、几何字段或解释。"
+    "请对每张图片输出一行中文摘要：使用检测到的 desc 原文分组，相同 desc 合并为“desc×N”（×为全角乘号、紧贴N不留空格），按 desc 字数从少到多排序，字数相同保持首次出现顺序，条目之间仅用中文逗号'，'分隔。"
+    "保持 desc 原样（包含备注时也写在该条目内，不额外拆分），不得换行或添加句号。只返回摘要文本，不要坐标、几何字段或解释。"
 )
 
 
@@ -165,9 +165,7 @@ SYSTEM_PROMPT_AUX = (
     "If unsure about a category, pick the closest simple class name available in the dataset and keep the wording concise."
 )
 
-USER_PROMPT_AUX = (
-    "List every visible object using concise English class names only (no attributes or long phrases) and keep the output in JSON."
-)
+USER_PROMPT_AUX = "List every visible object using concise English class names only (no attributes or long phrases) and keep the output in JSON."
 
 
 def get_template_prompts(name: str | None) -> tuple[str, str]:
@@ -176,11 +174,23 @@ def get_template_prompts(name: str | None) -> tuple[str, str]:
         # auxiliary
         "aux_dense": (SYSTEM_PROMPT_AUX, USER_PROMPT_AUX),
         # BBU
-        "bbu_dense": (build_dense_system_prompt(_DEFAULT_JSON_FORMAT, dataset="bbu"), USER_PROMPT_JSON),
-        "bbu_summary": (build_summary_system_prompt(dataset="bbu"), USER_PROMPT_SUMMARY),
+        "bbu_dense": (
+            build_dense_system_prompt(_DEFAULT_JSON_FORMAT, dataset="bbu"),
+            USER_PROMPT_JSON,
+        ),
+        "bbu_summary": (
+            build_summary_system_prompt(dataset="bbu"),
+            USER_PROMPT_SUMMARY,
+        ),
         # RRU
-        "rru_dense": (build_dense_system_prompt(_DEFAULT_JSON_FORMAT, dataset="rru"), USER_PROMPT_JSON),
-        "rru_summary": (build_summary_system_prompt(dataset="rru"), USER_PROMPT_SUMMARY),
+        "rru_dense": (
+            build_dense_system_prompt(_DEFAULT_JSON_FORMAT, dataset="rru"),
+            USER_PROMPT_JSON,
+        ),
+        "rru_summary": (
+            build_summary_system_prompt(dataset="rru"),
+            USER_PROMPT_SUMMARY,
+        ),
     }
     return registry.get(normalized, registry["bbu_dense"])
 

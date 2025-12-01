@@ -6,7 +6,7 @@ set -euo pipefail
 # Example: mission=BBU安装方式检查（正装） gpu=1 bash scripts/stage_a_infer.sh
 
 # Fixed configuration
-CHECKPOINT="output/summary_merged/10-31"
+CHECKPOINT="output/11-27/summary_merged/checkpoint-345"
 INPUT_DIR="group_data/bbu_scene_2.0_order"
 OUTPUT_DIR="output_post/stage_a"
 
@@ -29,6 +29,8 @@ TEMPERATURE="0.0001"
 TOP_P="1.0"
 REP_PENALTY="1.05"
 LOG_LEVEL="INFO"
+
+export CUDA_VISIBLE_DEVICES=$gpu_id
 
 # Print configuration
 echo "=================================="

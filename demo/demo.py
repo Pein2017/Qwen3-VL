@@ -42,14 +42,14 @@ def main() -> None:
     # Configuration (edit these)
 
     # model_path = "output/summary_merged/10-25-aug_on-full_last2_llm"
-    model_path = "output/11-24/stage_1.5_merged/sft_all-checkpoint-2070"
+    model_path = "output/11-27/res_1024_merged/checkpoint-690"
 
     image_paths = [
         # "demo/images/QC-20230106-0000211_16517.jpeg",
         # "demo/images/QC-20230106-0000211_16519.jpeg",
-        # "demo/images/test_demo.jpg",
+        "demo/images/test_demo.jpg",
         # ]
-        "demo/irrelevant_images/QC-TEMP-20241028-0015135_4206555.jpeg",
+        # "demo/irrelevant_images/QC-TEMP-20241028-0015135_4206555.jpeg",
         # "demo/irrelevant_images/QC-TEMP-20241028-0015135_4206556.jpeg",
         # "demo/irrelevant_images/QC-TEMP-20241028-0015135_4206715.jpeg",
     ]

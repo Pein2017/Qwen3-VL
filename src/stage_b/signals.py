@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from typing import List, Mapping, Sequence, Union, cast
+from typing import Dict, List, Sequence, Union, cast
 
 from .config import SignalsConfig
 from .types import (
@@ -16,8 +16,7 @@ from .types import (
 )
 from .utils.verdict import normalize_verdict
 
-# Removed _metric_value() and _semantic_advantage() functions
-# per training-free Stage-B design - semantic_advantage is no longer computed
+# Removed uncertainty regex cues; rely on LLM reasoning instead.
 
 
 def attach_signals(
@@ -60,11 +59,15 @@ def attach_signals(
             self_consistency = None
 
         confidence_value = confidence_input if config.store_confidence else None
+        needs_manual_review = False
+        conflict_flag = label_match is False
 
         signals = DeterministicSignals(
             label_match=label_match,
             self_consistency=self_consistency,
             confidence=confidence_value,
+            conflict_flag=conflict_flag,
+            needs_manual_review=needs_manual_review,
         )
 
         if isinstance(candidate, ParsedTrajectory):

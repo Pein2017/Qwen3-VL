@@ -109,6 +109,13 @@ class ReflectionEngine:
             self.config, "eligibility_policy", "selected_mismatch_or_all_wrong"
         )
 
+        # New guardrails: conflicts or manual-review flags should trigger reflection
+        for record in bundle.records:
+            for cand in record.candidates:
+                sig = cand.signals
+                if sig is not None and (sig.conflict_flag or sig.needs_manual_review):
+                    return True, None
+
         if policy == "contradictions_or_all_wrong":
             for record in bundle.records:
                 has_true = any(c.signals.label_match is True for c in record.candidates)
