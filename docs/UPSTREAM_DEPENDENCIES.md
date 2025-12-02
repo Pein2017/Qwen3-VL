@@ -36,14 +36,13 @@ _Source: `/data/ms-swift/swift/` (notably `swift/llm/train/sft.py` and `swift/ll
 
 ### SwiftSft Pipeline
 - **Entry point**: `SwiftSft` (inherits `SwiftPipeline` + `TunerMixin`) orchestrates loading the model/processor, template, datasets, collator, and trainer.
-- **Model loading**: `args.get_model_processor()` returns `(model, processor)`; padding-free or packing modes require flash attention kernels.
-- **Template**: `args.get_template(processor)` loads the multimodal chat template and verifies packing compatibility (`template.support_padding_free`). Templates can hook into the model for multimodal masking.
+- **Model loading**: `args.get_model_processor()` returns `(model, processor)`; padding-free modes require flash attention kernels. Packing is removed in this repo.
+- **Template**: `args.get_template(processor)` loads the multimodal chat template. Templates can hook into the model for multimodal masking.
 - **Dataset preparation**:
   1. Load JSONL via `load_dataset()` (returns HF Dataset or iterable dataset).
   2. Encode using `LazyLLMDataset` + template.encode (handles multimodal fields).
-  3. Optional packing via `PackingDataset` / `IterablePackingDataset`.
-  4. Cache handling via `args.cached_dataset` (on-disk Arrow splits).
-- **Collation**: `template.data_collator` is partially applied with `padding_to` when `train_type == 'longlora'`. For other regimes the template decides padding/packing logic.
+  3. Cache handling via `args.cached_dataset` (on-disk Arrow splits).
+- **Collation**: `template.data_collator` is partially applied with `padding_to` when `train_type == 'longlora'`. For other regimes the template decides padding logic (packing removed).
 - **Model preparation**: `TunerMixin.prepare_model(...)` applies LoRA/full tuning rules, sets `modules_to_save`, and ensures adapter checkpoints if requested.
 - **Trainer factory**: `TrainerFactory.get_trainer_cls(args)` selects a Hugging Face Trainer subclass (standard or DeepSpeed/sequence parallel variants). The resulting trainer receives the template to keep multimodal masking consistent.
 
@@ -53,10 +52,8 @@ _Source: `/data/ms-swift/swift/` (notably `swift/llm/train/sft.py` and `swift/ll
 - Builds `training_args` (HF `Seq2SeqTrainingArguments`) through `TrainerFactory.get_training_args(self)` with `remove_unused_columns = False` to preserve multimodal tensors.
 - Enforces dataset presence: either `dataset` YAML entries or cached datasets must be provided—this is why the repo always supplies `custom.train_jsonl` / `custom.val_jsonl`.
 
-### Packing & Streaming Modes
-- `padding_free` or `packing` set in YAML propagate to `TrainArguments`, which in turn select appropriate dataset wrappers.
-- Packing requires flash attention; ms-swift will raise if incompatible (`attn_impl` must be `flash_attn`/`flash_attention_*`).
-- Streaming datasets use `EncodePreprocessor` to tokenize on the fly while respecting template logic.
+### Streaming Mode
+- Streaming datasets use `EncodePreprocessor` to tokenize on the fly while respecting template logic. Packing is removed; only padded or padding-free (template-controlled) batching remains.
 
 ### Callbacks & Metrics
 ### RLHF & GKD

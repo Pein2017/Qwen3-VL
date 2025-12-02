@@ -60,6 +60,16 @@ bash tests/run_tests.sh
 - 验证几何类型：`bbox_2d`, `poly`（N点多边形）
 - 验证 `poly_points` 字段一致性
 
+### ✅ Test 5: Polygon Cap Functionality (test_poly_cap.py)
+- 测试多边形顶点上限功能（`poly_max_points`）
+- 验证超过上限的多边形自动转换为 `bbox_2d`
+- 验证数据合约合规性（仅 `bbox_2d` 和 `poly`，无 `line`/`quad`）
+- 统计转换数量（`poly_to_bbox_capped`）
+
+**测试场景**：
+- 4点/8点/12点多边形 → 保持为 `poly`
+- 15点/18点多边形 → 转换为 `bbox_2d`（默认上限12）
+
 ## 多边形统计（前20张图）
 
 | 点数范围 | 数量 | 占比 |
@@ -93,7 +103,8 @@ bash tests/run_tests.sh
 tests/
 ├── README.md                    # 本文件
 ├── run_tests.sh                 # 测试运行脚本（使用ms环境）
-└── test_lvis_converter.py       # 转换器测试套件
+├── test_lvis_converter.py       # 转换器测试套件
+└── test_poly_cap.py             # 多边形顶点上限功能测试
 ```
 
 ## 下载完成后的完整测试
@@ -127,7 +138,9 @@ conda run -n ms python tests/test_lvis_converter.py
 
 ## 预期结果
 
-✅ 所有4个测试应该通过：
+✅ 所有测试应该通过：
+
+**test_lvis_converter.py** (4个测试)：
 ```
 ✓ PASS - Annotation Loading
 ✓ PASS - BBox Conversion
@@ -135,4 +148,12 @@ conda run -n ms python tests/test_lvis_converter.py
 ✓ PASS - Format Compliance
 
 Total: 4/4 tests passed
+```
+
+**test_poly_cap.py** (2个测试)：
+```
+✓ PASS - Polygon Cap Functionality
+✓ PASS - Data Contract Compliance
+
+Total: 2/2 tests passed
 ```

@@ -486,7 +486,7 @@ logger.warning("...")
 - **Total overhead**: <1% of training step time
 
 ### Optimization Tips
-1. **Use packing**: `training.packing: true` eliminates padding waste
+1. **Padding-only**: Packing is removed; rely on standard padding and adjust `global_max_length` if needed.
 2. **Tune max_length**: Reduce `global_max_length` if seeing OOM
 3. **Reduce augmentation strength**: Lower rotation angles if seeing scaling warnings
 4. **Monitor logs**: Watch for frequent pixel limit warnings
@@ -541,11 +541,11 @@ Outputs to `vis_out/augment_stage3_exact/` showing original vs augmented with ov
 **Note**: Placing `expand_to_fit_affine` before size-changing operations (like `random_crop` or `resize_by_scale`) will cause the final image to not be a multiple of 32, breaking ViT requirements.
 
 ### OOM during training
-**Cause**: max_pixels too high or packing disabled
+**Cause**: max_pixels too high or batch too large
 **Fix**:
 1. Lower `max_pixels` (921600 → 614400)
-2. Enable `training.packing: true`
-3. Reduce `per_device_train_batch_size`
+2. Reduce `per_device_train_batch_size`
+3. Shorten `global_max_length` or clip sequences earlier
 
 ### Slow augmentation
 **Cause**: Too many barrier ops breaking affine accumulation

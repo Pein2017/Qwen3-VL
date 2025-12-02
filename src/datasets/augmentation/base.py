@@ -5,15 +5,8 @@ from typing import Any, Dict, List, Optional, Protocol, Tuple
 from PIL import Image
 
 from ..geometry import (
-    apply_affine,
-    clamp_points,
     compose_affine,
-    dedupe_consecutive_points,
     invert_affine,
-    sutherland_hodgman_clip,
-    to_clockwise,
-    classify_affine_kind,
-    clip_polyline_to_rect,
     transform_geometry,
 )
 from ..contracts import AugmentationTelemetry

@@ -9,7 +9,6 @@ Run with: python download_qwen3vl_example.py
 """
 
 import os
-import sys
 
 
 def check_dependencies():
@@ -36,7 +35,7 @@ def check_dependencies():
 
     if missing:
         print(f"\nMissing packages: {', '.join(missing)}")
-        print(f"\nInstall with:")
+        print("\nInstall with:")
         print(f"  pip install {' '.join(missing)}")
         return False
     else:
@@ -72,7 +71,7 @@ def download_models():
             "Qwen/Qwen3-VL-4B-Instruct",
             use_hf=False,  # Use ModelScope instead of HuggingFace
         )
-        print(f"\n✓ 4B model successfully downloaded!")
+        print("\n✓ 4B model successfully downloaded!")
         print(f"  Location: {model_dir_4b}")
 
         # Download 8B model
@@ -83,7 +82,7 @@ def download_models():
             "Qwen/Qwen3-VL-8B-Instruct",
             use_hf=False,  # Use ModelScope instead of HuggingFace
         )
-        print(f"\n✓ 8B model successfully downloaded!")
+        print("\n✓ 8B model successfully downloaded!")
         print(f"  Location: {model_dir_8b}")
 
         return model_dir_4b, model_dir_8b

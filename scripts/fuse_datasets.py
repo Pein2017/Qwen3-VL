@@ -74,6 +74,6 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except Exception as exc:  # pragma: no cover
+    except Exception:  # pragma: no cover
         logging.exception("Fusion builder failed")
         sys.exit(1)

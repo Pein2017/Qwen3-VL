@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import copy
 import json
-import math
 import random
 from dataclasses import dataclass
 from pathlib import Path
@@ -191,39 +190,24 @@ class FusionConfig:
 def _compute_target_quotas(
     targets: Sequence[TargetSpec], pool_sizes: Mapping[str, int]
 ) -> tuple[dict[str, int], Optional[int]]:
-    """Compute per-target quotas using ratio balancing.
+    """Compute per-target quotas using self-scaled ratios.
 
-    Returns (quota_map, base). base is None when no ratios are provided.
+    Returns (quota_map, base). base is kept for legacy compatibility and is
+    always None in the self-scaled regime.
     """
 
-    has_ratio = any(t.ratio is not None for t in targets)
     quotas: dict[str, int] = {}
-    if not has_ratio:
-        for spec in targets:
-            quotas[spec.name] = pool_sizes.get(spec.name, 0)
-        return quotas, None
-
-    capacities: list[float] = []
-    ratios: dict[str, float] = {}
     for spec in targets:
         ratio_val = spec.ratio if spec.ratio is not None else 1.0
-        ratios[spec.name] = ratio_val
-        length = pool_sizes.get(spec.name, 0)
-        if length <= 0:
-            raise ValueError(f"Target '{spec.name}' has empty pool for ratio balancing")
-        capacities.append(length / ratio_val)
-
-    base = math.floor(min(capacities))
-    if base <= 0:
-        raise ValueError("Computed base quota is non-positive; check target ratios and sizes")
-
-    for spec in targets:
-        ratio_val = ratios[spec.name]
+        if ratio_val < 0:
+            raise ValueError("ratio must be non-negative")
         pool_len = pool_sizes.get(spec.name, 0)
-        quota = round(base * ratio_val)
-        quota = max(1, min(pool_len, quota))
+        if pool_len <= 0:
+            quotas[spec.name] = 0
+            continue
+        quota = round(pool_len * ratio_val)
         quotas[spec.name] = quota
-    return quotas, base
+    return quotas, None
 
 
 def _annotate_record(record: Mapping[str, Any], spec: DatasetSpec) -> Dict[str, Any]:
@@ -277,11 +261,17 @@ def build_fused_jsonl(
         quota = target_quotas.get(target.name, 0)
         if quota <= 0:
             continue
-        indices = list(range(len(pool)))
         rng_local = random.Random((seed ^ hash(target.name)) & 0xFFFFFFFF)
+        indices = list(range(len(pool)))
         if len(indices) > 1:
             rng_local.shuffle(indices)
-        for idx in indices[:quota]:
+        if quota <= len(pool):
+            sampled_indices = indices[:quota]
+        else:
+            sampled_indices = indices[:]
+            extra_needed = quota - len(pool)
+            sampled_indices.extend(rng_local.randrange(len(pool)) for _ in range(extra_needed))
+        for idx in sampled_indices:
             fused.append(_annotate_record(pool[idx], target))
 
     total_target = len([rec for rec in fused if rec.get("metadata", {}).get("_fusion_domain") == "target"])

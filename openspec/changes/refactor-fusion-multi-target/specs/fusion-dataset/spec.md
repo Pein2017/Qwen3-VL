@@ -13,13 +13,13 @@ The fusion loader SHALL accept a `targets` list (one or more entries) and treat 
 - **WHEN** a fusion config provides only `target: { ... }`
 - **THEN** it is normalized to a single-element targets list without changing existing behavior.
 
-### Requirement: Ratio-balanced target quotas per epoch
-The fusion scheduler SHALL support optional per-target `ratio` values; when any ratios are present, it computes `base = floor(min(len_i / ratio_i))` across targets and assigns each target `quota_i = round(base * ratio_i)` (capped by its pool), shuffling indices deterministically each epoch.
+### Requirement: Self-scaled target quotas per epoch
+The fusion scheduler SHALL support per-target `ratio` values that scale each target by its own pool size: `quota_i = round(len_i * ratio_i)` with `ratio_i` defaulting to `1.0`; ratios below 1 downsample, ratios above 1 upsample with replacement, and indices are shuffled deterministically each epoch.
 
-#### Scenario: Three targets balanced
-- **GIVEN** target pool sizes 100, 200, 300 with ratios 0.33, 0.33, 0.34
+#### Scenario: Three targets scaled independently
+- **GIVEN** target pool sizes 100, 200, 300 with ratios 0.5, 1.0, 1.5
 - **WHEN** an epoch schedule is built
-- **THEN** quotas are approximately 100, 100, 103, derived from base=min(100/0.33≈303, 200/0.33≈606, 300/0.34≈882) ⇒ base≈303, then quotas round to 100/100/103
+- **THEN** quotas are 50, 200, and 450 respectively (upsample with replacement for the third target)
 - **AND** each target’s indices are shuffled deterministically using mixed seeds (global, epoch, per-target seed).
 
 ### Requirement: Source quotas keyed to total target quota
@@ -38,8 +38,8 @@ The fusion eval loader SHALL iterate all target validation splits (concatenated,
 - **THEN** the eval dataloader length equals the sum of their val records, with no source samples included.
 
 ### Requirement: Compatibility and defaults
-When no target ratios are provided, the scheduler SHALL fall back to full-coverage per target (existing behavior), and legacy single-target configs SHALL remain valid without code changes to callers.
+When no target ratios are provided, the scheduler SHALL default each target to `ratio=1.0` (full coverage), and legacy single-target configs SHALL remain valid without code changes to callers.
 
 #### Scenario: No ratios given
 - **WHEN** a multi-target config omits `ratio`
-- **THEN** every target sample is included once per epoch (as today), and sources still use the total target count for their quotas.
+- **THEN** every target sample is included once per epoch (full coverage), and sources still use the total target count for their quotas.

@@ -1,9 +1,9 @@
 """JSON conversation builder for dense captioning"""
 
 import base64
+import copy
 import json
 import os
-import copy
 from typing import Any, Dict, Iterable, List, Literal, Mapping, Optional, Tuple
 
 from ..contracts import ConversationRecord, validate_conversation_record
@@ -84,7 +84,11 @@ class JSONLinesBuilder(BaseBuilder):
         if record.get("messages"):
             return {
                 "messages": copy.deepcopy(record["messages"]),
-                **({"metadata": copy.deepcopy(record["metadata"])} if "metadata" in record else {}),
+                **(
+                    {"metadata": copy.deepcopy(record["metadata"])}
+                    if "metadata" in record
+                    else {}
+                ),
             }
 
         user_contents: List[Dict[str, Any]] = []
@@ -128,6 +132,9 @@ class JSONLinesBuilder(BaseBuilder):
             merged["assistant_payload"] = objects_payload
         if objects_out["bbox"]:
             merged["objects"] = objects_out
+        # Preserve metadata from record for fusion dataset grouping
+        if "metadata" in record:
+            merged["metadata"] = copy.deepcopy(record["metadata"])
         return merged
 
     def _build_group_entry(

@@ -10,7 +10,7 @@ set -euo pipefail
 # EDIT THESE FOR YOUR RUN
 # --------------------------------------------------------------------------- #
 RAW_ROOT="lvis/raw"              # contains annotations/ and images/
-OUTPUT_ROOT="lvis/resized_32_768_v2" # final resized images + JSONLs
+OUTPUT_ROOT="lvis/rescale_32_768_poly_max_12" # final resized images + JSONLs
 RUN_VAL="false"                                             # set to "true" to also process val split
 FACTOR="32"                                                 # grid alignment
 MAX_BLOCKS="768"                                            # pixel budget, blocks * FACTOR^2
@@ -34,9 +34,10 @@ MAX_PIXELS=$((FACTOR * FACTOR * MAX_BLOCKS))
 MIN_PIXELS=$((FACTOR * FACTOR * MIN_BLOCKS))
 
 echo "--- Converting + smart-resizing train split ---"
-${PYTHON_BIN} public_data/scripts/convert_lvis.py \
+${PYTHON_BIN} scripts/convert_lvis.py \
   --split train \
   --use-polygon \
+  --poly-max-points 12 \
   --annotation "${RAW_ROOT}/annotations/lvis_v1_train.json" \
   --image_root "${RAW_ROOT}/images" \
   --smart-resize \
@@ -48,9 +49,10 @@ ${PYTHON_BIN} public_data/scripts/convert_lvis.py \
 
 if [ "${RUN_VAL}" = "true" ]; then
   echo "--- Converting + smart-resizing val split ---"
-  ${PYTHON_BIN} public_data/scripts/convert_lvis.py \
+  ${PYTHON_BIN} scripts/convert_lvis.py \
     --split val \
     --use-polygon \
+    --poly-max-points 12 \
     --annotation "${RAW_ROOT}/annotations/lvis_v1_val.json" \
     --image_root "${RAW_ROOT}/images" \
     --smart-resize \

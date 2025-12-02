@@ -434,7 +434,8 @@ def is_torchcodec_available() -> bool:
 
         if importlib.util.find_spec("torchcodec") is None:
             return False
-        from torchcodec.decoders import VideoDecoder  # type: ignore
+        # Import to verify it's available
+        import torchcodec.decoders  # type: ignore  # noqa: F401
 
         return True
     except (ImportError, AttributeError, Exception):

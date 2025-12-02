@@ -1,7 +1,0 @@
-extends: ./last_6_base.yaml
-
-training:
-  run_name: lvis_chat_ratio_0.05-epoch_30-last_6_langmix
-
-custom:
-  fusion_config: configs/fusion/bbu_lvis_chat.yaml

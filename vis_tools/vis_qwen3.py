@@ -21,6 +21,8 @@ import json
 import os
 import re
 import sys
+import torch
+import gc
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -36,19 +38,19 @@ else:
     plt = None  # type: ignore
     torch = None  # type: ignore
     Image = None  # type: ignore
-from transformers import (
+from transformers import (  # noqa: E402
     AutoProcessor,
     Qwen3VLForConditionalGeneration,
     StoppingCriteria,
     StoppingCriteriaList,
 )
-from transformers.generation.logits_process import (
+from transformers.generation.logits_process import (  # noqa: E402
     LogitsProcessor,
     LogitsProcessorList,
 )
 
-from vis_tools import evaluate as geom_eval
-from vis_tools.vis_helper import (
+from vis_tools import evaluate as geom_eval  # noqa: E402
+from vis_tools.vis_helper import (  # noqa: E402
     canonicalize_poly,
     draw_objects,
 )
@@ -76,13 +78,13 @@ def _parse_args():
 # ==============================
 
 # Required paths
-CKPT_PATH = "output/11-27/res_1024_merged/checkpoint-690"  # HF dir or merged checkpoint  # HF dir or merged checkpoint
+CKPT_PATH = "output/12-1/fusion_dlora_merged/lm_head/checkpoint-700"  # HF dir or merged checkpoint  # HF dir or merged checkpoint
 JSONL_PATH = "data/bbu_full_1024_poly-need_review/val.jsonl"
 
 # Runtime settings
 LIMIT = 10
-DEVICE = "cuda:4"  # Default device; can be overridden by CLI arg in main()
-SAVE_DIR = "vis_out/11-27/res_1024_merged/checkpoint-690"
+DEVICE = "cuda:3"  # Default device; can be overridden by CLI arg in main()
+SAVE_DIR = "vis_out/12-1/lm_head"
 MAX_NEW_TOKENS = 2048
 TEMPERATURE = 0.01  # Moderate temperature for diversity without excessive randomness
 TOP_P = 0.95  # Nucleus sampling - cuts off low-probability tail for better diversity

@@ -19,7 +19,6 @@ from data_conversion.utils.exif_utils import apply_exif_orientation
 from src.datasets.preprocessors.resize import (
     IMAGE_FACTOR,
     MAX_PIXELS,
-    MAX_RATIO,
     MIN_PIXELS,
     smart_resize,
 )

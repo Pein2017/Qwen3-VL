@@ -69,8 +69,17 @@ cd public_data
 conda run -n ms python scripts/download_coig_cqia.py \
   --subsets coig_pc zhihu \
   --sample 2000 \
-  --merge
+  --merge \
+  --format           # normalize metadata + strip message loss fields
 # outputs to public_data/coig_cqia/*.jsonl (merged file optional)
+```
+
+**Format an existing COIG-CQIA JSONL**
+```bash
+python scripts/format_coig_cqia.py \
+  --input public_data/coig_cqia/coig_cqia_merged.jsonl \
+  --output public_data/coig_cqia/coig_cqia_merged_formatted.jsonl
+# or --inplace to rewrite
 ```
 
 ## Conversion Behavior (from code)
@@ -80,9 +89,9 @@ conda run -n ms python scripts/download_coig_cqia.py \
 - Crowd: skipped by default (`--keep-crowd` to keep).
 - Relative paths: default; use `--absolute-paths` to keep absolute.
 - Polygons: `--use-polygon` converts each segmentation part to a `poly` (N-point closed polygon). If no valid polygon, it falls back to bbox.
-- Smart resize: `--smart-resize` uses `src/datasets/preprocessors/resize.SmartResizePreprocessor` to resize images + geometry. **Caveat:** that preprocessor currently scales `bbox_2d` and `poly` fields; `quad` is no longer accepted.
+- Smart resize: `--smart-resize` uses `src/datasets/preprocessors/resize.SmartResizePreprocessor` to resize images + geometry. The preprocessor scales `bbox_2d` and `poly` fields.
 - Stats counters: total/skipped images & objects; polygon mode adds `poly_converted` and `polygon_skipped`.
-- Known flag gap: `--poly-max-points` is parsed but not wired into `LVISConverter`; using it will raise a constructor error. Skip this flag for now.
+- Polygon cap: `--poly-max-points` (default: 12) converts polygons with more than N vertices to `bbox_2d` for simplicity.
 
 ## JSONL Schema (produced here)
 ```json

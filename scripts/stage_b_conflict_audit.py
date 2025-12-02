@@ -20,7 +20,7 @@ import argparse
 import json
 from collections import defaultdict
 from pathlib import Path
-from typing import Dict, Iterable, Tuple
+from typing import Dict, Tuple
 
 
 def _load_conflicts(selections_path: Path) -> Dict[str, Dict[str, object]]:

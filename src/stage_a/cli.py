@@ -10,8 +10,10 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from .inference import run_stage_a_inference
 from src.config.missions import SUPPORTED_MISSIONS, validate_mission
+
+from ..utils import configure_logging, get_logger
+from .inference import run_stage_a_inference
 
 
 @dataclass(frozen=True)
@@ -200,7 +202,12 @@ Examples:
         type=str,
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
-        help="Logging level. Default: INFO",
+        help="Logging level (ignored if --debug is set). Default: INFO",
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug logging (HIGHEST PRIORITY, overrides --log_level)",
     )
 
     return parser.parse_args()
@@ -209,26 +216,21 @@ Examples:
 def main() -> None:
     """Main entry point for Stage-A inference CLI."""
     args = parse_args()
+
+    requested_level = getattr(logging, args.log_level.upper())
+    configure_logging(level=requested_level, debug=bool(args.debug), verbose=bool(args.debug))
+
     cfg = StageAConfig.from_namespace(args)
 
     try:
         cfg.validate()
     except Exception as exc:
-        logging.basicConfig(
-            level=logging.ERROR,
-            format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-        )
-        logger = logging.getLogger("stage_a.cli")
+        # Use unified logging system for error reporting
+        logger = get_logger("stage_a.cli")
         logger.error(str(exc))
         sys.exit(1)
 
-    # Setup logging
-    logging.basicConfig(
-        level=getattr(logging, cfg.log_level),
-        format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-    )
-
-    logger = logging.getLogger("stage_a.cli")
+    logger = get_logger("stage_a.cli")
 
     input_path = Path(cfg.input_dir)
     checkpoint_path = Path(cfg.checkpoint)

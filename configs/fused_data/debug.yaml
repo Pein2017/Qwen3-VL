@@ -1,0 +1,29 @@
+extends: ./all_base.yaml
+
+training:
+  run_name: lvis_chat_
+  num_train_epochs: 1
+  eval_strategy: steps
+  save_strategy: "no"
+  save_total_limit: 1
+  logging_dir: ./tb/debug
+  output_dir: ./output/debug
+  logging_steps: 1
+  eval_steps: 1
+  log_level: debug
+  log_level_replica: debug
+  # use global_max_length below; packing is removed
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 1
+  effective_batch_size: 2
+
+custom:
+  fusion_config: configs/fusion/bbu_rru_lvis_coig_tiny.yaml
+  augmentation_curriculum: null  # disable curriculum for tiny/debug to avoid boundary scaling errors
+  train_sample_limit: 16
+  val_sample_limit: 8
+
+template:
+  truncation_strategy: raise  # drop over-length samples instead of truncating
+
+global_max_length: 18000

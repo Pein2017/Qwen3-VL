@@ -79,9 +79,6 @@ class AugmentationPreprocessor(BasePreprocessor):
         # Only plugin registry path is supported
         try:
             from ..augmentation.base import Compose
-            from ..augmentation import (
-                ops as _builtin_ops,
-            )  # ensure registration side-effects
             from ..augmentation.registry import get as _get
         except Exception:
             Compose = None  # type: ignore

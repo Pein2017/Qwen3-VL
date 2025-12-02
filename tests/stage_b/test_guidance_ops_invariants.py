@@ -26,7 +26,7 @@ def test_remove_warns_missing_key_and_merge_validates(tmp_path):
         ExperienceOperation(op="upsert", key="G1", text="text1", rationale=None),
     )
     proposal = ReflectionProposal(action="refine", summary=None, critique=None, operations=ops, evidence_group_ids=("g0",))
-    updated = repo.preview_reflection(
+    _updated = repo.preview_reflection(  # noqa: F841
         mission="M1",
         proposal=proposal,
         reflection_id="r0",

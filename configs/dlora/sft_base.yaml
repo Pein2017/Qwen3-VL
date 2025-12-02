@@ -34,7 +34,7 @@ training:
   aligner_lr: 8.0e-4
   lr_scheduler_kwargs:
     min_lr: 1.0e-6
-  packing: true
+  packing: false
   weight_decay: 0.1
   warmup_ratio: 0.1
   add_version: true

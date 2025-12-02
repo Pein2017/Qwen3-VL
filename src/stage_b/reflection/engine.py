@@ -19,7 +19,6 @@ from src.config.missions import STAGE_B_MISSION_FOCUS
 
 from ..config import ReflectionConfig
 from ..io.guidance import GuidanceRepository, MissionGuidanceError
-from ..sampling.prompts import _render_summaries
 from ..types import (
     DeterministicSignals,
     ExperienceBundle,

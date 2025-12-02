@@ -10,16 +10,18 @@ import copy
 import random
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Literal, Mapping, MutableMapping, Optional, cast
+from typing import Any, Literal, Mapping, MutableMapping, Optional, cast
 
 from torch.utils.data import get_worker_info
+
+from src.utils import get_logger
 
 from ..config.prompts import USER_PROMPT_SUMMARY, get_template_prompts
 from .builders import JSONLinesBuilder
 from .contracts import validate_conversation_record
 from .dense_caption import LAST_SAMPLE_DEBUG, BaseCaptionDataset
 from .fusion import FusionConfig, _compute_target_quotas
-from .fusion_types import DatasetSpec, TargetSpec
+from .fusion_types import DatasetSpec
 from .preprocessors import AugmentationPreprocessor, ObjectCapPreprocessor
 from .utils import load_jsonl
 
@@ -43,6 +45,8 @@ class _DatasetPolicy:
 
 class FusionCaptionDataset(BaseCaptionDataset):
     """Fusion dataset that concatenates multiple JSONL sources with a unified template."""
+
+    _logger = get_logger(__name__)
 
     def __init__(
         self,
@@ -314,7 +318,14 @@ class FusionCaptionDataset(BaseCaptionDataset):
             indices = list(range(len(pool)))
             if self._shuffle and len(indices) > 1:
                 rng_target.shuffle(indices)
-            sampled_target = indices[:quota]
+            if quota <= len(pool):
+                sampled_target = indices[:quota]
+            else:
+                sampled_target = indices[:]
+                extra_needed = quota - len(pool)
+                sampled_target.extend(
+                    rng_target.randrange(len(pool)) for _ in range(extra_needed)
+                )
             counts[target.name] = len(sampled_target)
             schedule.extend((target.name, idx) for idx in sampled_target)
 
@@ -345,6 +356,21 @@ class FusionCaptionDataset(BaseCaptionDataset):
 
         self._schedule = schedule
         self._epoch_counts = counts
+        # Debug: log schedule composition
+        try:
+            from src.utils import get_logger
+
+            logger = get_logger(__name__)
+            logger.debug(
+                f"FusionCaptionDataset train schedule (epoch {self._epoch}): {self._epoch_counts}"
+            )
+            # Count samples per dataset in schedule
+            schedule_counts = {}
+            for dataset_name, _ in schedule:
+                schedule_counts[dataset_name] = schedule_counts.get(dataset_name, 0) + 1
+            logger.debug(f"Schedule sample counts: {schedule_counts}")
+        except Exception:
+            pass
         self._update_epoch_plan()
 
     def _build_eval_schedule(self) -> None:
@@ -541,6 +567,37 @@ class FusionCaptionDataset(BaseCaptionDataset):
         input_ids = encoded.get("input_ids")
         if input_ids is not None and hasattr(input_ids, "__len__"):
             info["input_length"] = len(input_ids)
+            try:
+                # Debug-only: emit per-sample token length by dataset for max-length tuning.
+                # Enhanced logging includes domain, object count, and template info for better debugging.
+                domain = policy.spec.domain
+                template_name = policy.spec.template
+                is_text_only = objects_after == 0 and domain == "source"
+                domain_label = f"{domain}[{dataset_name}]"
+
+                # Build detailed log message
+                log_parts = [
+                    f"Sample token length | {domain_label}",
+                    f"base_idx={base_idx}",
+                    f"len={len(input_ids)}",
+                ]
+
+                # Add object count for image-based datasets
+                if not is_text_only:
+                    log_parts.append(f"objects={objects_after}")
+                    if cap_applied:
+                        log_parts.append(f"capped_from={objects_before}")
+
+                # Add template info
+                log_parts.append(f"template={template_name}")
+
+                # Add augmentation status for targets
+                if domain == "target" and was_augmented:
+                    log_parts.append("aug=True")
+
+                self._logger.debug(" | ".join(log_parts))
+            except Exception:
+                pass
         self.last_sample_debug = info
         LAST_SAMPLE_DEBUG.update(info)
 
@@ -571,7 +628,9 @@ class FusionCaptionDataset(BaseCaptionDataset):
         primary = self._primary_target
         policy = self._policies[primary]
         use_aug = (
-            policy.augmentation_enabled and self._augmenter is not None and not mine_clean
+            policy.augmentation_enabled
+            and self._augmenter is not None
+            and not mine_clean
         )
         return BaseCaptionDataset(
             base_records=self._record_pools[primary],

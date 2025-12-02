@@ -34,7 +34,7 @@ Comprehensive guide for training, inference, deployment, and advanced topics.
 - `src/datasets/dense_caption.py` - `DenseCaptionDataset` (mode selection, augmentation config)
 - `src/datasets/builders/jsonlines.py` - `JSONLinesBuilder` (message formatting)
 - `src/datasets/preprocessors/` - Validation, augmentation preprocessing
-- `src/datasets/collators.py` - Tensor preparation, packing logic
+- `src/datasets/collators.py` - Tensor preparation (padding)
 - `src/datasets/data_details.md` - Data schema documentation
 
 **Geometry & Augmentation**:
@@ -62,6 +62,7 @@ Comprehensive guide for training, inference, deployment, and advanced topics.
 - Attaches typed runtime toggles to `TrainArguments` (e.g., `save_delay_config`, `visual_kd_config`)
 - Fails fast with informative errors when schemas or inheritance are invalid
 - Source of truth for all configuration behavior
+- Over-length policy: when `template.truncation_strategy` is set to `raise`, downstream datasets catch `MaxLengthError` and drop the offending sample instead of truncating, then retry another record (see `DenseCaptionDataset`).
 
 **DenseCaptionDataset** (`src/datasets/dense_caption.py`):
 ```python
@@ -181,7 +182,7 @@ logger.warning("Warning (all ranks)") # Logged on all ranks if severe
 3. Configure in dataset initialization
 
 ### Hard-Sample Mining
-- Deprecated as of 2025-11-27. Any config containing `custom.hard_sample_mining` will fail validation with guidance to remove the block and train with standard settings (packing supported).
+- Deprecated as of 2025-11-27. Any config containing `custom.hard_sample_mining` will fail validation with guidance to remove the block and train with standard padded settings.
 
 ### Critical Implementation Details
 
@@ -193,11 +194,9 @@ sft.prepare_model()  # Configures LoRA, freezes, modules_to_save
 trainer = sft.create_trainer()  # Now trainer has correct config
 ```
 
-**Packing Implementation**:
-- Enabled via `training.packing: true`
-- Collator concatenates samples to `max_length`
-- Requires Flash Attention 2+ (Qwen3-VL native)
-- Incompatible with `lazy_tokenize`
+**Packing**: Removed. Training now uses padded batches only; any config enabling `training.packing` or packing knobs fails fast. Legacy implementation is archived under `archive/packing/`.
+
+**Dataset-specific metrics (fusion)**: Padded batches carry `dataset_labels` from fusion metadata. The trainer logs per-dataset `*_loss` / `*_token_acc` during training for all datasets and skips source domains during eval when `dataset_domains` marks them (e.g., targets `bbu/rru` vs sources `lvis/lang_chat`). No extra config is required beyond fusion dataset wiring.
 
 **Freeze Logic** (`src/sft.py` + `SwiftSft`):
 ```python
@@ -212,7 +211,7 @@ trainer = sft.create_trainer()  # Now trainer has correct config
 
 Core SFT/LoRA recipes, KL anchoring overlays, augmentation telemetry, and troubleshooting now live in [TRAINING_PLAYBOOK.md](TRAINING_PLAYBOOK.md). Use that document for:
 - YAML scaffolding for single- and multi-stage training
-- LoRA/freezing setups, packing, and SaveDelay guidance
+- LoRA/freezing setups and SaveDelay guidance (packing removed)
 - Telemetry expectations plus health-check checklists
 - Advanced topics (LR schedulers, DeepSpeed configs, augmentation FAQs, common issues, aligner tuning)
 
@@ -240,4 +239,4 @@ Operational FAQs (LR schedulers, DeepSpeed presets, augmentation pipelines, temp
 
 ---
 
-**Last Updated**: 2025-11-21 (Doc split)
+**Last Updated**: 2025-12-02 (Dataset metrics on padded batches)

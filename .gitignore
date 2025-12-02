@@ -15,6 +15,7 @@
 !.cursor/
 !references/
 !public_data/
+!archive/
 
 # Track files in the tracked folders
 !src/**
@@ -35,6 +36,7 @@
 !references/**/*.py
 !public_data/**/*.py
 !public_data/**/*.md
+!archive/**
 
 # Ignore common Python cache folders
 **/__pycache__/

@@ -8,7 +8,7 @@ import os
 import re
 from dataclasses import asdict
 from multiprocessing import Manager
-from typing import Any
+from typing import Any, Callable, Mapping, Optional
 
 import torch
 from swift.llm.train.rlhf import SwiftRLHF
@@ -22,8 +22,10 @@ from .config import ConfigLoader, SaveDelayConfig
 from .datasets import BaseCaptionDataset
 from .datasets.augmentation.curriculum import AugmentationCurriculumScheduler
 from .datasets.fusion import FusionConfig
+from .data_collators.dataset_metrics import build_dataset_metrics_collator
+from .metrics.dataset_metrics import DatasetMetricsMixin
 from .trainers import with_final_checkpoint
-from .utils import enable_verbose_logging, get_logger, set_log_level
+from .utils import configure_logging, get_logger
 
 
 def resolve_trainer_cls(train_args):
@@ -41,7 +43,11 @@ def resolve_trainer_cls(train_args):
     # Skip forced final checkpoint in debug-style runs where the user requested no saves.
     save_strategy = getattr(train_args, "save_strategy", None)
     try:
-        save_strategy_enum = SaveStrategy(save_strategy) if save_strategy is not None else SaveStrategy.NO
+        save_strategy_enum = (
+            SaveStrategy(save_strategy)
+            if save_strategy is not None
+            else SaveStrategy.NO
+        )
     except Exception:
         # Accept loose string values like "none"/"NO"/"No".
         save_strategy_enum = (
@@ -120,12 +126,21 @@ def main():
     """Main training entry point - pure config-driven."""
     args = parse_args()
 
-    # Configure logging based on runtime flags
-    if args.verbose:
-        enable_verbose_logging()
+    # Configure logging (src namespace only)
+    configure_logging(
+        debug=bool(args.debug),
+        verbose=bool(args.verbose or args.debug),
+        level=logging.INFO,
+    )
 
-    if args.debug:
-        set_log_level(logging.DEBUG)
+    # Suppress extremely verbose torch autograd debug logs even when global debug is on.
+    # Those logs (torch.autograd.graph) dump every backward node and overwhelm output.
+    try:
+        torch_autograd_log = logging.getLogger("torch.autograd.graph")
+        torch_autograd_log.setLevel(logging.INFO)
+        torch_autograd_log.propagate = False
+    except Exception:
+        pass
 
     logger.info("=" * 70)
     logger.info("  MS-Swift Training with YAML Configuration")
@@ -141,6 +156,22 @@ def main():
         args.config, args.base_config
     )
     custom_config = training_config.custom
+
+    # Packing is removed; fail fast if configs still request it.
+    if getattr(train_args, "packing", False):
+        raise ValueError(
+            "training.packing is removed; use standard padded batching (set packing=false and remove packing knobs)."
+        )
+    forbidden_packing_keys = {
+        "custom.packing_group_key": getattr(custom_config, "packing_group_key", None),
+        "custom.packing_length_override": getattr(custom_config, "packing_length_override", None),
+        "custom.cached_lengths": getattr(custom_config, "cached_lengths", None),
+    }
+    for key, val in forbidden_packing_keys.items():
+        if val:
+            raise ValueError(
+                f"{key} is no longer supported because packing was removed; delete this config entry."
+            )
     # Append run_name to output_dir and logging_dir to form final paths
     try:
         run_name = getattr(train_args, "run_name", None)
@@ -609,7 +640,9 @@ def main():
     val_jsonl = custom_config.val_jsonl
     if fusion_config_obj:
         target_val_path = val_jsonl
-        has_source_val = any(src.val_jsonl is not None for src in fusion_config_obj.sources)
+        has_source_val = any(
+            src.val_jsonl is not None for src in fusion_config_obj.sources
+        )
         if target_val_path:
             logger.info(
                 "Loading fusion validation dataset with override target val_jsonl: "
@@ -665,6 +698,16 @@ def main():
             )
             logger.info(f"Validation dataset size: {len(eval_dataset)}")
 
+    # Domain labels for per-dataset telemetry (padding-only path)
+    dataset_domains: Optional[dict[str, str]] = None
+    if fusion_config_obj:
+        domains: dict[str, str] = {}
+        for tgt in fusion_config_obj.targets:
+            domains[tgt.name] = "target"
+        for src in fusion_config_obj.sources:
+            domains[src.name] = "source"
+        dataset_domains = domains
+
     # Sample printing disabled to avoid dumping labels/ids
 
     # CRITICAL: Apply tuner (LoRA/adapters) before creating trainer
@@ -676,8 +719,15 @@ def main():
 
     # Setup trainer
     logger.info("Setting up trainer...")
-    data_collator = sft._get_data_collator()
+    base_collator = sft._get_data_collator()
+    data_collator = build_dataset_metrics_collator(sft.template, base_collator)
     trainer_cls = resolve_trainer_cls(train_args)
+    if not issubclass(trainer_cls, DatasetMetricsMixin):
+        trainer_cls = type(
+            f"{trainer_cls.__name__}WithDatasetMetrics",
+            (DatasetMetricsMixin, trainer_cls),
+            {},
+        )
 
     # Add SaveDelayCallback if save_delay_steps is configured
     callbacks = sft.callbacks.copy() if sft.callbacks else []
@@ -726,23 +776,30 @@ def main():
     trainer_kwargs = (
         sft._get_trainer_kwargs() if hasattr(sft, "_get_trainer_kwargs") else {}
     )
-    trainer = trainer_cls(
-        model=sft.model,
-        args=train_args.training_args,
-        data_collator=data_collator,
-        train_dataset=dataset,
-        eval_dataset=eval_dataset,
-        callbacks=callbacks,
-        template=sft.template,
+    # trainer_cls is dynamically determined and accepts standard trainer parameters
+    # Type checker can't infer the exact constructor signature, so we ignore these errors
+    trainer = trainer_cls(  # type: ignore[misc]
+        model=sft.model,  # type: ignore[arg-type]
+        args=train_args.training_args,  # type: ignore[arg-type]
+        data_collator=data_collator,  # type: ignore[arg-type]
+        train_dataset=dataset,  # type: ignore[arg-type]
+        eval_dataset=eval_dataset,  # type: ignore[arg-type]
+        callbacks=callbacks,  # type: ignore[arg-type]
+        template=sft.template,  # type: ignore[arg-type]
         **trainer_kwargs,
     )
+    if dataset_domains is not None:
+        try:
+            trainer.dataset_domains = dict(dataset_domains)  # type: ignore[attr-defined]
+        except Exception:
+            pass
 
     # Patch DeepSpeed __del__ to avoid noisy cleanup errors (safe no-op)
     try:
         import deepspeed  # type: ignore
 
-        if hasattr(deepspeed.runtime.engine.DeepSpeedEngine, "__del__"):
-            _orig_ds_del = deepspeed.runtime.engine.DeepSpeedEngine.__del__
+        if hasattr(deepspeed.runtime.engine.DeepSpeedEngine, "__del__"):  # type: ignore[attr-defined]
+            _orig_ds_del = deepspeed.runtime.engine.DeepSpeedEngine.__del__  # type: ignore[attr-defined]
 
             def _safe_ds_del(self):  # type: ignore[override]
                 try:
@@ -751,7 +808,7 @@ def main():
                     # Suppress non-fatal cleanup errors
                     pass
 
-            deepspeed.runtime.engine.DeepSpeedEngine.__del__ = _safe_ds_del  # type: ignore[assignment]
+            deepspeed.runtime.engine.DeepSpeedEngine.__del__ = _safe_ds_del  # type: ignore[assignment,attr-defined]
     except Exception:
         pass
 
@@ -785,7 +842,7 @@ def main():
             # Check if DeepSpeed is enabled
             if (
                 hasattr(trainer, "is_deepspeed_enabled")
-                and trainer.is_deepspeed_enabled
+                and trainer.is_deepspeed_enabled  # type: ignore[attr-defined]
             ):
                 model_wrapped = getattr(trainer, "model_wrapped", None)
                 # model_wrapped IS the DeepSpeed engine when DeepSpeed is enabled

@@ -58,7 +58,7 @@ training:
     min_lr: 1.0e-6
   
   # Training flags
-  packing: true
+  packing: false
   weight_decay: 0.1
   warmup_ratio: 0.1
   add_version: true

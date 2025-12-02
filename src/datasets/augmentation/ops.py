@@ -16,7 +16,6 @@ from ..geometry import (
     vflip_matrix,
     clamp_points,
     dedupe_consecutive_points,
-    invert_affine,
     scale_center,
     scale_matrix,
     sutherland_hodgman_clip,
@@ -30,7 +29,6 @@ from ..geometry import (
     get_aabb,
     intersect_aabb,
     aabb_area,
-    compute_coverage,
     compute_polygon_coverage,
     translate_geometry,
 )
@@ -652,9 +650,9 @@ class CLAHE(ImageAugmenter):
             arr = np.asarray(im)
             bgr = arr[:, :, ::-1]
             lab = cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB)
-            l, a, b = cv2.split(lab)
-            l = clahe.apply(l)
-            lab = cv2.merge((l, a, b))
+            l_channel, a, b = cv2.split(lab)
+            l_channel = clahe.apply(l_channel)
+            lab = cv2.merge((l_channel, a, b))
             bgr2 = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
             rgb = bgr2[:, :, ::-1]
             out_imgs.append(Image.fromarray(rgb))
@@ -865,7 +863,6 @@ class AlbumentationsColor(ImageAugmenter):
             return images, geoms
         try:
             import numpy as _np  # type: ignore
-            import cv2  # type: ignore
             import albumentations as A  # type: ignore
             import random as _random
         except Exception as e:

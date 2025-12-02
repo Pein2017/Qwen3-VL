@@ -92,7 +92,7 @@ def to_batch(sample: Dict[str, Any], device: torch.device) -> Dict[str, Any]:
 
 def main() -> None:
     args = build_args()
-    device = torch.device(args.device)
+    _device = torch.device(args.device)  # noqa: F841
 
     if not args.chat_jsonl.is_file():
         raise FileNotFoundError(f"Chat JSONL not found: {args.chat_jsonl}")

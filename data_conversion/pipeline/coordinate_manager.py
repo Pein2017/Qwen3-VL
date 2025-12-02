@@ -1946,13 +1946,13 @@ class CoordinateManager:
 # Backward-compatibility re-exports for external callers.
 # These keep older imports like `from data_conversion.coordinate_manager import FormatConverter` working
 # while the actual implementations live in dedicated modules.
-from data_conversion.pipeline.format_converter import (
-    FormatConverter as _FormatConverter,  # noqa: E402
+from data_conversion.pipeline.format_converter import (  # noqa: E402
+    FormatConverter as _FormatConverter,
 )
 from data_conversion.pipeline.validation_manager import (  # noqa: E402
     DataValidator as _DataValidator,
 )
-from data_conversion.pipeline.validation_manager import (
+from data_conversion.pipeline.validation_manager import (  # noqa: E402
     StructureValidator as _StructureValidator,
 )
 

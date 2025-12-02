@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import io
 from random import Random
 from typing import List, Dict, Any
 
@@ -8,7 +7,7 @@ from PIL import Image
 
 from src.datasets.augmentation.base import Compose
 from src.datasets.augmentation.ops import HFlip, Rotate, Scale, PadToMultiple, ColorJitter, Gamma, ResizeByScale
-from src.datasets.geometry import apply_affine, compose_affine, hflip_matrix, rotate_center, scale_center
+from src.datasets.geometry import apply_affine, compose_affine
 
 
 def _make_img(w: int = 64, h: int = 48) -> Image.Image:
@@ -90,7 +89,7 @@ def test_resize_by_scale_changes_size_and_scales_geoms():
 
 
 def test_color_after_warp_no_geom_change():
-    rng = Random(2)
+    _rng = Random(2)  # noqa: F841
     w, h = 64, 64
     img = _make_img(w, h)
     geoms = _geom_samples()

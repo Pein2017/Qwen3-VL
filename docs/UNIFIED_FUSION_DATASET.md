@@ -6,9 +6,13 @@ This document describes the investigation, root cause analysis, and solution for
 
 **Solution**: Replaced `MultiSourceFusionDataset` (which cloned templates) with `FusionCaptionDataset` (formerly `UnifiedFusionDataset`, single shared template with dynamic prompt selection) and later refined it to restore per-source policies (prompt priority, augmentation/curriculum gating, object caps, deterministic per-epoch resampling, optional source eval). Source JSONLs are assumed to come from the offline converters (`data_conversion/` for BBU/RRU, `public_data/` for LVIS/others) that already match `docs/DATA_JSONL_CONTRACT.md`.
 
-**New (multi-target)**: Fusion now accepts multiple target datasets. Targets can optionally carry `ratio`; per-epoch quotas follow `base = floor(min(len_i / ratio_i))`, `quota_i = round(base * ratio_i)` (no ratios → full coverage). Source quotas are still `round(source_ratio * total_target_quota)`.
+**New (multi-target)**: Fusion now accepts multiple target datasets. Targets can optionally carry `ratio`; per-epoch quotas follow `quota_i = round(len_i * ratio_i)` with `ratio_i` defaulting to `1.0` (ratio < 1 downsamples, ratio > 1 upsamples with replacement; no ratios → full coverage). Source quotas are still `round(source_ratio * total_target_quota)`.
 
 **Result**: OOM issue resolved. Training runs successfully with proper mask ratios (30-60% for dense captioning with many objects).
+
+### Packing status
+
+Packing was removed from the runtime. Fusion training now uses padded batches only; configs with `training.packing` or packing knobs fail fast. Legacy packing code is archived under `archive/packing/` if needed for research.
 
 ---
 
@@ -96,7 +100,7 @@ FusionCaptionDataset
 ### Refinements (unified policy)
 
 - Prompt priority: `default < domain < dataset-specific` for both user/system prompts; template.system is restored after each sample.
-- Per-epoch schedule: full target coverage; each source draws `round(ratio * N_target)` with replacement every epoch; deterministic shuffling using fusion seed + optional per-dataset seed; raises on empty source pool when ratio > 0.
+- Per-epoch schedule: per-target coverage scales by `quota_i = round(len_i * ratio_i)` (ratio defaults to 1.0; <1 downsample, >1 upsample with replacement); each source draws `round(ratio * N_target_total)` with replacement every epoch; deterministic shuffling using fusion seed + optional per-dataset seed; raises on empty source pool when ratio > 0.
 - Per-dataset policies: sources default to clean (no augmentation/curriculum) and cap objects (default 64); targets inherit global augmentation/curriculum and can opt into a cap.
 - Object caps: applied after augmentation and before encoding; deterministic with the dataset/epoch/worker seed.
 - Evaluation: target eval by default; optional source `val_jsonl` included (no shuffle) when present and prepared offline (no splitting inside the loader).

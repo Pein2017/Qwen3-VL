@@ -244,10 +244,7 @@ ms-swift uses a **strict key-value convention** for multimodal content where the
 输出直接使用单图对象映射，`group_key_prefix` 配置项保持移除。
 - 顶层 `objects.ref/bbox/image_id` 保留为原始像素坐标，模板自动归一化为 norm1000
 - 不再有 section headers 或 `image_index` 字段
-- **Packing** (optional): `training.packing: true` to concatenate samples to `global_max_length`, eliminating padding waste
-  - ✅ Compatible with Qwen3-VL (`support_padding_free=True`)
-  - ⚠️ Incompatible with `lazy_tokenize`; requires bin-packing preprocessing
-  - Best for variable-length samples; ~90-95% GPU utilization
+- **Packing**: Removed. Training now always uses standard padding; `training.packing` and related knobs are rejected. Legacy code lives in `archive/packing/` for reference.
 
 **Dual Representation Strategy**:
 1. **Assistant 文本**: 使用 object-index JSON（`object_{n}`），几何字段直接暴露（bbox_2d/poly/line）。
@@ -445,4 +442,3 @@ These live under the `custom` section in YAML and are consumed by `src/sft.py` a
 | **MaxLengthError/OOM** | Long JSON-lines or many objects | Prefer `global_max_length` (single knob) or lower `template.max_length`; `truncation_strategy=right` (auto) |
 | **Points misalignment** | Augmentation bug | `AugmentationPreprocessor` updates images+geometries atomically; print sample to verify |
 | **Memory/performance** | Suboptimal settings | Use `attn_impl=flash_attn`, `torch_dtype=bfloat16`, `gradient_checkpointing=true`; adjust batch size; configure DeepSpeed for multi-GPU |
-

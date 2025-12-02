@@ -9,7 +9,7 @@ Usage:
 import argparse
 import json
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import List, Tuple
 
 
 REMARK_MARK = "备注"

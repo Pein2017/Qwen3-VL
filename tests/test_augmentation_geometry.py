@@ -5,9 +5,7 @@ import random
 from PIL import Image
 
 from src.datasets.augmentation.base import Compose
-from src.datasets.augmentation import ops as _ops  # register ops
 from src.datasets.augmentation.builder import build_compose_from_config
-from src.datasets.geometry import BBox, Polyline, transform_geometry
 
 
 def _blank(w: int, h: int):
@@ -32,7 +30,8 @@ def test_rotate_then_resize_bbox_to_poly_and_clip():
     assert len(q) == 8
     # all within bounds
     w, h = out_imgs[0].size
-    xs = q[0::2]; ys = q[1::2]
+    xs = q[0::2]
+    ys = q[1::2]
     assert min(xs) >= 0 and max(xs) <= w - 1
     assert min(ys) >= 0 and max(ys) <= h - 1
 
@@ -68,9 +67,10 @@ def test_line_clipping_and_dedup():
     _, out_geoms = compose.apply(imgs, geoms, width=50, height=50, rng=rng)
     g = out_geoms[0]
     assert "line" in g
-    l = g["line"]
-    assert len(l) >= 4
-    xs = l[0::2]; ys = l[1::2]
+    line = g["line"]
+    assert len(line) >= 4
+    xs = line[0::2]
+    ys = line[1::2]
     assert min(xs) >= 0 and max(xs) <= 49
     assert min(ys) >= 0 and max(ys) <= 49
 

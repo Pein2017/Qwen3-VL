@@ -15,6 +15,7 @@ MISSION="${mission:-BBU线缆布放要求}"
 gpu_id="${gpu:-7}"
 no_mission_flag="${no_mission:-true}"
 verify_flag="${verify_inputs:-true}"
+DEBUG_FLAG="${debug:-false}"
 if [[ "$gpu_id" == "cpu" ]]; then
   DEVICE="cpu"
   export CUDA_VISIBLE_DEVICES=""
@@ -57,6 +58,11 @@ esac
 case "${verify_flag,,}" in
   1|true|yes)
     EXTRA_FLAGS+=" --verify_inputs"
+    ;;
+esac
+case "${DEBUG_FLAG,,}" in
+  1|true|yes)
+    EXTRA_FLAGS+=" --debug"
     ;;
 esac
 

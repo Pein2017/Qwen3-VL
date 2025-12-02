@@ -17,6 +17,7 @@ export PYTHONPATH="${REPO_DIR}${PYTHONPATH:+:$PYTHONPATH}"
 CONFIG_PATH="${config:-configs/stage_b/debug.yaml}"
 CONDA_ENV="ms"
 LOG_LEVEL="${log_level:-debug}"
+DEBUG_FLAG="${debug:-false}"
 
 case "${LOG_LEVEL,,}" in
   debug|logging|warning)
@@ -44,6 +45,11 @@ fi
 
 # Build arguments array
 ARGS=("--config" "${CONFIG_PATH}" "--log-level" "${LOG_LEVEL}")
+case "${DEBUG_FLAG,,}" in
+  1|true|yes)
+    ARGS+=("--debug")
+    ;;
+esac
 
 # Print configuration
 echo "=================================="
@@ -53,6 +59,7 @@ echo "Config file:  ${CONFIG_PATH}"
 echo "GPU:          ${CUDA_VISIBLE_DEVICES}"
 echo "Conda env:    ${CONDA_ENV}"
 echo "Log level:    ${LOG_LEVEL}"
+echo "Debug mode:   ${DEBUG_FLAG}"
 echo "=================================="
 echo ""
 

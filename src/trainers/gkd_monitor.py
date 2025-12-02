@@ -296,10 +296,10 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
         if valid_count > 0:
             logits_flat = masked_student_logits.squeeze(0)
             preds = logits_flat.argmax(dim=-1)
-            accuracy = (preds == masked_labels).float().mean()
+            _accuracy = (preds == masked_labels).float().mean()  # noqa: F841
             correct_tokens = (preds == masked_labels).sum()
         else:
-            accuracy = student_logits.new_zeros(())
+            _accuracy = student_logits.new_zeros(())  # noqa: F841
             correct_tokens = student_logits.new_zeros(())
 
         total_tokens = torch.tensor(

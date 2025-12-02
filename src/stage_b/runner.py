@@ -17,6 +17,7 @@ import torch
 from tqdm import tqdm
 from transformers import AutoProcessor, AutoTokenizer, Qwen3VLForConditionalGeneration
 
+from ..utils import configure_logging, get_logger
 from .config import StageBConfig, load_stage_b_config
 from .ingest import ingest_stage_a
 from .io.export import serialize_selection, serialize_trajectory
@@ -34,47 +35,7 @@ from .types import (
 from .types import DeterministicSignals
 from .utils.seed import seed_everything
 
-logger = logging.getLogger("stage_b.runner")
-
-
-def _configure_logging(log_level: str) -> None:
-    normalized = log_level.strip().lower()
-    level_map = {
-        "debug": logging.DEBUG,
-        "logging": logging.INFO,
-        "warning": logging.WARNING,
-    }
-    if normalized not in level_map:
-        raise ValueError(
-            f"Unsupported log level '{log_level}'. Choose from: {', '.join(level_map)}"
-        )
-
-    level = level_map[normalized]
-    logging.basicConfig(
-        level=level,
-        format="[%(asctime)s] %(levelname)s %(name)s: %(message)s",
-    )
-    # Explicitly set level for all stage_b loggers to ensure debug messages are shown
-    # when log_level is set to DEBUG. This is necessary because child loggers may not inherit
-    # the root logger's level if they were created before basicConfig was called.
-    stage_b_loggers = [
-        "stage_b.runner",
-        "stage_b.reflection",
-        "stage_b.reflection.engine",
-        "stage_b.rollout",
-        "stage_b.ingest",
-        "stage_b.ingest.stage_a",
-        "stage_b.scoring",
-        "stage_b.io",
-        "stage_b.io.guidance",
-        "stage_b.io.export",
-    ]
-    for logger_name in stage_b_loggers:
-        logger_instance = logging.getLogger(logger_name)
-        logger_instance.setLevel(level)
-        # Ensure handlers inherit the level
-        for handler in logger_instance.handlers:
-            handler.setLevel(level)
+logger = get_logger("stage_b.runner")
 
 
 def _dtype_from_str(name: str):
@@ -191,7 +152,17 @@ def _setup_mission_guidance(
 
 
 def run_all(config: StageBConfig, log_level: str = "logging") -> None:
-    _configure_logging(log_level)
+    level_map = {
+        "debug": logging.DEBUG,
+        "logging": logging.INFO,
+        "warning": logging.WARNING,
+    }
+    normalized = log_level.strip().lower()
+    if normalized not in level_map:
+        raise ValueError(
+            f"Unsupported log level '{log_level}'. Choose from: {', '.join(level_map)}"
+        )
+    configure_logging(level=level_map[normalized], debug=(normalized == "debug"), verbose=False)
 
     logger.info("Stage-B starting with three-stage reflection pipeline")
 
@@ -515,13 +486,19 @@ def main() -> None:
         "--log-level",
         choices=["debug", "logging", "warning"],
         default="logging",
-        help="Logging level for the pipeline",
+        help="Logging level for the pipeline (ignored if --debug is set)",
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug logging (HIGHEST PRIORITY, overrides --log-level)",
     )
     args = parser.parse_args()
 
     stage_b_config = load_stage_b_config(args.config)
+    effective_level = "debug" if args.debug else args.log_level
     if args.step == "all":
-        run_all(stage_b_config, log_level=args.log_level)
+        run_all(stage_b_config, log_level=effective_level)
     else:  # pragma: no cover - defensive
         raise ValueError(f"Unsupported step: {args.step}")
 

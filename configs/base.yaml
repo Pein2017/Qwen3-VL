@@ -1,6 +1,6 @@
 # Base Configuration - Shared defaults for Qwen3-VL SFT
 
-global_max_length: 12000
+global_max_length: 4096
 
 model:
   torch_dtype: bfloat16
@@ -31,7 +31,7 @@ training:
   # Common trainer/runtime defaults
   add_version: true
   save_safetensors: true
-  packing: true
+  packing: false
   
   # Eval & checkpointing defaults
   eval_strategy: steps
@@ -69,5 +69,4 @@ custom:
   train_jsonl: data/bbu_full_768_poly-need_review/train.jsonl
   val_jsonl: data/bbu_full_768_poly-need_review/val.jsonl
   dump_conversation_path: output/conversation_text.txt
-
 

@@ -1,22 +1,23 @@
 """
-Unified logging system for Qwen3-VL with distributed GPU support.
+Unified, rank-aware logging for Qwen3-VL (src namespace only).
 
-This module provides rank-aware logging that integrates with ms-swift's logger.
-In distributed training environments, only rank 0 logs by default to reduce noise.
-Set QWEN3VL_VERBOSE=1 to enable logging from all ranks.
+Goals:
+- Single logger hierarchy rooted at `src`.
+- Rank filtering: log from rank 0 by default; opt-in all-rank via QWEN3VL_VERBOSE=1.
+- Debug flag should raise verbosity only for our code; do not touch torch/transformers/cuda.
+- No root/global logging mutations that could leak to third-party libraries.
 """
 
 import logging
 import os
 from typing import Optional
 
-# Try to import ms-swift's logger, fall back to standard logging
-try:
-    from swift.utils import get_logger as swift_get_logger
+BASE_LOGGER_NAME = "src"
 
-    _SWIFT_AVAILABLE = True
-except ImportError:
-    _SWIFT_AVAILABLE = False
+# State
+_GLOBAL_DEBUG_FLAG: bool = False
+_GLOBAL_LOG_LEVEL: int = logging.INFO
+_LOGGING_CONFIGURED: bool = False
 
 
 def get_rank() -> int:
@@ -86,112 +87,114 @@ class RankFilter(logging.Filter):
         return should_log()
 
 
+def is_verbose_enabled() -> bool:
+    verbose = os.environ.get("QWEN3VL_VERBOSE", "0").strip().lower()
+    return verbose in ("1", "true", "yes", "y")
+
+
+def _base_logger() -> logging.Logger:
+    return logging.getLogger(BASE_LOGGER_NAME)
+
+
+def _ensure_base_logger() -> None:
+    """Install handler/formatter/rank filter on the src root logger once."""
+    global _LOGGING_CONFIGURED
+    if _LOGGING_CONFIGURED:
+        return
+
+    base = _base_logger()
+    if not base.handlers:
+        handler = logging.StreamHandler()
+        formatter = logging.Formatter(
+            "[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+        handler.setFormatter(formatter)
+        handler.addFilter(RankFilter())
+        base.addHandler(handler)
+    base.propagate = False  # contain logs within src namespace
+    _LOGGING_CONFIGURED = True
+
+
+def _logger_name(name: Optional[str]) -> str:
+    if name in (None, "", BASE_LOGGER_NAME):
+        return BASE_LOGGER_NAME
+    return f"{BASE_LOGGER_NAME}.{name}"
+
+
 def get_logger(name: Optional[str] = None) -> logging.Logger:
-    """
-    Get a rank-aware logger that integrates with ms-swift.
-
-    This logger automatically filters messages in distributed training
-    so only rank 0 logs by default. Set QWEN3VL_VERBOSE=1 to enable
-    logging from all ranks.
-
-    Args:
-        name: Logger name. If None, uses the calling module's name.
-              Can be a simple name like "sft" or hierarchical like "datasets.builder".
-
-    Returns:
-        Configured logger instance
-
-    Examples:
-        >>> from src.utils import get_logger
-        >>> logger = get_logger(__name__)
-        >>> logger.info("Training started")  # Only logs from rank 0
-
-        >>> # Enable verbose mode to see logs from all ranks
-        >>> import os
-        >>> os.environ['QWEN3VL_VERBOSE'] = '1'
-        >>> logger.info("This will log from all ranks")
-    """
-    # Use ms-swift's logger if available, otherwise standard logging
-    if _SWIFT_AVAILABLE:
-        # ms-swift's get_logger returns a logger from their infrastructure
-        logger = swift_get_logger()
-
-        # If a specific name is requested, get or create that logger
-        if name:
-            # Get logger with the specified name under swift's hierarchy
-            logger = logging.getLogger(f"swift.custom.{name}")
-    else:
-        # Fall back to standard Python logging
-        if name is None:
-            name = __name__
-        logger = logging.getLogger(name)
-
-        # Configure basic logging if no handlers exist
-        if not logger.handlers and not logging.getLogger().handlers:
-            handler = logging.StreamHandler()
-            formatter = logging.Formatter(
-                "[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s",
-                datefmt="%Y-%m-%d %H:%M:%S",
-            )
-            handler.setFormatter(formatter)
-            logger.addHandler(handler)
-            logger.setLevel(logging.INFO)
-
-    # Add rank filter to prevent duplicate logs in distributed training
-    # Check if filter already exists to avoid adding multiple times
-    has_rank_filter = any(isinstance(f, RankFilter) for f in logger.filters)
-    if not has_rank_filter:
-        logger.addFilter(RankFilter())
-
+    """Return a child logger under the `src` namespace."""
+    _ensure_base_logger()
+    logger = logging.getLogger(_logger_name(name))
+    # Child loggers inherit handlers/filters/levels from base when level=NOTSET
+    if logger.level == logging.NOTSET:
+        logger.setLevel(logging.NOTSET)
+    logger.propagate = True
     return logger
 
 
+def configure_logging(
+    *, level: int = logging.INFO, debug: bool = False, verbose: bool = False
+) -> None:
+    """
+    Configure the src logging hierarchy.
+
+    - Affects only loggers under the `src` namespace.
+    - Respects rank filtering unless `verbose` is True or QWEN3VL_VERBOSE=1.
+    - When debug=True, elevates to DEBUG for src loggers only.
+    """
+    global _GLOBAL_DEBUG_FLAG, _GLOBAL_LOG_LEVEL
+
+    if verbose:
+        os.environ["QWEN3VL_VERBOSE"] = "1"
+    elif not is_verbose_enabled():
+        os.environ["QWEN3VL_VERBOSE"] = "0"
+
+    _GLOBAL_DEBUG_FLAG = bool(debug)
+    resolved_level = logging.DEBUG if debug else int(level)
+    _GLOBAL_LOG_LEVEL = resolved_level
+
+    _ensure_base_logger()
+    base = _base_logger()
+    base.setLevel(resolved_level)
+    base.propagate = False
+
+    # Normalize child loggers under src.* to inherit from base
+    for name, logger_obj in logging.Logger.manager.loggerDict.items():
+        if not isinstance(logger_obj, logging.Logger):
+            continue
+        if name == BASE_LOGGER_NAME or name.startswith(f"{BASE_LOGGER_NAME}."):
+            logger_obj.setLevel(logging.NOTSET)
+            logger_obj.propagate = True
+
+    # Ensure formatter/filter present on base handlers
+    for handler in base.handlers:
+        handler.setLevel(resolved_level)
+        has_rank_filter = any(isinstance(f, RankFilter) for f in handler.filters)
+        if not has_rank_filter:
+            handler.addFilter(RankFilter())
+
+
+def set_global_debug(debug: bool = True) -> None:
+    configure_logging(level=_GLOBAL_LOG_LEVEL, debug=debug, verbose=is_verbose_enabled())
+
+
+def is_global_debug_enabled() -> bool:
+    return _GLOBAL_DEBUG_FLAG
+
+
 def set_log_level(level: int) -> None:
-    """
-    Set the log level for all Qwen3-VL loggers.
-
-    Args:
-        level: Logging level (logging.DEBUG, logging.INFO, etc.)
-
-    Examples:
-        >>> import logging
-        >>> from src.utils.logger import set_log_level
-        >>> set_log_level(logging.DEBUG)  # Show debug messages
-    """
-    # Set level on root logger
-    logging.getLogger().setLevel(level)
-
-    # Set level on swift loggers if available
-    if _SWIFT_AVAILABLE:
-        swift_logger = logging.getLogger("swift")
-        swift_logger.setLevel(level)
+    configure_logging(level=level, debug=False, verbose=is_verbose_enabled())
 
 
 def enable_verbose_logging() -> None:
-    """
-    Enable logging from all ranks in distributed training.
-
-    This sets the QWEN3VL_VERBOSE environment variable to '1',
-    allowing all processes to emit log messages.
-
-    Examples:
-        >>> from src.utils.logger import enable_verbose_logging
-        >>> enable_verbose_logging()
-        >>> # Now all ranks will log
-    """
     os.environ["QWEN3VL_VERBOSE"] = "1"
+    configure_logging(level=_GLOBAL_LOG_LEVEL, debug=_GLOBAL_DEBUG_FLAG, verbose=True)
 
 
 def disable_verbose_logging() -> None:
-    """
-    Disable verbose logging (back to rank 0 only).
-
-    Examples:
-        >>> from src.utils.logger import disable_verbose_logging
-        >>> disable_verbose_logging()
-        >>> # Only rank 0 will log
-    """
     os.environ["QWEN3VL_VERBOSE"] = "0"
+    configure_logging(level=_GLOBAL_LOG_LEVEL, debug=_GLOBAL_DEBUG_FLAG, verbose=False)
 
 
 # Convenience logger for this module

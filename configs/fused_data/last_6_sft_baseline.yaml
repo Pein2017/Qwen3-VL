@@ -1,4 +1,0 @@
-extends: ./last_6_base.yaml
-
-training:
-  run_name: lvis_ratio_0.08-epoch_30-dlora-lrs_4_2_8-sft_baseline-last_6_vision-all_llm-from_base

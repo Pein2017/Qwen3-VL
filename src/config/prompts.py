@@ -175,8 +175,10 @@ SYSTEM_PROMPT_AUX = (
 USER_PROMPT_AUX = "List every visible object using concise English class names only (no attributes or long phrases) and keep the output in JSON."
 
 # Text-only chat source (language preservation)
+# For pre-authored chat messages, system prompt is typically empty to preserve original conversation structure
 SYSTEM_PROMPT_CHAT = ""  # Leave system blank for pre-authored chat messages
-USER_PROMPT_CHAT = "Answer the following instruction."
+# User prompt is typically not used for pre-authored messages, but kept as fallback
+USER_PROMPT_CHAT = ""  # Empty for pre-authored messages; messages field in JSONL contains full conversation
 
 
 def get_template_prompts(name: str | None) -> tuple[str, str]:

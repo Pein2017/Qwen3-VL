@@ -29,11 +29,11 @@ The fusion loader SHALL support per-source object caps to control sequence lengt
 - **AND** targets may opt in; fallback to no-cap when unset.
 
 ### Requirement: Deterministic per-epoch resampling and shuffling
-The fusion loader SHALL rebuild its schedule each epoch: consume all target samples once, sample each source with replacement by `round(ratio * N_target)`, then shuffle with a deterministic seed.
+The fusion loader SHALL rebuild its schedule each epoch: compute each target quota as `round(len(target) * ratio_i)` with `ratio_i` defaulting to `1.0` (ratio < 1 downsamples, ratio > 1 upsamples with replacement), then sample each source with replacement by `round(source_ratio * N_target_total)`, and finally shuffle with a deterministic seed.
 
 #### Scenario: Epoch boundary resampling
 - **WHEN** a new epoch starts
-- **THEN** the loader refreshes the source draws with replacement according to ratios, keeps full target coverage, shuffles the combined index deterministically, and exposes counts per source.
+- **THEN** the loader computes per-target quotas from their own pool sizes and ratios (no cross-target balancing), refreshes the source draws based on the summed target quota, and shuffles the combined index deterministically while exposing counts per source and target.
 
 ### Requirement: No online smart-resize guard
 The fusion loader SHALL NOT perform any online smart-resize; inputs are assumed pre-scaled, and resizing occurs only via augmentation ops when configured.

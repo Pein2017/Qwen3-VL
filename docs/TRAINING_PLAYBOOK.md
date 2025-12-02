@@ -8,6 +8,7 @@
 - Avoid CLI flags beyond `--config` (and optional `--base_config`, `--debug`)
 - All configuration in YAML files
 - Single length knob: `global_max_length`
+- To preserve annotations, prefer `template.truncation_strategy: raise`; `DenseCaptionDataset` will drop and retry any sample exceeding `max_length`/`global_max_length` instead of truncating.
 
 **Critical Setup**:
 ```yaml
@@ -17,6 +18,7 @@ model:
 template:
   template: qwen3_vl
   max_length: 4096           # Or use global_max_length
+  truncation_strategy: raise  # optional: raise so over-length samples are dropped, not truncated
 
 # Set global_max_length as the single length knob
 global_max_length: 4096      # Proxies both model.max_model_len and template.max_length
@@ -39,7 +41,7 @@ sft.prepare_model(...)
 
 ### Config catalog (Nov 2025)
 
-- `configs/base.yaml` — Shared defaults (bf16, packing, dataset placeholders, logging cadence)
+- `configs/base.yaml` — Shared defaults (bf16, padded batching, dataset placeholders, logging cadence)
 - `configs/stage_1/{lora.yaml,full_with_kd.yaml}` — Single-domain BBU recipes (LoRA or full) with GKD monitor
 - `configs/dlora/*.yaml` — LoRA variants targeting different vision/aligner slices
 - `configs/fused_data/*.yaml` — Fusion training recipes (look for `_gkd_` variants for KD-enabled runs)
@@ -219,23 +221,16 @@ Notes:
 - `eval/llm_kd_loss` jump → teacher/template mismatch (fix tokenizer/template).
 - **Smoke Test**: set `custom.sample_limit: 32` and `training.save_steps: 5` in a temporary overlay, then run `python -m src.sft --config configs/stage_1/full_with_kd.yaml`. Verify `logging.jsonl` includes `train/llm_kd_loss`, `train/vision_kd_loss`, `train/sft_loss`, and the output directory writes checkpoints.
 
-### Packing (Padding-Free Training)
+### Packing
 
-**Enable Packing**:
-```yaml
-training:
-  packing: true
-```
+Packing was removed. Training now always uses padded batches; any config containing `training.packing` or packing-related knobs fails fast. Legacy code lives in `archive/packing/` for reference.
 
-**Benefits**:
-- Eliminates padding waste
-- 20-30% faster training
-- Better GPU utilization
+### Dataset-Specific Telemetry (Fusion)
 
-**Requirements**:
-- Qwen3-VL (Flash Attention 2+)
-- Incompatible with `lazy_tokenize`
-- Compatible with LoRA and full fine-tuning
+- Auto-enabled for fusion runs: the collator attaches `dataset_labels` from `_fusion_source`/`dataset` metadata and the trainer mixin logs per-dataset `*_loss` / `*_token_acc` without packing.
+- Train steps emit metrics for every dataset in the batch (e.g., `bbu`, `rru`, `lvis`, `lang_chat`). Eval steps keep only target-domain datasets when `dataset_domains` marks sources (so source metrics are skipped automatically).
+- Metrics land in `logging.jsonl`/TensorBoard via ms-swift `custom_metrics`; look for the dataset suffixes (`bbu_loss`, `bbu_token_acc`, etc.) under the usual train/eval namespaces.
+- No extra config required beyond your fusion YAML; ensure fusion dataset metadata is intact so labels resolve correctly.
 
 ### Training Health Checks
 
@@ -422,7 +417,7 @@ def prepare_adapter(args: TrainArguments, model, *, template=None, train_dataset
             model = Swift.prepare_model(model, lora_config)
             logger.info(f'lora_config: {lora_config}')
 ```
-  - `get_target_modules` resolves `'all-linear'` to an exact regex for multimodal modules honoring freeze flags:
+- `get_target_modules` resolves `'all-linear'` to an exact regex for multimodal modules honoring freeze flags:
 ```92:106:/data/ms-swift/swift/llm/train/tuner.py
 def get_target_modules(args, model) -> Union[str, List[str]]:
     """Replace all-linear to actual modules"""
@@ -439,6 +434,23 @@ def get_target_modules(args, model) -> Union[str, List[str]]:
                 freeze_aligner=args.freeze_aligner,
                 include_embedding='all-embedding' in target_modules)
 ```
+
+### Qwen3-VL module cheatsheet for LoRA targets
+
+- Language model (LLM): `model.language_model.layers.*.{q_proj,k_proj,v_proj,o_proj,up_proj,gate_proj,down_proj}`, layer norms, plus `model.language_model.embed_tokens` (embedding) and `lm_head`.
+- Vision tower: `model.visual.blocks.*.{attn.qkv,attn.proj,mlp.linear_fc1,mlp.linear_fc2}`, `model.visual.patch_embed.proj`, deepstack mergers `model.visual.deepstack_merger_list.*.{linear_fc1,linear_fc2}`, and `model.visual.merger.{linear_fc1,linear_fc2}`.
+- Default `target_modules: [all-linear]` hits all the linear projections above **except** `lm_head` (explicitly ignored by `find_all_linears`).
+- To also adapt `lm_head` while keeping DoRA/dropout, avoid `target_parameters` (which routes through `ParamWrapper` and forbids `use_dora` or non‑zero `lora_dropout`). Instead, supply an explicit module list/regex that names `lm_head` alongside the usual projections, e.g.:
+  ```yaml
+  tuner:
+    target_modules:
+      - q_proj; k_proj; v_proj; o_proj
+      - up_proj; gate_proj; down_proj
+      - qkv; proj; linear_fc1; linear_fc2
+      - lm_head
+    target_parameters: []
+  ```
+  This keeps DoRA and dropout working because it stays on the module-target path.
   - Freeze knobs live in `TunerArguments` (defaults shown):
 ```105:114:/data/ms-swift/swift/llm/argument/tuner_args.py
 # lora or full
@@ -569,11 +581,7 @@ References (repo code):
      attn_impl: flash_attention_2
    ```
 
-2. **Packing**: Eliminate padding waste (~30% faster)
-   ```yaml
-   training:
-     packing: true
-   ```
+2. **Packing (removed)**: Packing is no longer supported; training uses padded batches only.
 
 3. **bf16**: Faster than fp32, more stable than fp16
    ```yaml
@@ -658,4 +666,4 @@ Augmentation guidance for grounding tasks:
 
 Monitoring: track bbox/poly/line metrics separately; reduce geometric ops if poly/line drifts.
 
-> Note: hard-sample mining was removed (2025-11-27). Any YAML containing `custom.hard_sample_mining` now fails validation; revert to standard SFT with `training.packing: true` for efficiency.
+> Note: hard-sample mining was removed (2025-11-27). Any YAML containing `custom.hard_sample_mining` now fails validation; revert to standard padded SFT (packing removed).

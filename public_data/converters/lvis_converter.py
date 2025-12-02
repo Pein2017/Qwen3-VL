@@ -36,7 +36,7 @@ class LVISConverter(BaseConverter):
       "images": ["path/to/image.jpg"],
       "objects": [
         {"bbox_2d": [x1,y1,x2,y2], "desc": "category"},
-        {"quad": [x1,y1,...,xn,yn], "quad_points": n, "desc": "category"}  # if use_polygon=True
+        {"poly": [x1,y1,...,xn,yn], "poly_points": n, "desc": "category"}  # if use_polygon=True
       ],
       "width": int,
       "height": int
@@ -44,29 +44,41 @@ class LVISConverter(BaseConverter):
 
     Geometry interpretation:
     - bbox_2d: 2-point implicit rectangle [x1,y1,x2,y2]
-    - quad: N-point closed polygon [x1,y1,...,xn,yn] where N >= 3
+    - poly: N-point closed polygon [x1,y1,...,xn,yn] where N >= 3
+      If poly_max_points is set and N > poly_max_points, converts to bbox_2d instead
 
     Modes:
     - use_polygon=False (default): Only convert bounding boxes
-    - use_polygon=True: Convert segmentation polygons (all N-point polygons → quad)
+    - use_polygon=True: Convert segmentation polygons (all N-point polygons → poly)
+      If poly_max_points is set, polygons exceeding the cap are converted to bbox_2d
     """
 
-    def __init__(self, config: ConversionConfig, use_polygon: bool = False):
+    def __init__(
+        self,
+        config: ConversionConfig,
+        use_polygon: bool = False,
+        poly_max_points: Optional[int] = None,
+    ):
         """
         Args:
             config: Conversion configuration
-            use_polygon: If True, convert segmentation polygons to quad (arbitrary N points)
+            use_polygon: If True, convert segmentation polygons to poly (arbitrary N points)
+            poly_max_points: If set, polygons with more than this many points will be
+                           converted to bbox_2d instead. If None, no cap is applied.
         """
         super().__init__(config)
         self.use_polygon = use_polygon
+        self.poly_max_points = poly_max_points
         self.category_map: Dict[int, Dict[str, str]] = {}  # cat_id -> {name, frequency}
         self.image_map: Dict[int, Dict[str, Any]] = {}  # img_id -> image_info
         self.annotations_by_image: Dict[int, List[Dict]] = defaultdict(list)
 
         # Track polygon statistics
         if use_polygon:
-            self.stats["quad_converted"] = 0
+            self.stats["poly_converted"] = 0
             self.stats["polygon_skipped"] = 0
+            if poly_max_points is not None:
+                self.stats["poly_to_bbox_capped"] = 0
 
     def load_annotations(self) -> Dict[str, Any]:
         """
@@ -125,14 +137,33 @@ class LVISConverter(BaseConverter):
         print("    Category distribution:")
         for freq, count in sorted(self.stats["categories"].items()):
             print(f"      {freq}: {count} categories")
-        mode_str = "enabled (N-point polygons → poly)" if self.use_polygon else "disabled (bbox only)"
+        mode_str = (
+            "enabled (N-point polygons → poly)"
+            if self.use_polygon
+            else "disabled (bbox only)"
+        )
         print(f"    Polygon mode: {mode_str}")
 
     def _build_image_map(self, images: List[Dict]) -> None:
         """Build image ID to metadata mapping."""
         for img in images:
+            # Try to get file_name from various sources
+            file_name = img.get("coco_file_name") or img.get("file_name")
+
+            # If still None, try to extract from coco_url
+            if not file_name:
+                coco_url = img.get("coco_url", "")
+                if coco_url:
+                    # Extract path from URL: http://images.cocodataset.org/train2017/000000391895.jpg
+                    # -> train2017/000000391895.jpg
+                    # The URL format is: http://images.cocodataset.org/{split}/{filename}
+                    url_parts = coco_url.split("/")
+                    if len(url_parts) >= 2:
+                        # Get the last two parts: split directory and filename
+                        file_name = "/".join(url_parts[-2:])
+
             self.image_map[img["id"]] = {
-                "file_name": img.get("coco_file_name", img.get("file_name")),
+                "file_name": file_name,
                 "width": img["width"],
                 "height": img["height"],
                 "coco_url": img.get("coco_url", ""),
@@ -166,7 +197,15 @@ class LVISConverter(BaseConverter):
             return None
 
         # Build image path
-        file_name = image_info["file_name"]
+        file_name = image_info.get("file_name")
+        if not file_name or not isinstance(file_name, str):
+            # Skip images without valid file_name
+            print(
+                f"  ! Image {image_id} has no valid file_name (got: {file_name}), skipping"
+            )
+            self.stats["skipped_images"] += 1
+            return None
+
         image_path = os.path.join(self.config.image_root, file_name)
 
         # Verify image exists
@@ -225,12 +264,12 @@ class LVISConverter(BaseConverter):
 
         category_name = self.category_map[cat_id]["name"]
 
-        # If polygon mode enabled, try to extract quad from segmentation
+        # If polygon mode enabled, try to extract polygons from segmentation
         if self.use_polygon:
-            quad_objs = self._extract_quads(ann, category_name, image_info)
-            if quad_objs:
-                return quad_objs
-            # If no valid quads, fall through to bbox
+            poly_objs = self._extract_polygons(ann, category_name, image_info)
+            if poly_objs:
+                return poly_objs
+            # If no valid polygons, fall through to bbox
 
         # Convert bbox from COCO [x,y,w,h] to [x1,y1,x2,y2]
         try:
@@ -277,7 +316,7 @@ class LVISConverter(BaseConverter):
 
         return [{"bbox_2d": bbox_xyxy, "desc": category_name}]
 
-    def _extract_quads(
+    def _extract_polygons(
         self, ann: Dict[str, Any], category_name: str, image_info: Dict[str, Any]
     ) -> Optional[list]:
         """
@@ -285,16 +324,17 @@ class LVISConverter(BaseConverter):
 
         LVIS segmentation format: [[x1,y1,x2,y2,...], [part2...]]
         Converts all polygons to poly format (arbitrary N points).
+        If poly_max_points is set and a polygon exceeds it, converts to bbox_2d.
 
         Returns:
-            List of polygon objects (as 'poly') or None
+            List of polygon objects (as 'poly') or bbox objects (as 'bbox_2d') or None
         """
         segmentation = ann.get("segmentation")
 
         if not segmentation or not isinstance(segmentation, list):
             return None
 
-        polygons = []
+        objects = []
 
         for part in segmentation:
             if not isinstance(part, list):
@@ -330,21 +370,76 @@ class LVISConverter(BaseConverter):
                     self.stats["polygon_skipped"] += 1
                     continue
 
-                # Success: add as 'poly' (generic polygon)
-                polygons.append(
-                    {
-                        "poly": coords,
-                        "poly_points": num_points,  # Track number of points
-                        "desc": category_name,
-                    }
-                )
-                self.stats["poly_converted"] = self.stats.get("poly_converted", 0) + 1
+                # Check if polygon exceeds point cap - convert to bbox_2d if so
+                if (
+                    self.poly_max_points is not None
+                    and num_points > self.poly_max_points
+                ):
+                    # Compute bounding box from polygon coordinates
+                    x_min, x_max = min(xs), max(xs)
+                    y_min, y_max = min(ys), max(ys)
+                    bbox_xyxy = [x_min, y_min, x_max, y_max]
+
+                    # Clip to image bounds if configured
+                    if self.config.clip_boxes:
+                        try:
+                            bbox_xyxy = clip_bbox_to_image(
+                                bbox_xyxy, image_info["width"], image_info["height"]
+                            )
+                        except ValueError:
+                            # Box becomes degenerate after clipping
+                            self.stats["polygon_skipped"] += 1
+                            continue
+                    else:
+                        # Just validate bounds
+                        if not validate_bbox_bounds(
+                            bbox_xyxy,
+                            image_info["width"],
+                            image_info["height"],
+                            allow_partial=True,
+                        ):
+                            self.stats["polygon_skipped"] += 1
+                            continue
+
+                    # Check minimum area/dimension
+                    area = compute_bbox_area(bbox_xyxy)
+                    if area < self.config.min_box_area:
+                        self.stats["polygon_skipped"] += 1
+                        continue
+
+                    x1, y1, x2, y2 = bbox_xyxy
+                    width = x2 - x1
+                    height = y2 - y1
+                    if (
+                        width < self.config.min_box_dimension
+                        or height < self.config.min_box_dimension
+                    ):
+                        self.stats["polygon_skipped"] += 1
+                        continue
+
+                    # Add as bbox_2d
+                    objects.append({"bbox_2d": bbox_xyxy, "desc": category_name})
+                    self.stats["poly_to_bbox_capped"] = (
+                        self.stats.get("poly_to_bbox_capped", 0) + 1
+                    )
+                else:
+                    # Success: add as 'poly' (generic polygon)
+                    objects.append(
+                        {
+                            "poly": coords,
+                            "poly_points": num_points,  # Track number of points
+                            "desc": category_name,
+                        }
+                    )
+                    self.stats["poly_converted"] = (
+                        self.stats.get("poly_converted", 0) + 1
+                    )
 
             except (ValueError, TypeError):
                 self.stats["polygon_skipped"] += 1
                 continue
 
-        return polygons if polygons else None
+        return objects if objects else None
 
     def _get_total_samples(self, annotations: Dict[str, Any]) -> int:
         """Get total number of images with annotations."""
@@ -364,6 +459,7 @@ def convert_lvis_to_jsonl(
     split: str = "train",
     max_samples: Optional[int] = None,
     use_polygon: bool = False,
+    poly_max_points: Optional[int] = None,
     **kwargs,
 ) -> None:
     """
@@ -375,7 +471,9 @@ def convert_lvis_to_jsonl(
         output_path: Output JSONL path
         split: Dataset split name
         max_samples: Limit samples (for testing)
-        use_polygon: Convert segmentation to quad (4-point polygons only)
+        use_polygon: Convert segmentation to poly (arbitrary N-point polygons)
+        poly_max_points: If set, polygons with more than this many points will be
+                        converted to bbox_2d instead
         **kwargs: Additional ConversionConfig parameters
 
     Example:
@@ -395,5 +493,7 @@ def convert_lvis_to_jsonl(
         **kwargs,
     )
 
-    converter = LVISConverter(config, use_polygon=use_polygon)
+    converter = LVISConverter(
+        config, use_polygon=use_polygon, poly_max_points=poly_max_points
+    )
     converter.convert()

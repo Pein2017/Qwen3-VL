@@ -128,7 +128,7 @@ JSONL → DenseCaptionDataset → Collator → Trainer
 1. **DenseCaptionDataset**: Mode selection (dense/summary), augmentation config, per-item orchestration
 2. **Preprocessors**: Validation, augmentation (plugged into the dataset)
 3. **Builder**: Message formatting (JSONLinesBuilder)
-4. **Collator**: Tensor preparation, optional packing
+4. **Collator**: Tensor preparation with standard padding (packing removed)
 
 ### Visual Feature Distillation (optional)
 
@@ -177,7 +177,7 @@ If your source is a human-annotation export, start with the intake guide (`docs/
 
 When you want BBU/RRU multi-target dense-caption training to consume auxiliary detection datasets (LVIS, COCO, etc.), provide a `custom.fusion_config` (YAML/JSON). The unified fusion loader mixes:
 
-- **Targets (one or more)**: declare under `targets:`. Optional per-target `ratio` enables balancing: compute `base = floor(min(len_i / ratio_i))`, then `quota_i = round(base * ratio_i)` for each target. If no ratios are provided, every target is fully covered each epoch. Target indices are shuffled deterministically per epoch. Evaluation concatenates all target `val_jsonl` splits (no sources).
+- **Targets (one or more)**: declare under `targets:`. Optional per-target `ratio` is self-scaled: `quota_i = round(len_i * ratio_i)` with `ratio_i` defaulting to `1.0` (ratio < 1 downsamples, ratio > 1 upsamples with replacement; ratio = 1 or unset keeps full coverage). Target indices are shuffled deterministically per epoch. Evaluation concatenates all target `val_jsonl` splits (no sources).
 - **Auxiliary sources**: each entry declares the dataset wrapper (e.g., `coco`, `lvis`, `objects365`) plus a `ratio`. Each epoch samples `round(ratio * N_target_total)` records **with replacement**, where `N_target_total` is the sum of target quotas for that epoch. Errors if the source pool is empty; shuffles deterministically using the fusion seed and optional per-dataset seed.
 - **Text-only sources**: you can add a chat-only auxiliary (`dataset: chat`, `template: chatml`) that points to a JSONL with pre-authored `messages` only (e.g., `public_data/coig_cqia/coig_cqia_merged.jsonl`). Chat sources skip augmentation/curriculum, reuse their own prompts, and are mixed by ratio like any other source.
 - **Per-dataset fields** (target and sources): `name`, `train_jsonl`, optional `val_jsonl`, `template`, optional `user_prompt`/`system_prompt` override, `augmentation_enabled`, `curriculum_enabled`, `max_objects_per_image`, optional `seed`. Sources default to **no augmentation/curriculum** and a **64 object cap**; targets inherit global augmentation/curriculum and can opt into a cap.
@@ -348,7 +348,7 @@ python -m src.datasets.validate_jsonl --input train.jsonl --verbose
 
 1. **Image Loading**: Use relative paths from JSONL directory for portability
 2. **Augmentation**: Enable only needed ops (each adds overhead)
-3. **Packing**: Set `training.packing: true` for 20-30% speedup
+3. **Packing**: Removed. Training always uses padded batches; packing knobs are rejected.
 
 ### Debugging
 
@@ -367,29 +367,12 @@ print(item.keys())  # input_ids, labels, pixel_values, ...
 
 ---
 
-## Collation & Packing
+## Collation (padding-only)
 
-### Standard Collation
-
-**Output Tensors**:
-- `input_ids`: Token IDs (includes vision placeholders)
-- `labels`: Target tokens (-100 for non-target positions)
-- `pixel_values`: Preprocessed images
-- `image_grid_thw`: Grid dimensions per image
-- `objects`: Top-level geometry metadata (norm1000)
-
-### Packing Mode
-
-**When**: `training.packing: true`
-
-**Benefits**:
-- Eliminates padding waste
-- 20-30% faster training
-- Better GPU utilization
-
-**Limitations**:
-- Incompatible with `lazy_tokenize`
-- Requires Qwen3-VL (Flash Attention 2+)
+Training and evaluation now always use padded batches:
+- `input_ids`, `labels`, `pixel_values`, `image_grid_thw`, `objects` are produced by the template collator.
+- Packing and its knobs (`training.packing`, `custom.packing_group_key`, cached length overrides) are removed; configs containing them fail fast.
+- Per-dataset telemetry is still available in the padded path using dataset labels from metadata.
 
 ---
 

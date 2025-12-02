@@ -1,7 +1,6 @@
 """Tests for vis_qwen3.parse_prediction with strict JSON validation."""
 
 import json
-from typing import Any, Dict, List
 
 import pytest
 

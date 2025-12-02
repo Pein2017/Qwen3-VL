@@ -1,0 +1,5 @@
+- [x] Implement consolidated packing updates: rank0-only pack build + broadcast, and cached-length opt-in path that skips augmentation/encode during pack build when cache is valid (fallback otherwise).
+- [x] Add cache hash/version validation and config for miss/mismatch policy (fail vs fallback).
+- [x] Provide cache generation helper/CLI that runs full augmentation+encode to emit exact lengths and hash metadata.
+- [x] Add tests: cache hit/miss/mismatch, DDP broadcast with cache, and packing correctness (grouping, domains) unchanged. *(DDP broadcast covered; cache hit/miss/mismatch covered via unit tests.)*
+- [x] Update docs (REFERENCE, TRAINING_PLAYBOOK) with broadcast + cached-length usage, cache generation steps, and guardrails.

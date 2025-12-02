@@ -4,7 +4,10 @@ import copy
 import random
 from typing import Any, Dict, List, Literal, MutableMapping, Optional, Sequence
 
+from src.utils import get_logger
+
 from torch.utils.data import Dataset, get_worker_info
+from swift.llm.template.base import MaxLengthError
 
 from src.config.prompts import USER_PROMPT_SUMMARY
 
@@ -15,6 +18,7 @@ from .utils import load_jsonl
 
 # Exposed for debugging (e.g., OOM tracing)
 LAST_SAMPLE_DEBUG: Dict[str, Any] = {}
+logger = get_logger(__name__)
 
 
 class BaseCaptionDataset(Dataset):
@@ -187,58 +191,80 @@ class BaseCaptionDataset(Dataset):
         if not self.base_records:
             raise IndexError("BaseCaptionDataset is empty")
 
-        base_idx = self._index_perm[index % len(self._index_perm)]
-        record = copy.deepcopy(self.base_records[base_idx])
+        max_attempts = min(5, len(self.base_records))
+        attempt = 0
+        while True:
+            base_idx = self._index_perm[(index + attempt) % len(self._index_perm)]
+            record = copy.deepcopy(self.base_records[base_idx])
 
-        worker = get_worker_info()
-        seed_local = self._rng.randrange(0, 2**32 - 1)
-        if worker is not None:
-            seed_local ^= ((worker.id + 1) * 0xC2B2AE35) & 0xFFFFFFFF
-        rng_local = random.Random(seed_local & 0xFFFFFFFF)
+            worker = get_worker_info()
+            seed_local = self._rng.randrange(0, 2**32 - 1)
+            if worker is not None:
+                seed_local ^= ((worker.id + 1) * 0xC2B2AE35) & 0xFFFFFFFF
+            rng_local = random.Random(seed_local & 0xFFFFFFFF)
 
-        if self.preprocessor is not None:
-            if hasattr(self.preprocessor, "rng"):
-                self.preprocessor.rng = rng_local
-            processed = self.preprocessor(record)
-            if processed is None:
-                raise ValueError(
-                    "Preprocessor removed the record; dataset does not duplicate samples"
-                )
-            record = processed
+            if self.preprocessor is not None:
+                if hasattr(self.preprocessor, "rng"):
+                    self.preprocessor.rng = rng_local
+                processed = self.preprocessor(record)
+                if processed is None:
+                    raise ValueError(
+                        "Preprocessor removed the record; dataset does not duplicate samples"
+                    )
+                record = processed
 
-        mode = self.mode
-        builder = self._create_builder(mode)
-        merged = builder.build_many([record])
+            mode = self.mode
+            builder = self._create_builder(mode)
+            merged = builder.build_many([record])
 
-        system_prompt = None
-        if mode == "summary" and self.system_prompt_summary:
-            system_prompt = self.system_prompt_summary
-        elif mode == "dense" and self.system_prompt_dense:
-            system_prompt = self.system_prompt_dense
+            system_prompt = None
+            if mode == "summary" and self.system_prompt_summary:
+                system_prompt = self.system_prompt_summary
+            elif mode == "dense" and self.system_prompt_dense:
+                system_prompt = self.system_prompt_dense
 
-        conversation_messages = copy.deepcopy(merged.get("messages", []) or [])
-        if system_prompt is not None:
-            conversation_messages = [
-                {"role": "system", "content": system_prompt},
-                *conversation_messages,
-            ]
+            conversation_messages = copy.deepcopy(merged.get("messages", []) or [])
+            if system_prompt is not None:
+                conversation_messages = [
+                    {"role": "system", "content": system_prompt},
+                    *conversation_messages,
+                ]
 
-        original_system = None
-        if system_prompt is not None:
-            try:
-                original_system = getattr(self.template, "system", None)
-                self.template.system = system_prompt
-            except Exception:
-                original_system = None
-
-        try:
-            encoded = self.template.encode(merged, return_length=True)
-        finally:
-            if system_prompt is not None and original_system is not None:
+            original_system = None
+            if system_prompt is not None:
                 try:
-                    self.template.system = original_system
+                    original_system = getattr(self.template, "system", None)
+                    self.template.system = system_prompt
                 except Exception:
-                    pass
+                    original_system = None
+
+            try:
+                encoded = self.template.encode(merged, return_length=True)
+            except MaxLengthError as exc:
+                # Drop over-length sample instead of truncating; try another record.
+                logger.warning(
+                    "Dropping over-length sample (dataset=%s, base_idx=%s, max_length=%s): %s",
+                    self.dataset_name,
+                    base_idx,
+                    getattr(self.template, "max_length", None),
+                    exc,
+                )
+                if system_prompt is not None and original_system is not None:
+                    try:
+                        self.template.system = original_system
+                    except Exception:
+                        pass
+                attempt += 1
+                if attempt >= max_attempts:
+                    raise
+                continue
+            finally:
+                if system_prompt is not None and original_system is not None:
+                    try:
+                        self.template.system = original_system
+                    except Exception:
+                        pass
+            break
 
         # Track last-sample debug info for OOM/root-cause tracing
         objects = record.get("objects") or []
@@ -259,6 +285,16 @@ class BaseCaptionDataset(Dataset):
         input_ids = encoded.get("input_ids")
         if input_ids is not None and hasattr(input_ids, "__len__"):
             info["input_ids_len"] = len(input_ids)
+            try:
+                # Debug-only: emit per-sample token length to help sizing global_max_length
+                logger.debug(
+                    "Sample token length | dataset=%s base_idx=%s len=%d",
+                    self.dataset_name,
+                    base_idx,
+                    len(input_ids),
+                )
+            except Exception:
+                pass
         self.last_sample_debug = info
         LAST_SAMPLE_DEBUG.update(info)
 

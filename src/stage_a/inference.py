@@ -900,5 +900,5 @@ def run_stage_a_inference(
     logger.info(f"Processed: {processed}/{len(groups)} groups")
     logger.info(f"Errors: {errors}")
     logger.info(f"Output: {output_path}")
-    logger.info(f"Results written incrementally (can tail -f to monitor)")
+    logger.info("Results written incrementally (can tail -f to monitor)")
     logger.info("=" * 70)

@@ -8,7 +8,6 @@ Merged SampleExtractor directly into UnifiedProcessor to eliminate redundancy.
 
 import logging
 import sys
-import re
 from multiprocessing import Pool, cpu_count
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple

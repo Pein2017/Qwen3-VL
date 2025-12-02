@@ -12,14 +12,12 @@ Covers:
 
 import json
 from datetime import datetime, timezone
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
 from src.stage_b.config import ReflectionConfig
 from src.stage_b.io import GuidanceRepository, MissionGuidanceError
-from src.stage_b.io.export import serialize_selection, serialize_trajectory
 from src.stage_b.reflection.engine import ReflectionEngine
 from src.stage_b.signals import attach_signals
 from src.stage_b.types import (
@@ -30,7 +28,6 @@ from src.stage_b.types import (
     ExperienceRecord,
     GroupTicket,
     ReflectionProposal,
-    SelectionResult,
     StageASummaries,
     TrajectoryWithSignals,
 )

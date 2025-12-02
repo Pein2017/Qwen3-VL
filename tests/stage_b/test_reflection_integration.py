@@ -141,7 +141,7 @@ def test_reflection_refine_action_accepted(tmp_path):
         confidence=0.8,
     )
 
-    candidate = TrajectoryWithSignals(parsed=trajectory, signals=signals)
+    _candidate = TrajectoryWithSignals(parsed=trajectory, signals=signals)  # noqa: F841
 
     record = ExperienceRecord(
         ticket=ticket,
@@ -185,7 +185,7 @@ def test_reflection_refine_action_accepted(tmp_path):
     )
 
     # Override _generate_reflection to return our test proposal
-    original_generate = engine._generate_reflection
+    _original_generate = engine._generate_reflection  # noqa: F841
     engine._generate_reflection = lambda bundle: proposal  # type: ignore[assignment]
 
     # Execute reflection

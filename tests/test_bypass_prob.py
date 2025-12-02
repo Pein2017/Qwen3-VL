@@ -62,7 +62,7 @@ def test_bypass_prob_intermediate():
     bypass_count = 0
     augment_count = 0
     
-    preprocessor = AugmentationPreprocessor(
+    _preprocessor = AugmentationPreprocessor(  # noqa: F841
         augmenter=None,  # Will return immediately since augmenter is None
         rng=random.Random(42),
         bypass_prob=0.1

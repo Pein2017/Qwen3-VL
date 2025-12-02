@@ -11,6 +11,7 @@ Features:
 
 import argparse
 import os
+import sys
 from pathlib import Path
 from typing import List
 
@@ -36,6 +37,11 @@ AVAILABLE_SUBSETS: List[str] = [
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUTPUT = ROOT / "coig_cqia"
 DEFAULT_CACHE = ROOT / ".ms_cache"
+
+# Allow importing sibling formatter without packaging public_data/.
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
 
 
 def parse_args() -> argparse.Namespace:
@@ -86,6 +92,17 @@ def parse_args() -> argparse.Namespace:
         "--merge",
         action="store_true",
         help="Also write a merged JSONL of all downloaded subsets.",
+    )
+    parser.add_argument(
+        "--format",
+        action="store_true",
+        help="Run formatting pass (metadata/source tag, drop message loss) on outputs.",
+    )
+    parser.add_argument(
+        "--source-name",
+        type=str,
+        default="coig_cqia",
+        help="metadata.source value to inject during formatting (default: coig_cqia).",
     )
     return parser.parse_args()
 
@@ -148,6 +165,14 @@ def export_subset(
     return out_path
 
 
+def format_jsonl(path: Path, *, source_name: str) -> Path:
+    from format_coig_cqia import format_file
+
+    print(f"Formatting {path}...")
+    format_file(path, path, source_name=source_name)
+    return path
+
+
 def main() -> None:
     args = parse_args()
     subsets = resolve_subsets(args.subsets)
@@ -163,6 +188,8 @@ def main() -> None:
             num_proc=args.num_proc,
             overwrite=args.overwrite,
         )
+        if args.format:
+            out = format_jsonl(out, source_name=args.source_name)
         exported.append(out)
 
     if args.merge and exported:
@@ -176,6 +203,8 @@ def main() -> None:
                     with path.open("r", encoding="utf-8") as fin:
                         for line in fin:
                             fout.write(line)
+            if args.format:
+                format_jsonl(merged_path, source_name=args.source_name)
     print("Done.")
 
 

@@ -41,7 +41,7 @@ training:
   run_name: last_llm_6-aug_conservative-eff_batch_32-epoch_5
 
   # Trainer/runtime additions for parity with stage_3
-  packing: true
+  packing: false
   optimizer: multimodal
   learning_rate: 1.0e-4
   vit_lr: 8.0e-5

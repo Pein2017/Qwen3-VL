@@ -177,7 +177,7 @@ def test_merge_operation_with_provenance(tmp_path: Path, prompt_file: Path):
     original_generate = engine._generate_reflection
     engine._generate_reflection = lambda bundle: parsed
     try:
-        outcome = engine.reflect(bundle, epoch=1, log=True)
+        _outcome = engine.reflect(bundle, epoch=1, log=True)  # noqa: F841
     finally:
         engine._generate_reflection = original_generate
 

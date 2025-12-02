@@ -1,7 +1,6 @@
 import json
 from pathlib import Path
 
-import pytest
 
 from src.datasets.fusion import FusionConfig, _compute_target_quotas
 
@@ -14,7 +13,7 @@ def test_compute_target_quotas_with_ratios():
                 require_ratio=False,
                 allow_ratio=True,
             )[0],
-            0.33,
+            0.5,
         ),
         FusionConfig._as_target(  # type: ignore[attr-defined]
             FusionConfig._parse_dataset_entry(
@@ -22,7 +21,7 @@ def test_compute_target_quotas_with_ratios():
                 require_ratio=False,
                 allow_ratio=True,
             )[0],
-            0.33,
+            None,
         ),
         FusionConfig._as_target(  # type: ignore[attr-defined]
             FusionConfig._parse_dataset_entry(
@@ -30,16 +29,16 @@ def test_compute_target_quotas_with_ratios():
                 require_ratio=False,
                 allow_ratio=True,
             )[0],
-            0.34,
+            1.5,
         ),
     ]
     quotas, base = _compute_target_quotas(
         targets, {"bbu": 100, "rru": 200, "t3": 300}
     )
-    assert base == 303
-    assert quotas["bbu"] == 100
-    assert quotas["rru"] == 100
-    assert quotas["t3"] == 103
+    assert base is None
+    assert quotas["bbu"] == 50  # downsample
+    assert quotas["rru"] == 200  # defaults to full coverage when ratio is None
+    assert quotas["t3"] == 450  # upsample beyond pool size
 
 
 def test_fusion_config_parses_multi_targets(tmp_path: Path):
@@ -77,4 +76,3 @@ def test_fusion_config_parses_multi_targets(tmp_path: Path):
     assert cfg.targets[0].name == "bbu"
     assert cfg.targets[1].ratio == 2.0
     assert len(cfg.sources) == 1
-

@@ -212,7 +212,8 @@ Examples:
     parser.add_argument(
         "--poly-max-points",
         type=int,
-        help="Convert polygons with more than N vertices to bbox_2d during conversion",
+        default=12,
+        help="Convert polygons with more than N vertices to bbox_2d during conversion (default: 12)",
     )
 
     # Smart-resize options
@@ -358,6 +359,7 @@ Examples:
         if args.poly_max_points <= 0:
             raise ValueError("--poly-max-points must be a positive integer")
         poly_max_points = int(args.poly_max_points)
+    # Note: poly_max_points defaults to 12 in argparse, so it will be set unless explicitly disabled
 
     print("=" * 60)
     print("LVIS to Qwen3-VL JSONL Converter")

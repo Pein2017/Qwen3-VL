@@ -1,13 +1,13 @@
 #!/bin/bash
 # Merge LoRA adapter into base model for end2end inference
 
-adapters=output/11-27/res_1024/v6-20251130-153929/epoch_30-sft_base-LRs_2_1_6-resume_from_sft_base-last_6_llm-with_lm_head/checkpoint-2070
+adapters=output/12-1/fusion_dlora/v1-20251201-151258/epoch_50-lrs_2_1_6-all_linear_plus_lm_head-bs_32/checkpoint-700
 
 # Extract base model path from adapter_config.json
-base_model=$(python3 -c "import json; print(json.load(open('$adapters/adapter_config.json'))['base_model_name_or_path'])")
+base_model=$(python3 -c "import json; print(json.load(open(\"$adapters/adapter_config.json\"))[\"base_model_name_or_path\"])")
 
 
-output_dir=output/11-27/res_1024_resumed_from_last_6-merged
+output_dir=output/12-1/fusion_dlora_merged/lm_head/checkpoint-700
 
 echo "Detected base model: $base_model"
 echo "Adapters: $adapters"
@@ -26,4 +26,3 @@ echo "Merged model saved to: $output_dir"
 echo ""
 echo "Test inference with:"
 echo "CUDA_VISIBLE_DEVICES=0 swift infer --model $output_dir --stream true"
-
