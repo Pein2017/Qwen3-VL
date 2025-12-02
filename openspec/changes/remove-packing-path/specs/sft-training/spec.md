@@ -1,9 +1,10 @@
 ## ADDED Requirements
 
-### Requirement: Packing disabled; padding-only batching
+### Requirement: Padding-only batching and telemetry
 - The SFT runner SHALL reject any config that sets `training.packing` to true or supplies packing-specific knobs (`packing_group_key`, cached-length settings), returning a clear error that packing is removed and padding is the only supported batching mode.
 - The default batching path SHALL use standard padding for `per_device_train_batch_size>1`, with no bin-packing or length-cache prepass executed in training or evaluation.
-- Per-dataset telemetry SHALL remain available in this padding-only mode by attaching dataset labels from sample metadata, without invoking packing logic.
+- Per-dataset telemetry SHALL remain available in this padding-only mode by attaching dataset labels from sample metadata and emitting one segment per sample to the grouped-metrics reducer.
+- Evaluation metrics SHALL log only datasets that provide `val` splits; source-only datasets remain absent unless their `val` path is configured.
 - The legacy packing implementation SHALL be removed from runtime import paths and stored only under `archive/packing/` for future reference.
 
 #### Scenario: Config tries to enable packing
@@ -14,6 +15,15 @@
 - WHEN packing keys are absent and `per_device_train_batch_size>1`
 - THEN the dataloader uses the padded collator, training proceeds, and aggregate metrics remain unchanged.
 
+#### Scenario: Per-dataset metrics with padded batches
+- WHEN padded batches contain samples from multiple datasets (e.g., `bbu`, `rru`, `lvis`, `lang_chat`)
+- THEN the collator attaches per-sample dataset labels and single-sample lengths, the trainer logs `train/{dataset}_loss` and `train/{dataset}_token_acc` for each dataset during logging steps, and aggregate training metrics remain unchanged.
+
+#### Scenario: Evaluation limited to datasets with val splits
+- GIVEN only target datasets provide `val` JSONL paths
+- WHEN evaluation runs with padding-only batching
+- THEN only those datasets produce eval metrics (e.g., `eval/bbu_loss`, `eval/bbu_token_acc`); sources without `val` remain absent.
+
 #### Scenario: Stray packing metadata
 - WHEN a config includes `custom.packing_group_key` or `custom.cached_lengths`
 - THEN validation fails with guidance to remove packing metadata because the feature is no longer supported.
@@ -21,6 +31,9 @@
 #### Scenario: Packing code archived
 - WHEN code attempts to import packing modules from the main package
 - THEN the import fails; the archived implementation lives under `archive/packing/` and is not on the runtime path.
+
+## Runtime Behavior
+- Padded batching only; packing is not supported.
 
 ## MODIFIED Requirements
 

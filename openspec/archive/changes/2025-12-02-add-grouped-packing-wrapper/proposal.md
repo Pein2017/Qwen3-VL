@@ -1,4 +1,5 @@
 # Proposal: Group-aware packing wrapper without upstream edits
+status: superseded (padding-only runtime; see `remove-packing-path`)
 
 ## Problem
 - Enabling `packing` in ms-swift merges samples from different datasets into one packed sequence, losing dataset identity and preventing per-dataset loss monitoring.

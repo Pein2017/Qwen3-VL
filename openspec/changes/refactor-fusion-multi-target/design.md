@@ -33,9 +33,7 @@ Example: lengths (100, 200, 300), ratios (0.33, 0.33, 0.34)
 - Single-target configs continue to work; lack of `ratio` means full coverage of each target per epoch.
 - Source semantics unchanged except that source quotas now key off combined target quota when multiple targets are present.
 
-## Packing & loss attribution (future consideration)
-- Problem: ms-swift packing merges multiple samples into one packed sequence, losing per-sample dataset identity for loss monitoring.
-- Options to evaluate:
-  1) **Group-by-dataset packing**: constrain packing bins so that only samples sharing `dataset_name` are packed together; retain per-packed-row metadata of that dataset. Simple, minimal overhead; per-dataset loss is per packed batch.
-  2) **Per-sample tags inside packed rows**: carry a parallel list of `(dataset, length, loss_mask_range)` for each packed element and extend the trainer’s loss reducer to accumulate per-dataset token loss. Heavier change to collate + trainer but more precise when mixed packing is allowed.
-- Preferred minimal path: start with group-by-dataset packing to regain dataset-level loss while keeping packing enabled; optionally add fine-grained tagging later.
+## Loss attribution under padded batching
+- Problem: dataset identity can be lost when batches mix multiple targets/sources unless labels are preserved for metrics.
+- Approach: attach per-sample dataset labels and lengths to padded batches and reuse the grouped-metrics reducer for per-dataset loss/accuracy.
+- Outcome: Works with the padding-only runtime; no packing path is required.

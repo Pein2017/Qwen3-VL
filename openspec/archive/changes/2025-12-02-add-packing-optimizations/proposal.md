@@ -1,4 +1,5 @@
 # Proposal: Packing optimizations (rank0 broadcast + cached lengths)
+status: superseded (padding-only runtime; see `remove-packing-path`)
 
 ## Problem
 - Packing still runs a full augmentation+encode pre-pass each epoch; even with rank0 broadcast, that pre-pass is expensive and duplicated work relative to training-time augmentation.

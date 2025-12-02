@@ -5,6 +5,14 @@
 - Uses ms-swift (`/data/ms-swift`) for training orchestration and Hugging Face transformers for model/template implementations.
 - Focus: dense captioning with structured geometry (bbox/quad/line) plus augmentation and visualization tooling.
 
+## Spec Status
+- Active, production-ready specs: `specs/sft-training`, `specs/fusion-dataset`, `specs/multi-dataset-fusion`, `specs/stage-b-training-free`, `specs/data-augmentation`, `specs/hard-sample-mining`.
+- Padding-only runtime: `training.packing` is not supported; legacy packing changes live in `openspec/archive/changes/` (`2025-12-02-add-grouped-packing-wrapper`, `2025-12-02-add-packing-optimizations`, `add-unpacked-group-telemetry`).
+- Experimental/in-progress changes (open tasks): `changes/add-language-fusion-wrapper`, `changes/refactor-grouped-metrics-sync`, `changes/refactor-stage-b-simple-guidance`.
+- Completed/production-ready changes: `changes/remove-packing-path`, `changes/update-fusion-target-only-policies`, Stage-B reflection/guardrail changes (`add-stageb-3step-reflection`, `add-stageb-guardrails`, `align-stageb-chat-convo`, `refactor-stageb-line-protocols`, `refactor-stageb-two-line-protocol`).
+- Legacy (not supported): `specs/packing-optimizations` kept for traceability only; padding-only runtime supersedes it.
+- Use `openspec list` for current status before editing specs or configs.
+
 ## Quick Orientation
 1. **Run surface**
    - `scripts/train.sh` (preferred launcher) and `src/sft.py` (Python entry point).

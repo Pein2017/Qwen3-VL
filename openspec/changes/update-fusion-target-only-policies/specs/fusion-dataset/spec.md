@@ -10,18 +10,13 @@ The fusion loader SHALL build evaluation datasets from the target domain only; s
 - **AND** source-domain samples are excluded from evaluation metrics and epoch counts
 - **AND** no augmentation or object caps are applied in evaluation mode.
 
-### Requirement: Domain-isolated packing and provenance
-The fusion loader SHALL tag every sample with `_fusion_domain`, `_fusion_source`, and `_fusion_template`, and packing strategies SHALL group records so that packed sequences do not mix domains (target vs source).
-
-#### Scenario: Domain grouping for packing
-- **WHEN** packed sequences are constructed from fusion samples
-- **THEN** the packer uses a grouping key derived from `_fusion_domain` (or stricter `_fusion_source`) so a single packed sequence never mixes target and source records
-- **AND** mixed-domain packing attempts are rejected or re-grouped.
+### Requirement: Domain provenance for fused records
+The fusion loader SHALL tag every sample with `_fusion_domain`, `_fusion_source`, and `_fusion_template` so downstream telemetry and auditing can attribute padded batches to the correct domain.
 
 #### Scenario: Provenance metadata available
 - **WHEN** a sample is emitted by the fusion loader (online or offline fused JSONL)
 - **THEN** its metadata contains `_fusion_domain`, `_fusion_source`, and `_fusion_template` fields
-- **AND** these fields are preserved through preprocessing and encoding for downstream debugging and packing.
+- **AND** these fields are preserved through preprocessing and encoding for downstream debugging, metric attribution, and padded batching.
 
 ## MODIFIED Requirements
 ### Requirement: Per-source augmentation and curriculum policy

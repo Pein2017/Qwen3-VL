@@ -1,4 +1,4 @@
 - [x] Update fusion-dataset spec with target-only eval, target-only aug/curriculum, and train-only source caps.
-- [x] Add packing/provenance requirement (metadata + domain-grouped packing) to fusion-dataset spec.
+- [x] Add provenance requirement (metadata `_fusion_domain`, `_fusion_source`, `_fusion_template`) to fusion-dataset spec for padded batching and telemetry.
 - [x] Add offline-fusion provenance requirement to multi-dataset-fusion spec (fused JSONL writes `_fusion_*`).
 - [x] Validate change set with `openspec validate update-fusion-target-only-policies --strict`.

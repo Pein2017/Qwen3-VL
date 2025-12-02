@@ -1,4 +1,5 @@
 # Proposal: Add per-dataset telemetry when packing is disabled
+status: superseded (covered by `remove-packing-path` padding-only batching)
 
 ## Problem
 - Packing is enabled by default to gain throughput, but some runs need it off (e.g., expensive augmentation).  

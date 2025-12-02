@@ -14,7 +14,7 @@ Make grouped metric synchronization deterministic and single-pass by reusing Swi
 ## Out of Scope
 - Changing metric definitions or logging cadence.
 - Altering upstream ms-swift behavior.
-- Adding new datasets or packing semantics.
+- Adding new datasets or revisiting packing semantics (packing is not supported).
 
 ## Success Criteria
 - Rank0 logs still include groups that appear only on other ranks.

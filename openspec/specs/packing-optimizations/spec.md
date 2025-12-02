@@ -1,7 +1,8 @@
 # packing-optimizations Specification
+status: deprecated (padding-only runtime; see change/remove-packing-path)
 
 ## Purpose
-TBD - created by archiving change add-packing-optimizations. Update Purpose after archive.
+Legacy reference from the archived packing path; runtime batching is padding-only and this spec is not active.
 ## Requirements
 ### Requirement: Rank0-only pack construction with broadcast
 Packing SHALL build packs on rank0 only when `torch.distributed` is initialized, broadcasting pack metadata (`indices`, `lengths`, `group`, `group_domains`) to all ranks before iteration.
@@ -40,4 +41,3 @@ The system SHALL provide a helper/CLI to generate exact per-sample lengths by ru
 #### Scenario: Cache generation command
 - **WHEN** the cache generation tool is run against a JSONL + config
 - **THEN** it writes exact lengths and the associated hash/version for packing to validate and consume.
-

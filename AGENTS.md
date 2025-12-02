@@ -52,7 +52,7 @@ Training, inference, and guidance workflows share a single repository. Start wit
 - Use `ms` conda environment for all Python scripts
 - `ms-swift` installed at `/data/ms-swift`
 - `transformers` in conda env at `/root/miniconda3/envs/ms/lib/python3.12/site-packages/transformers`
-- **Serena MCP**: Available via MCP server; project configured at `.serena/project.yml`. Activate with "activate the project Qwen3-VL" or by path. Project-specific memories stored in `.serena/memories/`.
+- **Serena MCP**: Available via MCP server; project configured at `.serena/project.yml`. Activate with "activate the project Qwen3-VL" or by path. Project-specific memories stored in `.serena/memories/`. **Do not use Serena MCP for pure document retrieval or reading** — it doesn't benefit document/text reading tasks; use standard file reading tools instead.
 
 ## Development Approach
 - **Configuration-first**: Edit YAML in `configs/` rather than adding ad‑hoc flags
