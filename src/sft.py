@@ -720,7 +720,10 @@ def main():
     # Setup trainer
     logger.info("Setting up trainer...")
     base_collator = sft._get_data_collator()
-    data_collator = build_dataset_metrics_collator(sft.template, base_collator)
+    token_type_cfg = getattr(custom_config, "token_type_metrics", None)
+    data_collator = build_dataset_metrics_collator(
+        sft.template, base_collator, token_type_cfg=token_type_cfg
+    )
     trainer_cls = resolve_trainer_cls(train_args)
     if not issubclass(trainer_cls, DatasetMetricsMixin):
         trainer_cls = type(

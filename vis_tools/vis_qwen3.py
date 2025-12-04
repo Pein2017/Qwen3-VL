@@ -17,27 +17,31 @@ from __future__ import annotations
 
 import argparse
 import ast
+import gc
 import json
 import os
 import re
 import sys
-import torch
-import gc
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import TYPE_CHECKING, Any, Dict, List
+
+import torch
 
 _SKIP_VIS_DEPS = os.environ.get("QWEN3_VL_NO_VIS_DEPS") is not None
 
-if not _SKIP_VIS_DEPS:
-    import matplotlib.patches as patches
-    import matplotlib.pyplot as plt
-    import torch
-    from PIL import Image
+if TYPE_CHECKING:
+    import matplotlib.patches as patches  # noqa: F401
+    import matplotlib.pyplot as plt  # noqa: F401
+    from PIL import Image as PILImage  # noqa: F401
 else:
-    patches = None  # type: ignore
-    plt = None  # type: ignore
-    torch = None  # type: ignore
-    Image = None  # type: ignore
+    if not _SKIP_VIS_DEPS:
+        import matplotlib.patches as patches
+        import matplotlib.pyplot as plt
+        from PIL import Image
+    else:
+        patches = None  # type: ignore
+        plt = None  # type: ignore
+        Image = None  # type: ignore
 from transformers import (  # noqa: E402
     AutoProcessor,
     Qwen3VLForConditionalGeneration,
@@ -78,13 +82,13 @@ def _parse_args():
 # ==============================
 
 # Required paths
-CKPT_PATH = "output/12-1/fusion_dlora_merged/lm_head/checkpoint-700"  # HF dir or merged checkpoint  # HF dir or merged checkpoint
-JSONL_PATH = "data/bbu_full_1024_poly-need_review/val.jsonl"
+CKPT_PATH = "output/12-2/fusion_dlora_merged/checkpoint-4650"  # HF dir or merged checkpoint  # HF dir or merged checkpoint
+JSONL_PATH = "data/rru_full_768_poly/val.jsonl"
 
 # Runtime settings
 LIMIT = 10
-DEVICE = "cuda:3"  # Default device; can be overridden by CLI arg in main()
-SAVE_DIR = "vis_out/12-1/lm_head"
+DEVICE = "cuda:2"  # Default device; can be overridden by CLI arg in main()
+SAVE_DIR = "vis_out/12-2/fusion_dlora_merged/rru-768"
 MAX_NEW_TOKENS = 2048
 TEMPERATURE = 0.01  # Moderate temperature for diversity without excessive randomness
 TOP_P = 0.95  # Nucleus sampling - cuts off low-probability tail for better diversity
@@ -221,7 +225,7 @@ processor.image_processor.do_resize = False
 # ======================
 
 
-def run_infer_one(pil_img: Image.Image, prompt: str) -> tuple[str, str]:
+def run_infer_one(pil_img: Any, prompt: str) -> tuple[str, str]:
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT_TEXT},
         {
@@ -255,7 +259,7 @@ def run_infer_one(pil_img: Image.Image, prompt: str) -> tuple[str, str]:
                 self.prompt_len = prompt_len
                 self.max_objects = max_objects
 
-            def _decode(self, ids: torch.Tensor) -> str:
+            def _decode(self, ids: "torch.Tensor") -> str:
                 try:
                     return processor.tokenizer.decode(
                         ids,
@@ -266,8 +270,11 @@ def run_infer_one(pil_img: Image.Image, prompt: str) -> tuple[str, str]:
                     return ""
 
             def __call__(
-                self, input_ids: torch.LongTensor, scores: torch.FloatTensor, **kwargs
-            ) -> torch.BoolTensor:
+                self,
+                input_ids: "torch.LongTensor",
+                scores: "torch.FloatTensor",
+                **kwargs,
+            ) -> "torch.BoolTensor":
                 batch_size = input_ids.shape[0] if input_ids is not None else 1
                 device = (
                     input_ids.device if input_ids is not None else torch.device("cpu")
@@ -342,7 +349,7 @@ def run_infer_one(pil_img: Image.Image, prompt: str) -> tuple[str, str]:
             self.seen_values: set[str] = set()
             self.bad_token_sequences: list[list[int]] = []
 
-        def _decode(self, ids: torch.Tensor) -> str:
+        def _decode(self, ids: "torch.Tensor") -> str:
             try:
                 return processor.tokenizer.decode(
                     ids, skip_special_tokens=False, clean_up_tokenization_spaces=False
@@ -400,7 +407,7 @@ def run_infer_one(pil_img: Image.Image, prompt: str) -> tuple[str, str]:
                 i = end_found + 1
             return out
 
-        def _update_seen(self, gen_ids: torch.Tensor) -> None:
+        def _update_seen(self, gen_ids: "torch.Tensor") -> None:
             text = self._decode(gen_ids)
             if not text:
                 return
@@ -413,8 +420,8 @@ def run_infer_one(pil_img: Image.Image, prompt: str) -> tuple[str, str]:
                     self.bad_token_sequences.append(ids)
 
         def __call__(
-            self, input_ids: torch.LongTensor, scores: torch.FloatTensor
-        ) -> torch.FloatTensor:  # type: ignore[override]
+            self, input_ids: "torch.LongTensor", scores: "torch.FloatTensor"
+        ) -> "torch.FloatTensor":  # type: ignore[override]
             if input_ids is None or input_ids.size(0) == 0:
                 return scores
             seq = input_ids[0]
@@ -831,7 +838,7 @@ def _canonicalize_poly(points: List[int | float]) -> List[int]:
 
 def _draw_objects(
     ax,
-    img: Image.Image,
+    img: Any,
     objects: List[Dict[str, Any]],
     color_map: Dict[str, str],
     scaled: bool,
@@ -1002,7 +1009,7 @@ def main() -> None:
             if not Path(img_path).is_absolute():
                 img_path = str((root / img_path).resolve())
             try:
-                img = Image.open(img_path).convert("RGB")
+                img = Image.open(img_path).convert("RGB")  # type: ignore[union-attr]
             except Exception:
                 continue
 
@@ -1137,7 +1144,7 @@ def main() -> None:
         if not Path(img_path).is_absolute():
             img_path = str((root / img_path).resolve())
         try:
-            img = Image.open(img_path).convert("RGB")
+            img = Image.open(img_path).convert("RGB")  # type: ignore[union-attr]
         except Exception:
             continue
 

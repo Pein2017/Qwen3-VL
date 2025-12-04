@@ -89,27 +89,38 @@ echo "[RUN] (cwd=${REPO_DIR}) ${CMD}"
 echo ""
 
 # Initialize conda and run the command from repo root
-# Try to find conda initialization script in common locations
-CONDA_INIT_SCRIPT=""
-if [ -f "${CONDA_BASE:-}/etc/profile.d/conda.sh" ]; then
-    CONDA_INIT_SCRIPT="${CONDA_BASE}/etc/profile.d/conda.sh"
-elif [ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]; then
-    CONDA_INIT_SCRIPT="$HOME/miniconda3/etc/profile.d/conda.sh"
-elif [ -f "/root/miniconda3/etc/profile.d/conda.sh" ]; then
-    CONDA_INIT_SCRIPT="/root/miniconda3/etc/profile.d/conda.sh"
-elif command -v conda &> /dev/null; then
-    # If conda is in PATH, try to get base path
-    CONDA_BASE=$(conda info --base 2>/dev/null || echo "")
-    if [ -n "$CONDA_BASE" ] && [ -f "$CONDA_BASE/etc/profile.d/conda.sh" ]; then
-        CONDA_INIT_SCRIPT="$CONDA_BASE/etc/profile.d/conda.sh"
-    fi
-fi
-
-if [ -n "$CONDA_INIT_SCRIPT" ]; then
-    source "$CONDA_INIT_SCRIPT"
-    conda activate "${CONDA_ENV}"
+# Check if conda environment is already active
+CURRENT_ENV="${CONDA_DEFAULT_ENV:-}"
+if [[ "${CURRENT_ENV}" == "${CONDA_ENV}" ]]; then
+    echo "[INFO] Conda environment '${CONDA_ENV}' is already active, skipping activation."
 else
-    echo "[WARNING] Could not find conda initialization script. Assuming conda is already initialized." >&2
+    # Try to find conda initialization script in common locations
+    CONDA_INIT_SCRIPT=""
+    if [ -f "${CONDA_BASE:-}/etc/profile.d/conda.sh" ]; then
+        CONDA_INIT_SCRIPT="${CONDA_BASE}/etc/profile.d/conda.sh"
+    elif [ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]; then
+        CONDA_INIT_SCRIPT="$HOME/miniconda3/etc/profile.d/conda.sh"
+    elif [ -f "/root/miniconda3/etc/profile.d/conda.sh" ]; then
+        CONDA_INIT_SCRIPT="/root/miniconda3/etc/profile.d/conda.sh"
+    elif command -v conda &> /dev/null; then
+        # If conda is in PATH, try to get base path
+        CONDA_BASE=$(conda info --base 2>/dev/null || echo "")
+        if [ -n "$CONDA_BASE" ] && [ -f "$CONDA_BASE/etc/profile.d/conda.sh" ]; then
+            CONDA_INIT_SCRIPT="$CONDA_BASE/etc/profile.d/conda.sh"
+        fi
+    fi
+
+    if [ -n "$CONDA_INIT_SCRIPT" ]; then
+        # Temporarily disable 'set -u' to avoid errors from conda deactivation scripts
+        set +u
+        source "$CONDA_INIT_SCRIPT" 2>/dev/null || true
+        conda activate "${CONDA_ENV}" 2>/dev/null || {
+            echo "[WARNING] Failed to activate conda environment '${CONDA_ENV}'. Continuing anyway." >&2
+        }
+        set -u
+    else
+        echo "[WARNING] Could not find conda initialization script. Assuming conda is already initialized." >&2
+    fi
 fi
 
 cd "${REPO_DIR}"

@@ -30,6 +30,8 @@ class DatasetSpec:
     prompt_system: Optional[str] = None
     # Optional deterministic seed for per-epoch sampling/shuffling.
     seed: Optional[int] = None
+    # Optional per-source sampling policy: when true and quota <= pool, sample without replacement.
+    sample_without_replacement: bool = False
 
 
 @dataclass(frozen=True)

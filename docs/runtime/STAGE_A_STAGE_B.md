@@ -8,7 +8,7 @@ Business briefing on the two-stage quality control pipeline that underpins produ
 
 **Audience**: Quality operations leads, production planners, mission owners, compliance partners.
 
-**Further technical reading**: `docs/STAGE_B_RUNTIME.md` (combined runtime), `openspec/changes/2025-11-03-adopt-training-free-stage-b/`.
+**Further technical reading**: `./STAGE_A_RUNTIME.md`, `./STAGE_B_RUNTIME.md`, and `openspec/changes/2025-11-03-adopt-training-free-stage-b/`.
 
 ---
 
@@ -83,7 +83,7 @@ The Stage-A/Stage-B stack addresses these by standardizing summaries, orchestrat
 
 1. **Data Intake & Preprocessing (Field Ops + Data Ops)**
    - Capture mission-tagged photo groups, confirm label quality, drop into intake bucket.
-   - Optional: normalize new annotation exports via `data_conversion/convert_dataset.sh` (see `docs/DATA_PREPROCESSING_PIPELINE.md`) before training or refreshing Stage‑A models.
+- Optional: normalize new annotation exports via `data_conversion/convert_dataset.sh` (see `../data/DATA_PREPROCESSING_PIPELINE.md`) before training or refreshing Stage‑A models.
 2. **Stage-A Run (ML Ops)**
    - Schedule nightly or on-demand summarization; publish Stage-A JSONL with completion report.
 3. **Pre-Flight Checks (Quality PM)**
@@ -101,7 +101,7 @@ The Stage-A/Stage-B stack addresses these by standardizing summaries, orchestrat
 - High-volume missions: run Stage-A continuously, Stage-B hourly with 32-record reflection batches.
 - Low-volume missions: Stage-A weekly, Stage-B on demand with manual approval of guidance edits.
 
-> Run commands and config details live in `docs/STAGE_B_RUNTIME.md` to keep this page focused on business operations.
+> Run commands and config details live in `./STAGE_B_RUNTIME.md` to keep this page focused on business operations.
 
 ---
 
@@ -166,7 +166,7 @@ Ensure downstream teams understand schema stability commitments; breaking change
 
 ## 10. Support & Further Reading
 
-- Technical operations guide: `docs/STAGE_B_RUNTIME.md`
+- Technical operations guide: `./STAGE_B_RUNTIME.md`
 - Prompt templates & schema: `configs/prompts/`, `src/stage_b/prompts.py`
 - Reflection change log & rationale: `openspec/changes/2025-11-03-adopt-training-free-stage-b/`
 - Visualization utilities for QA spot checks: `vis_tools/`

@@ -1,0 +1,7 @@
+- [x] Confirm current fusion sampling paths (online `FusionCaptionDataset` and offline `build_fused_jsonl`) and seeds.
+- [x] Add per-source config knob `sample_without_replacement` (default false) and validate schema/defaulting.
+- [x] Update online fusion scheduler to honor the knob: use per-epoch shuffled slice when quota <= pool, otherwise deterministic with-replacement fallback; keep counts/telemetry.
+- [x] Update offline fused JSONL builder to mirror the same policy and fallback.
+- [x] Add/adjust tests or lightweight probes for deterministic no-replacement sampling and fallback path.
+- [x] Update docs (`docs/UNIFIED_FUSION_DATASET.md`) to describe the new option and behavior.
+- [x] Update OpenSpec deltas and run `openspec validate update-fusion-source-no-replacement --strict`.

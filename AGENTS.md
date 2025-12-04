@@ -22,7 +22,7 @@ AI quality‑inspection system with two stages:
 - **Stage‑1 (Stage‑A) Basic Object Recognition** — single‑image evidence capture with rare/long‑tail object coverage.
 - **Stage‑2 (Stage‑B) Group‑Ticket Verification** — consumes Stage‑1 evidence + labels to issue binary `pass|fail` verdicts with auditable rationale.
 
-Training, inference, and guidance workflows share a single repository. Start with `docs/README.md` (index) and `docs/REFERENCE.md` (architecture map).
+Training, inference, and guidance workflows share a single repository. Start with `docs/README.md` (index) and `docs/training/REFERENCE.md` (architecture map).
 
 ## Component Roles
 - **Stage‑1 (Stage‑A) Inference** — `src/stage_a/`, `scripts/stage_a_infer.sh`; owns per‑image prompts, mission validation, and summary JSONL emission.
@@ -33,8 +33,8 @@ Training, inference, and guidance workflows share a single repository. Start wit
 
 ## Standard Workflow Outline
 1. **Data intake** → optional `data_conversion/convert_dataset.sh` to produce train/val/tiny JSONL and validation reports.
-2. **Fusion/curation** → prepare `custom.train_jsonl` or `custom.fusion_config` (see `docs/DATA_AND_DATASETS.md`, `docs/UNIFIED_FUSION_DATASET.md`).
-3. **Train/finetune** → run `scripts/train.sh --config <yaml>`; update `docs/TRAINING_PLAYBOOK.md` & `docs/REFERENCE.md` if behaviors change.
+2. **Fusion/curation** → prepare `custom.train_jsonl` or `custom.fusion_config` (see `docs/data/DATA_AND_DATASETS.md`, `docs/data/UNIFIED_FUSION_DATASET.md`).
+3. **Train/finetune** → run `scripts/train.sh --config <yaml>`; update `docs/training/TRAINING_PLAYBOOK.md` & `docs/training/REFERENCE.md` if behaviors change.
 4. **Stage‑1 inference** → `scripts/stage_a_infer.sh` writes per‑image summaries; verify outputs before Stage‑2.
 5. **Stage‑2 verdicts** → `scripts/stage_b_run.sh` emits selections/reflection logs; promote guidance snapshots as needed.
 6. **Documentation & governance** → sync `docs/` with changes; open/modify OpenSpec changes only when behavior or contracts shift.
@@ -69,16 +69,16 @@ Training, inference, and guidance workflows share a single repository. Start wit
 - **Extensibility**: Extend via new `Builder`/`Preprocessor`/`Template`, not by editing core logic
 
 ## Common Rules & Preferences
-- **Docs stay in lockstep with code**: touch the mapped doc when you touch its directory (see `docs/README.md` doc map). Stage‑A/B changes require updates to `docs/REFERENCE.md` and the Stage‑A/B runbooks.
+- **Docs stay in lockstep with code**: touch the mapped doc when you touch its directory (see `docs/README.md` doc map). Stage‑A/B changes require updates to `docs/training/REFERENCE.md` and the Stage‑A/B runbooks.
 - **Config-first surface**: prefer adding YAML knobs in `configs/` over new CLI flags; validate early via dataclasses in `src/config/schema.py`.
 - **Determinism**: seed everything (`seed`, `fusion seed`, `sampler` grids) and log seeds in new entrypoints; avoid implicit randomness.
 - **Geometry & grounding**: never drop or re-order geometry silently; use helpers in `src/datasets/geometry.py` and keep `poly` canonicalization rules consistent with `data_conversion/`.
 - **Logging**: use `src/utils/logger.get_logger` (rank-aware) and emit remediation hints in errors; avoid print/debug spam.
 - **Pass/Fail canonicals**: treat verdicts as `pass|fail` (lowercase) using `GroupLabel`; normalize variants via `normalize_verdict` helpers.
-- **Third-party additions**: prefer ms‑swift/transformers primitives; justify new deps and update `UPSTREAM_DEPENDENCIES.md` when behavior changes.
+- **Third-party additions**: prefer ms‑swift/transformers primitives; justify new deps and update `docs/platform/UPSTREAM_DEPENDENCIES.md` when behavior changes.
 - **Validation before merge**: run existing tests or targeted probes for dataset/geometry changes; add probes when altering preprocessing.
 
 ## Important
 - **Always interrupt if clarification is needed or anything is vague, ambiguous, or uncertain**
 - Run all Python scripts with `ms` conda environment
-- For commands and detailed configs, see `docs/README.md` and `docs/REFERENCE.md`
+- For commands and detailed configs, see `docs/README.md` and `docs/training/REFERENCE.md`

@@ -1,33 +1,6 @@
-# Stage-A/Stage-B Runtime Guide
+# Stage-B Runtime Guide
 
-Combined technical runbook for running Stage-A summarization and the Stage-B prompt-only verdict loop. Keep this file as the single engineer-facing reference for runtime commands and outputs.
-
----
-
-## Stage-A Runtime (single-image summaries)
-
-- Purpose: Generate per-image summaries (rare/long-tail coverage) that Stage-B ingests for group-level verdicts.
-- Entrypoint: `scripts/stage_a_infer.sh` wraps `python -m src.stage_a.cli` with mission defaults and device selection.
-
-```bash
-mission=挡风板安装检查 gpu=0 verify_inputs=true \
-  bash scripts/stage_a_infer.sh
-```
-
-**Inputs**
-- Layout: `<root>/<mission>/{审核通过|审核不通过}/<group_id>/*.{jpg,jpeg,png}`; labels inferred from parent dir (`审核通过`→`pass`, `审核不通过`→`fail`).
-
-**Outputs**
-- JSONL at `<output_dir>/<mission>_stage_a.jsonl` with `group_id`, `mission`, `label`, `images`, and normalized `per_image` keys (`image_1`, `image_2`, ...). Format aligns with `docs/DATA_JSONL_CONTRACT.md`.
-
-**Key flags / env vars**
-- `mission` (required) — must match `SUPPORTED_MISSIONS`.
-- `verify_inputs` — logs first-chunk hashes and grid/token counts; optional.
-- `no_mission` — skip mission focus text for smoke tests.
-- `gpu` / `device` — device selection (`cuda:N` or `cpu`).
-
-**Checkpoint choices**
-- Adapter-based for iteration; merged checkpoints for production (see `scripts/train.sh` exports or `swift export --merge_lora true`).
+Technical runbook for the Stage-B prompt-only verdict loop. Stage-A summarization is covered separately in `./STAGE_A_RUNTIME.md`.
 
 ---
 

@@ -20,7 +20,7 @@ from ..config.prompts import USER_PROMPT_SUMMARY, get_template_prompts
 from .builders import JSONLinesBuilder
 from .contracts import validate_conversation_record
 from .dense_caption import LAST_SAMPLE_DEBUG, BaseCaptionDataset
-from .fusion import FusionConfig, _compute_target_quotas
+from .fusion import FusionConfig, _compute_target_quotas, _sample_indices
 from .fusion_types import DatasetSpec
 from .preprocessors import AugmentationPreprocessor, ObjectCapPreprocessor
 from .utils import load_jsonl
@@ -41,6 +41,7 @@ class _DatasetPolicy:
     curriculum_enabled: bool
     max_objects_per_image: Optional[int]
     seed: Optional[int]
+    sample_without_replacement: bool
 
 
 class FusionCaptionDataset(BaseCaptionDataset):
@@ -81,6 +82,7 @@ class FusionCaptionDataset(BaseCaptionDataset):
         self._epoch = 0
         self._schedule: list[tuple[str, int]] = []
         self._epoch_counts: dict[str, int] = {}
+        self._without_replacement_fallbacks: dict[str, bool] = {}
         self._policies: dict[str, _DatasetPolicy] = {}
         self._record_pools: dict[str, list[dict[str, Any]]] = {}
         self._preprocessors_aug: dict[str, AugmentationPreprocessor] = {}
@@ -133,6 +135,7 @@ class FusionCaptionDataset(BaseCaptionDataset):
                 curriculum_enabled=target.supports_curriculum,
                 max_objects_per_image=None,  # targets stay uncapped
                 seed=target.seed,
+                sample_without_replacement=False,
             )
 
         # Sources
@@ -149,6 +152,9 @@ class FusionCaptionDataset(BaseCaptionDataset):
                 curriculum_enabled=False,
                 max_objects_per_image=source.max_objects_per_image,
                 seed=source.seed,
+                sample_without_replacement=bool(
+                    getattr(source, "sample_without_replacement", False)
+                ),
             )
 
             # Skip loading for train split when ratio is zero
@@ -341,14 +347,24 @@ class FusionCaptionDataset(BaseCaptionDataset):
             quota = round(source.ratio * total_target_quota)
             if quota <= 0 or not pool:
                 counts[source.name] = 0
+                self._without_replacement_fallbacks[source.name] = False
                 continue
 
             rng_source = random.Random(
                 self._mix_seed(self.seed, self._epoch, policy.seed or 0, 0xB7)
             )
-            sampled_indices = [rng_source.randrange(len(pool)) for _ in range(quota)]
-            counts[source.name] = quota
+            sampled_indices, fell_back = _sample_indices(
+                len(pool),
+                quota,
+                rng_source,
+                sample_without_replacement=policy.sample_without_replacement,
+            )
+            # Fallback path uses replacement when quota > pool.
+            if policy.sample_without_replacement and fell_back:
+                sampled_indices = [rng_source.randrange(len(pool)) for _ in range(quota)]
+            counts[source.name] = len(sampled_indices)
             schedule.extend((source.name, idx) for idx in sampled_indices)
+            self._without_replacement_fallbacks[source.name] = bool(fell_back)
 
         if self._shuffle and len(schedule) > 1:
             rng_shuffle = random.Random(self._mix_seed(self.seed, self._epoch, 0xC3))
@@ -407,6 +423,10 @@ class FusionCaptionDataset(BaseCaptionDataset):
                 ),
                 "max_objects_per_image": policy.max_objects_per_image,
                 "prompt_source": policy.prompts.source,
+                "sample_without_replacement": policy.sample_without_replacement,
+                "fallback_to_replacement": bool(
+                    self._without_replacement_fallbacks.get(name, False)
+                ),
             }
         self.epoch_plan = plan
 

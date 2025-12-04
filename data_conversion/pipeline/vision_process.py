@@ -23,7 +23,6 @@ from src.datasets.preprocessors.resize import (
     smart_resize,
 )
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -93,15 +92,33 @@ class ImageProcessor:
         output_path = self.output_image_dir / rel_path
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Check if image already exists and has been processed; trust its size.
+        # Check if image already exists and has been processed
+        # If final_width/final_height are provided, validate cached image matches
         if output_path.exists() and output_path != image_path:
             existing_width, existing_height = FileOperations.get_image_dimensions(
                 output_path
             )
-            logger.debug(
-                f"Using existing processed image: {output_path} ({existing_width}x{existing_height})"
-            )
-            return output_path, existing_width, existing_height
+
+            # If specific dimensions are requested, validate cache matches
+            if final_width is not None and final_height is not None:
+                if (existing_width, existing_height) != (final_width, final_height):
+                    logger.warning(
+                        f"Cached image {output_path.name} has size {existing_width}x{existing_height} "
+                        f"but requested {final_width}x{final_height}. Reprocessing..."
+                    )
+                    # Delete cached image to force reprocessing
+                    output_path.unlink()
+                else:
+                    logger.debug(
+                        f"Using existing processed image: {output_path} ({existing_width}x{existing_height})"
+                    )
+                    return output_path, existing_width, existing_height
+            else:
+                # No specific dimensions requested, trust cached size
+                logger.debug(
+                    f"Using existing processed image: {output_path} ({existing_width}x{existing_height})"
+                )
+                return output_path, existing_width, existing_height
 
         # Materialise EXIF orientation before any resizing so that geometry and
         # pixels live in the same coordinate frame.

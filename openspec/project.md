@@ -22,8 +22,8 @@
    - Summary of new knobs should live alongside the config file.
 3. **Docs**
    - `docs/README.md` — onboarding & repo goals.
-   - `docs/AUGMENTATION.md` — authoritative augmentation/geometry spec.
-   - `docs/DATA_AND_DATASETS.md` — JSONL schema, preprocessing expectations.
+   - `docs/data/DATA_AUGMENTATION.md` — authoritative augmentation/geometry spec.
+   - `docs/data/DATA_AND_DATASETS.md` — JSONL schema, preprocessing expectations.
    - `docs/experiments/` — archived studies and recommended hyperparameters.
 4. **Visual Tooling**
    - `vis_tools/vis_augment_compare.py` (side-by-side augmentation check).

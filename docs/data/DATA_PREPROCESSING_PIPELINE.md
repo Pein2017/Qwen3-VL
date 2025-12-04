@@ -56,9 +56,9 @@ Key flags in `convert_dataset.sh`:
 Outputs land in `${OUTPUT_ROOT}/` with `train.jsonl`, `val.jsonl`, tiny subsets, QA reports, and resized images when enabled.
 
 ## Handoff to Training & Fusion
-- **Direct training**: point `custom.train_jsonl` / `custom.val_jsonl` at the outputs (see `docs/TRAINING_PLAYBOOK.md`).
-- **Fusion training**: use the converted set as target or auxiliary in `custom.fusion_config` (see `docs/UNIFIED_FUSION_DATASET.md`).
-- **Schema alignment**: all outputs follow `docs/DATA_JSONL_CONTRACT.md`; geometry uses the canonical `poly`/`bbox_2d`/`line` keys expected by `src/datasets/geometry.py`.
+- **Direct training**: point `custom.train_jsonl` / `custom.val_jsonl` at the outputs (see `../training/TRAINING_PLAYBOOK.md`).
+- **Fusion training**: use the converted set as target or auxiliary in `custom.fusion_config` (see `./UNIFIED_FUSION_DATASET.md`).
+- **Schema alignment**: all outputs follow `./DATA_JSONL_CONTRACT.md`; geometry uses the canonical `poly`/`bbox_2d`/`line` keys expected by `src/datasets/geometry.py`.
 
 ## Quality Checklist
 - Validate QA artifacts before promotion: zero invalid samples, expected class mix, polygon vertex counts within budget.

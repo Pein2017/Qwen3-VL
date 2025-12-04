@@ -1,10 +1,10 @@
 stage_a_paths:
-  - output_post/stage_a/挡风板安装检查_stage_a.jsonl
+  - output_post/stage_a/挡风板安装检查_stage_a_tiny.jsonl
 
 seed: 17
 
 model:
-  model_name_or_path: output/11-27/res_1024_resumed_from_last_6-with_lm_head-merged
+  model_name_or_path: output/12-2/fusion_dlora_merged/checkpoint-4650
   torch_dtype: bfloat16
   device_map: auto
 

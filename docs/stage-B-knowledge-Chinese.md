@@ -20,7 +20,7 @@ Stage-B 现为“prompt-only”流程：模型输出固定两行（Verdict/Reaso
 - 几何约束：硬件采用 `poly/bbox_2d`，线缆采用 `line`；训练与推理链路保持几何与文本同步
 - 层级语义：使用“/”分隔属性层级；条件属性仅在父属性满足时出现；`备注` 为自由文本备注
 
-生产摘要（Stage-A与Stage-B共用）的格式规范见 `docs/DATA_AND_DATASETS.md`：
+生产摘要（Stage-A与Stage-B共用）的格式规范见 `docs/data/DATA_AND_DATASETS.md`：
 - 单行中文汇总；对象条目用中文逗号分隔，计数用“×N”
 - 条目内按“类型/属性[,属性]/[条件属性]”组织，备注统一以“，备注: ...”结尾
 - 自上而下、左到右的视觉顺序；无坐标数组
@@ -35,7 +35,7 @@ Stage-B 现为“prompt-only”流程：模型输出固定两行（Verdict/Reaso
 - 准确定位关键物体并输出类型/属性/备注的层级结构
 - 在 `summary` 模式下弱化定位能力，面向生产输出要求的“单行摘要”
 
-训练与数据要点（详见 `docs/DATA_AND_DATASETS.md` 与 `docs/REFERENCE.md`）：
+训练与数据要点（详见 `docs/data/DATA_AND_DATASETS.md` 与 `docs/training/REFERENCE.md`）：
 - JSONL 记录包含图片、对象几何与可选的 `summary` 字段；几何在磁盘保持像素坐标，模板在编码时归一化
 - 必备占位配置：`data.dataset: ["dummy"]` 用于 ms‑swift 初始化校验；实际训练数据通过 `custom.train_jsonl` 提供
 - 模板自动插入视觉占位符，打包与增广均为几何感知，确保图文对齐
@@ -120,7 +120,7 @@ Stage-B 现为“prompt-only”流程：模型输出固定两行（Verdict/Reaso
 
 运行入口与配置：
 - 通过 `scripts/stage_b_run.sh` 或 `python -m src.stage_b.runner --config /abs/path/to/config.yaml --log-level debug` 运行
-- 关键配置项（见 `docs/REFERENCE.md`“Stage-B”与仓库 `configs/stage_b/`）：
+- 关键配置项（见 `docs/training/REFERENCE.md` “Stage-B” 与仓库 `configs/stage_b/`）：
   - stage_a_paths：Stage-A JSONL 路径列表
   - model：`model_name_or_path / torch_dtype / device_map`
   - sampler：解码网格（temperature / top_p / max_new_tokens / samples_per_decode）
@@ -174,6 +174,6 @@ Stage-B 现为“prompt-only”流程：模型输出固定两行（Verdict/Reaso
 ## 附：与仓库文档的映射关系
 
 - 属性与层级：`data_conversion/hierarchical_attribute_mapping.json`
-- 数据与摘要规范：`docs/DATA_AND_DATASETS.md`
-- 训练与推理参考：`docs/REFERENCE.md`
-- 业务背景与双阶段关系：`docs/STAGE_A_STAGE_B.md`
+- 数据与摘要规范：`docs/data/DATA_AND_DATASETS.md`
+- 训练与推理参考：`docs/training/REFERENCE.md`
+- 业务背景与双阶段关系：`docs/runtime/STAGE_A_STAGE_B.md`

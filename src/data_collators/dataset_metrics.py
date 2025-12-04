@@ -1,6 +1,12 @@
-from typing import Any, Callable, Dict, List, Mapping
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 
 import torch
+
+from src.config.schema import TokenTypeMetricsConfig
+from src.data_collators.token_types import TokenType, compute_token_types
+from src.utils import get_logger
+
+logger = get_logger(__name__)
 
 
 def _resolve_label(row: Mapping[str, Any]) -> str:
@@ -18,6 +24,7 @@ def _resolve_label(row: Mapping[str, Any]) -> str:
 def build_dataset_metrics_collator(
     template: Any,
     base_collator: Callable[[List[Dict[str, Any]]], Dict[str, Any]] | None = None,
+    token_type_cfg: Optional[TokenTypeMetricsConfig] = None,
 ) -> Callable[[List[Dict[str, Any]]], Dict[str, Any]]:
     """Wrap the template collator to attach per-sample dataset labels (and lengths).
 
@@ -51,6 +58,82 @@ def build_dataset_metrics_collator(
 
         collated["dataset_labels"] = dataset_labels
         collated["dataset_segments"] = segments
+
+        _maybe_attach_token_types(
+            collated=collated,
+            raw_batch=batch,
+            dataset_labels=dataset_labels,
+            template=template,
+            cfg=token_type_cfg,
+        )
         return collated
 
     return _collate
+
+
+def _maybe_attach_token_types(
+    *,
+    collated: Dict[str, Any],
+    raw_batch: Sequence[Mapping[str, Any]],
+    dataset_labels: Sequence[str],
+    template: Any,
+    cfg: Optional[TokenTypeMetricsConfig],
+) -> None:
+    if cfg is None or not cfg.enabled:
+        return
+
+    labels_tensor = collated.get("labels")
+    attention_mask = collated.get("attention_mask")
+    if labels_tensor is None or not isinstance(labels_tensor, torch.Tensor):
+        return
+
+    tokenizer = getattr(template, "tokenizer", None)
+    template_meta = getattr(template, "template_meta", None)
+    suffix_tokens = getattr(template_meta, "suffix", None) if template_meta else None
+
+    if tokenizer is None:
+        return
+
+    token_type_list: List[torch.Tensor] = []
+    has_included = False
+
+    include_set = set(cfg.include)
+    exclude_set = set(cfg.exclude)
+
+    for idx, (raw, label) in enumerate(zip(raw_batch, dataset_labels)):
+        labels_row: torch.Tensor = labels_tensor[idx]
+        attn_row: Optional[torch.Tensor] = None
+        if isinstance(attention_mask, torch.Tensor) and attention_mask.ndim == 2:
+            attn_row = attention_mask[idx]
+
+        label_str = str(label) if label is not None else ""
+        label_key = label_str.lower()
+        included = label_key in include_set and label_key not in exclude_set
+        payload = raw.get("assistant_payload")
+
+        if not included or payload is None:
+            token_type_list.append(torch.full_like(labels_row, TokenType.IGNORE))
+            continue
+
+        has_included = True
+        token_types = compute_token_types(
+            tokenizer=tokenizer,
+            payload=payload,
+            labels=labels_row,
+            attention_mask=attn_row,
+            suffix_tokens=suffix_tokens,
+        )
+        if token_types is None or token_types.shape[0] != labels_row.shape[0]:
+            logger.debug(
+                "Falling back to IGNORE token types (label=%s, got=%s, expected=%s)",
+                label_key,
+                None if token_types is None else token_types.shape,
+                labels_row.shape,
+            )
+            token_types = torch.full_like(labels_row, TokenType.IGNORE)
+        token_type_list.append(token_types)
+
+    if not has_included:
+        return
+
+    collated["token_types"] = torch.stack(token_type_list, dim=0)

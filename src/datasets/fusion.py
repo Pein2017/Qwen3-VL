@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, Mapping, Optional, Sequence, Tuple
 
+from src.utils import get_logger
+
 from .fusion_types import AuxiliarySpec, DatasetSpec, TargetSpec
 from .wrappers import build_dataset_spec
 from .utils import load_jsonl
@@ -118,6 +120,10 @@ class FusionConfig:
                 params["system_prompt"] = entry.get("system_prompt")
             if "seed" in entry:
                 params["seed"] = entry.get("seed")
+            if "sample_without_replacement" in entry:
+                params["sample_without_replacement"] = entry.get(
+                    "sample_without_replacement"
+                )
         elif not isinstance(params, Mapping):
             raise TypeError("dataset params must be a mapping if provided")
 
@@ -153,6 +159,7 @@ class FusionConfig:
             prompt_user=spec.prompt_user,
             prompt_system=spec.prompt_system,
             seed=spec.seed,
+            sample_without_replacement=spec.sample_without_replacement,
             ratio=ratio,
         )
 
@@ -173,6 +180,7 @@ class FusionConfig:
             prompt_user=spec.prompt_user,
             prompt_system=spec.prompt_system,
             seed=spec.seed,
+            sample_without_replacement=spec.sample_without_replacement,
             ratio=ratio,
         )
 
@@ -236,6 +244,32 @@ def _sample_with_replacement(
     return samples
 
 
+def _sample_indices(
+    pool_len: int,
+    quota: int,
+    rng: random.Random,
+    *,
+    sample_without_replacement: bool,
+) -> tuple[list[int], bool]:
+    """Return indices and whether we fell back to replacement.
+
+    Fallback occurs when without-replacement is requested but quota exceeds pool.
+    """
+
+    if pool_len <= 0 or quota <= 0:
+        return [], False
+
+    if sample_without_replacement and quota <= pool_len:
+        indices = list(range(pool_len))
+        if pool_len > 1:
+            rng.shuffle(indices)
+        return indices[:quota], False
+
+    fallback = sample_without_replacement and quota > pool_len
+    indices = [rng.randrange(pool_len) for _ in range(quota)]
+    return indices, fallback
+
+
 def build_fused_jsonl(
     config: FusionConfig,
     output_path: str,
@@ -244,6 +278,7 @@ def build_fused_jsonl(
     shuffle: bool = True,
 ) -> Path:
     rng = random.Random(seed)
+    logger = get_logger(__name__)
 
     # Load target records and compute quotas (respect ratios when provided).
     target_pools: dict[str, list[Dict[str, Any]]] = {}
@@ -284,10 +319,33 @@ def build_fused_jsonl(
         source_seed = (
             seed if source.seed is None else (seed ^ int(source.seed)) & 0xFFFFFFFF
         )
-        sampled = _sample_with_replacement(
-            source_records, quota, random.Random(source_seed)
+        rng_source = random.Random(source_seed)
+        sampled_indices, fell_back = _sample_indices(
+            len(source_records),
+            quota,
+            rng_source,
+            sample_without_replacement=bool(source.sample_without_replacement),
         )
-        fused.extend(_annotate_record(record, source) for record in sampled)
+        sampled_records: list[Dict[str, Any]]
+        if source.sample_without_replacement and not fell_back:
+            sampled_records = [copy.deepcopy(source_records[i]) for i in sampled_indices]
+        else:
+            sampled_records = _sample_with_replacement(
+                source_records, quota, rng_source
+            )
+        if fell_back:
+            try:
+                logger.debug(
+                    "fusion offline fallback to replacement",
+                    extra={
+                        "source": source.name,
+                        "quota": quota,
+                        "pool": len(source_records),
+                    },
+                )
+            except Exception:
+                pass
+        fused.extend(_annotate_record(record, source) for record in sampled_records)
 
     if shuffle:
         rng.shuffle(fused)
@@ -316,4 +374,5 @@ __all__ = [
     "build_fused_jsonl",
     "prepare_record_for_dataset",
     "_compute_target_quotas",
+    "_sample_indices",
 ]

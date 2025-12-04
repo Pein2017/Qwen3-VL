@@ -1,13 +1,13 @@
 #!/bin/bash
 # Merge LoRA adapter into base model for end2end inference
 
-adapters=output/12-1/fusion_dlora/v1-20251201-151258/epoch_50-lrs_2_1_6-all_linear_plus_lm_head-bs_32/checkpoint-700
+adapters=output/12-2/fusion_dlora/v2-20251202-075322/epoch_50-lrs_2_1_6-all_linear-bs_32/checkpoint-4650
 
 # Extract base model path from adapter_config.json
 base_model=$(python3 -c "import json; print(json.load(open(\"$adapters/adapter_config.json\"))[\"base_model_name_or_path\"])")
 
 
-output_dir=output/12-1/fusion_dlora_merged/lm_head/checkpoint-700
+output_dir=output/12-2/fusion_dlora_merged/checkpoint-4650
 
 echo "Detected base model: $base_model"
 echo "Adapters: $adapters"

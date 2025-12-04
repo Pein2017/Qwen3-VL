@@ -387,15 +387,15 @@ custom:
   use_summary: true
 ```
 
-For details, see `docs/DATA_FORMATS.md#dense-vs-summary-modes`.
+For details, see `docs/data/DATA_JSONL_CONTRACT.md#top-level-record`.
 
 
 ### Further reading
 
 - **Training workflows**: See `docs/TRAINING_GUIDE.md` for complete training guide
 - **Inference & deployment**: See `docs/INFERENCE_GUIDE.md` for inference and adapter merging
-- **Data preparation**: See `docs/DATA_FORMATS.md` for JSONL schemas and validation
-- **Advanced topics**: See `docs/REFERENCE.md` for performance tuning and troubleshooting
+- **Data preparation**: See `docs/data/DATA_JSONL_CONTRACT.md` for JSONL schemas and validation
+- **Advanced topics**: See `docs/training/REFERENCE.md` for performance tuning and troubleshooting
 
 ## Utilities
 

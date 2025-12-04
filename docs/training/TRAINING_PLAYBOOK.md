@@ -48,7 +48,7 @@ sft.prepare_model(...)
 - `configs/fusion/*.yaml` — Offline fusion builder configs for `scripts/fuse_datasets.py`
 - `configs/summary.yaml` — Summary-only training mode
 - `configs/stage_b/*.yaml` — Stage-B runtime configs (debug/run)
-- Upstream data for these configs is normally produced by the annotation converter (`data_conversion/convert_dataset.sh`, see `docs/DATA_PREPROCESSING_PIPELINE.md`) or by public converters in `public_data/`. Ensure converted JSONL matches `docs/DATA_JSONL_CONTRACT.md` before training.
+- Upstream data for these configs is normally produced by the annotation converter (`data_conversion/convert_dataset.sh`, see `docs/data/DATA_PREPROCESSING_PIPELINE.md`) or by public converters in `public_data/`. Ensure converted JSONL matches `docs/data/DATA_JSONL_CONTRACT.md` before training.
 
 ### Training Modes
 
@@ -603,7 +603,7 @@ data:
   dataset: ["dummy"]  # Required by ms-swift TrainArguments validation
 ```
 
-**Why needed:** ms-swift validates non-empty dataset during `TrainArguments.__post_init__()` before our custom dataset loading. The placeholder satisfies validation but is never used. See `DATA_AND_DATASETS.md` for details.
+**Why needed:** ms-swift validates non-empty dataset during `TrainArguments.__post_init__()` before our custom dataset loading. The placeholder satisfies validation but is never used. See `data/DATA_AND_DATASETS.md` for details.
 
 ### Issue: "Expected all tensors to be on the same device"
 

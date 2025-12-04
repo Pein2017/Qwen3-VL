@@ -51,6 +51,8 @@ DATASET_PRIOR_RULES = {
         "- 接地线只判断是否带标签。\n"
         "- 分组：标签/尾纤/接地线按组出现；若任一组内对象数 < 2 视为异常样本。分组号需写入 desc 前缀（如**组1: 尾纤/...**）。\n"
         "- 不生成**审核通过/不通过**等工单级字段。\n"
+        "检测RRU设备、紧固件、线缆尾纤，RRU接地端、RRU接地线",
+        "尾纤的保护方式有两种，黑色的防水胶带或者白色的尼龙套管；若是白色的尼龙套管，标签会贴在白色尼龙管上"
     ),
 }
 
@@ -102,8 +104,10 @@ def build_dense_system_prompt(
     ds = _get_dataset(dataset)
     fmt = _normalize_format_key(json_format)
     format_hint = FORMAT_HINTS[fmt]
-    schema = DATASET_SCHEMA_HINT.get(ds, "")
-    prior = DATASET_PRIOR_RULES.get(ds, "")
+    schema_raw = DATASET_SCHEMA_HINT.get(ds, "")
+    prior_raw = DATASET_PRIOR_RULES.get(ds, "")
+    schema = "".join(schema_raw) if isinstance(schema_raw, (tuple, list)) else schema_raw
+    prior = "".join(prior_raw) if isinstance(prior_raw, (tuple, list)) else prior_raw
     return DENSE_SYSTEM_PROMPT_CORE + format_hint + schema + "先验规则：\n" + prior
 
 
@@ -113,8 +117,10 @@ SYSTEM_PROMPT_JSON = build_dense_system_prompt(_DEFAULT_JSON_FORMAT, dataset="bb
 
 def build_summary_system_prompt(*, dataset: str | None = None) -> str:
     ds = _get_dataset(dataset)
-    schema = DATASET_SCHEMA_HINT.get(ds, "")
-    prior = DATASET_PRIOR_RULES.get(ds, "")
+    schema_raw = DATASET_SCHEMA_HINT.get(ds, "")
+    prior_raw = DATASET_PRIOR_RULES.get(ds, "")
+    schema = "".join(schema_raw) if isinstance(schema_raw, (tuple, list)) else schema_raw
+    prior = "".join(prior_raw) if isinstance(prior_raw, (tuple, list)) else prior_raw
     return (
         """你是图像摘要助手。请始终使用简体中文作答。只返回一行中文摘要文本，不要任何解释或额外符号。若图片与任务无关或目标不可见，必须返回**无关图片**。
 

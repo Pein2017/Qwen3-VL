@@ -19,9 +19,9 @@ Comprehensive guide for training, inference, deployment, and advanced topics.
 ## Architecture & Implementation
 
 ### Inspection Pipeline (Stage‑1 → Stage‑2)
-- **Stage‑1 / Stage‑A (Basic Object Recognition)**: `src/stage_a/` emits per-image evidence/rare-object summaries used as inputs to Stage‑2. Runbook: `docs/STAGE_B_RUNTIME.md` (Stage-A section).
-- **Stage‑2 / Stage‑B (Group Ticket Verification)**: `src/stage_b/` ingests Stage‑A JSONL + labels and returns `pass|fail` verdicts with **prompt-only rollouts** (four-line output with evidence JSON arrays) plus optional reflection updates. No CriticEngine; manual-review and failure queues live under each mission run dir. Runbook: `docs/STAGE_B_RUNTIME.md` and business context in `docs/STAGE_A_STAGE_B.md`.
-- **Offline preprocessing (optional)**: `data_conversion/` normalizes annotation exports into train/val/tiny JSONL and QA reports. Guide: `docs/DATA_PREPROCESSING_PIPELINE.md`.
+- **Stage‑1 / Stage‑A (Basic Object Recognition)**: `src/stage_a/` emits per-image evidence/rare-object summaries used as inputs to Stage‑2. Runbook: `docs/runtime/STAGE_A_RUNTIME.md`.
+- **Stage‑2 / Stage‑B (Group Ticket Verification)**: `src/stage_b/` ingests Stage‑A JSONL + labels and returns `pass|fail` verdicts with **prompt-only rollouts** plus optional reflection updates. No CriticEngine; manual-review and failure queues live under each mission run dir. Runbook: `docs/runtime/STAGE_B_RUNTIME.md` and business context in `docs/runtime/STAGE_A_STAGE_B.md`.
+- **Offline preprocessing (optional)**: `data_conversion/` normalizes annotation exports into train/val/tiny JSONL and QA reports. Guide: `docs/data/DATA_PREPROCESSING_PIPELINE.md`.
 
 ### Source Code Layout
 
@@ -35,7 +35,7 @@ Comprehensive guide for training, inference, deployment, and advanced topics.
 - `src/datasets/builders/jsonlines.py` - `JSONLinesBuilder` (message formatting)
 - `src/datasets/preprocessors/` - Validation, augmentation preprocessing
 - `src/datasets/collators.py` - Tensor preparation (padding)
-- `src/datasets/data_details.md` - Data schema documentation
+- Canonical schema doc: `docs/data/DATA_JSONL_CONTRACT.md`
 
 **Geometry & Augmentation**:
 - `src/datasets/geometry.py` - Core geometry transforms (bbox, poly, line)
@@ -48,11 +48,11 @@ Comprehensive guide for training, inference, deployment, and advanced topics.
 - `src/callbacks/save_delay_callback.py` - `SaveDelayCallback` (checkpoint throttling)
 
 ### Doc ↔ Code Cross-References
-- **Stage‑1 inference**: `src/stage_a/` ↔ `docs/STAGE_B_RUNTIME.md`
-- **Stage‑2 verdict loop**: `src/stage_b/` ↔ `docs/STAGE_B_RUNTIME.md`, `docs/STAGE_A_STAGE_B.md`
-- **Data preprocessing**: `data_conversion/` ↔ `docs/DATA_PREPROCESSING_PIPELINE.md`, `docs/DATA_AND_DATASETS.md` (conversion section)
-- **Fusion dataset**: `src/datasets/unified_fusion_dataset.py` ↔ `docs/UNIFIED_FUSION_DATASET.md`
-- **Training & config**: `src/sft.py`, `src/config/` ↔ `docs/TRAINING_PLAYBOOK.md`
+- **Stage‑1 inference**: `src/stage_a/` ↔ `docs/runtime/STAGE_A_RUNTIME.md`
+- **Stage‑2 verdict loop**: `src/stage_b/` ↔ `docs/runtime/STAGE_B_RUNTIME.md`, `docs/runtime/STAGE_A_STAGE_B.md`
+- **Data preprocessing**: `data_conversion/` ↔ `docs/data/DATA_PREPROCESSING_PIPELINE.md`, `docs/data/DATA_AND_DATASETS.md` (conversion section)
+- **Fusion dataset**: `src/datasets/unified_fusion_dataset.py` ↔ `docs/data/UNIFIED_FUSION_DATASET.md`
+- **Training & config**: `src/sft.py`, `src/config/` ↔ `docs/training/TRAINING_PLAYBOOK.md`
 
 ### Key Components Deep Dive
 
@@ -215,11 +215,17 @@ Core SFT/LoRA recipes, KL anchoring overlays, augmentation telemetry, and troubl
 - Telemetry expectations plus health-check checklists
 - Advanced topics (LR schedulers, DeepSpeed configs, augmentation FAQs, common issues, aligner tuning)
 
+**Token-type telemetry (optional)**  
+- Config: `custom.token_type_metrics.enabled` (default `false`), `include` (default `['target','lvis']`), `exclude` (default `['coig_lang_chat']`).  
+- Behavior: collator reconstructs assistant JSON, tokenizes with the active template, aligns token types (1=desc, 2=coord numbers, 3=format), and pads/truncates to supervised positions; rows outside `include` get IGNORE.  
+- Metrics: per dataset label, logs `{label}_token_acc` (all supervised tokens, naturally weighted), type-sliced accuracies/entropy `{label}_{desc|coord|format}_token_acc|entropy`, plus token-count companions `{label}_token_count` and `{label}_{type}_token_count` to make weighting explicit.  
+- Validation: smoke run on 2025-12-04 with `configs/smoke/group_metrics.yaml` (4B checkpoint, tiny fusion `configs/fusion/bbu_rru_lvis_coig_tiny.yaml`, `logging_steps=1`, `eval_steps=1`, `save_strategy=no`, `max_steps=20`) produced the expected token-type metrics; see `output/smoke/group_metrics/v0-20251204-062817/smoke_group_metrics_4b/logging.jsonl`.
+
 Keep configs under `configs/` in sync with the playbook when making behavioral changes.
 
 ## Inference
 
-Runtime/deployment instructions for Stage-A summaries and the Stage-B verdict loop live in [STAGE_B_RUNTIME.md](STAGE_B_RUNTIME.md):
+Runtime/deployment instructions for Stage-A summaries and the Stage-B verdict loop live in [STAGE_B_RUNTIME.md](../runtime/STAGE_B_RUNTIME.md):
 - Adapter vs merged checkpoints, export commands, and decoding tips
 - Dense captioning usage examples
 - Stage-A CLI guardrails and output schemas
@@ -232,11 +238,11 @@ Operational FAQs (LR schedulers, DeepSpeed presets, augmentation pipelines, temp
 ## Additional Resources
 
 - **Training**: [TRAINING_PLAYBOOK.md](TRAINING_PLAYBOOK.md)
-- **Stage-A & Stage-B runtime**: [STAGE_B_RUNTIME.md](STAGE_B_RUNTIME.md)
+- **Stage-A & Stage-B runtime**: [STAGE_B_RUNTIME.md](../runtime/STAGE_B_RUNTIME.md)
 - **Data preprocessing & contract**: [DATA_PREPROCESSING_PIPELINE.md](DATA_PREPROCESSING_PIPELINE.md), [DATA_JSONL_CONTRACT.md](DATA_JSONL_CONTRACT.md)
 - **Data formats & augmentation**: [DATA_AND_DATASETS.md](DATA_AND_DATASETS.md), [DATA_AUGMENTATION.md](DATA_AUGMENTATION.md)
 - **Archived docs**: `docs/archive/` (historical references, detailed technical guides)
 
 ---
 
-**Last Updated**: 2025-12-02 (Dataset metrics on padded batches)
+**Last Updated**: 2025-12-04 (Token-type telemetry validated via smoke run)

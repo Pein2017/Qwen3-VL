@@ -152,6 +152,11 @@ class DatasetWrapper(abc.ABC):
         dataset_seed = _parse_seed(
             mapping.get("seed"), field_name=f"{cls.__name__}.seed"
         )
+        sample_without_replacement = _normalize_bool(
+            mapping.get("sample_without_replacement"),
+            field_name=f"{cls.__name__}.sample_without_replacement",
+            default=False,
+        )
         resolved_name = name or cls.default_name
         return DatasetSpec(
             key=cls.key,
@@ -168,6 +173,7 @@ class DatasetWrapper(abc.ABC):
             prompt_user=user_prompt,
             prompt_system=system_prompt,
             seed=dataset_seed,
+            sample_without_replacement=sample_without_replacement,
         )
 
 

@@ -1,0 +1,6 @@
+- [x] Add config knobs under `custom.token_type_metrics` (enabled bool, include/exclude lists; defaults off, include target+lvis, exclude coig_lang_chat).
+- [x] Implement collator-side token typing that reconstructs assistant payload text, tokenizes with the active tokenizer, and aligns types to `labels != -100` with fail-soft handling.
+- [x] Extend trainer metrics mixin to log per-type token accuracy and entropy for included datasets in both train and eval, skipping excluded/pure-text sources.
+- [x] Add unit tests using the real Qwen3-VL tokenizer to verify type alignment on bbox/poly/line_points examples.
+- [x] Update documentation/config reference to describe the knobs and metric names.
+- [x] Run `openspec validate add-token-type-metrics --strict`.

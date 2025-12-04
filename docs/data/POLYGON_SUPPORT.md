@@ -18,7 +18,7 @@ Each object must include exactly one of these fields plus a non-empty `desc`. Co
 
 ## Geometry handling
 
-Propagation happens during conversion (see `docs/DATA_PREPROCESSING_PIPELINE.md` for the BBU/RRU converter and public converters under `public_data/`):
+Propagation happens during conversion (see `./DATA_PREPROCESSING_PIPELINE.md` for the BBU/RRU converter and public converters under `public_data/`):
 
 1. The JSONL retains the geometry produced by offline converters; loaders do not alter `poly`/`bbox_2d` at runtime.
 2. To cap polygon complexity, use the conversion scripts (e.g., `public_data/scripts/convert_lvis.py --use-polygon --poly-max-points 12 ...`) so oversized polygons are downgraded before training.
@@ -32,4 +32,4 @@ With runtime fallback removed, polygons survive through augmentation and are nor
 - Dataset wrappers carry domain information (target vs source) so the fusion loader knows whether to attach augmentation/curriculum. Template selection is handled at the wrapper level, so JSONL records themselves no longer require provenance metadata.
 - Source-domain wrappers default to clean images; target-domain wrappers automatically attach the configured augmentation pipeline. Override per dataset via `params.augmentation_enabled`/`params.curriculum_enabled` if needed.
 
-For a deeper look, see `docs/DATA_AND_DATASETS.md` (multi-dataset fusion section) and `openspec/changes/update-geometry-poly-fusion/design.md`.
+For a deeper look, see `./DATA_AND_DATASETS.md` (multi-dataset fusion section) and `openspec/changes/update-geometry-poly-fusion/design.md`.

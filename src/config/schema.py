@@ -46,6 +46,43 @@ class PromptOverrides:
 
 
 @dataclass(frozen=True)
+class TokenTypeMetricsConfig:
+    enabled: bool = False
+    include: tuple[str, ...] = ("target", "lvis")
+    exclude: tuple[str, ...] = ("coig_lang_chat",)
+
+    def __post_init__(self) -> None:
+        # Normalize to lowercase strings for stable comparisons
+        inc = tuple(str(v).strip().lower() for v in self.include)
+        exc = tuple(str(v).strip().lower() for v in self.exclude)
+        object.__setattr__(self, "include", inc)
+        object.__setattr__(self, "exclude", exc)
+
+    @classmethod
+    def from_mapping(cls, payload: Any) -> "TokenTypeMetricsConfig":
+        if payload is None:
+            return cls()
+        if not isinstance(payload, Mapping):
+            raise TypeError("custom.token_type_metrics must be a mapping when provided")
+
+        enabled = bool(payload.get("enabled", False))
+        include_raw = payload.get("include", cls.include)
+        exclude_raw = payload.get("exclude", cls.exclude)
+
+        def _to_tuple(value: Any, field: str) -> tuple[str, ...]:
+            if value is None:
+                return ()
+            if isinstance(value, (list, tuple)):
+                return tuple(str(v).strip() for v in value)
+            return (str(value).strip(),)
+
+        include = _to_tuple(include_raw, "include")
+        exclude = _to_tuple(exclude_raw, "exclude")
+
+        return cls(enabled=enabled, include=include, exclude=exclude)
+
+
+@dataclass(frozen=True)
 class DeepSpeedConfig:
     enabled: bool
     config: Any
@@ -239,6 +276,7 @@ class CustomConfig:
     val_jsonl: Optional[str] = None
     output_variant: Literal["dense", "summary"] = "dense"
     visual_kd: VisualKDConfig = field(default_factory=VisualKDConfig.disabled)
+    token_type_metrics: TokenTypeMetricsConfig = field(default_factory=TokenTypeMetricsConfig)
     extra: Mapping[str, Any] = field(default_factory=dict)
     fusion_config: Optional[str] = None
 
@@ -333,6 +371,8 @@ class CustomConfig:
         fusion_config = data.pop("fusion_config", None)
         visual_kd_raw = data.pop("visual_kd", None)
         visual_kd = VisualKDConfig.from_mapping(visual_kd_raw)
+        token_type_metrics_raw = data.pop("token_type_metrics", None)
+        token_type_metrics = TokenTypeMetricsConfig.from_mapping(token_type_metrics_raw)
         hsm_raw = data.pop("hard_sample_mining", None)
         if hsm_raw is not None:
             raise ValueError(
@@ -384,6 +424,7 @@ class CustomConfig:
             fusion_config=str(fusion_config) if fusion_config is not None else None,
             output_variant=prompts.output_variant,
             visual_kd=visual_kd,
+            token_type_metrics=token_type_metrics,
             extra=extra,
         )
 

@@ -154,7 +154,7 @@ custom:
 
 ## Conversion & QA Tooling
 
-If your source is a human-annotation export, start with the intake guide (`docs/DATA_PREPROCESSING_PIPELINE.md`) and run `data_conversion/convert_dataset.sh` to produce train/val/tiny JSONL that already satisfy this contract.
+If your source is a human-annotation export, start with the intake guide (`./DATA_PREPROCESSING_PIPELINE.md`) and run `data_conversion/convert_dataset.sh` to produce train/val/tiny JSONL that already satisfy this contract.
 
 - **BBU conversion (`data_conversion/`)**:
   - `convert_dataset.sh` wraps `data_conversion/pipeline/unified_processor.py` with environment + parameter guardrails (max pixels, resize factor, validation toggles).
@@ -210,7 +210,7 @@ sources:
 
 Runtime loader: `custom.fusion_config` always uses `FusionCaptionDataset` (alias `UnifiedFusionDataset`) with a single shared template. For deterministic static mixes, you can still precompute fused JSONLs with `scripts/fuse_datasets.py --config <path>`.
 
-For the universal JSONL record contract shared by all domains, see `docs/DATA_JSONL_CONTRACT.md`.
+For the universal JSONL record contract shared by all domains, see `./DATA_JSONL_CONTRACT.md`.
 
 ---
 
@@ -397,7 +397,7 @@ Before training:
 - **Augmentation**: [DATA_AUGMENTATION.md](DATA_AUGMENTATION.md) - Geometry-aware transforms
 - **Training**: [REFERENCE.md](REFERENCE.md#training) - Full training guide
 - **Architecture**: [README.md](README.md#architecture) - End-to-end pipeline
-- **Upstream Models**: [UPSTREAM_DEPENDENCIES.md](UPSTREAM_DEPENDENCIES.md) - HF Qwen3-VL + ms-swift background
+- **Upstream Models**: [UPSTREAM_DEPENDENCIES.md](../platform/UPSTREAM_DEPENDENCIES.md) - HF Qwen3-VL + ms-swift background
 
 ---
 

@@ -45,12 +45,12 @@ export MODELSCOPE_CACHE="./modelscope/hub"
 MODE="${MODE:-prod}"
 
 # Dataset selector: bbu | rru
-DATASET="${DATASET:-bbu}"
+DATASET="${DATASET:-rru}"
 
 # Processing parameters
 VAL_RATIO="${VAL_RATIO:-0.2}"
 RESIZE="${RESIZE:-true}"
-MAX_PIXELS="${MAX_PIXELS:-786432}"
+MAX_PIXELS="${MAX_PIXELS:-1048576}"
 IMAGE_FACTOR="${IMAGE_FACTOR:-32}"
 LOG_LEVEL="${LOG_LEVEL:-INFO}"
 SEED="${SEED:-17}"
@@ -70,11 +70,11 @@ LIMIT="${LIMIT:-}"
 case "$DATASET" in
   bbu)
     DEFAULT_INPUT="raw_ds/bbu_scene_2.0/bbu_scene_2.0"
-    DEFAULT_NAME="bbu_full_768_poly-need_review"
+    DEFAULT_NAME="bbu_full_1024_poly-need_review"
     ;;
   rru)
     DEFAULT_INPUT="raw_ds/rru_scene/rru_scene"
-    DEFAULT_NAME="rru_full_768_poly"
+    DEFAULT_NAME="rru_full_1024_poly"
     ;;
   *)
     echo "❌ Unknown DATASET: $DATASET (expected 'bbu' or 'rru')"
