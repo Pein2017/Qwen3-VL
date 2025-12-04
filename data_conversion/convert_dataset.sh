@@ -50,7 +50,7 @@ DATASET="${DATASET:-rru}"
 # Processing parameters
 VAL_RATIO="${VAL_RATIO:-0.2}"
 RESIZE="${RESIZE:-true}"
-MAX_PIXELS="${MAX_PIXELS:-1048576}"
+MAX_PIXELS="${MAX_PIXELS:-1048576}" # 768: 786432
 IMAGE_FACTOR="${IMAGE_FACTOR:-32}"
 LOG_LEVEL="${LOG_LEVEL:-INFO}"
 SEED="${SEED:-17}"
@@ -73,7 +73,7 @@ case "$DATASET" in
     DEFAULT_NAME="bbu_full_1024_poly-need_review"
     ;;
   rru)
-    DEFAULT_INPUT="raw_ds/rru_scene/rru_scene"
+    DEFAULT_INPUT="raw_ds/rru_scene"
     DEFAULT_NAME="rru_full_1024_poly"
     ;;
   *)

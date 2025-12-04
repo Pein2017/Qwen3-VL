@@ -1,6 +1,6 @@
-# Base Configuration - Shared defaults for Qwen3-VL SFT
-
-global_max_length: 4096
+# Base runtime defaults (non-tunable)
+# Keep only immutable runtime choices here; all hyperparameters must be set
+# explicitly in downstream configs to avoid hidden defaults.
 
 model:
   torch_dtype: bfloat16
@@ -9,64 +9,5 @@ model:
 template:
   template: qwen3_vl
   truncation_strategy: right
-  max_pixels: 1572864999  # an extremely large value so that never `do_resize`
-  # NOTE: RLHF defaults to loss_scale='last_round' which should be correct for single-round conversations
-  # Keeping default (last_round) - need to debug why it unmasks 50% of tokens
-  
-deepspeed:
-  enabled: true
-  config: zero2
-
-training:
-  # defaults, can be overridden per-environment
-  gradient_checkpointing: true
-  lr_scheduler_type: cosine_warmup_with_min_lr
-  bf16: true
-  report_to: [tensorboard]
-  seed: 17
-  warmup_ratio: 0.1
-  max_grad_norm: 0.5
-  weight_decay: 0.1 
-  
-  # Common trainer/runtime defaults
-  add_version: true
-  save_safetensors: true
-  packing: false
-  
-  # Eval & checkpointing defaults
-  eval_strategy: steps
-  eval_steps: 20
-  save_strategy: best
-  save_steps: 40
-  save_total_limit: 2
-  save_last_epoch: true
-  save_only_model: true
-  metric_for_best_model: eval_token_acc
-  greater_is_better: true
-  save_delay_steps: 100  # Prevent checkpoint saves during first 100 steps (warmup protection)
-  
-  # Logging
-  logging_steps: 10
-  logging_first_step: true
-  
-  # Scheduler extras
-  lr_scheduler_kwargs:
-    min_lr: 1.0e-6
-
-data:
-  # Required by ms-swift TrainArguments validation (actual datasets loaded via custom.train_jsonl/val_jsonl)
-  dataset: ["dummy"]
-  val_dataset: ["dummy"]  # Prevent eval_strategy from being overridden to 'no'
-  dataset_num_proc: 8
-  dataloader_num_workers: 16
-  dataloader_pin_memory: true
-  dataloader_prefetch_factor: 4
-  dataloader_persistent_workers: true
-
-custom:
-  json_format: standard
-  emit_norm: norm1000
-  train_jsonl: data/bbu_full_768_poly-need_review/train.jsonl
-  val_jsonl: data/bbu_full_768_poly-need_review/val.jsonl
-  dump_conversation_path: output/conversation_text.txt
-
+  # Keep extremely large to avoid unintended resizing during preprocessing.
+  max_pixels: 1572864999

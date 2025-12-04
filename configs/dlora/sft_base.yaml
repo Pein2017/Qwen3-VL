@@ -1,5 +1,7 @@
 extends: ../base.yaml
 
+global_max_length: 4096
+
 # Common Stage 1.5 recipe: DoRA on all LLM layers (q_proj & v_proj only),
 # DoRA on last-6 Vision blocks (21-26, qkv only), DoRA on all aligner MLP layers.
 
@@ -22,6 +24,7 @@ tuner:
   lora_bias: none
 
 training:
+  # Override per experiment; baseline single-target values provided here.
   output_dir: ./output/11-24/stage_1.5
   run_name: epoch_30-dlora-lrs_4_2_8-sft_all
   num_train_epochs: 30
@@ -29,40 +32,63 @@ training:
   per_device_eval_batch_size: 4
   effective_batch_size: 32
   optimizer: multimodal
+  # LR groups (LLM/ViT/aligner) — tune per experiment as needed.
   learning_rate: 4.0e-4
   vit_lr: 2.0e-4
   aligner_lr: 8.0e-4
+  lr_scheduler_type: cosine_warmup_with_min_lr
   lr_scheduler_kwargs:
     min_lr: 1.0e-6
-  packing: false
-  weight_decay: 0.1
   warmup_ratio: 0.1
+  gradient_checkpointing: true
+  bf16: true
+  report_to: [tensorboard]
+  seed: 17
+  max_grad_norm: 0.5
+  weight_decay: 0.1
+  packing: false
   add_version: true
   save_safetensors: true
   eval_strategy: steps
-  save_strategy: best
   eval_steps: 40
+  save_strategy: best
   save_steps: 10
   save_total_limit: 2
+  save_last_epoch: true
+  save_only_model: true
+  metric_for_best_model: eval_token_acc
+  greater_is_better: true
   save_delay_steps: 1800
   logging_dir: ./tb/11-24/stage_1.5
   logging_steps: 10
   logging_first_step: true
 
 data:
+  # Required by ms-swift TrainArguments validation (actual datasets loaded via custom.train_jsonl/val_jsonl)
+  dataset: ["dummy"]
+  val_dataset: ["dummy"]  # Prevent eval_strategy from being overridden to 'no'
   dataset_num_proc: 8
   dataloader_num_workers: 16
   dataloader_pin_memory: true
   dataloader_prefetch_factor: 4
+  dataloader_persistent_workers: true
 
 deepspeed:
   enabled: true
   config: zero2
 
 custom:
+  json_format: standard
   emit_norm: norm1000
-  # Pure BBU (no fusion); inherit default train/val JSONL from base config
+  train_jsonl: data/bbu_full_768_poly-need_review/train.jsonl
+  val_jsonl: data/bbu_full_768_poly-need_review/val.jsonl
+  dump_conversation_path: output/conversation_text.txt
+  # Pure BBU (no fusion); downstream configs enable fusion by overriding this field.
   fusion_config: null
+  token_type_metrics:
+    enabled: true
+    include: [target, lvis]
+    exclude: [coig_lang_chat]
   augmentation:
     enabled: true
     bypass_prob: 0.1

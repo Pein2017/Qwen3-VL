@@ -1,0 +1,14 @@
+extends: ../dlora/sft_base.yaml
+
+# Fused-data variant: enable the fusion mix while inheriting all training/hparam defaults.
+custom:
+  fusion_config: configs/fusion/bbu_rru_lvis_coig.yaml
+
+# Experiment-facing knobs: safe to tune per fusion run.
+training:
+  output_dir: ./output/12-02/fusion_dlora
+  logging_dir: ./tb/12-02/fusion_dlora
+  run_name: epoch_50-lrs_2_1_6-fusion
+  learning_rate: 2.0e-4
+  vit_lr: 1.0e-4
+  aligner_lr: 6.0e-4

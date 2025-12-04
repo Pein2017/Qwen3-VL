@@ -39,12 +39,13 @@ sft.prepare_model(...)
 
 ❌ **Common mistake**: Forgetting `prepare_model()` → full model saved instead of adapter
 
-### Config catalog (Nov 2025)
+### Config catalog (Dec 2025)
 
-- `configs/base.yaml` — Shared defaults (bf16, padded batching, dataset placeholders, logging cadence)
+- `configs/base.yaml` — Non-tunable runtime defaults only (dtype, attention impl, template); no hyperparameters live here.
 - `configs/stage_1/{lora.yaml,full_with_kd.yaml}` — Single-domain BBU recipes (LoRA or full) with GKD monitor
-- `configs/dlora/*.yaml` — LoRA variants targeting different vision/aligner slices
-- `configs/fused_data/*.yaml` — Fusion training recipes (look for `_gkd_` variants for KD-enabled runs)
+- `configs/dlora/*.yaml` — Core SFT/LoRA recipes; all hyperparameters (LR groups, freeze/DoRA targets, augmentations, dataset placeholders) are defined here.
+- `configs/fused_data/*.yaml` — Fusion variants that only turn on `custom.fusion_config`, inheriting every other setting from `dlora/sft_base.yaml`.
+- `configs/1024/*.yaml` — High-res fusion variants that only swap in 1024px dataset paths on top of `configs/fused_data/sft_base.yaml`.
 - `configs/fusion/*.yaml` — Offline fusion builder configs for `scripts/fuse_datasets.py`
 - `configs/summary.yaml` — Summary-only training mode
 - `configs/stage_b/*.yaml` — Stage-B runtime configs (debug/run)

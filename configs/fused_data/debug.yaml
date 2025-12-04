@@ -1,7 +1,7 @@
-extends: ./all_base.yaml
+extends: ./sft_base.yaml
 
 training:
-  run_name: lvis_chat_
+  run_name: lvis_chat_debug
   num_train_epochs: 1
   eval_strategy: steps
   save_strategy: "no"
