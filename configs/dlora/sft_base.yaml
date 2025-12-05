@@ -68,9 +68,9 @@ data:
   dataset: ["dummy"]
   val_dataset: ["dummy"]  # Prevent eval_strategy from being overridden to 'no'
   dataset_num_proc: 8
-  dataloader_num_workers: 16
+  dataloader_num_workers: 4
   dataloader_pin_memory: true
-  dataloader_prefetch_factor: 4
+  dataloader_prefetch_factor: 2
   dataloader_persistent_workers: true
 
 deepspeed:

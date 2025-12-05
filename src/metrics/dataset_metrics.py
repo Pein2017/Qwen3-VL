@@ -19,7 +19,9 @@ class DatasetMetricsMixin:
     label_field = "dataset_labels"
     segment_field = "dataset_segments"
 
-    def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
+    def compute_loss(
+        self, model, inputs, return_outputs=False, num_items_in_batch=None
+    ):
         dataset_labels = inputs.pop(self.label_field, None)
         _ = inputs.pop(self.segment_field, None)  # Optional legacy field
         token_types = inputs.pop("token_types", None)
@@ -29,11 +31,13 @@ class DatasetMetricsMixin:
         )
 
         if dataset_labels is not None:
-            try:
-                self._log_dataset_metrics(outputs, inputs, dataset_labels, token_types)
-                self._sync_dataset_metrics()
-            except Exception:
-                pass
+            # Log metrics per-sample; skip distributed sync to avoid deadlocks.
+            # The trainer's own aggregation handles cross-rank reduction safely.
+            self._log_dataset_metrics(outputs, inputs, dataset_labels, token_types)
+            # Skip sync entirely during eval to prevent deadlocks when ranks have imbalanced batches.
+            # During training, all ranks process batches uniformly, so sync is safe but unnecessary.
+            # We disable it completely to avoid any potential issues.
+            # self._sync_dataset_metrics()  # Disabled: trainer handles metric aggregation
 
         return (loss, outputs) if return_outputs else loss
 
@@ -55,7 +59,11 @@ class DatasetMetricsMixin:
         if not isinstance(dataset_labels, (list, tuple)):
             return
 
-        mode = "train" if getattr(self, "model", None) is None or self.model.training else "eval"  # type: ignore[attr-defined]
+        mode = (
+            "train"
+            if getattr(self, "model", None) is None or self.model.training
+            else "eval"
+        )  # type: ignore[attr-defined]
         custom_metrics = getattr(self, "custom_metrics", None)
         if custom_metrics is None or mode not in custom_metrics:
             return
@@ -68,7 +76,9 @@ class DatasetMetricsMixin:
 
         logits_next = logits[:, :-1, :]
         labels_next = labels[:, 1:]
-        token_types_next = token_types[:, 1:] if isinstance(token_types, torch.Tensor) else None
+        token_types_next = (
+            token_types[:, 1:] if isinstance(token_types, torch.Tensor) else None
+        )
 
         for idx, lbl in enumerate(dataset_labels):
             if lbl is None:
@@ -96,9 +106,15 @@ class DatasetMetricsMixin:
                     preds = sample_logits.argmax(dim=-1)
                     seg_acc = (preds[mask] == sample_labels[mask]).float().mean()
 
+                    # Guard against non-finite values (e.g., NaN/inf) from unstable logits.
+                    if not torch.isfinite(seg_loss) or not torch.isfinite(seg_acc):
+                        continue
+
                 metrics[f"{label_str}_loss"].update(float(seg_loss.detach().item()))
                 metrics[f"{label_str}_token_acc"].update(float(seg_acc.detach().item()))
-                metrics[f"{label_str}_token_count"].update(float(supervised_token_count))
+                metrics[f"{label_str}_token_count"].update(
+                    float(supervised_token_count)
+                )
 
             # Token-type metrics (optional)
             if token_types_next is None:
@@ -119,6 +135,10 @@ class DatasetMetricsMixin:
                     # Entropy: mean over tokens, sum over vocab
                     probs = F.softmax(type_logits, dim=-1)
                     entropy = (-probs * probs.log()).sum(dim=-1).mean()
+
+                    # Skip token-type metrics when entropy or accuracy is non-finite.
+                    if not torch.isfinite(acc) or not torch.isfinite(entropy):
+                        continue
                 metrics[f"{label_str}_{suffix}_token_acc"].update(
                     float(acc.detach().item())
                 )
@@ -130,33 +150,24 @@ class DatasetMetricsMixin:
                 )
 
     def _sync_dataset_metrics(self) -> None:
+        """Synchronize dataset metric key structure.
+
+        NOTE: To avoid potential distributed deadlocks during evaluation when some
+        ranks receive no batches, this is intentionally a no-op in multi-GPU runs.
+        Metrics remain correct per-rank and are still aggregated by the trainer.
+        """
         if not dist.is_available() or not dist.is_initialized():
             return
-        mode = "train" if getattr(self, "model", None) is None or self.model.training else "eval"  # type: ignore[attr-defined]
-        custom_metrics = getattr(self, "custom_metrics", None)
-        if custom_metrics is None or mode not in custom_metrics:
-            return
-        metrics = custom_metrics[mode]
 
-        local_keys = list(metrics.keys())
-        key_cache = getattr(self, "_dataset_metric_key_cache", {})
-        cached = key_cache.get(mode, set())
-        local_set = set(local_keys)
-        if local_set.issubset(cached):
+        # Disable cross-rank key synchronization when running with >1 rank.
+        # This prevents hangs caused by ranks that never enter compute_loss()
+        # during eval (common with small or imbalanced eval splits).
+        world_size = dist.get_world_size()
+        if world_size <= 1:
             return
 
-        gathered_keys = [None] * dist.get_world_size()
-        dist.all_gather_object(gathered_keys, local_keys)
-
-        union_keys = set()
-        for keys in gathered_keys:
-            if keys:
-                union_keys.update(keys)
-
-        for key in sorted(union_keys):
-            if key not in metrics:
-                _ = metrics[key]
-
-        cached.update(union_keys)
-        key_cache[mode] = cached
-        setattr(self, "_dataset_metric_key_cache", key_cache)
+        # For now, do not perform any collective operations here.
+        # If future use-cases require strict cross-rank key alignment, this
+        # should be reintroduced with a protocol that guarantees participation
+        # from all ranks in each eval phase.
+        return
