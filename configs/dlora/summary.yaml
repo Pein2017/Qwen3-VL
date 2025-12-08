@@ -1,26 +1,27 @@
 extends: ./sft_base.yaml
 
 model:
-  model: output/11-24/stage_1.5_merged/baseline-checkpoint-2070
+  model: output/12-4/res_1024_fusion_merged/checkpoint-1116
 
 tuner:
-  # Freeze vision and aligner, only train LLM last-6 blocks
-  freeze_llm: false   # Train LLM (last 6 blocks only via target_regex)
+  # Freeze vision and aligner, train full LLM tower (lm_head fixed)
+  freeze_llm: false   # Train full LLM tower via target_regex
   freeze_vit: true    # Freeze vision encoder
   freeze_aligner: true  # Freeze MLP aligner
-  # LoRA targets: LLM last-6 blocks only (layers 30, 31, 32, 33, 34, 35) - lm_head excluded for ablation
-  target_regex: '^(?:model\.)?language_model\.layers\.(?:30|31|32|33|34|35)\.(?:self_attn\.(?:q_proj|k_proj|v_proj|o_proj)|mlp\.(?:gate_proj|up_proj|down_proj))$'
-  modules_to_save: [lm_head]  # Full fine-tuning for vocabulary adaptation
+  # LoRA targets: all LLM blocks (q/k/v/o + MLP) excluding lm_head
+  modules_to_save: []  # Keep lm_head fixed (no tuning/saving)
+  lora_rank: 8
+  lora_alpha: 16
 
 training:
   per_device_train_batch_size: 4
   per_device_eval_batch_size: 8
   effective_batch_size: 32
   num_train_epochs: 10
-  output_dir: ./output/11-30/summary
-  logging_dir: ./tb/11-30/summary
-  run_name: res_1024-epoch_10-lr_2e-4-bs_32-last_6_llm-from_resumed_last_6_llm-with_lm_head_full
-  learning_rate: 2.0e-4
+  output_dir: ./output/12-4/summary
+  logging_dir: ./tb/12-4/summary
+  run_name: res_1024-bbu_rru_fused-lrs_1e-4-dlora_8_16
+  learning_rate: 1.0e-4
   vit_lr: 1.0e-7
   aligner_lr: 1.0e-7
   save_delay_steps: 300

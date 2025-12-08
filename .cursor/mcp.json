@@ -1,0 +1,17 @@
+{
+    "mcpServers": {
+        "serena": {
+            "command": "/root/miniconda3/envs/ms/bin/uv",
+            "args": [
+                "run",
+                "--directory",
+                "/data/Qwen2.5-VL-main/mcp/serena-main",
+                "serena-mcp-server",
+                "--context",
+                "ide-assistant",
+                "--project",
+                "/data/Qwen3-VL"
+            ]
+        }
+    }
+}

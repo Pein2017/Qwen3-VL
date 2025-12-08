@@ -1,0 +1,37 @@
+---
+alwaysApply: true
+---
+
+<!-- OPENSPEC:START -->
+# OpenSpec Instructions
+
+These instructions are for AI assistants working in this project.
+
+Always open `@/openspec/AGENTS.md` when the request:
+- Mentions planning or proposals (words like proposal, spec, change, plan)
+- Introduces new capabilities, breaking changes, architecture shifts, or big performance/security work
+- Sounds ambiguous and you need the authoritative spec before coding
+
+Use `@/openspec/AGENTS.md` to learn:
+- How to create and apply change proposals
+- Spec format and conventions
+- Project structure and guidelines
+
+Keep this managed block so 'openspec update' can refresh the instructions.
+
+<!-- OPENSPEC:END -->
+
+## Qwen3‑VL quick brief
+- Single repo: ms‑swift orchestrated dense-caption training under `/data/Qwen3-VL`.
+- Configuration-first: edit YAML in `configs/`, consumption handled by `src/sft.py` and helpers.
+- Canonical references:
+  - Global guide: `/data/Qwen3-VL/AGENTS.md`
+  - Feature workflow: `openspec/AGENTS.md`, `openspec/project.md`
+  - Augmentation/geometry: `docs/AUGMENTATION.md`, `compare/.../final_analysis.md`
+  - Launch scripts: `scripts/train.sh`, `python -m src.sft`
+  - Visualization: `vis_tools/vis_augment_compare.py`, `vis_qwen3.py`
+
+## Working notes
+- Prefer ms‑swift/transformers primitives; keep custom code minimal.
+- Changes touching augmentation/geometry should include visualization or tests.
+- For new capabilities follow the OpenSpec proposal → tasks → validation flow.

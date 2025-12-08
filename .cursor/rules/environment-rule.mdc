@@ -1,0 +1,37 @@
+---
+alwaysApply: true
+---
+
+### **Common Commands**
+
+**Training**
+
+```bash
+conda run -n ms bash scripts/run_new_train.sh
+```
+
+**Inference**
+
+```bash
+conda run -n ms python -m src_new.inference \
+  --config configs/config.yaml \
+  --checkpoint checkpoints/last.ckpt \
+  --image assets/sample.jpg
+```
+
+**Testing**
+
+```bash
+conda run -n ms pytest tests/rl/test_prompt_batch_smoke.py -v
+```
+
+**Data Conversion**
+
+```bash
+conda run -n ms bash data_conversion/convert_dataset.sh
+```
+
+**Command Construction**
+- Always send commands as **single, complete lines**
+- Avoid line breaks within command strings
+- Use proper quoting when paths contain spaces

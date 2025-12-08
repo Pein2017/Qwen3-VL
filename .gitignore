@@ -23,6 +23,7 @@
 !configs/**
 !docs/**/*
 !demo/**
+!.cursor/**
 !scripts/**
 !openspec/**
 !vis_tools/**
@@ -32,7 +33,6 @@
 !.cursorindexingignore
 !AGENTS.md
 !compare/**
-.cursor/**
 !references/**/*.md
 !references/**/*.py
 !public_data/**/*.py
