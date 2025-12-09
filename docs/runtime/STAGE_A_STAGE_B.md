@@ -63,7 +63,7 @@ The Stage-A/Stage-B stack addresses these by standardizing summaries, orchestrat
 | What | Business Interpretation |
 | ---- | ---------------------- |
 | Input | Stage-A summaries + ground-truth labels + current mission guidance. |
-| Process | Prompt-only rollouts that must emit evidence JSON arrays; majority vote selection; non-explainable or malformed cases are pushed to manual-review/failure queues; reflection (prompt-only) updates guidance with small edits. |
+| Process | Prompt-only rollouts（提示=guidance+Stage-A 摘要，不含 GT）；必须输出两行 Verdict+Reason，缺一记为格式错误；多数表决 selection；反思阶段复用同一模型（无 CriticEngine），以批次方式读取多个工单的 Stage-A 摘要+候选 Verdict/Reason/信号，生成严格 JSON 的规则增删改；若整批无指导更新且该批某组找不到支持 GT 的候选，则该组进入 manual_review。重跑同一 run_name 时重建 trajectories/selections/manual_review/failure 与 reflection_cache，指导沿用上次快照（除非显式 reset）。 |
 | Output | Final binary verdicts (`pass` / `fail`) in JSONL, trajectories for audit, reflection log, manual-review queue, and updated mission-specific guidance repository. |
 
 **Experiences = living policy**

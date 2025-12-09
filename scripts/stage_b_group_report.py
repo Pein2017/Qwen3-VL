@@ -17,8 +17,9 @@ def parse_args() -> argparse.Namespace:
         "--stage-a",
         dest="stage_a",
         type=Path,
+        nargs="+",
         default=None,
-        help="Optional Stage-A JSONL to annotate labels",
+        help="Optional Stage-A JSONL path(s) to annotate labels",
     )
     return parser.parse_args()
 

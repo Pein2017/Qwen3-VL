@@ -107,6 +107,8 @@ def ingest_stage_a(
                     if not isinstance(per_image_raw, Mapping):
                         raise TypeError("per_image field must be an object")
                     normalized = _normalize_per_image(per_image_raw)
+                    if not normalized:
+                        raise ValueError("per_image summaries must be non-empty")
 
                     timestamp: Optional[datetime] = None
                     if isinstance(payload.get("label_timestamp"), str):
@@ -141,4 +143,3 @@ def ingest_stage_a(
 
 
 __all__ = ["ingest_stage_a"]
-

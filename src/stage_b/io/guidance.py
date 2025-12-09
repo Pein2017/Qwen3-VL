@@ -18,6 +18,7 @@ from ..types import (
     MissionGuidance,
     ReflectionProposal,
 )
+from ..utils.chinese import normalize_spaces, to_simplified
 
 logger = logging.getLogger(__name__)
 
@@ -263,6 +264,12 @@ class GuidanceRepository:
         source_group_ids: Sequence[str],
         operations: Sequence[ExperienceOperation],
     ) -> MissionGuidance:
+        def _normalize_text(text: str) -> str:
+            simplified = to_simplified(text)
+            simplified = normalize_spaces(simplified)
+            simplified = simplified.strip().rstrip("。.")
+            return simplified
+
         def _is_valid_key(key: Optional[str]) -> bool:
             if key is None:
                 return True
@@ -274,6 +281,9 @@ class GuidanceRepository:
 
         applied_any = False
         source_fallback = tuple(str(gid) for gid in source_group_ids)
+        normalized_lookup = {
+            _normalize_text(text): key for key, text in experiences.items()
+        }
 
         for op in operations:
             normalized_op = op.op
@@ -308,15 +318,15 @@ class GuidanceRepository:
             if not text:
                 continue
 
+            norm_text = _normalize_text(text)
+
             # If the same guidance text already exists, reuse its key and
             # merge metadata instead of skipping the update. This allows new
             # reflection batches to contribute additional evidence group_ids
             # without duplicating experiences.
             existing_key: Optional[str] = None
-            for k, v in experiences.items():
-                if v == text:
-                    existing_key = k
-                    break
+            if norm_text in normalized_lookup:
+                existing_key = normalized_lookup[norm_text]
 
             if existing_key is not None:
                 target_key = existing_key
@@ -327,6 +337,7 @@ class GuidanceRepository:
                     key = str(key)
                 target_key = key
                 experiences[target_key] = text
+                normalized_lookup[norm_text] = target_key
 
             # Build combined sources (proposal evidence + fallback group ids)
             combined_sources = []

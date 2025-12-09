@@ -4,24 +4,24 @@ stage_a_paths:
 seed: 17
 
 model:
-  model_name_or_path: output/12-2/fusion_dlora_merged/checkpoint-4650
+  model_name_or_path: output/12-4/res_1024_fusion_merged/checkpoint-1116
   torch_dtype: bfloat16
   device_map: auto
 
 guidance:
   path: output_post/stage_b/initial_guidance.json
   retention: 5
+  reset_on_rerun: false
 
 output:
   root: output_post/stage_b
-  run_name: debug-0.1-0.3-0.5
+  run_name: debug-0.1-0.4-0.7
   group_report: true
 
 sampler:
   samples_per_decode: 1
-  format_filter: true
   grid:
-    - temperature: 0.001
+    - temperature: 0.1
       top_p: 0.9
       max_new_tokens: 1024
       seed: 42
@@ -31,7 +31,7 @@ sampler:
         - "<|im_end|>"
         - "<|endoftext|>"
         - "</s>"
-    - temperature: 0.3
+    - temperature: 0.4
       top_p: 0.9
       max_new_tokens: 1024
       seed: 43
@@ -41,7 +41,7 @@ sampler:
         - "<|im_end|>"
         - "<|endoftext|>"
         - "</s>"
-    - temperature: 0.5
+    - temperature: 0.7
       top_p: 0.9
       max_new_tokens: 1024
       seed: null
@@ -64,8 +64,6 @@ reflection:
   max_new_tokens: 2048  # Allow longer responses to avoid truncation (G1 case)
   max_reflection_length: 12000  # Larger packed context
   token_budget: 12000  # Allow larger packed context to avoid dropping records
-  require_rule_for_conflicts: true
-  treat_keep_conflict_as_noise: false  # Do not auto-mark keep-on-conflict as noise; rely on conflict rules instead
 
 selection:
   policy: top_label
@@ -73,9 +71,7 @@ selection:
 
 
 manual_review:
-  enabled: true
   min_verdict_agreement: 0.8  # fraction of candidates sharing the same verdict
-  min_self_consistency: 0.8   # average self_consistency for majority verdict
 
 runner:
   epochs: 2 # Tiny smoke: 单轮

@@ -124,34 +124,8 @@ def _parse_two_line_response(
             reason = line.strip()
             break
 
-    format_ok = verdict is not None and reason is not None
+    format_ok = verdict is not None and reason is not None and bool(reason.strip())
     return format_ok, verdict, reason
-
-
-def _fallback_coerce(
-    response: str,
-) -> Tuple[bool, Optional[GroupLabel], Optional[str]]:
-    """Best-effort salvage when two-line parsing fails.
-
-    - Infer verdict from first verdict keyword; default to fail.
-    - Use the first non-empty line (trimmed to 200 chars) as reason.
-    """
-
-    verdict_candidates = re.findall(r"(通过|不通过)", response)
-    verdict: Optional[GroupLabel] = (
-        _normalize_verdict(verdict_candidates[0]) if verdict_candidates else "fail"
-    )
-
-    reason = None
-    for line in response.splitlines():
-        text = line.strip()
-        if text:
-            reason = text[:200]
-            break
-    if reason is None:
-        reason = "empty_response"
-
-    return True, verdict, reason
 
 
 class RolloutSampler:
@@ -340,22 +314,6 @@ class RolloutSampler:
                         normalized_response_text
                     )
 
-                    if not format_ok:
-                        logger.warning(
-                            "Rollout parse failed (group=%s, cand=%d), raw response=%.300s",
-                            ticket.group_id,
-                            candidate_index,
-                            normalized_response_text,
-                        )
-                        format_ok, verdict, reason = _fallback_coerce(
-                            normalized_response_text
-                        )
-                        logger.warning(
-                            "Salvaged malformed rollout candidate (group=%s, cand=%d)",
-                            ticket.group_id,
-                            candidate_index,
-                        )
-
                     # Convert traditional Chinese to simplified Chinese and normalize spaces
                     if reason:
                         reason = to_simplified(reason)
@@ -369,33 +327,6 @@ class RolloutSampler:
                             format_ok=format_ok,
                         )
                     )
-
-        # Safety net: if a group ended with zero candidates (all filtered), synthesize one
-        now = datetime.now(timezone.utc)
-        for ticket in tickets:
-            if per_group[ticket.group_id]:
-                continue
-            logger.warning(
-                "Sampler yielded zero valid candidates after filtering; injecting fallback for %s",
-                ticket.group_id,
-            )
-            decode = self.config.grid[0]
-            base = Trajectory(
-                group_id=ticket.group_id,
-                mission=ticket.mission,
-                candidate_index=0,
-                decode=decode,
-                response_text="sampling_failed",
-                created_at=now,
-            )
-            per_group[ticket.group_id].append(
-                ParsedTrajectory(
-                    base=base,
-                    verdict="fail",
-                    reason="sampling_failed",
-                    format_ok=True,
-                )
-            )
 
         return per_group
 

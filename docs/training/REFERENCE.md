@@ -229,7 +229,7 @@ Runtime/deployment instructions for Stage-A summaries and the Stage-B verdict lo
 - Adapter vs merged checkpoints, export commands, and decoding tips
 - Dense captioning usage examples
 - Stage-A CLI guardrails and output schemas
-- Stage-B sampler/selection/manual-review/reflection flow (prompt-only, no CriticEngine)
+- Stage-B sampler/selection/manual-review/reflection flow (prompt-only, no CriticEngine); rollout 提示=guidance+Stage-A 摘要（不含 GT），严格两行解析；低一致性/标签冲突仅作为反思触发，manual-review 在反思后判定：若整批无指导更新且该组无任何候选支持 GT，则写入 manual_review_queue。反思输出严格 JSON 的 add/update/delete 规则，批处理更新 guidance，重跑同一 run_name 重建 per-run artifacts，指导沿用上次快照。
 
 ## Advanced Topics & FAQ
 

@@ -8,8 +8,9 @@ import argparse
 import json
 import logging
 import random
-from datetime import datetime
+import shutil
 from collections import defaultdict
+from dataclasses import replace
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -26,13 +27,11 @@ from .io.guidance import GuidanceRepository
 from .reflection import ReflectionEngine
 from .rollout import RolloutSampler
 from .types import (
+    DeterministicSignals,
     ExperienceRecord,
     GroupTicket,
-    Trajectory,
-    ParsedTrajectory,
     TrajectoryWithSignals,
 )
-from .types import DeterministicSignals
 from .utils.seed import seed_everything
 
 logger = get_logger("stage_b.runner")
@@ -86,6 +85,27 @@ def _prepare_mission_output_paths(mission_dir: Path) -> Tuple[Path, Path]:
     return trajectories_path, selections_path
 
 
+def _reset_mission_artifacts(mission_dir: Path) -> None:
+    """Clear per-run artifacts to avoid cross-run contamination."""
+
+    mission_dir.mkdir(parents=True, exist_ok=True)
+    for filename in (
+        "trajectories.jsonl",
+        "selections.jsonl",
+        "manual_review_queue.jsonl",
+        "failure_malformed.jsonl",
+    ):
+        path = mission_dir / filename
+        if path.exists():
+            path.unlink()
+        path.write_text("", encoding="utf-8")
+
+    cache_dir = mission_dir / "reflection_cache"
+    if cache_dir.exists():
+        shutil.rmtree(cache_dir)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+
 def _shuffle_indices(count: int, *, epoch: int, base_seed: int) -> List[int]:
     indices = list(range(count))
     seed_value = base_seed + epoch
@@ -105,7 +125,12 @@ def _chunked(seq: List, size: int):
 
 
 def _setup_mission_guidance(
-    startup_path: Path, mission_dir: Path, mission: str, retention: int
+    startup_path: Path,
+    mission_dir: Path,
+    mission: str,
+    retention: int,
+    *,
+    reset: bool = False,
 ) -> GuidanceRepository:
     """Load initial guidance from startup path and copy to mission directory.
 
@@ -126,6 +151,26 @@ def _setup_mission_guidance(
     mission_guidance_path = mission_dir / "guidance.json"
     mission_dir.mkdir(parents=True, exist_ok=True)
 
+    if mission_guidance_path.exists() and not reset:
+        repo = GuidanceRepository(
+            mission_guidance_path,
+            retention=retention,
+        )
+        try:
+            repo.load()
+            logger.info(
+                "Reusing existing mission guidance for %s at %s",
+                mission,
+                mission_guidance_path,
+            )
+            return repo
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Existing mission guidance %s could not be loaded (%s); re-seeding from startup",
+                mission_guidance_path,
+                exc,
+            )
+
     # Load startup/global guidance and extract mission section; fail fast if missing
     startup_repo = GuidanceRepository(startup_path, retention=retention)
     startup_map = startup_repo.load()
@@ -134,6 +179,9 @@ def _setup_mission_guidance(
             f"Mission {mission} not found in global guidance file: {startup_path}"
         )
     seed_section = startup_map[mission].to_payload()
+
+    if mission_guidance_path.exists() and reset:
+        mission_guidance_path.unlink()
 
     # Write only this mission section into mission-specific guidance.json
     with mission_guidance_path.open("w", encoding="utf-8") as fh:
@@ -162,9 +210,13 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
         raise ValueError(
             f"Unsupported log level '{log_level}'. Choose from: {', '.join(level_map)}"
         )
-    configure_logging(level=level_map[normalized], debug=(normalized == "debug"), verbose=False)
+    configure_logging(
+        level=level_map[normalized], debug=(normalized == "debug"), verbose=False
+    )
 
-    logger.info("Stage-B starting with three-stage reflection pipeline")
+    logger.info(
+        "Stage-B starting with reflection-first pipeline (single mission, no critic)"
+    )
 
     seed_everything(config.seed)
 
@@ -184,6 +236,11 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
     logger.info(
         f"Discovered {len(tickets_by_mission)} mission(s): {list(tickets_by_mission.keys())}"
     )
+
+    if len(tickets_by_mission) != 1:
+        raise RuntimeError(
+            f"Stage-B reflection-first pipeline expects exactly one mission per run_name; got {len(tickets_by_mission)} missions"
+        )
 
     training_by_mission = tickets_by_mission
 
@@ -208,6 +265,7 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
 
         # Setup mission-specific directory structure
         mission_dir = run_dir / mission
+        _reset_mission_artifacts(mission_dir)
 
         # Setup mission-specific guidance
         mission_guidance_repo = _setup_mission_guidance(
@@ -215,6 +273,7 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
             mission_dir=mission_dir,
             mission=mission,
             retention=config.guidance.retention,
+            reset=config.guidance.reset_on_rerun,
         )
 
         # Prepare mission-specific output paths
@@ -284,36 +343,31 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                             "No parsed candidates for %s; queuing manual review",
                             ticket.group_id,
                         )
-                        fallback_base = None
-                        if config.sampler.grid:
-                            fallback_base = Trajectory(
-                                group_id=ticket.group_id,
-                                mission=ticket.mission,
-                                candidate_index=0,
-                                decode=config.sampler.grid[0],
-                                response_text="format_error",
-                                created_at=datetime.now(),
-                            )
-                        fallback_parsed = ParsedTrajectory(
-                            base=fallback_base
-                            if fallback_base
-                            else Trajectory(
-                                group_id=ticket.group_id,
-                                mission=ticket.mission,
-                                candidate_index=0,
-                                decode=config.sampler.grid[0],
-                                response_text="format_error",
-                                created_at=datetime.now(),
-                            ),
-                            verdict="fail",
-                            reason="format_error",
-                            format_ok=False,
-                        )
-                        parsed_candidates = [fallback_parsed]
+                        failure_entry = {
+                            "group_id": ticket.group_id,
+                            "mission": ticket.mission,
+                            "reason": "no_candidates",
+                            "raw_text": None,
+                        }
+                        _append_jsonl(failure_path, failure_entry)
+                        manual_entry = {
+                            "group_id": ticket.group_id,
+                            "mission": ticket.mission,
+                            "label": ticket.label,
+                            "model_verdict": None,
+                            "reason": "no_candidates",
+                        }
+                        _append_jsonl(manual_review_path, manual_entry)
+                        continue
 
                     wrapped_candidates: List[TrajectoryWithSignals] = []
                     for cand in parsed_candidates:
-                        if not cand.format_ok:
+                        format_ok = (
+                            cand.format_ok
+                            and cand.verdict is not None
+                            and bool((cand.reason or "").strip())
+                        )
+                        if not format_ok:
                             failure_entry = {
                                 "group_id": ticket.group_id,
                                 "mission": ticket.mission,
@@ -331,7 +385,11 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                             _append_jsonl(manual_review_path, manual_entry)
                             continue
 
-                        label_match = cand.verdict == ticket.label if cand.verdict is not None else False
+                        label_match = (
+                            cand.verdict == ticket.label
+                            if cand.verdict is not None
+                            else False
+                        )
                         signals = DeterministicSignals(
                             label_match=label_match,
                             self_consistency=None,
@@ -344,6 +402,14 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
 
                     if not wrapped_candidates:
                         # nothing usable for this group
+                        manual_entry = {
+                            "group_id": ticket.group_id,
+                            "mission": ticket.mission,
+                            "label": ticket.label,
+                            "model_verdict": None,
+                            "reason": "no_valid_candidates",
+                        }
+                        _append_jsonl(manual_review_path, manual_entry)
                         continue
 
                     # Select final verdict
@@ -376,17 +442,29 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                         _append_jsonl(manual_review_path, manual_entry)
                         continue
 
-                    if selection.needs_manual_review:
-                        manual_entry = {
-                            "group_id": ticket.group_id,
-                            "mission": ticket.mission,
-                            "label": ticket.label,
-                            "model_verdict": selection.verdict,
-                            "reason": ",".join(selection.warnings)
-                            if selection.warnings
-                            else "needs_manual_review",
-                        }
-                        _append_jsonl(manual_review_path, manual_entry)
+                    low_agreement_flag = (
+                        selection.vote_strength is not None
+                        and selection.vote_strength
+                        < config.manual_review.min_verdict_agreement
+                    )
+                    updated_candidates: List[TrajectoryWithSignals] = []
+                    for candidate in wrapped_candidates:
+                        sig = candidate.signals
+                        if sig is None:
+                            updated_candidates.append(candidate)
+                            continue
+                        updated_sig = replace(
+                            sig,
+                            vote_strength=selection.vote_strength,
+                            low_agreement=low_agreement_flag,
+                            needs_manual_review=(
+                                sig.needs_manual_review or selection.needs_manual_review
+                            ),
+                        )
+                        updated_candidates.append(
+                            replace(candidate, signals=updated_sig)
+                        )
+                    wrapped_candidates = updated_candidates
 
                     # Write trajectories
                     for candidate in wrapped_candidates:
@@ -423,6 +501,23 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                             epoch=epoch,
                             log=True,
                         )
+                        if not outcome.applied and not outcome.operations:
+                            for rec in pending_records:
+                                has_support = any(
+                                    cand.signals and cand.signals.label_match is True
+                                    for cand in rec.candidates
+                                )
+                                if not has_support:
+                                    _append_jsonl(
+                                        manual_review_path,
+                                        {
+                                            "group_id": rec.ticket.group_id,
+                                            "mission": rec.ticket.mission,
+                                            "label": rec.ticket.label,
+                                            "model_verdict": None,
+                                            "reason": "no_support_after_reflection",
+                                        },
+                                    )
 
                         last_reflection_id = (
                             outcome.reflection_id if outcome.applied else None
@@ -447,6 +542,23 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                     epoch=epoch,
                     log=True,
                 )
+                if not outcome.applied and not outcome.operations:
+                    for rec in pending_records:
+                        has_support = any(
+                            cand.signals and cand.signals.label_match is True
+                            for cand in rec.candidates
+                        )
+                        if not has_support:
+                            _append_jsonl(
+                                mission_dir / "manual_review_queue.jsonl",
+                                {
+                                    "group_id": rec.ticket.group_id,
+                                    "mission": rec.ticket.mission,
+                                    "label": rec.ticket.label,
+                                    "model_verdict": None,
+                                    "reason": "no_support_after_reflection",
+                                },
+                            )
 
                 last_reflection_id = outcome.reflection_id if outcome.applied else None
                 pending_records.clear()
@@ -459,14 +571,11 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
         )
 
         if config.output.group_report:
-            stage_a_path = config.stage_a_paths[0] if config.stage_a_paths else None
             try:
-                report_path = build_group_report(mission_dir, stage_a_path)
+                report_path = build_group_report(mission_dir, config.stage_a_paths)
                 logger.info("Wrote grouped report to %s", report_path)
             except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "Failed to build group report for %s: %s", mission, exc
-                )
+                logger.warning("Failed to build group report for %s: %s", mission, exc)
 
     logger.info(
         f"Completed Stage-B pipeline across {config.runner.epochs} epoch(s) and {processed_missions} mission(s): {total_selections} total selections"

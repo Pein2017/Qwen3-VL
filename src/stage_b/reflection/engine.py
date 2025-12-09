@@ -10,7 +10,7 @@ import re
 import uuid
 from collections import Counter
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Set
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import torch
 from transformers import PreTrainedModel, PreTrainedTokenizerBase
@@ -133,7 +133,11 @@ class ReflectionEngine:
             for cand in rec.candidates:
                 sig = cand.signals
                 if sig is not None:
-                    if sig.conflict_flag or sig.needs_manual_review:
+                    if (
+                        sig.conflict_flag
+                        or sig.needs_manual_review
+                        or sig.low_agreement
+                    ):
                         return True, None
                     label_vals.append(sig.label_match)
                 if (
@@ -157,6 +161,7 @@ class ReflectionEngine:
                 "group_id": rec.ticket.group_id,
                 "label": rec.ticket.label,
                 "winning_candidate": rec.winning_candidate,
+                "stage_a_summaries": rec.ticket.summaries.as_dict(),
             }
             cand_entries = []
             for cand in rec.candidates:
@@ -171,8 +176,11 @@ class ReflectionEngine:
                         "needs_manual_review": sig.needs_manual_review
                         if sig
                         else False,
+                        "low_agreement": sig.low_agreement if sig else False,
+                        "vote_strength": sig.vote_strength if sig else None,
                         "summary": cand.summary,
                         "critique": cand.critique,
+                        "raw_text": cand.raw_text,
                     }
                 )
             rec_entry["candidates"] = cand_entries
@@ -263,18 +271,26 @@ class ReflectionEngine:
             label = rec.ticket.label
             win = rec.winning_candidate
             case_lines.append(f"- group_id: {gid}; gt: {label}; winning: {win}")
+            summaries = rec.ticket.summaries.as_dict()
+            if summaries:
+                summary_lines = [
+                    f"    {key}: {value}" for key, value in sorted(summaries.items())
+                ]
+                case_lines.append("  STAGE-A 摘要:")
+                case_lines.extend(summary_lines)
             for cand in rec.candidates:
                 sig = cand.signals
                 match = sig.label_match if sig else None
                 case_lines.append(
-                    f"  cand#{cand.candidate_index}: verdict={cand.verdict} match={match} reason={cand.reason}"
+                    f"  cand#{cand.candidate_index}: verdict={cand.verdict} match={match} low_agreement={sig.low_agreement if sig else False} reason={cand.reason}"
                 )
 
         prompt = (
-            "你是规则反思助手。请仅输出 JSON 数组，不要输出其他任何文本或 Markdown。\n"
-            "每个元素字段: group_id, action(add_rule|ask_more_info|abstain_noise|keep), why, missing_evidence(list,可空), new_rule(仅 add_rule)。\n"
-            "当且仅当现有证据已部分支持 GT 且缺少明确要点时，才提出 add_rule+new_rule；若需要更多材料，用 ask_more_info 并写 missing_evidence；疑似噪声用 abstain_noise；否则 keep。\n"
-            f"最多 {self.config.max_operations or 3} 条；禁止使用样本细节或包含“×/标签/”。\n\n"
+            "你是规则反思助手，用简体中文输出严格 JSON 数组，不要输出其他文本或 Markdown。\n"
+            "每个元素字段: op(add|update|delete), key(仅 update/delete 必填，add 可留空), text(仅 add/update 必填，<=120 字，写通用规则句并标明通过/不通过/需复核), rationale(可空,<=40 字), evidence(list,可空)。\n"
+            f"最多 {self.config.max_operations or 3} 条；禁止样本细节、品牌/型号、斜杠/“标签/”。\n"
+            "语义重复或只改措辞的规则要合并，不要生成近义重复。缺证据或噪声时可输出空数组 []。\n\n"
+            "背景：Stage-A 提供逐图摘要（无判定）；当前案例包含标签与模型 Reason。请基于这些证据输出可泛化的新增/更新/删除规则。\n\n"
             "EXPERIENCES:\n"
             + "\n".join(experiences_lines)
             + "\n\nCASES:\n"
@@ -343,217 +359,88 @@ class ReflectionEngine:
         List[Mapping[str, Any]],
         List[Mapping[str, Any]],
     ]:
-        """Parse counterfactual reflection JSON into ops + auxiliary queues."""
+        """Parse reflection JSON into ExperienceOperation list (add/update/delete)."""
 
-        record_by_gid = {rec.ticket.group_id: rec for rec in bundle.records}
-        ops: List[ExperienceOperation] = []
-        wishlist: List[Mapping[str, Any]] = []
-        noise: List[Mapping[str, Any]] = []
         max_ops = self.config.max_operations or len(ops_json)
+        ops: List[ExperienceOperation] = []
 
-        # Pre-compute conflict status per group so we can reason independently of
-        # what the reflection LLM decides to do for each entry.
-        conflict_gids: List[str] = []
-        conflict_status: Dict[str, Dict[str, bool]] = {}
-        for rec in bundle.records:
-            signals = [
-                cand.signals for cand in rec.candidates if cand.signals is not None
-            ]
-            has_true = any(sig.label_match is True for sig in signals)
-            has_false = any(sig.label_match is False for sig in signals)
-            selected_mismatch = False
-            if rec.winning_candidate is not None:
-                for cand in rec.candidates:
-                    sig = cand.signals
-                    if (
-                        sig is not None
-                        and cand.candidate_index == rec.winning_candidate
-                    ):
-                        selected_mismatch = sig.label_match is False
-                        break
-            all_wrong = has_false and not has_true
-            if has_false:
-                conflict_gids.append(rec.ticket.group_id)
-            conflict_status[rec.ticket.group_id] = {
-                "has_true": has_true,
-                "has_false": has_false,
-                "selected_mismatch": selected_mismatch,
-                "all_wrong": all_wrong,
-            }
-
-        # Track which actions the LLM proposed per group so we can identify
-        # conflicts where it effectively did "nothing" (keep) and force
-        # a conservative rule instead of labelling them as pure noise.
-        per_gid_actions: Dict[str, Set[str]] = {}
-
-        def _as_list(obj: object) -> List[str]:
-            if isinstance(obj, Sequence) and not isinstance(obj, (str, bytes)):
-                return [str(x).strip() for x in obj if str(x).strip()]
-            if obj is None:
-                return []
-            return [str(obj).strip()] if str(obj).strip() else []
+        evidence_default = tuple(rec.ticket.group_id for rec in bundle.records)
 
         for entry in ops_json:
+            if len(ops) >= max_ops:
+                break
             if not isinstance(entry, Mapping):
                 continue
-            action = str(entry.get("action", "")).strip().lower()
-            gid = str(entry.get("group_id", "")).strip()
-            why = str(entry.get("why", "")).strip()
-            missing = _as_list(entry.get("missing_evidence"))[:3]
-            new_rule = str(entry.get("new_rule", "")).strip()
-            if not gid or gid not in record_by_gid:
+
+            op_raw = str(entry.get("op", "")).strip().lower()
+            key_raw = entry.get("key")
+            key = str(key_raw).strip() if key_raw is not None else None
+            text_raw = entry.get("text")
+            text = str(text_raw).strip() if text_raw is not None else None
+            rationale_raw = entry.get("rationale")
+            rationale = (
+                str(rationale_raw).strip()
+                if isinstance(rationale_raw, str) and rationale_raw.strip()
+                else None
+            )
+
+            evidence_list = entry.get("evidence")
+            if isinstance(evidence_list, Sequence) and not isinstance(
+                evidence_list, (str, bytes)
+            ):
+                evid = tuple(str(x).strip() for x in evidence_list if str(x).strip())
+            else:
+                evid = evidence_default
+
+            if op_raw not in {"add", "update", "delete"}:
                 continue
-            rec = record_by_gid[gid]
-            per_gid_actions.setdefault(gid, set()).add(action or "keep")
 
-            status = conflict_status.get(gid, {})
-            has_true = status.get("has_true", False)
-            has_false = status.get("has_false", False)
-            selected_mismatch = status.get("selected_mismatch", False)
-            all_wrong = status.get("all_wrong", False)
-            has_contradiction = has_true and has_false
-
-            if action == "add_rule":
-                if len(ops) >= max_ops:
+            if op_raw == "delete":
+                if not key:
                     continue
-                if not new_rule:
-                    continue
-                if self._reject_experience_text(new_rule):
-                    continue
-                # Allow longer guidance sentences; soft-cap to avoid runaway generations
-                if len(new_rule) > 120:
-                    new_rule = new_rule[:120]
-                # 允许在标签不符或存在矛盾时也添加规则，用于对冲全错/选错的场景
-                allow_add = (
-                    has_true or all_wrong or has_contradiction or selected_mismatch
-                )
-                if not allow_add:
-                    noise.append(
-                        {
-                            "mission": bundle.mission,
-                            "group_id": gid,
-                            "label": rec.ticket.label,
-                            "reason": "no_supporting_or_conflict_signal",
-                            "why": why,
-                        }
+                ops.append(
+                    ExperienceOperation(
+                        op="remove",
+                        key=key,
+                        text=None,
+                        rationale=rationale,
+                        evidence=evid,
+                        merged_from=None,
                     )
-                    continue
+                )
+                continue
+
+            # add / update
+            if not text or self._reject_experience_text(text):
+                continue
+            if len(text) > 120:
+                text = text[:120]
+            if op_raw == "add":
                 ops.append(
                     ExperienceOperation(
                         op="upsert",
                         key=None,
-                        text=new_rule,
-                        rationale="add_rule",
-                        evidence=(gid,),
+                        text=text,
+                        rationale=rationale,
+                        evidence=evid,
                         merged_from=None,
                     )
                 )
-            elif action == "ask_more_info":
-                wishlist.append(
-                    {
-                        "mission": bundle.mission,
-                        "group_id": gid,
-                        "label": rec.ticket.label,
-                        "missing_evidence": missing,
-                        "why": why,
-                    }
-                )
-            elif action == "abstain_noise":
-                noise.append(
-                    {
-                        "mission": bundle.mission,
-                        "group_id": gid,
-                        "label": rec.ticket.label,
-                        "reason": "abstain_noise",
-                        "why": why,
-                    }
-                )
-            else:  # keep or unknown
-                # Legacy behaviour: optionally treat keep-on-conflict as noise/wishlist.
-                # When treat_keep_conflict_as_noise is False (default), these samples
-                # are left for the conflict policy below to handle (no auto-noise).
-                if self.config.treat_keep_conflict_as_noise:
-                    if all_wrong or (selected_mismatch and not has_true):
-                        noise.append(
-                            {
-                                "mission": bundle.mission,
-                                "group_id": gid,
-                                "label": rec.ticket.label,
-                                "reason": "auto_keep_mismatch",
-                                "why": why or "标签与候选全不符，视为噪声或需人工复核",
-                            }
-                        )
-                    elif selected_mismatch and has_true:
-                        wishlist.append(
-                            {
-                                "mission": bundle.mission,
-                                "group_id": gid,
-                                "label": rec.ticket.label,
-                                "missing_evidence": missing
-                                or [
-                                    f"补充能支撑标签为 {rec.ticket.label} 的关键部件近景/安装状态"
-                                ],
-                                "why": why or "标签与当前判定不一致，需要补充证据澄清",
-                            }
-                        )
-
-        # Conflict guardrail: for conflicting groups, always ensure a rule
-        # exists (unless LLM already proposed add_rule). This prevents
-        # conflicts from being silently marked as noise/keep.
-        if self.config.require_rule_for_conflicts and max_ops != 0:
-            for gid, status in conflict_status.items():
-                is_conflict = status.get("all_wrong", False) or status.get(
-                    "selected_mismatch", False
-                )
-                if not is_conflict:
+            elif op_raw == "update":
+                if not key:
                     continue
-                actions = per_gid_actions.get(gid, set())
-                # Only skip when add_rule 已出现；ask_more_info/abstain_noise/keep
-                # 仍会触发保守规则注入，以覆盖 GT 与模型冲突场景。
-                if "add_rule" in actions:
-                    continue
-                if len(ops) >= max_ops:
-                    break
-                # Reuse the generic conservative rule text; duplicates will be
-                # merged via GuidanceRepository._build_updated_guidance.
-                rule_text = (
-                    "当关键部件缺失、未按要求安装或不可见/模糊/遮挡时，判定不通过或需人工复核；证据不足时不放行"
-                )
                 ops.append(
                     ExperienceOperation(
                         op="upsert",
-                        key=None,
-                        text=rule_text,
-                        rationale="forced_conflict_rule",
-                        evidence=(gid,),
+                        key=key,
+                        text=text,
+                        rationale=rationale,
+                        evidence=evid,
                         merged_from=None,
                     )
                 )
 
-        # Backwards-compatible safety net when conflict forcing is disabled:
-        # if no operations were produced but conflicts/mismatches exist, inject
-        # a single conservative rule using the first conflicting group as seed.
-        if (
-            not self.config.require_rule_for_conflicts
-            and not ops
-            and conflict_gids
-            and max_ops != 0
-        ):
-            rule_text = (
-                "当关键部件缺失、未按要求安装或不可见/模糊/遮挡时，判定不通过或需人工复核；证据不足时不放行"
-            )
-            ops.append(
-                ExperienceOperation(
-                    op="upsert",
-                    key=None,
-                    text=rule_text,
-                    rationale="auto_conflict_fail",
-                    evidence=tuple(conflict_gids[:1]),
-                    merged_from=None,
-                )
-            )
-
-        return tuple(ops), wishlist, noise
+        return tuple(ops), [], []
 
     def _build_plan_payload(
         self,
@@ -637,7 +524,9 @@ class ReflectionEngine:
         for record in bundle.records:
             for cand in record.candidates:
                 sig = cand.signals
-                if sig is not None and (sig.conflict_flag or sig.needs_manual_review):
+                if sig is not None and (
+                    sig.conflict_flag or sig.needs_manual_review or sig.low_agreement
+                ):
                     return True, None
 
         if policy == "contradictions_or_all_wrong":
@@ -708,6 +597,10 @@ class ReflectionEngine:
         winning_candidate: int | None,
         guidance_step: int,
     ) -> ExperienceRecord:
+        if not ticket.summaries.per_image:
+            raise ValueError(
+                f"Stage-A summaries missing for ticket {ticket.group_id}; reflection requires evidence"
+            )
         experience_candidates = []
         for item in candidates:
             if item.parsed is None:
@@ -734,6 +627,7 @@ class ReflectionEngine:
                     signals=signals,
                     summary=None,
                     critique=None,
+                    raw_text=item.parsed.base.response_text,
                 )
             )
         return ExperienceRecord(
@@ -870,8 +764,6 @@ class ReflectionEngine:
             self._write_json(paths["plan"], self._plan_to_json(plan_payload))
             proposal = plan_payload["proposal"]  # type: ignore[index]
             operations = plan_payload["operations"]  # type: ignore[index]
-            wishlist_entries = plan_payload.get("wishlist_entries", [])  # type: ignore[arg-type]
-            noise_entries = plan_payload.get("noise_entries", [])  # type: ignore[arg-type]
         except Exception as exc:
             ineligible_reason = f"generation_error: {exc}"
             warnings.append("generation_error")
@@ -900,9 +792,6 @@ class ReflectionEngine:
             if log:
                 self._append_log(outcome, epoch=epoch)
             return outcome
-
-        # Record wishlist/noise suggestions even if no guidance is applied
-        self._record_aux_logs(wishlist_entries or [], noise_entries or [])
 
         evidence_ids = tuple(rec.ticket.group_id for rec in bundle.records)
 

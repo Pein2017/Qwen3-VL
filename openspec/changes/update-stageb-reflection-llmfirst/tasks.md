@@ -1,0 +1,5 @@
+- [x] Confirm current Stage-B behavior (rollout parsing, selection, reflection eligibility, guidance updates, report builder) against code to anchor deltas.
+- [x] Draft spec deltas for `stage-b-training-free`: reflection-first (no critic), strict format handling + manual-review, widened eligibility, Stage-A evidence in reflection, guidance dedup/merge/reuse, per-run hygiene, selection knob stance, multi-mission reporting.
+- [x] Validate with `openspec validate update-stageb-reflection-llmfirst --strict`.
+- [x] Share the proposal for review.
+- [x] Refine/update all Stage-B prompts to simplified Chinese (rollout, reflection, guidance prompts) so wording aligns with the updated spec (strict format handling, evidence grounding, reflection-first loop).***

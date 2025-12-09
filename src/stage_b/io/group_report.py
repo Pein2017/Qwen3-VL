@@ -22,14 +22,19 @@ def _load_jsonl(path: Path) -> List[dict]:
         return [json.loads(line) for line in f if line.strip()]
 
 
-def _stage_a_labels(path: Optional[Path]) -> Dict[str, str]:
-    labels: Dict[str, str] = {}
-    if path and path.exists():
+def _stage_a_labels(paths: Optional[Iterable[Path]]) -> Dict[tuple, str]:
+    labels: Dict[tuple, str] = {}
+    if not paths:
+        return labels
+    for path in paths:
+        if not path or not path.exists():
+            continue
         for item in _load_jsonl(path):
             gid = item.get("group_id")
+            mission = item.get("mission")
             label = item.get("label")
-            if gid and label:
-                labels[gid] = label
+            if gid and mission and label:
+                labels[(mission, gid)] = label
     return labels
 
 
@@ -72,7 +77,7 @@ def _normalize_reason(reason: Optional[str]) -> Optional[str]:
     return normalized
 
 
-def build_group_report(run_dir: Path, stage_a_path: Optional[Path] = None) -> Path:
+def build_group_report(run_dir: Path, stage_a_paths: Optional[Iterable[Path]] = None) -> Path:
     """Create consolidated per-group report JSONL under run_dir."""
 
     selections = _load_jsonl(run_dir / "selections.jsonl")
@@ -80,7 +85,7 @@ def build_group_report(run_dir: Path, stage_a_path: Optional[Path] = None) -> Pa
     manual = _index_by_group(_load_jsonl(run_dir / "manual_review_queue.jsonl"))
     noise = _index_by_group(_load_jsonl(run_dir / "label_or_stageA_noise.jsonl"))
     reflection = _reflection_ops(run_dir / "reflection.jsonl")
-    labels = _stage_a_labels(stage_a_path)
+    labels = _stage_a_labels(stage_a_paths)
 
     sel_map = {item["group_id"]: item for item in selections if item.get("group_id")}
     cand_map = defaultdict(list)
@@ -133,7 +138,7 @@ def build_group_report(run_dir: Path, stage_a_path: Optional[Path] = None) -> Pa
             record = {
                 "group_id": gid,
                 "mission": mission,
-                "label": labels.get(gid),
+                "label": labels.get((mission, gid)),
                 "selection": selection_result,
                 "candidates": cand_map.get(gid, []),
                 "manual_review": manual.get(gid, []),

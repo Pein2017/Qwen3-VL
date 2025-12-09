@@ -186,6 +186,8 @@ class DeterministicSignals:
     self_consistency: Optional[float]
     conflict_flag: bool = False
     needs_manual_review: bool = False
+    vote_strength: Optional[float] = None
+    low_agreement: bool = False
 
 
 @dataclass(frozen=True)
@@ -243,6 +245,7 @@ class ExperienceCandidate:
     # Critic insights (populated from CriticOutput when available)
     summary: Optional[str] = None
     critique: Optional[str] = None
+    raw_text: Optional[str] = None
 
 
 @dataclass(frozen=True)

@@ -45,7 +45,7 @@ training:
   report_to: [tensorboard]
   seed: 17
   max_grad_norm: 0.5
-  weight_decay: 0.1
+  weight_decay: 0.0
   packing: false
   add_version: true
   save_safetensors: true

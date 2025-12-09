@@ -27,9 +27,9 @@ config=configs/stage_b/run.yaml gpus=0 log_level=logging \
 ##### Config Breakdown (`src/stage_b/config.py`)
 
 - `model`: HF checkpoint path, dtype (`bfloat16` recommended), and device map.
-- `sampler`: decode grid (temperature/top_p/max_new_tokens/stop), `samples_per_decode`, optional format filter. Prompt现要求“两行输出”：`Verdict: 通过|不通过` + `Reason: <单行理由>`，不再包含 `Evidence_Positive/Negative`。
+- `sampler`: decode grid (temperature/top_p/max_new_tokens/stop) 与 `samples_per_decode`。提示现要求“两行输出”：`Verdict: 通过|不通过` + `Reason: <单行理由>`，不再包含 `Evidence_Positive/Negative`。
 - `selection`: majority vote + temperature tie-break; uses vote strength, no confidence/self-consistency.
-- `manual_review`: basic gating still available but most review routed via explicit queues.
+- `manual_review`: 低一致性阈值（`min_verdict_agreement`）用于记录警示；大多数复核仍通过 `manual_review_queue.jsonl`。
 - `reflection`: prompt-only JSON ops; batch size configurable (debug default 4), `max_operations` (<=3 recommended).
 - `runner`: epochs and `rollout_batch_size` (larger batches speed up sampling).
 - `output`: Root/run_name plus mission subdirs for artifacts.

@@ -64,12 +64,16 @@ def serialize_trajectory(
             "created_at": base.created_at.isoformat(),
             "warnings": list(item.warnings),
             "label_match": signals.label_match if signals else False,
+            "vote_strength": signals.vote_strength if signals else None,
+            "low_agreement": signals.low_agreement if signals else False,
+            "needs_manual_review": signals.needs_manual_review if signals else False,
         },
     }
 
 
 def serialize_selection(item: SelectionResult) -> Dict[str, object]:
     label_match = bool(item.label_match) if item.label_match is not None else False
+    low_agreement = "low_agreement" in set(item.warnings)
 
     # Normalize reason field as safety net
     normalized_reason = item.reason
@@ -95,6 +99,7 @@ def serialize_selection(item: SelectionResult) -> Dict[str, object]:
             "warnings": list(item.warnings),
             "conflict_flag": item.conflict_flag,
             "needs_manual_review": item.needs_manual_review,
+            "low_agreement": low_agreement,
         },
     }
 

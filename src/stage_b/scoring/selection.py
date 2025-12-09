@@ -83,13 +83,10 @@ def select_for_group(
         conflict_flag = True
         warnings.append("label_mismatch")
 
-    # Always route conflicts (label mismatch) to manual review; keep low-agreement logic.
-    if conflict_flag:
-        needs_manual_review = True
-    if manual_review.enabled:
-        if vote_strength is not None and vote_strength < manual_review.min_verdict_agreement:
-            needs_manual_review = True
-            warnings.append("low_agreement")
+    low_agreement_flag = vote_strength is not None and vote_strength < manual_review.min_verdict_agreement
+
+    if low_agreement_flag:
+        warnings.append("low_agreement")
 
     return SelectionResult(
         group_id=parsed.base.group_id,

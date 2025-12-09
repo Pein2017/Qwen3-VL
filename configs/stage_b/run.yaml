@@ -12,6 +12,7 @@ model:
 guidance:
   path: output_post/stage_b/initial_guidance.json
   retention: 5
+  reset_on_rerun: false
 
 output:
   root: output_post/stage_b
@@ -20,7 +21,6 @@ output:
 
 sampler:
   samples_per_decode: 2
-  format_filter: true
   grid:
     - temperature: 0.1
       top_p: 0.9
@@ -67,8 +67,6 @@ reflection:
   max_new_tokens: 2560  # Allow longer responses for multiple guidance entries
   max_reflection_length: 12000  # Max input length for reflection prompts
   token_budget: 12000
-  require_rule_for_conflicts: true
-  treat_keep_conflict_as_noise: false
 
 selection:
   policy: top_label

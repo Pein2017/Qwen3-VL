@@ -23,6 +23,7 @@ def _require(mapping: Mapping[str, Any], key: str, context: str) -> Any:
 class GuidanceConfig:
     path: Path
     retention: int
+    reset_on_rerun: bool = False
 
 
 @dataclass(frozen=True)
@@ -45,7 +46,6 @@ class ModelConfig:
 class SamplerConfig:
     grid: Tuple[DecodeConfig, ...]
     samples_per_decode: int
-    format_filter: bool
 
 
 @dataclass(frozen=True)
@@ -63,26 +63,14 @@ class ReflectionConfig:
     max_new_tokens: int = 1024
     max_reflection_length: int = 4096
     token_budget: int = 4096  # Token budget for reflection prompt packing
-    # Reflection conflict policy:
-    # - require_rule_for_conflicts: when True, each conflicting group (label vs model)
-    #   that lacks an explicit add_rule/ask_more_info/abstain_noise entry will receive
-    #   a conservative auto rule instead of being treated as pure noise.
-    # - treat_keep_conflict_as_noise: when True, legacy behaviour is preserved and
-    #   `keep` on conflict groups is logged to the noise queue; when False (default),
-    #   such cases are left for the conflict policy to handle (no auto noise).
-    require_rule_for_conflicts: bool = True
-    treat_keep_conflict_as_noise: bool = False
 
 
 @dataclass(frozen=True)
 class ManualReviewConfig:
-    """Gating thresholds for deferring to manual review based on agreement/self-consistency."""
+    """Low-agreement threshold for flagging tickets."""
 
-    enabled: bool = True
     # Minimum fraction of candidates sharing the majority verdict (0.0–1.0).
     min_verdict_agreement: float = 0.8
-    # Optional minimum average self-consistency for majority verdict candidates (0.0–1.0).
-    min_self_consistency: float = 0.8
 
 
 @dataclass(frozen=True)
@@ -155,12 +143,9 @@ def _load_sampler(section: Mapping[str, Any]) -> SamplerConfig:
     if samples_per_decode <= 0:
         raise ValueError("sampler.samples_per_decode must be > 0")
 
-    format_filter = bool(_require(section, "format_filter", "sampler section"))
-
     return SamplerConfig(
         grid=grid,
         samples_per_decode=samples_per_decode,
-        format_filter=format_filter,
     )
 
 
@@ -179,8 +164,13 @@ def _load_guidance(section: Mapping[str, Any]) -> GuidanceConfig:
     retention = int(_require(section, "retention", "guidance section"))
     if retention <= 0:
         raise ValueError("guidance.retention must be > 0")
+    reset_on_rerun = bool(section.get("reset_on_rerun", False))
 
-    return GuidanceConfig(path=path, retention=retention)
+    return GuidanceConfig(
+        path=path,
+        retention=retention,
+        reset_on_rerun=reset_on_rerun,
+    )
 
 
 def _load_output(section: Mapping[str, Any]) -> OutputConfig:
@@ -252,12 +242,6 @@ def _load_reflection(section: Mapping[str, Any]) -> ReflectionConfig:
     token_budget = int(section.get("token_budget", max_reflection_length))
     if token_budget <= 0:
         raise ValueError("reflection.token_budget must be > 0")
-    require_rule_for_conflicts = bool(
-        section.get("require_rule_for_conflicts", True)
-    )
-    treat_keep_conflict_as_noise = bool(
-        section.get("treat_keep_conflict_as_noise", False)
-    )
 
     return ReflectionConfig(
         prompt_path=prompt_path,
@@ -268,35 +252,23 @@ def _load_reflection(section: Mapping[str, Any]) -> ReflectionConfig:
         max_new_tokens=max_new_tokens,
         max_reflection_length=max_reflection_length,
         token_budget=token_budget,
-        require_rule_for_conflicts=require_rule_for_conflicts,
-        treat_keep_conflict_as_noise=treat_keep_conflict_as_noise,
     )
 
 
 def _load_manual_review(
     section: Optional[Mapping[str, Any]],
 ) -> ManualReviewConfig:
-    """Load ManualReviewConfig controlling manual-review gating."""
+    """Load ManualReviewConfig controlling low-agreement gating."""
 
     if section is None:
         return ManualReviewConfig()
 
-    enabled = bool(section.get("enabled", True))
     min_verdict_agreement = float(section.get("min_verdict_agreement", 0.8))
-    min_self_consistency = float(section.get("min_self_consistency", 0.8))
 
-    for name, value in (
-        ("min_verdict_agreement", min_verdict_agreement),
-        ("min_self_consistency", min_self_consistency),
-    ):
-        if not (0.0 <= value <= 1.0):
-            raise ValueError(f"manual_review.{name} must be in [0.0, 1.0]")
+    if not (0.0 <= min_verdict_agreement <= 1.0):
+        raise ValueError("manual_review.min_verdict_agreement must be in [0.0, 1.0]")
 
-    return ManualReviewConfig(
-        enabled=enabled,
-        min_verdict_agreement=min_verdict_agreement,
-        min_self_consistency=min_self_consistency,
-    )
+    return ManualReviewConfig(min_verdict_agreement=min_verdict_agreement)
 
 
 def _load_selection(section: Mapping[str, Any]) -> SelectionConfig:
