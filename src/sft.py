@@ -639,14 +639,14 @@ def main():
     eval_dataset = None
     val_jsonl = custom_config.val_jsonl
     if fusion_config_obj:
-        target_val_path = val_jsonl
+        target_val_path = None
         has_source_val = any(
             src.val_jsonl is not None for src in fusion_config_obj.sources
         )
-        if target_val_path:
+        if val_jsonl:
             logger.info(
-                "Loading fusion validation dataset with override target val_jsonl: "
-                f"{target_val_path}; sources_with_val={has_source_val}"
+                "Fusion mode: ignoring custom.val_jsonl override and using per-target "
+                f"validation splits; sources_with_val={has_source_val}"
             )
         else:
             logger.info(

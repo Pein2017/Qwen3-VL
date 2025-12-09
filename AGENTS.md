@@ -52,7 +52,9 @@ Training, inference, and guidance workflows share a single repository. Start wit
 - Use `ms` conda environment for all Python scripts
 - `ms-swift` installed at `/data/ms-swift`
 - `transformers` in conda env at `/root/miniconda3/envs/ms/lib/python3.12/site-packages/transformers`
-- **Serena MCP**: Available via MCP server; project configured at `.serena/project.yml`. Activate with "activate the project Qwen3-VL" or by path. Project-specific memories stored in `.serena/memories/`. **Do not use Serena MCP for pure document retrieval or reading** — it doesn't benefit document/text reading tasks; use standard file reading tools instead.
+- **Serena MCP (semantic tools only)**: Available via MCP server; project configured at `.serena/project.yml`. Activate with "activate the project Qwen3-VL" or by path. Project memories live in `.serena/memories/`. Use MCP for semantic, symbol-level navigation and edits (find symbols/refs, structured symbol changes) especially in large files. **Do not use it for pure doc retrieval, bulk prose reads, or routine shell commands**—use the normal terminal plus `read_file`/`rg` for those to avoid truncation/latency.
+- **When to prefer Serena MCP**: You need `find_symbol`/`get_symbols_overview` to map a file, `find_referencing_symbols` to update callers, or symbol-level edit helpers to patch a whole function/class. Skip MCP when you already know the file/lines or are just reading docs.
+- **MCP workflow (breadth → depth)**: Start with `get_symbols_overview` or `find_symbol` to locate targets, inspect specific bodies only as needed, use `find_referencing_symbols` before edits, then apply symbol-level edits. Fall back to plain `read_file` only when you truly need the full text.
 
 ## Development Approach
 - **Configuration-first**: Edit YAML in `configs/` rather than adding ad‑hoc flags

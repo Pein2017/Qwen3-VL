@@ -5,7 +5,7 @@
 # Allow code and common config/doc files (these will be indexed)
 !**/*.py
 !**/*.md
-# !**/*.json
+!**/*.json
 !**/*.yaml
 !**/*.yml
 !**/*.toml

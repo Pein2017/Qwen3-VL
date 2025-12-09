@@ -87,8 +87,8 @@ custom:
   fusion_config: null
   token_type_metrics:
     enabled: true
-    include: [target, lvis]
-    exclude: [coig_lang_chat]
+    include: [bbu, rru, lvis]
+    exclude: [lang_chat]
   augmentation:
     enabled: true
     bypass_prob: 0.1

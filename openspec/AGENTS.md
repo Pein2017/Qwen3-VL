@@ -287,6 +287,13 @@ Only add complexity with:
 | Read specific files | Read | Direct file access |
 | Explore unknown scope | Task | Multi-step investigation |
 
+### Serena MCP Usage
+- Use MCP for semantic navigation and precise symbol edits: `mcp_serena_get_symbols_overview`, `mcp_serena_find_symbol` (+`depth`), `mcp_serena_find_referencing_symbols`, and symbol-level insert/replace helpers.
+- Prefer `mcp_serena_replace_content` for small inline tweaks when a symbol replace is overkill; keep regex tight.
+- Do **not** use MCP for simple doc reads or broad file dumps—use standard `read_file`/`rg` instead; MCP has response limits.
+- Run shell commands with the regular terminal; `mcp_serena_execute_shell_command` is only a fallback when no terminal is available.
+- Avoid using MCP for long prose retrieval; it’s optimized for code symbols, not large text.
+
 ## Error Recovery
 
 ### Change Conflicts

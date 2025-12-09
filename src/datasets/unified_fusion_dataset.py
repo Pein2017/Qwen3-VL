@@ -540,7 +540,7 @@ class FusionCaptionDataset(BaseCaptionDataset):
         merged = builder.build_many([record])
         conversation_messages = copy.deepcopy(merged.get("messages", []) or [])
 
-        if system_prompt:
+        if system_prompt not in (None, ""):
             conversation_messages = [
                 {"role": "system", "content": system_prompt},
                 *conversation_messages,
@@ -548,14 +548,14 @@ class FusionCaptionDataset(BaseCaptionDataset):
 
         original_system = getattr(self.template, "system", None)
         try:
-            if system_prompt:
+            if system_prompt is not None:
                 try:
                     self.template.system = system_prompt
                 except Exception:
                     pass
             encoded = self.template.encode(merged, return_length=True)
         finally:
-            if system_prompt is not None and original_system is not None:
+            if system_prompt is not None:
                 try:
                     self.template.system = original_system
                 except Exception:

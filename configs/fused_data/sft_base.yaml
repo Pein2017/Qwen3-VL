@@ -1,14 +1,22 @@
 extends: ../dlora/sft_base.yaml
 
+tuner:
+  lora_rank: 32
+  lora_alpha: 64
+
 # Fused-data variant: enable the fusion mix while inheriting all training/hparam defaults.
 custom:
   fusion_config: configs/fusion/bbu_rru_lvis_coig.yaml
 
 # Experiment-facing knobs: safe to tune per fusion run.
 training:
-  output_dir: ./output/12-02/fusion_dlora
-  logging_dir: ./tb/12-02/fusion_dlora
-  run_name: epoch_50-lrs_2_1_6-fusion
+  per_device_train_batch_size: 5
+  per_device_eval_batch_size: 8
+  effective_batch_size: 30
+  output_dir: ./output/12-9/fusion_dlora
+  logging_dir: ./tb/12-9/fusion_dlora
+  run_name: epoch_30-dlora_32_64-lrs_2_1_6-eff_bs_30
   learning_rate: 2.0e-4
   vit_lr: 1.0e-4
   aligner_lr: 6.0e-4
+  weight_decay: 0.0

@@ -5,10 +5,9 @@
             "args": [
                 "run",
                 "--directory",
-                "/data/Qwen2.5-VL-main/mcp/serena-main",
-                "serena-mcp-server",
-                "--context",
-                "ide-assistant",
+                "/data/Qwen3-VL/mcp/serena",
+                "serena",
+                "start-mcp-server",
                 "--project",
                 "/data/Qwen3-VL"
             ]
