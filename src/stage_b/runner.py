@@ -316,6 +316,7 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
             reflection_cycle = 0
             pending_records: List[ExperienceRecord] = []
             last_reflection_id: Optional[str] = None
+            last_applied_rule_keys: List[str] = []  # Track rules applied in last reflection
 
             manual_review_path = mission_dir / "manual_review_queue.jsonl"
             failure_path = mission_dir / "failure_malformed.jsonl"
@@ -512,7 +513,23 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                             epoch=epoch,
                             log=True,
                         )
-                        if not outcome.applied and not outcome.operations:
+                        if outcome.proposal.uncertainty_note == "no_evidence_for_label":
+                            # No evidence supporting the label - route to manual review
+                            for rec in pending_records:
+                                _append_jsonl(
+                                    manual_review_path,
+                                    {
+                                        "group_id": rec.ticket.group_id,
+                                        "mission": rec.ticket.mission,
+                                        "label": rec.ticket.label,
+                                        "model_verdict": None,
+                                        "reason": "no_evidence_for_label",
+                                    },
+                                )
+                            logger.info(
+                                f"Reflection found no evidence for {len(pending_records)} tickets; routed to manual review"
+                            )
+                        elif not outcome.applied and not outcome.operations:
                             for rec in pending_records:
                                 has_support = any(
                                     cand.signals and cand.signals.label_match is True
@@ -549,6 +566,29 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                                         "reason": "label_mismatch_after_reflection",
                                     },
                                 )
+                                # Update miss_count for rules that led to this failed prediction
+                                if last_applied_rule_keys:
+                                    mission_guidance_repo.increment_miss_count(
+                                        mission, last_applied_rule_keys
+                                    )
+                                    logger.debug(
+                                        f"Updated miss_count for rules {last_applied_rule_keys} due to prediction failure on {rec.ticket.group_id}"
+                                    )
+
+                        # Extract and track applied rules for miss_count updates
+                        if outcome.applied:
+                            applied_keys = []
+                            for op in outcome.operations:
+                                # Track both upsert (add/update) operations
+                                if op.op == "upsert" and op.key:
+                                    applied_keys.append(op.key)
+                                elif op.op == "upsert" and op.text:
+                                    # For new rules without explicit key, use text as identifier
+                                    applied_keys.append(f"_text_{hash(op.text) % (10**8)}")
+                            last_applied_rule_keys = applied_keys
+                            logger.debug(
+                                f"Reflection applied {len(applied_keys)} rule(s): {applied_keys}"
+                            )
 
                         last_reflection_id = (
                             outcome.reflection_id if outcome.applied else None
@@ -573,7 +613,23 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                     epoch=epoch,
                     log=True,
                 )
-                if not outcome.applied and not outcome.operations:
+                if outcome.proposal.uncertainty_note == "no_evidence_for_label":
+                    # No evidence supporting the label - route to manual review
+                    for rec in pending_records:
+                        _append_jsonl(
+                            mission_dir / "manual_review_queue.jsonl",
+                            {
+                                "group_id": rec.ticket.group_id,
+                                "mission": rec.ticket.mission,
+                                "label": rec.ticket.label,
+                                "model_verdict": None,
+                                "reason": "no_evidence_for_label",
+                            },
+                        )
+                    logger.info(
+                        f"Reflection found no evidence for {len(pending_records)} tickets; routed to manual review"
+                    )
+                elif not outcome.applied and not outcome.operations:
                     for rec in pending_records:
                         has_support = any(
                             cand.signals and cand.signals.label_match is True
@@ -610,10 +666,50 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                                 "reason": "label_mismatch_after_reflection",
                             },
                         )
+                        # Update miss_count for rules that led to this failed prediction
+                        if last_applied_rule_keys:
+                            mission_guidance_repo.increment_miss_count(
+                                mission, last_applied_rule_keys
+                            )
+                            logger.debug(
+                                f"Updated miss_count for rules {last_applied_rule_keys} due to prediction failure on {rec.ticket.group_id}"
+                            )
+
+                # Extract and track applied rules from end-of-epoch reflection
+                if outcome.applied:
+                    applied_keys = []
+                    for op in outcome.operations:
+                        # Track both upsert (add/update) operations
+                        if op.op == "upsert" and op.key:
+                            applied_keys.append(op.key)
+                        elif op.op == "upsert" and op.text:
+                            # For new rules without explicit key, use text as identifier
+                            applied_keys.append(f"_text_{hash(op.text) % (10**8)}")
+                    last_applied_rule_keys = applied_keys
+                    logger.debug(
+                        f"End-of-epoch reflection applied {len(applied_keys)} rule(s): {applied_keys}"
+                    )
 
                 last_reflection_id = outcome.reflection_id if outcome.applied else None
                 pending_records.clear()
                 reflection_cycle += 1
+
+        # Epoch-end cleanup: remove low-confidence rules
+        if config.guidance_lifecycle and config.guidance_lifecycle.enable_auto_cleanup:
+            try:
+                removed = mission_guidance_repo.cleanup_low_confidence(
+                    mission,
+                    confidence_threshold=config.guidance_lifecycle.confidence_drop_threshold,
+                    min_miss_before_drop=config.guidance_lifecycle.min_miss_before_drop,
+                )
+                if removed:
+                    logger.info(
+                        f"Epoch {epoch}: cleanup_low_confidence removed {len(removed)} rule(s): {removed}"
+                    )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    f"Failed to perform cleanup at epoch {epoch}: {exc}"
+                )
 
         total_selections += mission_selection_count
 

@@ -1,7 +1,7 @@
 import json
 import os
-from pathlib import Path
 import sys
+from pathlib import Path
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -52,13 +52,23 @@ def main():
         preserve_geometry_points=True,
         bbox_input_type="pixel",
     )
-    merged = builder.build(rec_a, rec_b)
+    # Build each record separately and merge objects manually
+    merged_a = builder.build(rec_a)
+    merged_b = builder.build(rec_b)
 
-    # Validate raw points are preserved (no enclosure)
+    # Merge objects from both builds
     objs_a = rec_a.get("objects", []) or []
     objs_b = rec_b.get("objects", []) or []
-    raw_bbox = merged.get("objects", {}).get("bbox", [])
-    image_ids = merged.get("objects", {}).get("image_id", [])
+    raw_bbox_a = merged_a.get("objects", {}).get("bbox", [])
+    raw_bbox_b = merged_b.get("objects", {}).get("bbox", [])
+    image_ids_a = merged_a.get("objects", {}).get("image_id", [])
+    image_ids_b = merged_b.get("objects", {}).get("image_id", [])
+
+    # Combine objects from both records
+    raw_bbox = raw_bbox_a + raw_bbox_b
+    image_ids = image_ids_a + [
+        i + 1 for i in image_ids_b
+    ]  # Offset image_id for second record
 
     # Build a flattened list of expected raw point arrays in order (A then B)
     expected_pts = []
@@ -110,5 +120,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-

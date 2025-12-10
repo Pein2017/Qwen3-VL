@@ -10,7 +10,7 @@ import shutil
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Mapping, MutableMapping, Optional, Sequence, Union, cast
+from typing import Dict, List, Mapping, MutableMapping, Optional, Sequence, Union, cast
 
 from ..types import (
     ExperienceMetadata,
@@ -383,11 +383,22 @@ class GuidanceRepository:
                             f"merge operation skipped missing source key '{mkey_str}' in mission {current.mission}"
                         )
 
+                        # Preserve lifecycle stats from existing metadata
+            hit_count = existing_meta.hit_count if existing_meta else 0
+            miss_count = existing_meta.miss_count if existing_meta else 0
+            # When updating an experience, increment hit_count (rule is being reinforced)
+            hit_count += 1
+            # Recalculate confidence
+            confidence = hit_count / (hit_count + miss_count + 1e-5)
+
             metadata[target_key] = ExperienceMetadata(
                 updated_at=now,
                 reflection_id=reflection_id,
                 sources=tuple(combined_sources),
                 rationale=rationale,
+                hit_count=hit_count,
+                miss_count=miss_count,
+                confidence=confidence,
             )
             applied_any = True
 
@@ -586,6 +597,128 @@ class GuidanceRepository:
                     path.unlink()
                 except OSError:  # pragma: no cover - best effort cleanup
                     pass
+
+
+    def cleanup_low_confidence(
+        self,
+        mission: str,
+        *,
+        confidence_threshold: float = 0.35,
+        min_miss_before_drop: int = 3,
+    ) -> List[str]:
+        """Remove low-confidence experiences from guidance.
+
+        Args:
+            mission: The mission to clean up.
+            confidence_threshold: Remove experiences below this confidence.
+            min_miss_before_drop: Require at least this many misses before removal.
+
+        Returns:
+            List of removed experience keys.
+        """
+        guidance_map = self.load()
+        current = guidance_map.get(mission)
+        if current is None:
+            return []
+
+        removed_keys: List[str] = []
+        experiences = dict(current.experiences)
+        metadata = dict(current.metadata)
+
+        for key, meta in list(metadata.items()):
+            if (
+                meta.confidence < confidence_threshold
+                and meta.miss_count >= min_miss_before_drop
+            ):
+                logger.info(
+                    f"Removing low-confidence experience {key} from {mission}: "
+                    f"confidence={meta.confidence:.3f}, miss_count={meta.miss_count}"
+                )
+                experiences.pop(key, None)
+                metadata.pop(key, None)
+                removed_keys.append(key)
+
+        if not removed_keys:
+            return []
+
+        # Rebuild guidance with remaining experiences
+        now = _now()
+        updated = MissionGuidance(
+            mission=current.mission,
+            focus=current.focus,
+            experiences=experiences,
+            step=current.step,  # Don't increment step for cleanup
+            updated_at=now,
+            metadata=metadata,
+        )
+
+        self._create_snapshot()
+        guidance_map = dict(guidance_map)
+        guidance_map[mission] = updated
+        self._write(guidance_map)
+        self.invalidate()
+
+        return removed_keys
+
+    def increment_miss_count(
+        self,
+        mission: str,
+        experience_keys: Sequence[str],
+    ) -> None:
+        """Increment miss count for experiences that led to incorrect predictions.
+
+        Args:
+            mission: The mission containing the experiences.
+            experience_keys: Keys of experiences to increment miss count for.
+        """
+        guidance_map = self.load()
+        current = guidance_map.get(mission)
+        if current is None:
+            return
+
+        metadata = dict(current.metadata)
+        now = _now()
+        updated_any = False
+
+        for key in experience_keys:
+            if key not in metadata:
+                continue
+
+            meta = metadata[key]
+            new_miss_count = meta.miss_count + 1
+            new_confidence = meta.hit_count / (meta.hit_count + new_miss_count + 1e-5)
+
+            metadata[key] = ExperienceMetadata(
+                updated_at=now,
+                reflection_id=meta.reflection_id,
+                sources=meta.sources,
+                rationale=meta.rationale,
+                hit_count=meta.hit_count,
+                miss_count=new_miss_count,
+                confidence=new_confidence,
+            )
+            updated_any = True
+            logger.debug(
+                f"Incremented miss_count for {key} in {mission}: "
+                f"miss={new_miss_count}, confidence={new_confidence:.3f}"
+            )
+
+        if not updated_any:
+            return
+
+        updated = MissionGuidance(
+            mission=current.mission,
+            focus=current.focus,
+            experiences=current.experiences,
+            step=current.step,
+            updated_at=now,
+            metadata=metadata,
+        )
+
+        guidance_map = dict(guidance_map)
+        guidance_map[mission] = updated
+        self._write(guidance_map)
+        self.invalidate()
 
 
 __all__ = ["GuidanceRepository", "MissionGuidanceError"]

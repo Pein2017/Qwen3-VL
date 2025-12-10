@@ -19,6 +19,10 @@ class ExperienceMetadata:
     reflection_id: str
     sources: Tuple[str, ...] = field(default_factory=tuple)
     rationale: Optional[str] = None
+    # Lifecycle management fields
+    hit_count: int = 0
+    miss_count: int = 0
+    confidence: float = 1.0
 
     def to_payload(self) -> Dict[str, object]:
         payload: Dict[str, object] = {
@@ -28,6 +32,10 @@ class ExperienceMetadata:
         }
         if self.rationale:
             payload["rationale"] = self.rationale
+        # Lifecycle fields
+        payload["hit_count"] = self.hit_count
+        payload["miss_count"] = self.miss_count
+        payload["confidence"] = self.confidence
         return payload
 
     @staticmethod
@@ -58,11 +66,24 @@ class ExperienceMetadata:
             else None
         )
 
+        # Parse lifecycle fields with defaults for backward compatibility
+        hit_count_raw = payload.get("hit_count", 0)
+        hit_count = int(hit_count_raw) if isinstance(hit_count_raw, (int, float)) else 0
+
+        miss_count_raw = payload.get("miss_count", 0)
+        miss_count = int(miss_count_raw) if isinstance(miss_count_raw, (int, float)) else 0
+
+        confidence_raw = payload.get("confidence", 1.0)
+        confidence = float(confidence_raw) if isinstance(confidence_raw, (int, float)) else 1.0
+
         return ExperienceMetadata(
             updated_at=updated_at,
             reflection_id=reflection_raw.strip(),
             sources=sources,
             rationale=rationale,
+            hit_count=hit_count,
+            miss_count=miss_count,
+            confidence=confidence,
         )
 
 

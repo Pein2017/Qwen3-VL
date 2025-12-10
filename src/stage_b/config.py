@@ -66,6 +66,18 @@ class ReflectionConfig:
 
 
 @dataclass(frozen=True)
+class GuidanceLifecycleConfig:
+    """Guidance lifecycle management configuration.
+
+    Controls automatic cleanup of low-confidence experiences.
+    """
+
+    confidence_drop_threshold: float = 0.35
+    min_miss_before_drop: int = 3
+    enable_auto_cleanup: bool = True  # Auto-cleanup at each epoch end
+
+
+@dataclass(frozen=True)
 class ManualReviewConfig:
     """Low-agreement threshold for flagging tickets."""
 
@@ -97,6 +109,7 @@ class StageBConfig:
     model: ModelConfig
     runner: RunnerConfig
     manual_review: ManualReviewConfig
+    guidance_lifecycle: Optional[GuidanceLifecycleConfig] = None
 
 
 def _decode_config(section: Mapping[str, Any]) -> DecodeConfig:
@@ -300,6 +313,22 @@ def _load_runner(section: Mapping[str, Any]) -> RunnerConfig:
     return RunnerConfig(epochs=epochs, rollout_batch_size=rollout_batch_size)
 
 
+def _load_guidance_lifecycle(
+    section: Optional[Mapping[str, Any]],
+) -> Optional[GuidanceLifecycleConfig]:
+    """Load optional guidance lifecycle configuration."""
+    if section is None:
+        return None
+    confidence_drop = float(section.get("confidence_drop_threshold", 0.35))
+    min_miss = int(section.get("min_miss_before_drop", 3))
+    enable_cleanup = bool(section.get("enable_auto_cleanup", True))
+    return GuidanceLifecycleConfig(
+        confidence_drop_threshold=confidence_drop,
+        min_miss_before_drop=min_miss,
+        enable_auto_cleanup=enable_cleanup,
+    )
+
+
 def load_stage_b_config(path: str | Path) -> StageBConfig:
     with Path(path).open("r", encoding="utf-8") as fh:
         raw_config = yaml.safe_load(fh) or {}
@@ -319,6 +348,7 @@ def load_stage_b_config(path: str | Path) -> StageBConfig:
     model = _load_model(_require(raw_config, "model", "Stage-B config"))
     runner = _load_runner(_require(raw_config, "runner", "Stage-B config"))
     seed_value = _load_seed(raw_config)
+    guidance_lifecycle = _load_guidance_lifecycle(raw_config.get("guidance_lifecycle"))
 
     return StageBConfig(
         seed=seed_value,
@@ -331,11 +361,13 @@ def load_stage_b_config(path: str | Path) -> StageBConfig:
         model=model,
         runner=runner,
         manual_review=manual_review,
+        guidance_lifecycle=guidance_lifecycle,
     )
 
 
 __all__ = [
     "GuidanceConfig",
+    "GuidanceLifecycleConfig",
     "RunnerConfig",
     "ModelConfig",
     "OutputConfig",

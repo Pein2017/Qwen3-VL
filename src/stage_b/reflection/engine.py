@@ -203,12 +203,17 @@ class ReflectionEngine:
 
     @staticmethod
     def _reject_experience_text(text: str) -> bool:
-        """Heuristic to block Stage-A style summaries leaking into guidance."""
-        if "×" in text:
-            return True
-        if "标签/" in text:
-            return True
-        return False
+        """Heuristic to block Stage-A style summaries leaking into guidance.
+
+        Relaxed filter: requires multiple Stage-A format markers to trigger.
+        """
+        # More precise: require multiple Stage-A format markers simultaneously
+        is_stage_a_format = (
+            "×" in text
+            and "/" in text
+            and any(k in text for k in ["设备", "显示完整", "只显示部分"])
+        )
+        return is_stage_a_format or "标签/" in text
 
     def _compact_guidance(self, mission: str) -> Optional[MissionGuidance]:
         """Dedup, normalize, reindex experiences G0..Gn."""
@@ -270,7 +275,7 @@ class ReflectionEngine:
             gid = rec.ticket.group_id
             label = rec.ticket.label
             win = rec.winning_candidate
-            case_lines.append(f"- group_id: {gid}; gt: {label}; winning: {win}")
+            case_lines.append(f"- group_id: {gid}; 人工标签: {label}; 选中候选: {win}")
             summaries = rec.ticket.summaries.as_dict()
             if summaries:
                 summary_lines = [
@@ -282,15 +287,37 @@ class ReflectionEngine:
                 sig = cand.signals
                 match = sig.label_match if sig else None
                 case_lines.append(
-                    f"  cand#{cand.candidate_index}: verdict={cand.verdict} match={match} low_agreement={sig.low_agreement if sig else False} reason={cand.reason}"
+                    f"  cand#{cand.candidate_index}: verdict={cand.verdict} match={match} reason={cand.reason}"
                 )
 
+        # Evidence-aware reflection prompt (First Principle: Pure LLM, no hardcoded rules)
         prompt = (
-            "你是规则反思助手，用简体中文输出严格 JSON 数组，不要输出其他文本或 Markdown。\n"
-            "每个元素字段: op(add|update|delete), key(仅 update/delete 必填，add 可留空), text(仅 add/update 必填，<=120 字，写通用规则句并标明通过/不通过/需复核), rationale(可空,<=40 字), evidence(list,可空)。\n"
-            f"最多 {self.config.max_operations or 3} 条；禁止样本细节、品牌/型号、斜杠/“标签/”。\n"
-            "语义重复或只改措辞的规则要合并，不要生成近义重复。缺证据或噪声时可输出空数组 []。\n\n"
-            "背景：Stage-A 提供逐图摘要（无判定）；当前案例包含标签与模型 Reason。请基于这些证据输出可泛化的新增/更新/删除规则。\n\n"
+            "你是质检规则学习助手。任务：分析候选结果，判断是否有证据支持人工标签，然后决定是否学习规则。\n\n"
+            "## 任务步骤\n\n"
+            "### Step 1: 证据判断\n"
+            "分析所有候选的 Verdict 和 Reason，判断是否有证据支持人工标签：\n\n"
+            "1. 如果有候选的 Verdict == 人工标签 → 有证据\n"
+            "2. 如果所有候选 Verdict != 人工标签，但 Reason 中包含支持标签的信息：\n"
+            "   - 标签是 fail 时：Reason 中有负面信号（缺失/不合规/无法确认/未配备等）→ 有证据\n"
+            "   - 标签是 pass 时：Reason 中所有必需项都存在且合规 → 有证据\n"
+            "3. 如果 Reason 完全与标签矛盾，无任何支持信息 → 无证据\n\n"
+            "### Step 2: 决策\n"
+            "- 如果有证据：分析错误原因，提取可学习的规则，输出 operations\n"
+            "- 如果无证据：输出空数组 []，并在 evidence_analysis 中标注 \"no_evidence_for_label\"\n\n"
+            "## 输出格式（严格 JSON 对象，不要输出其他文本或 Markdown）\n"
+            "{\n"
+            '  "evidence_analysis": "简述证据判断过程（<=60字）",\n'
+            '  "has_evidence": true | false,\n'
+            '  "operations": [...]  // 如果 has_evidence=false，输出空数组\n'
+            "}\n\n"
+            "operations 数组元素字段:\n"
+            "- op: add|update|delete\n"
+            "- key: 仅 update/delete 必填，add 可留空\n"
+            "- text: 仅 add/update 必填，<=120 字，写通用规则句并标明通过/不通过\n"
+            "- rationale: 可空，<=40 字\n"
+            "- evidence: list，可空\n\n"
+            f'最多 {self.config.max_operations or 3} 条；禁止样本细节、品牌/型号、斜杠/"标签/"。\n'
+            "语义重复或只改措辞的规则要合并。\n\n"
             "EXPERIENCES:\n"
             + "\n".join(experiences_lines)
             + "\n\nCASES:\n"
@@ -339,12 +366,27 @@ class ReflectionEngine:
         # Normalize response immediately after generation
         response = to_simplified(response)
         response = normalize_spaces(response)
-        # Strict JSON only
+        # Strict JSON only - now expecting object with evidence_analysis, has_evidence, operations
         try:
             parsed = json.loads(response)
-            if not isinstance(parsed, list):
-                raise ValueError("critique JSON is not a list")
-            return parsed
+            # Handle both old format (list) and new format (object with operations)
+            if isinstance(parsed, list):
+                # Legacy format: return as-is
+                return parsed
+            if isinstance(parsed, dict):
+                # New format: extract operations and inject evidence metadata
+                ops = parsed.get("operations", [])
+                if not isinstance(ops, list):
+                    ops = []
+                # Inject evidence metadata into the result for downstream processing
+                evidence_analysis = parsed.get("evidence_analysis", "")
+                has_evidence = parsed.get("has_evidence", True)
+                # If no evidence, mark with special metadata
+                if not has_evidence:
+                    # Return a special marker that _ops_from_json can recognize
+                    return [{"_no_evidence": True, "_analysis": evidence_analysis}]
+                return ops
+            raise ValueError("critique JSON is not a list or object")
         except Exception as exc:
             self._last_debug_info = {
                 "raw_response": response[:500],
@@ -358,6 +400,7 @@ class ReflectionEngine:
         Tuple[ExperienceOperation, ...],
         List[Mapping[str, Any]],
         List[Mapping[str, Any]],
+        Optional[str],  # no_evidence_note: "no_evidence_for_label" if no evidence
     ]:
         """Parse reflection JSON into ExperienceOperation list (add/update/delete/none).
 
@@ -366,7 +409,21 @@ class ReflectionEngine:
           to avoid leaking review states into guidance;
         - deduplicate by normalized text+key;
         - truncate long text.
+
+        Returns:
+            Tuple of (operations, wishlist_entries, noise_entries, no_evidence_note)
+            - no_evidence_note is "no_evidence_for_label" if LLM determined no evidence
         """
+
+        # Check for no-evidence marker from _generate_three_stage_ops
+        if ops_json and len(ops_json) == 1:
+            first_entry = ops_json[0]
+            if isinstance(first_entry, Mapping) and first_entry.get("_no_evidence"):
+                analysis = first_entry.get("_analysis", "")
+                logger.info(
+                    f"Reflection found no evidence for label: {analysis}"
+                )
+                return tuple(), [], [], "no_evidence_for_label"
 
         max_ops = self.config.max_operations or len(ops_json)
         ops: List[ExperienceOperation] = []
@@ -481,7 +538,7 @@ class ReflectionEngine:
         if forbidden_hit:
             raise ValueError("forbidden_phrase_in_reflection_ops")
 
-        return tuple(ops), [], []
+        return tuple(ops), [], [], None
 
     def _build_plan_payload(
         self,
@@ -490,18 +547,26 @@ class ReflectionEngine:
         bundle: ExperienceBundle,
         reflection_id: str,
     ) -> Dict[str, Any]:
-        operations, wishlist_entries, noise_entries = self._ops_from_json(
+        operations, wishlist_entries, noise_entries, no_evidence_note = self._ops_from_json(
             critique_json, bundle=bundle
         )
         evidence_ids = tuple(rec.ticket.group_id for rec in bundle.records)
-        action = "refine" if operations else "noop"
+
+        # Determine action and uncertainty_note based on evidence analysis
+        if no_evidence_note:
+            action = "noop"
+            uncertainty_note = no_evidence_note
+        else:
+            action = "refine" if operations else "noop"
+            uncertainty_note = None
+
         proposal = ReflectionProposal(
             action=ReflectionAction(action),  # type: ignore[arg-type]
             summary="three_stage critique",
             critique="json_ops",
             operations=operations,
             evidence_group_ids=evidence_ids,
-            uncertainty_note=None,
+            uncertainty_note=uncertainty_note,
             text=None,
         )
         ops_serializable = [

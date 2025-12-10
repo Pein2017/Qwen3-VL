@@ -14,7 +14,7 @@ guidance:
 
 output:
   root: output_post/stage_b
-  run_name: debug-0.1-0.4-0.7
+  run_name: debug-0.1-0.4-0.7-original_non_summary
   group_report: true
 
 sampler:
@@ -74,4 +74,10 @@ manual_review:
 
 runner:
   epochs: 3 # Tiny smoke: 单轮
-  rollout_batch_size: 1  
+  rollout_batch_size: 1
+
+# Guidance lifecycle management (optional)
+guidance_lifecycle:
+  confidence_drop_threshold: 0.35  # Remove experiences below this confidence
+  min_miss_before_drop: 3          # Require at least this many misses before removal
+  enable_auto_cleanup: true        # Auto-cleanup at each epoch end

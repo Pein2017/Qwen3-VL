@@ -1,23 +1,23 @@
 extends: ../fused_data/sft_base.yaml
 
 model:
-  model: output/12-9/fusion_merged/checkpoint-1880
+  model: model_cache/models/Qwen/Qwen3-VL-8B-Instruct
 
 training:
   output_dir: ./output/12-9/res_1024_fusion
   logging_dir: ./tb/12-9/res_1024_fusion
-  run_name: epoch_6-lrs_5-8-10-smooth_aug
-  num_train_epochs: 6
-  warmup_ratio: 0.05
-  learning_rate: 5.0e-5
-  vit_lr: 8.0e-5
-  aligner_lr: 1.0e-4
-  save_delay_steps: 200
+  run_name: from_original-epoch_30-lrs_4-2-8
+  num_train_epochs: 30
+  warmup_ratio: 0.1
+  learning_rate: 4.0e-4
+  vit_lr: 2.0e-4
+  aligner_lr: 8.0e-4
+  save_delay_steps: 1600
   # logging_steps: 1
   # eval_steps: 1
   per_device_train_batch_size: 2
   per_device_eval_batch_size: 4
-  effective_batch_size: 32
+  effective_batch_size: 36
 
 custom:
   fusion_config: configs/fusion/bbu_rru_lvis_coig_1024.yaml
@@ -75,37 +75,37 @@ custom:
     include: [bbu, rru, lvis]
     exclude: [lang_chat]
 
-  augmentation_curriculum:
-    phases:
-      - until_percent: 5
-        bypass_prob: 0.8
-        ops:
-          hflip: { prob: 0.05 }
-          rotate: { prob: 0.08, max_deg: 8.0 }
-          resize_by_scale: { prob: 0.10, lo: 0.97, hi: 1.03 }
-      - until_percent: 20
-        bypass_prob: 0.45
-        ops:
-          rotate: { prob: 0.14, max_deg: 11.0 }
-          random_crop: { prob: 0.10, scale: [0.92, 1.00], aspect_ratio: [0.94, 1.06], min_coverage: 0.4, completeness_threshold: 0.95 }
-          resize_by_scale: { prob: 0.22, lo: 0.95, hi: 1.06 }
-          color_jitter: { prob: 0.10, brightness: [0.95, 1.05], contrast: [0.95, 1.05], saturation: [0.95, 1.05] }
-      - until_percent: 45
-        bypass_prob: 0.28
-        ops:
-          rotate: { prob: 0.18, max_deg: 13.0 }
-          random_crop: { prob: 0.12, scale: [0.90, 0.99], aspect_ratio: [0.92, 1.08], min_coverage: 0.38, completeness_threshold: 0.95 }
-          resize_by_scale: { prob: 0.30, lo: 0.93, hi: 1.08 }
-          color_jitter: { prob: 0.12, brightness: [0.93, 1.07], contrast: [0.93, 1.07], saturation: [0.93, 1.07] }
-          small_object_zoom_paste: { prob: 0.08, scale: [1.35, 1.8], max_targets: 1, max_attempts: 16, max_size: 96 }
-      - until_percent: 70
-        bypass_prob: 0.16
-        ops:
-          rotate: { prob: 0.24, max_deg: 15.0 }
-          random_crop: { prob: 0.14, scale: [0.88, 0.98], aspect_ratio: [0.90, 1.10], min_coverage: 0.36, completeness_threshold: 0.95 }
-          resize_by_scale: { prob: 0.36, lo: 0.92, hi: 1.10 }
-          color_jitter: { prob: 0.16, brightness: [0.92, 1.08], contrast: [0.92, 1.08], saturation: [0.92, 1.08] }
-          small_object_zoom_paste: { prob: 0.12, scale: [1.45, 1.95], max_targets: 1, max_attempts: 18, max_size: 96 }
-      - until_percent: 100
-        bypass_prob: 0.08
-        ops: {}  # fall through to steady policy above
+  # augmentation_curriculum:
+  #   phases:
+  #     - until_percent: 5
+  #       bypass_prob: 0.8
+  #       ops:
+  #         hflip: { prob: 0.05 }
+  #         rotate: { prob: 0.08, max_deg: 8.0 }
+  #         resize_by_scale: { prob: 0.10, lo: 0.97, hi: 1.03 }
+  #     - until_percent: 20
+  #       bypass_prob: 0.45
+  #       ops:
+  #         rotate: { prob: 0.14, max_deg: 11.0 }
+  #         random_crop: { prob: 0.10, scale: [0.92, 1.00], aspect_ratio: [0.94, 1.06], min_coverage: 0.4, completeness_threshold: 0.95 }
+  #         resize_by_scale: { prob: 0.22, lo: 0.95, hi: 1.06 }
+  #         color_jitter: { prob: 0.10, brightness: [0.95, 1.05], contrast: [0.95, 1.05], saturation: [0.95, 1.05] }
+  #     - until_percent: 45
+  #       bypass_prob: 0.28
+  #       ops:
+  #         rotate: { prob: 0.18, max_deg: 13.0 }
+  #         random_crop: { prob: 0.12, scale: [0.90, 0.99], aspect_ratio: [0.92, 1.08], min_coverage: 0.38, completeness_threshold: 0.95 }
+  #         resize_by_scale: { prob: 0.30, lo: 0.93, hi: 1.08 }
+  #         color_jitter: { prob: 0.12, brightness: [0.93, 1.07], contrast: [0.93, 1.07], saturation: [0.93, 1.07] }
+  #         small_object_zoom_paste: { prob: 0.08, scale: [1.35, 1.8], max_targets: 1, max_attempts: 16, max_size: 96 }
+  #     - until_percent: 70
+  #       bypass_prob: 0.16
+  #       ops:
+  #         rotate: { prob: 0.24, max_deg: 15.0 }
+  #         random_crop: { prob: 0.14, scale: [0.88, 0.98], aspect_ratio: [0.90, 1.10], min_coverage: 0.36, completeness_threshold: 0.95 }
+  #         resize_by_scale: { prob: 0.36, lo: 0.92, hi: 1.10 }
+  #         color_jitter: { prob: 0.16, brightness: [0.92, 1.08], contrast: [0.92, 1.08], saturation: [0.92, 1.08] }
+  #         small_object_zoom_paste: { prob: 0.12, scale: [1.45, 1.95], max_targets: 1, max_attempts: 18, max_size: 96 }
+  #     - until_percent: 100
+  #       bypass_prob: 0.08
+  #       ops: {}  # fall through to steady policy above
