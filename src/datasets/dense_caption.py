@@ -14,7 +14,7 @@ from src.config.prompts import USER_PROMPT_SUMMARY
 from .builders import JSONLinesBuilder
 from .contracts import ConversationRecord, validate_conversation_record
 from .preprocessors import AugmentationPreprocessor, SequentialPreprocessor
-from .utils import load_jsonl
+from .utils import extract_object_points, load_jsonl
 
 # Exposed for debugging (e.g., OOM tracing)
 LAST_SAMPLE_DEBUG: Dict[str, Any] = {}
@@ -36,6 +36,7 @@ class BaseCaptionDataset(Dataset):
         user_prompt: str,
         emit_norm: Literal["none", "norm100", "norm1000"],
         json_format: Literal["standard"],
+        user_prompt_summary: Optional[str] = None,
         augmenter: Optional[Any] = None,
         preprocessor: Optional[Any] = None,
         use_summary: bool = False,
@@ -51,6 +52,9 @@ class BaseCaptionDataset(Dataset):
         self.system_prompt_dense = system_prompt_dense
         self.system_prompt_summary = system_prompt_summary
         self.user_prompt = user_prompt
+        self.user_prompt_summary = (
+            user_prompt_summary if user_prompt_summary is not None else USER_PROMPT_SUMMARY
+        )
         self.emit_norm: Literal["none", "norm100", "norm1000"] = emit_norm
         self.json_format: Literal["standard"] = json_format
         self.bypass_prob = float(bypass_prob)
@@ -179,7 +183,9 @@ class BaseCaptionDataset(Dataset):
         return len(self.base_records)
 
     def _create_builder(self, mode: Literal["dense", "summary"]) -> JSONLinesBuilder:
-        user_prompt = USER_PROMPT_SUMMARY if mode == "summary" else self.user_prompt
+        user_prompt = (
+            self.user_prompt_summary if mode == "summary" else self.user_prompt
+        )
         return JSONLinesBuilder(
             user_prompt=user_prompt,
             emit_norm=self.emit_norm,
@@ -214,6 +220,26 @@ class BaseCaptionDataset(Dataset):
                 record = processed
 
             mode = self.mode
+            if not record.get("messages"):
+                if mode == "summary":
+                    summary_val = record.get("summary")
+                    if not isinstance(summary_val, str) or not summary_val.strip():
+                        raise ValueError(
+                            f"Dataset '{self.dataset_name}' is in summary mode but record is missing a non-empty 'summary' string."
+                        )
+                else:
+                    objects = record.get("objects") or []
+                    if not isinstance(objects, list) or not objects:
+                        raise ValueError(
+                            f"Dataset '{self.dataset_name}' is in dense mode but record has no objects."
+                        )
+                    for obj_idx, obj in enumerate(objects, start=1):
+                        geom_type, points = extract_object_points(obj)
+                        if not geom_type or not points:
+                            raise ValueError(
+                                f"Dataset '{self.dataset_name}' dense mode requires geometry; object_{obj_idx} is missing bbox_2d/poly/line points."
+                            )
+
             builder = self._create_builder(mode)
             merged = builder.build_many([record])
 

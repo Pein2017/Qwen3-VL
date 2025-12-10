@@ -359,12 +359,32 @@ class ReflectionEngine:
         List[Mapping[str, Any]],
         List[Mapping[str, Any]],
     ]:
-        """Parse reflection JSON into ExperienceOperation list (add/update/delete)."""
+        """Parse reflection JSON into ExperienceOperation list (add/update/delete/none).
+
+        Guardrails:
+        - forbid third-state phrases (e.g., 需复核/需人工复核/不写不通过/通过但需复核)
+          to avoid leaking review states into guidance;
+        - deduplicate by normalized text+key;
+        - truncate long text.
+        """
 
         max_ops = self.config.max_operations or len(ops_json)
         ops: List[ExperienceOperation] = []
+        forbidden_hit = False
+        seen_norms: set[str] = set()
 
         evidence_default = tuple(rec.ticket.group_id for rec in bundle.records)
+
+        def _norm(txt: str) -> str:
+            return " ".join(txt.strip().split())
+
+        forbidden_phrases = (
+            "需复核",
+            "需人工复核",
+            "不写不通过",
+            "通过但需复核",
+            "通过但需人工复核",
+        )
 
         for entry in ops_json:
             if len(ops) >= max_ops:
@@ -373,6 +393,12 @@ class ReflectionEngine:
                 continue
 
             op_raw = str(entry.get("op", "")).strip().lower()
+            if op_raw == "none":
+                # explicit no-op from the model
+                continue
+            if op_raw not in {"add", "update", "delete"}:
+                continue
+
             key_raw = entry.get("key")
             key = str(key_raw).strip() if key_raw is not None else None
             text_raw = entry.get("text")
@@ -392,12 +418,13 @@ class ReflectionEngine:
             else:
                 evid = evidence_default
 
-            if op_raw not in {"add", "update", "delete"}:
-                continue
-
             if op_raw == "delete":
                 if not key:
                     continue
+                norm_key = f"del::{key}"
+                if norm_key in seen_norms:
+                    continue
+                seen_norms.add(norm_key)
                 ops.append(
                     ExperienceOperation(
                         op="remove",
@@ -413,8 +440,19 @@ class ReflectionEngine:
             # add / update
             if not text or self._reject_experience_text(text):
                 continue
-            if len(text) > 120:
-                text = text[:120]
+            lowered = text.lower()
+            if any(p.lower() in lowered for p in forbidden_phrases):
+                forbidden_hit = True
+                continue
+            if len(text) > 160:
+                text = text[:160]
+
+            norm = _norm(text)
+            norm_key = f"{op_raw}::{key or ''}::{norm}"
+            if norm_key in seen_norms:
+                continue
+            seen_norms.add(norm_key)
+
             if op_raw == "add":
                 ops.append(
                     ExperienceOperation(
@@ -439,6 +477,9 @@ class ReflectionEngine:
                         merged_from=None,
                     )
                 )
+
+        if forbidden_hit:
+            raise ValueError("forbidden_phrase_in_reflection_ops")
 
         return tuple(ops), [], []
 

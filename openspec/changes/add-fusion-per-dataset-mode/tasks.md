@@ -1,0 +1,6 @@
+ - [x] Update `specs/fusion-dataset` with per-dataset mode selection, validation expectations, and prompt safety.
+ - [x] Extend fusion config/schema/wrappers to parse per-dataset `mode` (with `use_summary` alias) and fallback to legacy `custom.use_summary`.
+ - [x] Implement FusionCaptionDataset/BaseCaptionDataset changes for per-sample mode resolution, mode-aware prompts/templates, and strict summary/dense validation without template leakage; preserve telemetry.
+ - [x] Add/refresh unit tests covering mixed summary+dense fusion, prompt selection, and validation; adjust snapshots as needed.
+ - [x] Refresh docs/config examples (`DATA_AND_DATASETS.md`, fusion config snippets, README) to describe mixed-mode fusion and defaults.
+ - [x] Run `openspec validate add-fusion-per-dataset-mode --strict` and targeted tests; summarize results.

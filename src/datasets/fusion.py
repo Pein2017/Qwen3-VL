@@ -104,6 +104,10 @@ class FusionConfig:
                 params["val_jsonl"] = entry.get("val_jsonl")
             if "template" in entry:
                 params["template"] = entry.get("template")
+            if "mode" in entry:
+                params["mode"] = entry.get("mode")
+            if "use_summary" in entry:
+                params["use_summary"] = entry.get("use_summary")
             if "poly_fallback" in entry:
                 params["poly_fallback"] = entry.get("poly_fallback")
             if "poly_max_points" in entry:
@@ -150,6 +154,7 @@ class FusionConfig:
             train_jsonl=spec.train_jsonl,
             template=spec.template,
             domain=spec.domain,
+            mode=spec.mode,
             supports_augmentation=spec.supports_augmentation,
             supports_curriculum=spec.supports_curriculum,
             poly_fallback=spec.poly_fallback,
@@ -171,6 +176,7 @@ class FusionConfig:
             train_jsonl=spec.train_jsonl,
             template=spec.template,
             domain=spec.domain,
+            mode=spec.mode,
             supports_augmentation=spec.supports_augmentation,
             supports_curriculum=spec.supports_curriculum,
             poly_fallback=spec.poly_fallback,

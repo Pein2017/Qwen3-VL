@@ -80,7 +80,8 @@ Each record in your training data follows this structure:
 "单行汇总文本"
 ```
 Requires `summary` field in every record.
-Enable by setting `custom.use_summary: true` in the training config. Mixed dense/summary sampling is **not** implemented; the dataset runs in whichever mode `use_summary` selects.
+For fusion runs, set `mode: summary` (or `use_summary: true`) per dataset inside the fusion config to mix summary targets with dense sources. When `mode` is omitted, datasets fall back to `custom.use_summary` (default = dense) for backward compatibility.
+Dense mode validation requires at least one object with geometry; summary mode validation requires a non-empty `summary` string.
 
 ### Summary Field Standard
 
@@ -139,7 +140,7 @@ JSONL → DenseCaptionDataset → Collator → Trainer
 ### DenseCaptionDataset
 
 **Role**:
-- Selects dense vs summary mode per sample
+- Selects dense vs summary mode per sample (per-dataset when using fusion configs)
 - Applies augmentation/preprocessing
 - Attaches metadata for downstream processing and template encoding
 
@@ -150,6 +151,7 @@ custom:
   val_jsonl: /path/to/val.jsonl
   use_summary: false                # true → summary-only mode
   emit_norm: norm1000              # Coordinate format in text
+  # fusion configs: each target/source can set mode: dense|summary (alias use_summary) to override this default
 ```
 
 ## Conversion & QA Tooling

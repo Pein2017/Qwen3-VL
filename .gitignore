@@ -25,13 +25,13 @@
 !demo/**
 !.cursor/**
 !scripts/**
-!openspec/**
+!openspec/**   
 !vis_tools/**
 !data_conversion/**
 !tests/**
 !.cursorignore
 !.cursorindexingignore
-!AGENTS.md
+!*.md
 !compare/**
 !references/**/*.md
 !references/**/*.py

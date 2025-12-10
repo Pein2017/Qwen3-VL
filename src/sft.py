@@ -347,18 +347,47 @@ def main():
 
     # Extract mode control parameters
     use_summary = bool(custom_config.use_summary)
+    default_mode = "summary" if use_summary else "dense"
     summary_label_grouping = bool(
         getattr(custom_config, "summary_label_grouping", False)
     )
 
-    # Prepare system prompts for the selected mode
-    # The system prompt is set on the template by ConfigLoader.resolve_prompts
-    system_prompt_dense = getattr(sft.template, "system", None)
-    system_prompt_summary = custom_config.system_prompt_summary
+    # Load fusion config early to detect per-dataset modes
+    fusion_config_obj: FusionConfig | None = None
+    if custom_config.fusion_config:
+        fusion_config_obj = FusionConfig.from_file(custom_config.fusion_config)
 
-    if use_summary:
-        logger.info("Summary mode enabled (custom.use_summary=true)")
-        if system_prompt_summary is None:
+    def _requires_summary(spec: Any) -> bool:
+        mode_val = getattr(spec, "mode", None)
+        if mode_val not in {"dense", "summary", None}:
+            raise ValueError(
+                f"Invalid fusion dataset mode '{mode_val}' for {getattr(spec, 'name', spec)}; "
+                "expected 'dense' or 'summary'."
+            )
+        resolved_mode = mode_val if mode_val is not None else default_mode
+        return resolved_mode == "summary"
+
+    needs_summary_mode = use_summary or (
+        fusion_config_obj is not None
+        and any(
+            _requires_summary(spec)
+            for spec in (*fusion_config_obj.targets, *fusion_config_obj.sources)
+        )
+    )
+
+    # Prepare system prompts for both modes (keep dense prompt even if summary is default)
+    system_prompt_dense = getattr(sft.template, "system", None)
+    try:
+        if system_prompt_dense is None or use_summary:
+            from .config.prompts import build_dense_system_prompt
+
+            system_prompt_dense = build_dense_system_prompt(custom_config.json_format)
+    except Exception:
+        pass
+
+    system_prompt_summary = custom_config.system_prompt_summary
+    if needs_summary_mode:
+        if system_prompt_summary is None and use_summary:
             system_prompt_summary = getattr(sft.template, "system", None)
         if system_prompt_summary is None:
             try:
@@ -368,18 +397,25 @@ def main():
                 logger.info("Loaded default SYSTEM_PROMPT_SUMMARY")
             except ImportError as exc:
                 raise ValueError(
-                    "custom.use_summary is true but no summary system prompt was provided."
+                    "Summary mode is enabled but no summary system prompt was provided."
                 ) from exc
-        system_prompt_dense = None
     else:
-        logger.info("Dense mode only (custom.use_summary=false)")
+        system_prompt_summary = None
+
+    if use_summary:
+        logger.info(
+            "Default summary mode enabled (custom.use_summary=true); fusion datasets may override per-dataset."
+        )
+    else:
+        logger.info(
+            "Default dense mode (custom.use_summary=false); set per-dataset mode in fusion config to enable summary samples."
+        )
 
     summary_preprocessor = None
     if summary_label_grouping:
-        if not use_summary:
+        if not needs_summary_mode:
             logger.warning(
-                "custom.summary_label_grouping is true but use_summary is false; "
-                "label grouping will be ignored."
+                "custom.summary_label_grouping is true but no summary dataset is active; label grouping will be ignored."
             )
         else:
             try:
@@ -398,9 +434,7 @@ def main():
     dataset_seed = 42
     dataset: Any
     fusion_callback: FusionEpochCallback | None = None
-    fusion_config_obj: FusionConfig | None = None
-    if custom_config.fusion_config:
-        fusion_config_obj = FusionConfig.from_file(custom_config.fusion_config)
+    if fusion_config_obj:
         from .datasets.unified_fusion_dataset import FusionCaptionDataset
 
         dataset = FusionCaptionDataset(

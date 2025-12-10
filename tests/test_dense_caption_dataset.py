@@ -32,7 +32,7 @@ def _make_dataset():
         "objects": [
             {
                 "desc": "obj_1",
-                "bbox": [0.0, 0.0, 10.0, 10.0],
+                "bbox_2d": [0.0, 0.0, 10.0, 10.0],
             }
         ],
         "width": 10,

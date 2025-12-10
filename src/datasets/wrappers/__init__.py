@@ -82,6 +82,22 @@ def _parse_prompt(value: Any, *, field_name: str) -> Optional[str]:
     raise TypeError(f"{field_name} must be a string if provided")
 
 
+def _parse_mode(value: Any, *, field_name: str) -> Optional[Literal["dense", "summary"]]:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return "summary" if value else "dense"
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"dense", "summary"}:
+            return normalized  # type: ignore[return-value]
+        if normalized in {"true", "1", "yes", "on"}:
+            return "summary"
+        if normalized in {"false", "0", "no", "off"}:
+            return "dense"
+    raise ValueError(f"{field_name} must be one of {{dense, summary}} or a boolean")
+
+
 class DatasetWrapper(abc.ABC):
     """Base class for converting fusion config entries into DatasetSpec objects."""
 
@@ -89,6 +105,7 @@ class DatasetWrapper(abc.ABC):
     default_name: str = "dataset"
     domain: DatasetDomain = "target"
     template_id: str = "bbu_dense"
+    summary_template_id: Optional[str] = None
     supports_augmentation: bool = True
     supports_curriculum: bool = True
     default_poly_fallback: Literal["off", "bbox_2d"] = "off"
@@ -108,10 +125,21 @@ class DatasetWrapper(abc.ABC):
                 f"{cls.__name__} requires params.train_jsonl to be set"
             )
         val_jsonl = mapping.get("val_jsonl")
-        template_value = mapping.get("template")
-        template = (
-            str(template_value).strip() if template_value else cls.template_id
+        mode_declared = _parse_mode(
+            mapping.get("mode"),
+            field_name=f"{cls.__name__}.mode",
         )
+        if mode_declared is None and "use_summary" in mapping:
+            mode_declared = _parse_mode(
+                mapping.get("use_summary"),
+                field_name=f"{cls.__name__}.use_summary",
+            )
+        template_value = mapping.get("template")
+        template = str(template_value).strip() if template_value else None
+        if not template:
+            raise ValueError(
+                f"{cls.__name__} requires params.template; no fallback to {cls.template_id} is allowed"
+            )
         poly_fallback = mapping.get("poly_fallback")
         if poly_fallback is None:
             poly_fallback = cls.default_poly_fallback
@@ -174,6 +202,7 @@ class DatasetWrapper(abc.ABC):
             prompt_system=system_prompt,
             seed=dataset_seed,
             sample_without_replacement=sample_without_replacement,
+            mode=mode_declared,
         )
 
 
@@ -217,6 +246,7 @@ def build_dataset_spec(
 class TargetDatasetWrapper(DatasetWrapper):
     domain: DatasetDomain = "target"
     template_id = "bbu_dense"
+    summary_template_id = "bbu_summary"
     supports_augmentation = True
     supports_curriculum = True
 
@@ -237,6 +267,7 @@ class BbuDatasetWrapper(TargetDatasetWrapper):
 @register_dataset_wrapper("rru")
 class RruDatasetWrapper(TargetDatasetWrapper):
     default_name = "rru"
+    summary_template_id = "rru_summary"
 
 
 @register_dataset_wrapper("coco")

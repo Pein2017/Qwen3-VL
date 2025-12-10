@@ -1,37 +1,38 @@
 extends: ./sft_base.yaml
 
 model:
-  model: output/12-4/res_1024_fusion_merged/checkpoint-1116
+  model: output/12-9/fusion_merged/checkpoint-1880
 
 tuner:
-  # Freeze vision and aligner, train full LLM tower (lm_head fixed)
-  freeze_llm: false   # Train full LLM tower via target_regex
+  # Freeze vision/aligner; LoRA only on last-6 LLM blocks (lm_head fixed)
+  freeze_llm: false   # Enable LoRA adapters on selected LLM layers
   freeze_vit: true    # Freeze vision encoder
   freeze_aligner: true  # Freeze MLP aligner
-  # LoRA targets: all LLM blocks (q/k/v/o + MLP) excluding lm_head
+  # LoRA targets: LLM layers 30-35 (q/k/v/o + MLP) excluding lm_head
+  target_regex: '^(?:model\.)?language_model\.layers\.(?:30|31|32|33|34|35)\.(?:self_attn\.(?:q_proj|k_proj|v_proj|o_proj)|mlp\.(?:gate_proj|up_proj|down_proj))$'
   modules_to_save: []  # Keep lm_head fixed (no tuning/saving)
   lora_rank: 16
   lora_alpha: 32
 
 training:
-  per_device_train_batch_size: 4
-  per_device_eval_batch_size: 8
+  per_device_train_batch_size: 2
+  per_device_eval_batch_size: 4
   effective_batch_size: 32
   num_train_epochs: 6
   output_dir: ./output/12-9/summary
   logging_dir: ./tb/12-9/summary
-  run_name: res_1024-bbu_rru_fused-lrs_1e-4-dlora_16_32-fusion_chat
+  run_name: res_768-bbu_rru_fused-lrs_1e-4-dlora_16_32-last_6_llm-fusion_all
   learning_rate: 1.0e-4
   vit_lr: 1.0e-7
   aligner_lr: 1.0e-7
   save_delay_steps: 300
   
 custom:
-  train_jsonl: data/bbu_full_1024_poly-need_review/train.jsonl
-  val_jsonl: data/bbu_full_1024_poly-need_review/val.jsonl
+  # train_jsonl: data/bbu_full_768_poly-need_review/train.jsonl
+  # val_jsonl: data/bbu_full_768_poly-need_review/val.jsonl
   fusion_config: configs/fusion/bbu_summary_lang_chat_0p2.yaml
   emit_norm: norm1000
-  # Toggle summary-only mode (no mixed sampling)
+  # Default to summary; individual fusion datasets can override with mode
   use_summary: true
   # Collapse identifiable 标签/* entries into 标签/可以识别 while keeping 无法识别 separate
   summary_label_grouping: true

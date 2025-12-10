@@ -22,11 +22,13 @@ AI quality‑inspection system with two stages:
 - **Stage‑1 (Stage‑A) Basic Object Recognition** — single‑image evidence capture with rare/long‑tail object coverage.
 - **Stage‑2 (Stage‑B) Group‑Ticket Verification** — consumes Stage‑1 evidence + labels to issue binary `pass|fail` verdicts with auditable rationale.
 
+This is the canonical global instruction set for all agents (Claude, Codex, etc.). Keep any agent-specific ergonomics as tiny addenda; agent files (e.g., `CLAUDE.md`) should symlink here so updates stay in one place.
+
 Training, inference, and guidance workflows share a single repository. Start with `docs/README.md` (index) and `docs/training/REFERENCE.md` (architecture map).
 
 ## Component Roles
-- **Stage‑1 (Stage‑A) Inference** — `src/stage_a/`, `scripts/stage_a_infer.sh`; owns per‑image prompts, mission validation, and summary JSONL emission.
-- **Stage‑2 (Stage‑B) Verdict & Guidance** — `src/stage_b/`, `scripts/stage_b_run.sh`; ingests Stage‑A JSONL + labels, runs rollout/critic/selection/reflection, returns `pass|fail` per ticket.
+- **Stage‑1 (Stage‑A) Inference** — `src/stage_a/`, `scripts/stage_a.sh`; owns per‑image prompts, mission validation, and summary JSONL emission.
+- **Stage‑2 (Stage‑B) Verdict & Guidance** — `src/stage_b/`, `scripts/stage_b.sh`; ingests Stage‑A JSONL + labels, runs rollout/critic/selection/reflection, returns `pass|fail` per ticket.
 - **Data Preprocessing & Intake** — `data_conversion/`; optional offline step that normalizes human‑annotated exports (taxonomy, geometry canonicalization, smart resize) into train/val JSONL plus QA artifacts.
 - **Training & Fusion** — `src/sft.py`, `src/datasets/`, `configs/`, `scripts/train.sh`; config‑first fine‑tuning and multi‑dataset fusion.
 - **Docs & Runbooks** — `docs/` (public), `openspec/` (governance); keep doc ↔ code pointers current.
@@ -35,8 +37,8 @@ Training, inference, and guidance workflows share a single repository. Start wit
 1. **Data intake** → optional `data_conversion/convert_dataset.sh` to produce train/val/tiny JSONL and validation reports.
 2. **Fusion/curation** → prepare `custom.train_jsonl` or `custom.fusion_config` (see `docs/data/DATA_AND_DATASETS.md`, `docs/data/UNIFIED_FUSION_DATASET.md`).
 3. **Train/finetune** → run `scripts/train.sh --config <yaml>`; update `docs/training/TRAINING_PLAYBOOK.md` & `docs/training/REFERENCE.md` if behaviors change.
-4. **Stage‑1 inference** → `scripts/stage_a_infer.sh` writes per‑image summaries; verify outputs before Stage‑2.
-5. **Stage‑2 verdicts** → `scripts/stage_b_run.sh` emits selections/reflection logs; promote guidance snapshots as needed.
+4. **Stage‑1 inference** → `scripts/stage_a.sh` wraps `python -m src.stage_a.cli` and writes per‑image summaries; verify outputs before Stage‑2.
+5. **Stage‑2 verdicts** → `scripts/stage_b.sh` wraps `python -m src.stage_b.runner` and emits selections/reflection logs; promote guidance snapshots as needed.
 6. **Documentation & governance** → sync `docs/` with changes; open/modify OpenSpec changes only when behavior or contracts shift.
 
 ## Codebase Layout
@@ -48,6 +50,17 @@ Training, inference, and guidance workflows share a single repository. Start wit
 - `openspec/` — Change management specs and proposals
 - `vis_tools/` — Visualization & QA helpers
 
+## Key Code Anchors
+- Training entry: `src/sft.py` (SwiftSft integration)
+- Config loading: `src/config/loader.py` (frozen dataclasses + validation)
+- Dense caption dataset: `src/datasets/dense_caption.py`
+- Message builder: `src/datasets/builders/jsonlines.py`
+- Geometry helpers: `src/datasets/geometry.py`
+- Augmentation ops: `src/datasets/augmentation/ops.py`
+- Stage‑A pipeline: `src/stage_a/`
+- Stage‑B pipeline: `src/stage_b/`
+- Logging: `src/utils/logger.py` (use `get_logger`)
+
 ## Environment
 - Use `ms` conda environment for all Python scripts
 - `ms-swift` installed at `/data/ms-swift`
@@ -56,12 +69,25 @@ Training, inference, and guidance workflows share a single repository. Start wit
 - **When to prefer Serena MCP**: You need `find_symbol`/`get_symbols_overview` to map a file, `find_referencing_symbols` to update callers, or symbol-level edit helpers to patch a whole function/class. Skip MCP when you already know the file/lines or are just reading docs.
 - **MCP workflow (breadth → depth)**: Start with `get_symbols_overview` or `find_symbol` to locate targets, inspect specific bodies only as needed, use `find_referencing_symbols` before edits, then apply symbol-level edits. Fall back to plain `read_file` only when you truly need the full text.
 
+## Quick Commands (conda env `ms`)
+- Training: `conda run -n ms bash scripts/train.sh config=/abs/path/to/config.yaml gpus=0`
+- Tests: `conda run -n ms pytest tests/ -v` (or `tests/rl/test_prompt_batch_smoke.py`)
+- Stage‑A: `conda run -n ms bash scripts/stage_a.sh`
+- Stage‑B: `conda run -n ms bash scripts/stage_b.sh`
+- Data conversion: `conda run -n ms bash data_conversion/convert_dataset.sh`
+- Visualization: `conda run -n ms python vis_tools/vis_augment_compare.py --config /abs/config.yaml`
+- LoRA merge: `conda run -n ms bash scripts/merge_stage2_lora.sh`
+
 ## Development Approach
 - **Configuration-first**: Edit YAML in `configs/` rather than adding ad‑hoc flags
 - **Reuse over custom**: Prefer ms‑swift/transformers primitives before adding custom modules
 - **Documentation**: Update `docs/` when visible behavior, configs, or workflows change
 - **Spec-driven**: For features or major changes, consult `openspec/AGENTS.md` and follow the change process
 - **Geometry-aware**: Keep augmentation and data handling geometry‑aware; add tests/visualization when touching `src/datasets/`
+
+## Geometry & Data Flow Notes
+- Canonical geometry keys: `bbox_2d`, `poly` (even-length list ≥), `line`.
+- Typical sample path: load JSONL record → optional augmentation (epoch-seeded RNG) → build one-turn messages with embedded images → template encodes (adds vision tokens, normalizes coords to norm1000) → train on `input_ids`, `labels`, `pixel_values`, `image_grid_thw`, `objects`.
 
 ## Design Principles (High-Level)
 - **Explicit over implicit**: No silent defaults; all config via YAML/CLI/constructor with early validation
@@ -80,7 +106,53 @@ Training, inference, and guidance workflows share a single repository. Start wit
 - **Third-party additions**: prefer ms‑swift/transformers primitives; justify new deps and update `docs/platform/UPSTREAM_DEPENDENCIES.md` when behavior changes.
 - **Validation before merge**: run existing tests or targeted probes for dataset/geometry changes; add probes when altering preprocessing.
 
+## OpenSpec workflow for behavior changes
+- For capability/behavior shifts, create a spec under `openspec/changes/<change-id>/` and validate with `openspec validate <change-id> --strict` before implementation.
+- Skip proposals only for bug fixes, typos, dependency bumps, config-only changes, or tests for existing behavior.
+
+## Codex MCP Collaboration
+- Always consider how to collaborate with Codex via the Codex MCP tool and use it as an objective counterpart.
+- Mandatory steps:
+  1. After forming an initial analysis of the user request, send the requirements and your initial approach to Codex and ask it to refine the analysis and implementation plan.
+  2. Before any coding, request a code prototype from Codex (ask only for a unified diff patch; forbid real modifications). Once received, treat it only as a logical reference and fully rewrite the changes yourself to production-grade readability and maintainability before applying them.
+  3. After any real coding, immediately ask Codex to review the code changes and confirm requirement coverage.
+  4. Codex is a reference only—maintain your own judgment and challenge Codex when appropriate. The goal is a unified, precise plan reached through debate.
+
+## Codex Tool Invocation Specification
+1. Tool overview
+- Codex MCP provides a `codex` tool for AI-assisted coding, invoked via MCP (no CLI needed).
+
+2. Tool parameters
+- Required: PROMPT (string) — task instruction to Codex.
+- Required: cd (Path) — working directory root for Codex.
+- Optional: sandbox ("read-only" default, "workspace-write", "danger-full-access").
+- Optional: SESSION_ID (UUID | null) — continue a prior session; default None starts a new one.
+- Optional: skip_git_repo_check (boolean) — allow running outside Git; default False.
+- Optional: return_all_messages (boolean) — include reasoning and tool calls; default False.
+- Optional: image (List[Path] | null) — attach one or more images to the prompt.
+- Optional: model (string | null) — override model; otherwise use user default.
+- Optional: yolo (boolean | null) — skip sandbox approvals; default False.
+- Optional: profile (string | null) — load settings from `~/.codex/config.toml`.
+
+3. Usage
+- New conversation: omit SESSION_ID or pass None; Codex returns a new SESSION_ID for future turns.
+- Continue conversation: pass the prior SESSION_ID to preserve context.
+
+4. Invocation rules
+- Always save the returned SESSION_ID for later calls.
+- `cd` must point to an existing directory; otherwise the tool silently fails.
+- Forbid Codex from making real edits; use `sandbox="read-only"` and ask for unified diff patches only.
+
+5. Notes
+- Session management: track SESSION_ID to avoid confusion.
+- Working directory: ensure `cd` is correct and exists.
+- Error handling: check the `success` field and handle failures.
+
 ## Important
 - **Always interrupt if clarification is needed or anything is vague, ambiguous, or uncertain**
 - Run all Python scripts with `ms` conda environment
 - For commands and detailed configs, see `docs/README.md` and `docs/training/REFERENCE.md`
+- Do not hand-craft `<|image_pad|>` tokens (chat template handles it)
+- Packing is removed; training uses padded batches only
+- With `truncation_strategy: raise`, over-length samples drop and retry
+- Hard-sample mining is deprecated; configs with `custom.hard_sample_mining` fail validation

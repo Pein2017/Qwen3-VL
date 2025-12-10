@@ -1,23 +1,23 @@
 extends: ../fused_data/sft_base.yaml
 
 model:
-  model: output/12-2/fusion_dlora_merged/checkpoint-4650
+  model: output/12-9/fusion_merged/checkpoint-1880
 
 training:
-  output_dir: ./output/12-4/res_1024_fusion
-  logging_dir: ./tb/12-4/res_1024_fusion
-  run_name: epoch_12-lrs_5-8-10-smooth_aug
-  num_train_epochs: 12
+  output_dir: ./output/12-9/res_1024_fusion
+  logging_dir: ./tb/12-9/res_1024_fusion
+  run_name: epoch_6-lrs_5-8-10-smooth_aug
+  num_train_epochs: 6
   warmup_ratio: 0.05
   learning_rate: 5.0e-5
   vit_lr: 8.0e-5
   aligner_lr: 1.0e-4
-  save_delay_steps: 500
+  save_delay_steps: 200
   # logging_steps: 1
   # eval_steps: 1
-  # per_device_train_batch_size: 2
-  # per_device_eval_batch_size: 4
-  # effective_batch_size: 16
+  per_device_train_batch_size: 2
+  per_device_eval_batch_size: 4
+  effective_batch_size: 32
 
 custom:
   fusion_config: configs/fusion/bbu_rru_lvis_coig_1024.yaml

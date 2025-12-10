@@ -1,17 +1,16 @@
 stage_a_paths:
   - output_post/stage_a/挡风板安装检查_stage_a_tiny.jsonl
-
 seed: 17
 
 model:
-  model_name_or_path: output/12-4/res_1024_fusion_merged/checkpoint-1116
+  model_name_or_path: output/12-9/summary_merged/checkpoint-558
   torch_dtype: bfloat16
   device_map: auto
 
 guidance:
   path: output_post/stage_b/initial_guidance.json
   retention: 5
-  reset_on_rerun: false
+  reset_on_rerun: true
 
 output:
   root: output_post/stage_b
@@ -74,5 +73,5 @@ manual_review:
   min_verdict_agreement: 0.8  # fraction of candidates sharing the same verdict
 
 runner:
-  epochs: 2 # Tiny smoke: 单轮
+  epochs: 3 # Tiny smoke: 单轮
   rollout_batch_size: 1  

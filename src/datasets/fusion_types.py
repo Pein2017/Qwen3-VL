@@ -20,6 +20,8 @@ class DatasetSpec:
     domain: Literal["target", "source"]
     supports_augmentation: bool
     supports_curriculum: bool
+    # Optional explicit mode; defaults applied elsewhere when None.
+    mode: Optional[Literal["dense", "summary"]] = None
     poly_fallback: Literal["off", "bbox_2d"] = "off"
     poly_max_points: Optional[int] = None
     val_jsonl: Optional[Path] = None

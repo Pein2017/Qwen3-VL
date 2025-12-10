@@ -94,6 +94,7 @@ def _reset_mission_artifacts(mission_dir: Path) -> None:
         "selections.jsonl",
         "manual_review_queue.jsonl",
         "failure_malformed.jsonl",
+        "reflection.jsonl",
     ):
         path = mission_dir / filename
         if path.exists():
@@ -221,6 +222,10 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
     seed_everything(config.seed)
 
     run_dir = config.output.root / config.output.run_name
+    if run_dir.exists():
+        logger.info("Cleaning existing run directory to avoid stale artifacts: %s", run_dir)
+        shutil.rmtree(run_dir)
+    run_dir.mkdir(parents=True, exist_ok=True)
 
     # Ingest all tickets to discover missions
     logger.info("Ingesting Stage-A outputs")
@@ -362,10 +367,16 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
 
                     wrapped_candidates: List[TrajectoryWithSignals] = []
                     for cand in parsed_candidates:
+                        reason_text = cand.reason or ""
+                        verdict_val = cand.verdict
+                        contains_review = any(
+                            term in reason_text for term in ("需复核", "需人工复核")
+                        )
                         format_ok = (
                             cand.format_ok
-                            and cand.verdict is not None
-                            and bool((cand.reason or "").strip())
+                            and verdict_val is not None
+                            and bool(reason_text.strip())
+                            and not (verdict_val == "pass" and contains_review)
                         )
                         if not format_ok:
                             failure_entry = {
@@ -518,6 +529,26 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                                             "reason": "no_support_after_reflection",
                                         },
                                     )
+                        # If winning candidate still mismatches label, enqueue manual review
+                        for rec in pending_records:
+                            if rec.winning_candidate is None:
+                                continue
+                            win_idx = rec.winning_candidate
+                            win_cand = next(
+                                (c for c in rec.candidates if c.candidate_index == win_idx),
+                                None,
+                            )
+                            if win_cand and win_cand.signals and win_cand.signals.label_match is False:
+                                _append_jsonl(
+                                    manual_review_path,
+                                    {
+                                        "group_id": rec.ticket.group_id,
+                                        "mission": rec.ticket.mission,
+                                        "label": rec.ticket.label,
+                                        "model_verdict": win_cand.verdict,
+                                        "reason": "label_mismatch_after_reflection",
+                                    },
+                                )
 
                         last_reflection_id = (
                             outcome.reflection_id if outcome.applied else None
@@ -559,6 +590,26 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                                     "reason": "no_support_after_reflection",
                                 },
                             )
+                # If winning candidate still mismatches label, enqueue manual review
+                for rec in pending_records:
+                    if rec.winning_candidate is None:
+                        continue
+                    win_idx = rec.winning_candidate
+                    win_cand = next(
+                        (c for c in rec.candidates if c.candidate_index == win_idx),
+                        None,
+                    )
+                    if win_cand and win_cand.signals and win_cand.signals.label_match is False:
+                        _append_jsonl(
+                            mission_dir / "manual_review_queue.jsonl",
+                            {
+                                "group_id": rec.ticket.group_id,
+                                "mission": rec.ticket.mission,
+                                "label": rec.ticket.label,
+                                "model_verdict": win_cand.verdict,
+                                "reason": "label_mismatch_after_reflection",
+                            },
+                        )
 
                 last_reflection_id = outcome.reflection_id if outcome.applied else None
                 pending_records.clear()

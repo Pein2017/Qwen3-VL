@@ -43,8 +43,8 @@ Whenever you add or modify code in the directories above, update the associated 
 | `train.sh` | `scripts/` | Conda-aware launcher for `python -m src.sft` / `torchrun` with config auto-resolution and debug toggles. |
 | `fuse_datasets.py` | `scripts/` | Offline builder for `src/datasets/fusion.py` configs; pre-mixes BBU + auxiliary JSONL with deterministic ratios. |
 | `download.py` | `scripts/` | Download helper for internal/raw corpora (mirrors instructions in `docs/data/DATA_AND_DATASETS.md`). |
-| `stage_a_infer.sh` | `scripts/` | Mission-aware wrapper around `src.stage_a.cli` with guardrails for checkpoint/input directories. |
-| `stage_b_run.sh` | `scripts/` | Stage-B reflection loop launcher; wires configs to `src.stage_b.runner`. |
+| `stage_a.sh` | `scripts/` | Mission-aware wrapper around `src.stage_a.cli` with guardrails for checkpoint/input directories. |
+| `stage_b.sh` | `scripts/` | Stage-B reflection loop launcher; wires configs to `src.stage_b.runner`. |
 | `debug_fusion_template_clone.py` | `scripts/` | Smoke-test for template reuse in fused datasets (regression guard for cloning bugs). |
 | `merge_stage2_lora.sh` | `scripts/` | Utility to merge staged LoRA checkpoints for deployment. |
 
@@ -135,8 +135,8 @@ Vision Encoder (ViT) → Aligner (Projector) → LLM
 | Data & Datasets | `src/datasets/`, `data_conversion/`, `scripts/fuse_datasets.py` |
 | Augmentation | `src/datasets/augmentation/`, `src/datasets/geometry.py`, `vis_tools/` |
 | Training Playbook & Reference | `src/sft.py`, `scripts/train.sh`, `configs/`, `src/callbacks/`, `src/trainers/` |
-| Stage-A Runtime | `src/stage_a/`, `scripts/stage_a_infer.sh`, `src/utils/logger.py` |
-| Stage-B Runtime | `src/stage_b/`, `scripts/stage_b_run.sh`, `configs/stage_b/` |
+| Stage-A Runtime | `src/stage_a/`, `scripts/stage_a.sh`, `src/utils/logger.py` |
+| Stage-B Runtime | `src/stage_b/`, `scripts/stage_b.sh`, `configs/stage_b/` |
 | Public Data | `public_data/`, `public_data/scripts/`, `public_data/tests/` |
 | Utils & Logging | `src/utils/`, `src/callbacks/` |
 

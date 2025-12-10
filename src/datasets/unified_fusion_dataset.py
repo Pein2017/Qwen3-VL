@@ -16,14 +16,18 @@ from torch.utils.data import get_worker_info
 
 from src.utils import get_logger
 
-from ..config.prompts import USER_PROMPT_SUMMARY, get_template_prompts
+from ..config.prompts import (
+    SYSTEM_PROMPT_SUMMARY,
+    USER_PROMPT_SUMMARY,
+    get_template_prompts,
+)
 from .builders import JSONLinesBuilder
 from .contracts import validate_conversation_record
 from .dense_caption import LAST_SAMPLE_DEBUG, BaseCaptionDataset
 from .fusion import FusionConfig, _compute_target_quotas, _sample_indices
 from .fusion_types import DatasetSpec
 from .preprocessors import AugmentationPreprocessor, ObjectCapPreprocessor
-from .utils import load_jsonl
+from .utils import extract_object_points, load_jsonl
 
 
 @dataclass(frozen=True)
@@ -37,6 +41,7 @@ class _PromptResolution:
 class _DatasetPolicy:
     spec: DatasetSpec
     prompts: _PromptResolution
+    mode: Literal["dense", "summary"]
     augmentation_enabled: bool
     curriculum_enabled: bool
     max_objects_per_image: Optional[int]
@@ -96,7 +101,32 @@ class FusionCaptionDataset(BaseCaptionDataset):
         ]
         self._primary_target = self._target_names[0]
 
-        default_system_prompt = system_prompt_dense
+        default_mode: Literal["dense", "summary"] = (
+            "summary" if use_summary else "dense"
+        )
+        default_user_prompt_dense = user_prompt
+        default_system_prompt_dense = system_prompt_dense
+        default_system_prompt_summary = system_prompt_summary
+
+        resolved_modes: dict[str, Literal["dense", "summary"]] = {}
+        needs_summary_prompt = default_mode == "summary"
+        for spec in [*fusion_config.targets, *fusion_config.sources]:
+            mode_val: Literal["dense", "summary"] = (
+                spec.mode if spec.mode is not None else default_mode
+            )
+            resolved_modes[spec.name] = mode_val
+            if mode_val == "summary":
+                needs_summary_prompt = True
+
+        if needs_summary_prompt and default_system_prompt_summary is None:
+            if default_mode == "summary":
+                default_system_prompt_summary = getattr(base_template, "system", None)
+        if needs_summary_prompt and default_system_prompt_summary is None:
+            default_system_prompt_summary = SYSTEM_PROMPT_SUMMARY
+        if needs_summary_prompt and default_system_prompt_summary is None:
+            raise ValueError(
+                "Summary mode requested but no summary system prompt was provided."
+            )
         # Load pools for the selected split
         if split == "eval" and target_eval_jsonl is not None:
             override_target_path = Path(target_eval_jsonl)
@@ -104,6 +134,7 @@ class FusionCaptionDataset(BaseCaptionDataset):
             override_target_path = None
 
         for target in fusion_config.targets:
+            mode = resolved_modes.get(target.name, default_mode)
             if split == "eval":
                 target_path = override_target_path or target.val_jsonl
             else:
@@ -119,18 +150,21 @@ class FusionCaptionDataset(BaseCaptionDataset):
                     f"FusionCaptionDataset requires at least one record for target '{target.name}'"
                 )
             self._record_pools[target.name] = [
-                self._annotate_record(rec, target) for rec in target_records
+                self._annotate_record(rec, target, mode) for rec in target_records
             ]
 
             # Build prompt/policy for target
             target_prompts = self._resolve_prompts(
                 target,
-                default_user_prompt=user_prompt,
-                default_system_prompt=default_system_prompt,
+                mode=mode,
+                default_user_prompt_dense=default_user_prompt_dense,
+                default_system_prompt_dense=default_system_prompt_dense,
+                default_system_prompt_summary=default_system_prompt_summary,
             )
             self._policies[target.name] = _DatasetPolicy(
                 spec=target,
                 prompts=target_prompts,
+                mode=mode,
                 augmentation_enabled=target.supports_augmentation,
                 curriculum_enabled=target.supports_curriculum,
                 max_objects_per_image=None,  # targets stay uncapped
@@ -140,14 +174,18 @@ class FusionCaptionDataset(BaseCaptionDataset):
 
         # Sources
         for source in fusion_config.sources:
+            mode = resolved_modes.get(source.name, default_mode)
             policy = self._resolve_prompts(
                 source,
-                default_user_prompt=user_prompt,
-                default_system_prompt=default_system_prompt,
+                mode=mode,
+                default_user_prompt_dense=default_user_prompt_dense,
+                default_system_prompt_dense=default_system_prompt_dense,
+                default_system_prompt_summary=default_system_prompt_summary,
             )
             self._policies[source.name] = _DatasetPolicy(
                 spec=source,
                 prompts=policy,
+                mode=mode,
                 augmentation_enabled=False,  # sources remain clean
                 curriculum_enabled=False,
                 max_objects_per_image=source.max_objects_per_image,
@@ -178,7 +216,7 @@ class FusionCaptionDataset(BaseCaptionDataset):
                     f"Fusion source '{source.name}' is empty while ratio={source.ratio}"
                 )
             self._record_pools[source.name] = [
-                self._annotate_record(rec, source) for rec in source_records
+                self._annotate_record(rec, source, mode) for rec in source_records
             ]
 
         # Initialize parent BaseCaptionDataset with a single template instance.
@@ -187,15 +225,18 @@ class FusionCaptionDataset(BaseCaptionDataset):
             base_records=all_records,
             template=base_template,
             user_prompt=user_prompt,
+            user_prompt_summary=USER_PROMPT_SUMMARY,
             emit_norm=emit_norm,
             json_format=json_format,
             augmenter=None,
             preprocessor=preprocessor,
             bypass_prob=bypass_prob,
             curriculum_state=curriculum_state,
-            use_summary=use_summary,
+            use_summary=default_mode == "summary",
             system_prompt_dense=system_prompt_dense,
-            system_prompt_summary=system_prompt_summary,
+            system_prompt_summary=default_system_prompt_summary
+            if needs_summary_prompt
+            else system_prompt_summary,
             seed=seed,
             dataset_name=self._primary_target,
             allow_empty=True,
@@ -228,7 +269,9 @@ class FusionCaptionDataset(BaseCaptionDataset):
 
     @staticmethod
     def _annotate_record(
-        record: MutableMapping[str, Any], spec: DatasetSpec
+        record: MutableMapping[str, Any],
+        spec: DatasetSpec,
+        mode: Literal["dense", "summary"],
     ) -> dict[str, Any]:
         """Annotate record with source dataset metadata."""
         annotated = copy.deepcopy(dict(record))
@@ -238,6 +281,7 @@ class FusionCaptionDataset(BaseCaptionDataset):
         metadata["_fusion_source"] = spec.name
         metadata["_fusion_template"] = spec.template
         metadata["_fusion_domain"] = spec.domain
+        metadata["_fusion_mode"] = mode
         annotated["metadata"] = metadata
         return annotated
 
@@ -273,10 +317,40 @@ class FusionCaptionDataset(BaseCaptionDataset):
         self,
         spec: DatasetSpec,
         *,
-        default_user_prompt: str,
-        default_system_prompt: Optional[str],
+        mode: Literal["dense", "summary"],
+        default_user_prompt_dense: str,
+        default_system_prompt_dense: Optional[str],
+        default_system_prompt_summary: Optional[str],
     ) -> _PromptResolution:
-        domain_system, domain_user = get_template_prompts(spec.template)
+        if mode == "summary" and default_system_prompt_summary is None:
+            raise ValueError(
+                f"Summary mode requested for dataset '{spec.name}' but no summary system prompt provided."
+            )
+
+        template_name = spec.template
+        if not template_name:
+            raise ValueError(
+                f"Dataset '{spec.name}' must specify a template; no fallback is allowed."
+            )
+        if mode == "summary" and "summary" not in template_name.lower():
+            raise ValueError(
+                f"Dataset '{spec.name}' is in summary mode but template '{template_name}' "
+                "is not a summary template. Provide an explicit *summary template."
+            )
+        if mode == "dense" and "summary" in template_name.lower():
+            raise ValueError(
+                f"Dataset '{spec.name}' is in dense mode but template '{template_name}' "
+                "is a summary template. Use the matching dense template."
+            )
+        domain_system, domain_user = get_template_prompts(template_name)
+
+        if mode == "summary":
+            default_user_prompt = USER_PROMPT_SUMMARY
+            default_system_prompt = default_system_prompt_summary
+        else:
+            default_user_prompt = default_user_prompt_dense
+            default_system_prompt = default_system_prompt_dense
+
         user_prompt = (
             spec.prompt_user
             if spec.prompt_user is not None
@@ -295,6 +369,41 @@ class FusionCaptionDataset(BaseCaptionDataset):
         else:
             source = "default"
         return _PromptResolution(user=user_prompt, system=system_prompt, source=source)
+
+    def _validate_record_for_mode(
+        self,
+        record: Mapping[str, Any],
+        mode: Literal["dense", "summary"],
+        dataset_name: str,
+    ) -> None:
+        """Validate record contents based on the resolved mode."""
+        if record.get("messages"):
+            # Pre-authored chat records bypass geometry/summary validation.
+            return
+        if mode == "summary":
+            summary = record.get("summary")
+            if not isinstance(summary, str) or not summary.strip():
+                raise ValueError(
+                    f"Fusion dataset '{dataset_name}' is in summary mode but record is missing a non-empty 'summary' string."
+                )
+            return
+
+        objects = record.get("objects") or []
+        if not isinstance(objects, list):
+            raise ValueError(
+                f"Fusion dataset '{dataset_name}' is in dense mode but 'objects' is not a list."
+            )
+        if not objects:
+            raise ValueError(
+                f"Fusion dataset '{dataset_name}' is in dense mode but record has no objects."
+            )
+
+        for idx, obj in enumerate(objects, start=1):
+            geom_type, points = extract_object_points(obj)
+            if not geom_type or not points:
+                raise ValueError(
+                    f"Fusion dataset '{dataset_name}' dense mode requires geometry; object_{idx} is missing bbox_2d/poly/line points."
+                )
 
     def _build_train_schedule(self) -> None:
         target_pool_sizes = {
@@ -411,6 +520,7 @@ class FusionCaptionDataset(BaseCaptionDataset):
                 continue
             plan[name] = {
                 "count": self._epoch_counts.get(name, 0),
+                "mode": policy.mode,
                 "augmentation": bool(
                     policy.augmentation_enabled
                     and self._augmenter is not None
@@ -515,7 +625,7 @@ class FusionCaptionDataset(BaseCaptionDataset):
         else:
             objects_after = len(record.get("objects") or [])
 
-        if self.mode == "summary" and self.preprocessor is not None:
+        if policy.mode == "summary" and self.preprocessor is not None:
             if hasattr(self.preprocessor, "rng"):
                 self.preprocessor.rng = rng_local
             processed_summary = self.preprocessor(record)
@@ -525,14 +635,21 @@ class FusionCaptionDataset(BaseCaptionDataset):
                 )
             record = processed_summary
 
+        # Mode-aware validation after preprocessors
+        self._validate_record_for_mode(record, policy.mode, dataset_name)
+
         # Build conversation
-        mode = self.mode
+        mode = policy.mode
         prompts = policy.prompts
         system_prompt = prompts.system
-        if mode == "summary" and self.system_prompt_summary is not None:
-            system_prompt = self.system_prompt_summary
+        if system_prompt is None:
+            system_prompt = (
+                self.system_prompt_summary
+                if mode == "summary"
+                else self.system_prompt_dense
+            )
         builder = JSONLinesBuilder(
-            user_prompt=USER_PROMPT_SUMMARY if mode == "summary" else prompts.user,
+            user_prompt=prompts.user,
             emit_norm=self.emit_norm,
             mode=mode,
             json_format=self.json_format,
@@ -652,18 +769,31 @@ class FusionCaptionDataset(BaseCaptionDataset):
             and self._augmenter is not None
             and not mine_clean
         )
+        use_summary_mode = policy.mode == "summary"
+        system_prompt_dense = (
+            policy.prompts.system if policy.mode == "dense" else self.system_prompt_dense
+        )
+        system_prompt_summary = (
+            policy.prompts.system
+            if policy.mode == "summary"
+            else self.system_prompt_summary
+        )
+        user_prompt_summary = (
+            policy.prompts.user if policy.mode == "summary" else None
+        )
         return BaseCaptionDataset(
             base_records=self._record_pools[primary],
             template=self.template,
             user_prompt=policy.prompts.user,
+            user_prompt_summary=user_prompt_summary,
             emit_norm=self.emit_norm,
             json_format=self.json_format,
             augmenter=self._augmenter if use_aug else None,
             bypass_prob=0.0 if mine_clean else self.bypass_prob,
             curriculum_state=None,
-            use_summary=self.use_summary,
-            system_prompt_dense=self.system_prompt_dense,
-            system_prompt_summary=self.system_prompt_summary,
+            use_summary=use_summary_mode,
+            system_prompt_dense=system_prompt_dense,
+            system_prompt_summary=system_prompt_summary,
             seed=self.seed,
             dataset_name=primary,
             allow_empty=False,

@@ -9,7 +9,11 @@ import pytest
 
 from src.config.prompts import (
     SYSTEM_PROMPT_JSON,
+    SYSTEM_PROMPT_SUMMARY,
+    SYSTEM_PROMPT_AUX,
     USER_PROMPT_JSON,
+    USER_PROMPT_SUMMARY,
+    USER_PROMPT_AUX,
 )
 from src.datasets.fusion import FusionConfig
 from src.datasets.preprocessors.augmentation import AugmentationPreprocessor
@@ -60,15 +64,22 @@ def _write_fusion_config(
     ratio: float = 1.0,
     target_name: str = "target",
     source_name: str = "source",
+    target_mode: str | None = None,
+    source_mode: str | None = None,
     source_overrides: dict[str, Any] | None = None,
     target_val: Path | None = None,
     source_val: Path | None = None,
+    target_template: str = "bbu_dense",
+    source_template: str = "aux_dense",
 ) -> None:
     target_section: dict[str, Any] = {
         "dataset": "bbu",
         "name": target_name,
         "train_jsonl": str(target_train),
+        "template": target_template,
     }
+    if target_mode:
+        target_section["mode"] = target_mode
     if target_val is not None:
         target_section["val_jsonl"] = str(target_val)
     source_section: dict[str, Any] = {
@@ -76,7 +87,10 @@ def _write_fusion_config(
         "name": source_name,
         "train_jsonl": str(source_train),
         "ratio": ratio,
+        "template": source_template,
     }
+    if source_mode:
+        source_section["mode"] = source_mode
     if source_val is not None:
         source_section["val_jsonl"] = str(source_val)
     if source_overrides:
@@ -100,6 +114,8 @@ def test_unified_fusion_prompt_priority(tmp_path: Path) -> None:
             "user_prompt": "SRC_USER",
             "system_prompt": "SRC_SYSTEM",
         },
+        target_template="bbu_dense",
+        source_template="aux_dense",
     )
 
     fusion_config = FusionConfig.from_file(str(config_path))
@@ -132,6 +148,106 @@ def test_unified_fusion_prompt_priority(tmp_path: Path) -> None:
     assert template.system == "BASE_SYS"
 
 
+def test_unified_fusion_mixed_modes(tmp_path: Path) -> None:
+    target_jsonl = tmp_path / "target.jsonl"
+    source_jsonl = tmp_path / "source.jsonl"
+    _write_jsonl(
+        target_jsonl,
+        [{"images": ["img.jpg"], "summary": "设备完好", "width": 10, "height": 10}],
+    )
+    _write_jsonl(source_jsonl, [_basic_record()])
+
+    config_path = tmp_path / "fusion.json"
+    _write_fusion_config(
+        config_path,
+        target_train=target_jsonl,
+        source_train=source_jsonl,
+        target_mode="summary",
+        source_mode="dense",
+        target_template="bbu_summary",
+        source_template="aux_dense",
+    )
+
+    fusion_config = FusionConfig.from_file(str(config_path))
+    template = _StubTemplate()
+    dataset = FusionCaptionDataset(
+        fusion_config=fusion_config,
+        base_template=template,
+        user_prompt="DEFAULT_USER",
+        emit_norm="none",
+        json_format="standard",
+        augmenter=None,
+        bypass_prob=0.0,
+        curriculum_state=None,
+        use_summary=False,
+        system_prompt_dense=None,
+        system_prompt_summary=None,
+        seed=11,
+        shuffle=False,
+    )
+
+    target_sample = dataset[0]
+    assert dataset.epoch_plan["target"]["mode"] == "summary"
+    assert target_sample["messages"][0]["content"] == SYSTEM_PROMPT_SUMMARY
+    assert (
+        target_sample["messages"][1]["content"][-1]["text"] == USER_PROMPT_SUMMARY
+    )
+    assert dataset.last_sample_debug["mode"] == "summary"
+
+    source_sample = dataset[1]
+    assert dataset.epoch_plan["source"]["mode"] == "dense"
+    assert source_sample["messages"][0]["content"] == SYSTEM_PROMPT_AUX
+    assert source_sample["messages"][1]["content"][-1]["text"] == USER_PROMPT_AUX
+    assert dataset.last_sample_debug["mode"] == "dense"
+    assert template.system == "BASE_SYS"
+
+
+def test_unified_fusion_dense_requires_geometry(tmp_path: Path) -> None:
+    target_jsonl = tmp_path / "target.jsonl"
+    source_jsonl = tmp_path / "source.jsonl"
+    _write_jsonl(
+        target_jsonl,
+        [
+            {
+                "images": ["img.jpg"],
+                "objects": [{"desc": "missing geometry"}],
+                "width": 10,
+                "height": 10,
+            }
+        ],
+    )
+    _write_jsonl(source_jsonl, [_basic_record()])
+    config_path = tmp_path / "fusion.json"
+    _write_fusion_config(
+        config_path,
+        target_train=target_jsonl,
+        source_train=source_jsonl,
+        ratio=0.0,
+        source_name="src",
+        target_template="bbu_dense",
+        source_template="aux_dense",
+    )
+
+    dataset = FusionCaptionDataset(
+        fusion_config=FusionConfig.from_file(str(config_path)),
+        base_template=_StubTemplate(),
+        user_prompt="DEFAULT_USER",
+        emit_norm="none",
+        json_format="standard",
+        augmenter=None,
+        bypass_prob=0.0,
+        curriculum_state=None,
+        use_summary=False,
+        system_prompt_dense=None,
+        system_prompt_summary=None,
+        seed=17,
+        shuffle=False,
+    )
+
+    with pytest.raises(ValueError):
+        _ = dataset[0]
+
+
 def test_unified_fusion_respects_source_augmentation_gating(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -146,6 +262,8 @@ def test_unified_fusion_respects_source_augmentation_gating(
         source_train=source_jsonl,
         target_name="target_ds",
         source_name="src_ds",
+        target_template="bbu_dense",
+        source_template="aux_dense",
     )
 
     calls: list[str | None] = []
@@ -192,6 +310,8 @@ def test_unified_fusion_applies_object_cap_after_augmentation(tmp_path: Path) ->
         target_train=target_jsonl,
         source_train=source_jsonl,
         source_overrides={"max_objects_per_image": 2},
+        target_template="bbu_dense",
+        source_template="aux_dense",
     )
 
     dataset = FusionCaptionDataset(
@@ -226,6 +346,8 @@ def test_unified_fusion_default_source_cap(tmp_path: Path) -> None:
         config_path,
         target_train=target_jsonl,
         source_train=source_jsonl,
+        target_template="bbu_dense",
+        source_template="aux_dense",
     )
 
     dataset = FusionCaptionDataset(
@@ -262,6 +384,8 @@ def test_unified_fusion_resamples_sources_per_epoch(tmp_path: Path) -> None:
         source_train=source_jsonl,
         ratio=0.5,
         source_name="src",
+        target_template="bbu_dense",
+        source_template="aux_dense",
     )
 
     dataset = FusionCaptionDataset(
@@ -305,6 +429,8 @@ def test_unified_fusion_includes_optional_source_eval(tmp_path: Path) -> None:
         target_val=target_val,
         source_val=source_val,
         source_name="src_eval",
+        target_template="bbu_dense",
+        source_template="aux_dense",
     )
 
     dataset = FusionCaptionDataset(

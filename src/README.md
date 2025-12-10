@@ -160,7 +160,7 @@ Index → Epoch-seeded permutation
 **Step Details**:
 1. **Record Selection**: Epoch-based permutation ensures deterministic shuffling across workers while staying single-image.
 2. **Preprocessing**: `AugmentationPreprocessor` applies affine transforms to images + geometries atomically.
-3. **Mode Selection**: `custom.use_summary` toggles summary-only runs; dense mode keeps JSON object outputs per sample.
+3. **Mode Selection**: `custom.use_summary` sets the default (dense/summary); fusion configs may override per target/source via `mode: dense|summary`.
 4. **Message Building**:
    - `JSONLinesBuilder`: User prompt embeds the image; assistant returns `{ "object_1": {...}, ... }` (no per-image wrapper).
    - Summary mode yields a single formatted string. Top-level `objects` retain exact point arrays for template normalization.
@@ -366,25 +366,42 @@ Tip: keep `training.aligner_lr` (and optionally `training.vit_lr`) to control pe
 
 ### Summary Output Toggle
 
-**Feature**: Switch between dense JSON captions and single-line summaries by flipping a single flag; mixed sampling is no longer supported.
+**Feature**: Switch between dense JSON captions and single-line summaries. `custom.use_summary` sets the default mode, and fusion configs can override per target/source with `mode: dense|summary`, enabling mixed summary+dense sampling.
 
 **Supported modes**:
-- **Dense-only (default)**: grouped JSON with geometry + description (`custom.use_summary: false` or omitted)
-- **Summary-only**: single-line summaries (`custom.use_summary: true`)
+- **Dense default**: grouped JSON with geometry + description (`custom.use_summary: false` or omitted); fusion datasets inherit unless overridden.
+- **Summary**: single-line summaries (`custom.use_summary: true` or fusion dataset `mode: summary`).
 
 **Usage**:
 ```yaml
-# Dense-only (default behavior)
+# Dense default (non-fusion or fusion fallback)
 custom:
   train_jsonl: data/bbu_full_768/train.jsonl
   use_summary: false
 ```
 
 ```yaml
-# Summary-only run
+# Summary default (all datasets unless fusion overrides)
 custom:
   train_jsonl: data/bbu_full_768/train.jsonl
   use_summary: true
+```
+
+```yaml
+# Fusion mixed modes (summary target, dense source)
+custom:
+  fusion_config: configs/fusion/bbu_rru_lvis_coig.yaml
+  use_summary: false   # default dense; target overrides below
+...
+targets:
+  - dataset: bbu
+    train_jsonl: /abs/path/to/summary_target.jsonl
+    mode: summary
+sources:
+  - dataset: coco
+    train_jsonl: /abs/path/to/coco.jsonl
+    ratio: 0.1
+    mode: dense
 ```
 
 For details, see `docs/data/DATA_JSONL_CONTRACT.md#top-level-record`.
@@ -416,7 +433,7 @@ CUDA_VISIBLE_DEVICES=0 conda run -n ms swift export \
 
 ## Dataset knobs
 
-- use_summary: toggle summary-only mode
+- use_summary: set default mode (dense/summary) for runs; fusion datasets can override with per-dataset `mode`
 - augmentation.*: geometry-aware augmentation pipeline (Compose config)
 - dump_conversation_text: write one decoded conversation sample to disk for inspection
 

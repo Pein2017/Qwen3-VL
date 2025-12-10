@@ -188,7 +188,20 @@ USER_PROMPT_CHAT = ""  # Empty for pre-authored messages; messages field in JSON
 
 
 def get_template_prompts(name: str | None) -> tuple[str, str]:
-    normalized = (name or "bbu_dense").strip().lower()
+    """Return (system, user) prompts for a known template name.
+
+    We disallow silent fallbacks; callers must provide a registered template. Any
+    unknown name (including "none"/"non") raises ValueError to avoid drifting to
+    a default BBU prompt.
+    """
+
+    if name is None:
+        raise ValueError("template name must be provided (no fallback allowed)")
+
+    normalized = name.strip().lower()
+    if normalized in {"", "none", "non", "null"}:
+        raise ValueError(f"Invalid template name '{name}'; no fallback is permitted")
+
     registry = {
         # auxiliary
         "aux_dense": (SYSTEM_PROMPT_AUX, USER_PROMPT_AUX),
@@ -213,7 +226,15 @@ def get_template_prompts(name: str | None) -> tuple[str, str]:
             USER_PROMPT_SUMMARY,
         ),
     }
-    return registry.get(normalized, registry["bbu_dense"])
+
+    try:
+        return registry[normalized]
+    except KeyError as exc:
+        available = ", ".join(sorted(registry.keys()))
+        raise ValueError(
+            f"Unknown template '{name}'. Registered templates: {available}. "
+            "No fallback is allowed."
+        ) from exc
 
 
 SYSTEM_PROMPT = SYSTEM_PROMPT_JSON
