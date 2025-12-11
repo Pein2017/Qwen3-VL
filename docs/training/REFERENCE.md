@@ -230,6 +230,7 @@ Runtime/deployment instructions for Stage-A summaries and the Stage-B verdict lo
 - Dense captioning usage examples
 - Stage-A CLI guardrails and output schemas
 - Stage-B sampler/selection/manual-review/reflection flow (prompt-only, no CriticEngine); rollout 提示=guidance+Stage-A 摘要（不含 GT），严格两行解析；低一致性/标签冲突仅作为反思触发，manual-review 在反思后判定：若整批无指导更新且该组无任何候选支持 GT，则写入 manual_review_queue。反思输出严格 JSON 的 add/update/delete 规则，批处理更新 guidance，重跑同一 run_name 重建 per-run artifacts，指导沿用上次快照。
+- 生产约束：Stage‑A 与 Stage‑B 在最终环境中共用同一个 Qwen3‑VL 模型（同一组权重 / LoRA 组合），通过不同 prompt 和 config 切换任务；训练 summary‑mode 或添加新 LoRA 时，需要显式评估对 Stage‑B rollout/verdict 行为的影响。
 
 ## Advanced Topics & FAQ
 

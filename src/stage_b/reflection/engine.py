@@ -303,7 +303,7 @@ class ReflectionEngine:
             "3. 如果 Reason 完全与标签矛盾，无任何支持信息 → 无证据\n\n"
             "### Step 2: 决策\n"
             "- 如果有证据：分析错误原因，提取可学习的规则，输出 operations\n"
-            "- 如果无证据：输出空数组 []，并在 evidence_analysis 中标注 \"no_evidence_for_label\"\n\n"
+            '- 如果无证据：输出空数组 []，并在 evidence_analysis 中标注 "no_evidence_for_label"\n\n'
             "## 输出格式（严格 JSON 对象，不要输出其他文本或 Markdown）\n"
             "{\n"
             '  "evidence_analysis": "简述证据判断过程（<=60字）",\n'
@@ -329,7 +329,11 @@ class ReflectionEngine:
             {"role": "user", "content": prompt},
         ]
         chat_prompt = self.tokenizer.apply_chat_template(
-            messages, add_generation_prompt=True, tokenize=False
+            messages,
+            add_generation_prompt=True,
+            tokenize=False,
+            # Disable Qwen3 thinking blocks in reflection prompts
+            enable_thinking=False,
         )
         assert isinstance(chat_prompt, str), (
             "apply_chat_template must return string when tokenize=False"
@@ -420,9 +424,7 @@ class ReflectionEngine:
             first_entry = ops_json[0]
             if isinstance(first_entry, Mapping) and first_entry.get("_no_evidence"):
                 analysis = first_entry.get("_analysis", "")
-                logger.info(
-                    f"Reflection found no evidence for label: {analysis}"
-                )
+                logger.info(f"Reflection found no evidence for label: {analysis}")
                 return tuple(), [], [], "no_evidence_for_label"
 
         max_ops = self.config.max_operations or len(ops_json)
@@ -453,7 +455,7 @@ class ReflectionEngine:
             if op_raw == "none":
                 # explicit no-op from the model
                 continue
-            if op_raw not in {"add", "update", "delete"}:
+            if op_raw not in {"add", "update", "delete", "merge"}:
                 continue
 
             key_raw = entry.get("key")
@@ -474,6 +476,15 @@ class ReflectionEngine:
                 evid = tuple(str(x).strip() for x in evidence_list if str(x).strip())
             else:
                 evid = evidence_default
+
+            merged_from_raw = entry.get("merged_from")
+            merged_from: Tuple[str, ...] = tuple(
+                str(x).strip()
+                for x in merged_from_raw
+                if isinstance(merged_from_raw, Sequence)
+                and not isinstance(merged_from_raw, (str, bytes))
+                and str(x).strip()
+            )
 
             if op_raw == "delete":
                 if not key:
@@ -534,6 +545,19 @@ class ReflectionEngine:
                         merged_from=None,
                     )
                 )
+            elif op_raw == "merge":
+                if not key or not merged_from:
+                    continue
+                ops.append(
+                    ExperienceOperation(
+                        op="merge",
+                        key=key,
+                        text=text,
+                        rationale=rationale,
+                        evidence=evid,
+                        merged_from=merged_from,
+                    )
+                )
 
         if forbidden_hit:
             raise ValueError("forbidden_phrase_in_reflection_ops")
@@ -547,8 +571,8 @@ class ReflectionEngine:
         bundle: ExperienceBundle,
         reflection_id: str,
     ) -> Dict[str, Any]:
-        operations, wishlist_entries, noise_entries, no_evidence_note = self._ops_from_json(
-            critique_json, bundle=bundle
+        operations, wishlist_entries, noise_entries, no_evidence_note = (
+            self._ops_from_json(critique_json, bundle=bundle)
         )
         evidence_ids = tuple(rec.ticket.group_id for rec in bundle.records)
 
@@ -948,8 +972,8 @@ class ReflectionEngine:
         # Deterministic path currently only used when config.engine == "deterministic";
         # keep a defensive definition of auto_text before any usage.
         auto_text = (
-            "[AUTO] 矛盾/全错/冲突样本：优先标记人工复核；关键挡风板/BBU要素缺失或不确定时，"
-            "倾向不通过或降低置信，并在 Reason 中写明证据不足。"
+            "[AUTO] 矛盾/全错/冲突样本：关键挡风板/BBU要素缺失或存在不确定时，一律视为不通过，"
+            "不要在 Reason 中使用“证据不足”之类的措辞，而是直接指出缺失或不确定的具体要素。"
         )
         guidance_map = self.guidance_repo.load()
         current_guidance = guidance_map.get(bundle.mission)
@@ -1091,7 +1115,11 @@ class ReflectionEngine:
             {"role": "user", "content": reflection_prompt},
         ]
         chat_prompt = self.tokenizer.apply_chat_template(
-            messages, add_generation_prompt=True, tokenize=False
+            messages,
+            add_generation_prompt=True,
+            tokenize=False,
+            # Disable Qwen3 thinking blocks in reflection prompts
+            enable_thinking=False,
         )
         assert isinstance(chat_prompt, str), (
             "apply_chat_template must return string when tokenize=False"

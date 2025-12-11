@@ -20,7 +20,8 @@ config=configs/stage_b/run.yaml gpus=0 log_level=logging \
 ```
 
 - `GuidanceRepository` copies the global guidance file into `{output.root}/{output.run_name}/{mission}/guidance.json` so edits stay isolated until you manually promote them back.
-- Shared Qwen3-VL model is reused by sampler and reflection; **no CriticEngine**.
+- Shared Qwen3-VL model is reused by sampler and reflection; **no CriticEngine**。
+- 生产部署约束：Stage‑A 摘要和 Stage‑B 判决在同一 Qwen3‑VL checkpoint 上运行（同一套权重/LoRA），通过不同的 prompt 实现任务切换，因此任何针对摘要的 SFT/LoRA 调整都必须兼顾 Stage‑B 的 rollout 推理质量。
 - Reflection runs only on explainable mismatches (GT vs model) and proposes ≤3 micro-guidance edits; malformed or non-explainable samples are logged and skipped.
 - `stage_a_paths` must point to Stage-A JSONL files containing `mission`, `group_id`, `label` (`pass|fail`), and `per_image`; keys are normalized to `image_{n}`.
 

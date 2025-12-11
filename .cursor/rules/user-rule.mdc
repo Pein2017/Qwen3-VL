@@ -1,7 +1,6 @@
 ---
-alwaysApply: true
+alwaysApply: false
 ---
-
 <!-- OPENSPEC:START -->
 # OpenSpec Instructions
 

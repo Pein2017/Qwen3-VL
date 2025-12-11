@@ -55,6 +55,14 @@ Stage-B 现为“prompt-only”流程：模型输出固定两行（Verdict/Reaso
 {"group_id": "QC-TEMP-20241206-0015502", "mission": "挡风板安装检查", "label": "fail", "images": ["QC-TEMP-20241206-0015502_4348975.jpeg"], "per_image": {"image_1": "BBU设备/华为/显示完整/这个BBU设备未按要求配备挡风板×2，螺丝、光纤插头/BBU安装螺丝/显示完整/符合要求×3，螺丝、光纤插头/BBU端光纤插头/显示完整/符合要求×6，光纤/有保护措施/蛇形管/弯曲半径合理×2，标签/可以识别×7，标签/无法识别×2，挡风板/显示完整/安装方向正确×1，备注: 无法判断品牌和是否足够空间安装挡风板"}}
 ```
 
+结合当前 `bbu_full_768_poly` 词表，可以大致把摘要里的对象与短语理解为几类模式（示意，非穷举）：
+- BBU 设备本体：`BBU设备/{品牌},显示完整|只显示部分,(无需安装|机柜空间充足需要安装)/这个BBU设备(按要求配备了挡风板|未按要求配备挡风板)`，`备注:` 通常说明拍摄是否完整、机柜空间是否可判定、品牌是否可辨认等。
+- 挡风板：`挡风板/{品牌},显示完整|只显示部分,安装方向正确|安装方向错误`，`备注:` 中常出现“未拍全/范围过小/无法判断品牌/无法判断安装方向是否正确”等表述。
+- 接地相关：`螺丝、光纤插头/机柜处接地螺丝,符合要求`、`螺丝、光纤插头/地排处接地螺丝,符合要求`，`备注:` 里可能提示“背面疑似连接多条电线”等潜在风险。
+- 线缆布放：`光纤/有保护措施,弯曲半径合理/蛇形管`、`光纤/无保护措施,弯曲半径不合理(...)`，以及“部分未套蛇形管/未显示弯曲情况”等局部问题。
+- 电线捆扎：`电线/捆扎整齐` vs `电线/分布散乱`，直接对应线缆布放任务中的“整齐/散乱”判断。
+- 标签与 OCR：原始标签文本在摘要阶段被归一为 `标签/可以识别` 与 `标签/无法识别` 两种状态，具体站点名、设备标识等不直接出现在 Stage-B 的输入中。
+
 先验业务要求（简化版）：
 - BBU安装方式检查（正装）：至少检测到 BBU 设备与 BBU 安装螺丝，且“符合要求”
 - BBU接地线检查：至少检测到机柜处接地螺丝与地排处接地螺丝且“符合要求”，并检测到电线且“捆扎整齐”
@@ -93,26 +101,24 @@ Stage-B 现为“prompt-only”流程：模型输出固定两行（Verdict/Reaso
 
 高层架构（运行时）：
 1) Ingest：读取 Stage-A JSONL，规范化成组级工单（GroupTicket）
-2) Rollout：按解码网格（温度、top_p、max_new_tokens 等）对每组生成多个候选判定
-3) Signals：对候选进行确定性打分（标签一致性、任务聚焦一致性、启发式置信度、自洽性等）；CriticEngine 对每个候选生成结构化评述（摘要与评述）
-4) Selection：依据策略选择最终判定（如 top_semantic，平分时按置信度/温度打破平局）
-5) Reflection：批处理近期轨迹，分析 wins/losses 与 GT 差异，融合 CriticEngine 评述，提出结构化 guidance 变更提案
-6) Guidance Repository：落库与快照；通过留存与回滚策略保障可治理性
-- LLM 输出协议：Rollout 仍用三行判定格式；Critic/Reflection 改为逐行 `KEY: value` 文本协议（无 JSON），由解析器转为内部结构后再写 JSONL 日志。
+2) Rollout：按解码网格（温度、top_p、max_new_tokens 等）对每组生成一个或多个候选判定，每个候选都遵守两行输出协议（Verdict/Reason）。
+3) Signals：为候选附加确定性信号（如与历史标签的一致性 `label_match`、在候选集合中的自洽度 self_consistency 等），不再调用 CriticEngine。
+4) Selection：基于多数表决 + fail-first 策略选择最终判定（多数票若打平，优先选择 verdict=`fail` 的候选；再按温度和候选索引打破平局）。
+5) Reflection：对近期包含标签冲突或部分正确的轨迹进行批处理，比较模型判定与 GT 差异，构造 JSON-only 的 guidance 变更提案（增加/更新/删除经验规则）。
+6) Guidance Repository：对提案进行应用/留存，并以快照形式记录每次变更，支持回滚与再训练使用。
+- LLM 输出协议：Rollout 使用两行判定格式（`Verdict:` / `Reason:`）；Reflection 输出合法 JSON 数组，每个元素代表一条规则操作（add/update/delete/none）。
 
 产物与目录结构（概览）：
-- selections.jsonl：最终选择的判定结果与分数
-- trajectories.jsonl：候选级别的完整生成与评分轨迹
-- guidance.json + snapshots/：当前生效 guidance 与每次变更的快照
-- reflection.jsonl：反思提案、合并/拒绝、影响评估与 KPI 记录
+- selections.jsonl：最终选择的判定结果及其元数据（vote_strength、label_match、conflict_flag 等）
+- trajectories.jsonl：候选级别的完整生成与解析轨迹（含解码温度、候选索引、解析是否成功等）
+- guidance.json + snapshots/：当前生效 guidance 及每次变更的快照
+- reflection.jsonl：反思提案、是否应用、关联样本 ID 与指导变更记录
 
-策略与信号（示例）：
-- label_match（与历史人工标签一致性）
-- focus_consistency（是否紧扣 mission 关注点）
-- summary_confidence（摘要质量启发式：是否出现关键要素、是否存在互相矛盾的条目）
-- semantic_advantage（相对优势分，综合理由质量与一致性）
-- needs_recheck / label_contradiction（用于人工加审阈值）
-- （已移除 CriticEngine，暂无 critic_summary / critic_critique 信号）
+策略与信号（当前实现）：
+- label_match：候选 verdict 与历史人工标签是否一致
+- self_consistency：在同一组候选中，某一 verdict 出现的比例（启发式一致性）
+- vote_strength：最终被选 verdict 在候选集合中的票数占比
+- conflict_flag：最终选择与标签明显矛盾时为 true，用于后续反思和人工排查
 
 ---
 
@@ -137,7 +143,7 @@ Stage-B 现为“prompt-only”流程：模型输出固定两行（Verdict/Reaso
 
 ## 判定规则示例（对齐属性映射）
 
-> 说明：以下示例用于提示 LLM 聚焦的关键对象，不再作为硬编码规则执行。Stage-B 以 prompt + guidance + 标签兜底（label=fail 不放行）为准，不确定表述会被标记为 `needs_manual_review/uncertainty_notes` 供人工复核。
+> 说明：以下示例用于提示 LLM 聚焦的关键对象，不再作为硬编码规则执行。Stage-B 以 prompt + guidance 为主，历史标签只作为冲突标记和反思信号，不做硬兜底。当前对挡风板等高风险任务采用“只要存在明显问题或无法确认关键要素，就判为不通过”的保守策略；极端矛盾或难以解释的样本会写入 `manual_review_queue.jsonl` 供人工复核。
 
 将“先验要求”具体化为可执行检查（基于 Stage-A 摘要）：
 - BBU安装（正装）：必须同时出现“BBU设备/显示完整”与“螺丝、光纤插头/BBU安装螺丝/显示完整/符合要求”；若摘要出现“不符合要求/未拧紧/露铜/复接/生锈”，则直接“不通过”
@@ -147,16 +153,16 @@ Stage-B 现为“prompt-only”流程：模型输出固定两行（Verdict/Reaso
 
 特殊情况处理：
 - `备注` 作为 override 线索（如：施工临时方案/勘误说明），可触发“需要人工复核”而非直接通过
-- 遇到“无法判断/模糊/遮挡/证据不足”等词面时，按 mission 关键词过滤后降低置信度并标记复核信号，而不是直接 fail
+- 遇到“无法判断/模糊/遮挡/只显示部分”等描述且影响到任务关注的关键要素（如挡风板是否配备、接地线是否存在、线缆是否有保护等）时，当前策略是直接判为“不通过”，在 Reason 中明确写出“关键要素无法确认”的原因；仅在反思环节发现“完全找不到支持标签的证据”或其它异常情况时，才将样本写入 `manual_review_queue.jsonl` 交由人工复核
 
 ---
 
 ## 风险、边界与质量控制
 
 - 双重噪声：Stage-A 与人工标签均可能有偏；通过多候选 + 确定性信号 + 反思提案缓解
-- 误放行控制：标签为 fail 时强制输出 fail；对高风险 mission 设置更高的选择阈值或强制人工复核；同时保留模型原始 verdict/reason + conflict/uncertainty 信号，便于反思寻找缺项或标注噪声
-- 冲突/不确定反馈：`conflict_flag` 表示与标签矛盾或守护信号触发；`needs_manual_review`/`uncertainty_notes` 记录模糊表述并驱动反思/人工复核
-- 指标退化监控：持续追踪 semantic_advantage 与 verdict/Reason 分布，异常时冻结 guidance 变更并回滚到上个快照
+- 误放行控制：通过保守的判定 prompt（关键要素只要存在问题或无法确认即判为“不通过”）+ fail-first 选择策略，把“人工 fail 而 AI pass”的风险压到最低；冲突样本通过 `conflict_flag` 与 `manual_review_queue.jsonl` 路由给人工排查，而不是简单用标签覆盖模型判定
+- 冲突/不确定反馈：`conflict_flag` 表示与历史标签矛盾；需要人工介入的样本会追加到 `manual_review_queue.jsonl` 并标记原因（如 `no_evidence_for_label`、`no_support_after_reflection` 等），供质检同学重点复核
+- 指标退化监控：持续追踪 Label Match、误放行率、verdict/Reason 分布，异常时冻结 guidance 变更并回滚到最近的稳定快照
 - 词表与格式漂移：严守 `DATA_AND_DATASETS.md` 摘要规范；新增检查点须同步更新属性映射与摘要生成
 
 ---

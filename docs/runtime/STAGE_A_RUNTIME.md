@@ -31,6 +31,7 @@ mission=挡风板安装检查 gpu=0 verify_inputs=true \
 
 ## Checkpoint Choices
 - LoRA adapters for iteration; merged checkpoints for production (see `scripts/train.sh` exports or `swift export --merge_lora true`).
+- 生产约束：Stage‑A 与 Stage‑B 在最终部署中共用同一个 Qwen3‑VL 模型（同一组权重/LoRA 组合），避免双模型部署成本；所有针对摘要任务的微调都需要显式考虑 Stage‑B 判决能力的保留。
 
 ## See Also
 - Stage-B runtime (group verdicts): `./STAGE_B_RUNTIME.md`

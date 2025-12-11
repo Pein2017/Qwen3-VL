@@ -1,0 +1,12 @@
+- [ ] Confirm no conflicting in-flight changes touch augmentation code paths (`src/datasets/augmentation/*`, preprocessors, curriculum, vis_tools) via `openspec list` and git history.
+- [ ] Implement base classes `AffineOp`, `ColorOp`, `PatchOp` (registry-compatible), keeping existing public interfaces stable.
+- [ ] Refactor existing affine ops (hflip, vflip, rotate, scale, resize_by_scale, expand_to_fit_affine) to inherit `AffineOp`.
+- [ ] Refactor existing color ops (color_jitter, gamma, hsv, clahe, auto_contrast, sharpness) to inherit `ColorOp`.
+- [ ] Refactor crop/paste ops (random_crop, small_object_zoom_paste) to `PatchOp`, preserving coverage/drop semantics and telemetry.
+- [ ] Expose typed curriculum parameter maps for all ops and update `AugmentationCurriculumScheduler` to consume them, failing fast on unknown parameters, dimension mismatch, or invalid values.
+- [ ] Capture golden augmentation outputs (images, geometries, telemetry) for a representative JSONL slice and fixed seeds before landing the refactor, and check them into `tests/augmentation/fixtures/`.
+- [ ] Add equivalence tests that run the refactored augmentation pipeline on those fixtures under the same seeds and compare against golden outputs with the specified numeric tolerances and ordering rules.
+- [ ] Add/adjust unit tests in `tests/augmentation` to cover the base classes, PatchOp invariants, and curriculum parameter map behavior (including invalid overrides).
+- [ ] Implement a shared TL→BR object sort helper (matching `data_conversion` semantics) and invoke it after augmentation and before dense-caption conversation building (e.g., in `JSONLinesBuilder`), ensuring training-time object order matches the prompt contract.
+- [ ] Update docs in `docs/data/DATA_AUGMENTATION.md` (and any linked augmentation runbooks) to describe AffineOp/ColorOp/PatchOp, the curriculum parameter map, and the TL→BR re-sorting behavior after augmentation.
+- [ ] Run `openspec validate refactor-augmentation-baseops --strict`.

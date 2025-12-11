@@ -153,6 +153,8 @@ class RolloutSampler:
             messages,
             tokenize=False,
             add_generation_prompt=True,
+            # Disable Qwen3 "thinking" blocks (<think>...</think>) to keep outputs simple
+            enable_thinking=False,
         )
         assert isinstance(rendered, str), "apply_chat_template must return string"
         return rendered

@@ -17,7 +17,7 @@ Keep this managed block so 'openspec update' can refresh the instructions.
 
 <!-- OPENSPEC:END -->
 
-## Project Overview
+# Project Overview
 AI quality‑inspection system with two stages:
 - **Stage‑1 (Stage‑A) Basic Object Recognition** — single‑image evidence capture with rare/long‑tail object coverage.
 - **Stage‑2 (Stage‑B) Group‑Ticket Verification** — consumes Stage‑1 evidence + labels to issue binary `pass|fail` verdicts with auditable rationale.
@@ -65,9 +65,7 @@ Training, inference, and guidance workflows share a single repository. Start wit
 - Use `ms` conda environment for all Python scripts
 - `ms-swift` installed at `/data/ms-swift`
 - `transformers` in conda env at `/root/miniconda3/envs/ms/lib/python3.12/site-packages/transformers`
-- **Serena MCP (semantic tools only)**: Available via MCP server; project configured at `.serena/project.yml`. Activate with "activate the project Qwen3-VL" or by path. Project memories live in `.serena/memories/`. Use MCP for semantic, symbol-level navigation and edits (find symbols/refs, structured symbol changes) especially in large files. **Do not use it for pure doc retrieval, bulk prose reads, or routine shell commands**—use the normal terminal plus `read_file`/`rg` for those to avoid truncation/latency.
-- **When to prefer Serena MCP**: You need `find_symbol`/`get_symbols_overview` to map a file, `find_referencing_symbols` to update callers, or symbol-level edit helpers to patch a whole function/class. Skip MCP when you already know the file/lines or are just reading docs.
-- **MCP workflow (breadth → depth)**: Start with `get_symbols_overview` or `find_symbol` to locate targets, inspect specific bodies only as needed, use `find_referencing_symbols` before edits, then apply symbol-level edits. Fall back to plain `read_file` only when you truly need the full text.
+- **Serena MCP**: Available via MCP server; project configured at `.serena/project.yml`. See the `initial_prompt` in that file for detailed usage guidelines (when to use it, when to avoid it, and the recommended workflow).
 
 ## Quick Commands (conda env `ms`)
 - Training: `conda run -n ms bash scripts/train.sh config=/abs/path/to/config.yaml gpus=0`
@@ -109,44 +107,6 @@ Training, inference, and guidance workflows share a single repository. Start wit
 ## OpenSpec workflow for behavior changes
 - For capability/behavior shifts, create a spec under `openspec/changes/<change-id>/` and validate with `openspec validate <change-id> --strict` before implementation.
 - Skip proposals only for bug fixes, typos, dependency bumps, config-only changes, or tests for existing behavior.
-
-## Codex MCP Collaboration
-- Always consider how to collaborate with Codex via the Codex MCP tool and use it as an objective counterpart.
-- Mandatory steps:
-  1. After forming an initial analysis of the user request, send the requirements and your initial approach to Codex and ask it to refine the analysis and implementation plan.
-  2. Before any coding, request a code prototype from Codex (ask only for a unified diff patch; forbid real modifications). Once received, treat it only as a logical reference and fully rewrite the changes yourself to production-grade readability and maintainability before applying them.
-  3. After any real coding, immediately ask Codex to review the code changes and confirm requirement coverage.
-  4. Codex is a reference only—maintain your own judgment and challenge Codex when appropriate. The goal is a unified, precise plan reached through debate.
-
-## Codex Tool Invocation Specification
-1. Tool overview
-- Codex MCP provides a `codex` tool for AI-assisted coding, invoked via MCP (no CLI needed).
-
-2. Tool parameters
-- Required: PROMPT (string) — task instruction to Codex.
-- Required: cd (Path) — working directory root for Codex.
-- Optional: sandbox ("read-only" default, "workspace-write", "danger-full-access").
-- Optional: SESSION_ID (UUID | null) — continue a prior session; default None starts a new one.
-- Optional: skip_git_repo_check (boolean) — allow running outside Git; default False.
-- Optional: return_all_messages (boolean) — include reasoning and tool calls; default False.
-- Optional: image (List[Path] | null) — attach one or more images to the prompt.
-- Optional: model (string | null) — override model; otherwise use user default.
-- Optional: yolo (boolean | null) — skip sandbox approvals; default False.
-- Optional: profile (string | null) — load settings from `~/.codex/config.toml`.
-
-3. Usage
-- New conversation: omit SESSION_ID or pass None; Codex returns a new SESSION_ID for future turns.
-- Continue conversation: pass the prior SESSION_ID to preserve context.
-
-4. Invocation rules
-- Always save the returned SESSION_ID for later calls.
-- `cd` must point to an existing directory; otherwise the tool silently fails.
-- Forbid Codex from making real edits; use `sandbox="read-only"` and ask for unified diff patches only.
-
-5. Notes
-- Session management: track SESSION_ID to avoid confusion.
-- Working directory: ensure `cd` is correct and exists.
-- Error handling: check the `success` field and handle failures.
 
 ## Important
 - **Always interrupt if clarification is needed or anything is vague, ambiguous, or uncertain**

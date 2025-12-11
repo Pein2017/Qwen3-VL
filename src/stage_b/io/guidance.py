@@ -6,8 +6,8 @@ from __future__ import annotations
 
 import json
 import logging
-import shutil
 import re
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Mapping, MutableMapping, Optional, Sequence, Union, cast
@@ -21,7 +21,6 @@ from ..types import (
 from ..utils.chinese import normalize_spaces, to_simplified
 
 logger = logging.getLogger(__name__)
-
 
 
 class MissionGuidanceError(RuntimeError):
@@ -170,7 +169,6 @@ class GuidanceRepository:
         with self.path.open("w", encoding="utf-8") as fh:
             json.dump({}, fh, ensure_ascii=False, indent=2)
         self._cache = {}
-
 
     # ------------------------------------------------------------------
     # Accessors
@@ -351,18 +349,11 @@ class GuidanceRepository:
             rationale = (op.rationale or "").strip() or None
 
             # If metadata already exists for this key, merge sources and
-            # prefer the new rationale when provided.
+            # prefer the new rationale when provided. When merging, also fold
+            # metadata from merged_from keys before deleting them.
             existing_meta = metadata.get(target_key)
-            if existing_meta is not None:
-                for source in existing_meta.sources:
-                    source_str = str(source)
-                    if source_str and source_str not in seen_sources:
-                        combined_sources.append(source_str)
-                        seen_sources.add(source_str)
-                if rationale is None:
-                    rationale = existing_meta.rationale
+            merged_metas: List[ExperienceMetadata] = []
 
-            # If this is a merge, remove merged_from keys without reindexing
             if normalized_op == "merge" and op.merged_from:
                 for mkey in op.merged_from:
                     mkey_str = (mkey or "").strip()
@@ -373,19 +364,36 @@ class GuidanceRepository:
                             )
                         continue
                     if mkey_str in experiences:
+                        meta_to_fold = metadata.pop(mkey_str, None)
+                        if meta_to_fold is not None:
+                            merged_metas.append(meta_to_fold)
                         try:
                             del experiences[mkey_str]
                         except KeyError:  # pragma: no cover - defensive
                             pass
-                        metadata.pop(mkey_str, None)
                     else:
                         logger.warning(
                             f"merge operation skipped missing source key '{mkey_str}' in mission {current.mission}"
                         )
 
-                        # Preserve lifecycle stats from existing metadata
-            hit_count = existing_meta.hit_count if existing_meta else 0
-            miss_count = existing_meta.miss_count if existing_meta else 0
+            for meta in [m for m in (existing_meta, *merged_metas) if m]:
+                for source in meta.sources:
+                    source_str = str(source)
+                    if source_str and source_str not in seen_sources:
+                        combined_sources.append(source_str)
+                        seen_sources.add(source_str)
+                if rationale is None and meta.rationale:
+                    rationale = meta.rationale
+
+            # Preserve lifecycle stats from existing metadata
+            hit_count = sum(
+                meta.hit_count
+                for meta in [m for m in (existing_meta, *merged_metas) if m]
+            )
+            miss_count = sum(
+                meta.miss_count
+                for meta in [m for m in (existing_meta, *merged_metas) if m]
+            )
             # When updating an experience, increment hit_count (rule is being reinforced)
             hit_count += 1
             # Recalculate confidence
@@ -403,7 +411,9 @@ class GuidanceRepository:
             applied_any = True
 
         if not applied_any:
-            raise MissionGuidanceError("Reflection refine proposal did not modify guidance")
+            raise MissionGuidanceError(
+                "Reflection refine proposal did not modify guidance"
+            )
 
         # Enforce non-empty experiences dict
         if not experiences:
@@ -586,7 +596,6 @@ class GuidanceRepository:
                     pass
             raise
 
-
         self._cache = dict(payload)
 
     def _prune_snapshots(self, snapshot_dir: Path) -> None:
@@ -597,7 +606,6 @@ class GuidanceRepository:
                     path.unlink()
                 except OSError:  # pragma: no cover - best effort cleanup
                     pass
-
 
     def cleanup_low_confidence(
         self,

@@ -113,9 +113,9 @@ custom:
       - name: small_object_zoom_paste  # fixed strength across training
         params:
           prob: 0.14
-          max_targets: 1
+          max_targets: 4
           max_attempts: 20
-          scale: [1.45, 1.9]
+          scale: [1.0, 1.5]
           max_size: 96
           max_line_length: 128
           overlap_threshold: 0.1

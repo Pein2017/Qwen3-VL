@@ -30,6 +30,12 @@ Stage-B（分组判决）
   └─ 输出：pass/fail 判决 + 学到的规则
 ```
 
+### 1.3 生产部署约束：单模型双阶段
+
+- 最终线上环境中，Stage‑A 摘要与 Stage‑B 判决共用同一个 Qwen3‑VL 模型（同一组权重 / LoRA 组合），通过不同 prompt 切换任务。
+- 这意味着：任何针对 Stage‑A summary‑mode 的 SFT/LoRA 微调都可能影响 Stage‑B 的 verdict 习惯；训练与配置调整需要显式考虑“既能做 dense/summary 识别，又能做 group‑ticket 判决”的统一能力。
+- 本文档中的诊断与改进建议（prompt 调整、LoRA 层数收缩、数据配比等）都默认遵守这一单模型约束。
+
 ### 1.2 核心价值主张
 
 **"训练免费的端到端学习"**
@@ -864,4 +870,3 @@ Epoch 2, Sample B:
   → 反向投票：有任何fail候选就标记风险
   → 而不是完全依赖多数投票
 ```
-
