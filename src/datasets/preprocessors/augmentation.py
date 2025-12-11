@@ -1,12 +1,14 @@
 """Augmentation preprocessor - decoupled from dataset logic"""
 
 import random
+import re
 from typing import Any, Dict, List, Mapping, MutableMapping, Optional
 
 from .base import BasePreprocessor
 from ..utils import extract_geometry
 from ...utils.logger import get_logger
 from ..contracts import ConversationRecord, AugmentationTelemetry
+from ..augmentation.curriculum import NumericParam, _build_base_ops
 
 
 class AugmentationPreprocessor(BasePreprocessor):
@@ -234,9 +236,12 @@ class AugmentationPreprocessor(BasePreprocessor):
         bypass = state.get("bypass_prob")
         if bypass is not None:
             try:
-                self.bypass_prob = float(bypass)
-            except (TypeError, ValueError):
-                pass
+                value = float(bypass)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"Curriculum bypass_prob must be numeric; got {bypass}") from exc
+            if value < 0.0 or value > 1.0:
+                raise ValueError(f"Curriculum bypass_prob must be within [0, 1]; got {value}")
+            self.bypass_prob = value
         ops = state.get("ops") or {}
         if isinstance(ops, Mapping):
             self._apply_curriculum_overrides(ops)
@@ -248,6 +253,10 @@ class AugmentationPreprocessor(BasePreprocessor):
         if self.augmenter is None:
             return
 
+        def _is_prob_field(name: str) -> bool:
+            n = str(name).lower()
+            return n == "prob" or n.endswith("_prob")
+
         def _coerce_value(current: Any, new_value: Any) -> Any:
             """Preserve operator parameter types when applying overrides."""
             if current is None:
@@ -255,46 +264,77 @@ class AugmentationPreprocessor(BasePreprocessor):
             if isinstance(current, bool):
                 return bool(new_value)
             if isinstance(current, int):
-                try:
-                    return int(round(new_value))
-                except Exception:
-                    return current
+                return int(round(new_value))
             if isinstance(current, float):
-                try:
-                    return float(new_value)
-                except Exception:
-                    return current
+                return float(new_value)
             if isinstance(current, tuple):
-                if isinstance(new_value, (list, tuple)):
-                    coerced = []
-                    for i, item in enumerate(new_value):
-                        base = current[i] if i < len(current) else (current[-1] if current else None)
-                        coerced.append(_coerce_value(base, item) if base is not None else item)
-                    return tuple(coerced)
-                return current
+                if not isinstance(new_value, (list, tuple)):
+                    raise TypeError("tuple override must be list/tuple")
+                return tuple(_coerce_value(current[i], new_value[i]) for i in range(len(new_value)))
             if isinstance(current, list):
-                if isinstance(new_value, (list, tuple)):
-                    coerced = []
-                    for i, item in enumerate(new_value):
-                        base = current[i] if i < len(current) else None
-                        coerced.append(_coerce_value(base, item) if base is not None else item)
-                    return coerced
+                if not isinstance(new_value, (list, tuple)):
+                    raise TypeError("list override must be list/tuple")
+                return [_coerce_value(current[i], new_value[i]) for i in range(len(new_value))]
             return new_value
 
-        for op in getattr(self.augmenter, "ops", []):
-            name = getattr(op, "_aug_name", None)
-            if not name:
-                continue
-            params = overrides.get(name)
-            if not isinstance(params, Mapping):
-                continue
-            for param_name, value in params.items():
-                try:
+        name_map = getattr(self.augmenter, "_augmentation_name_map", {}) or {}
+        if not name_map:
+            for op in getattr(self.augmenter, "ops", []):
+                n = getattr(op, "_aug_name", None) or re.sub(
+                    r"(?<!^)(?=[A-Z])", "_", op.__class__.__name__
+                ).lower()
+                name_map.setdefault(n, []).append(op)
+        base_map: Dict[str, Dict[str, NumericParam]] = getattr(
+            self.augmenter, "_curriculum_base_ops", {}
+        ) or {}
+        if not base_map:
+            meta = getattr(self.augmenter, "_augmentation_meta", [])
+            base_map = _build_base_ops(meta)
+        if not base_map:
+            for op in getattr(self.augmenter, "ops", []):
+                n = getattr(op, "_aug_name", None) or re.sub(
+                    r"(?<!^)(?=[A-Z])", "_", op.__class__.__name__
+                ).lower()
+                raw_curr = getattr(op, "curriculum_params", None)
+                if callable(raw_curr):
+                    raw_curr = raw_curr()
+                if isinstance(raw_curr, Mapping):
+                    for param_name, value in raw_curr.items():
+                        numeric = value if isinstance(value, NumericParam) else NumericParam.from_raw(value)
+                        base_map.setdefault(n, {})[param_name] = numeric
+
+        for op_name, param_overrides in overrides.items():
+            if op_name not in base_map:
+                raise ValueError(f"Curriculum override references unknown op '{op_name}'")
+            base_params = base_map[op_name]
+            if not isinstance(param_overrides, Mapping):
+                raise TypeError(f"Curriculum override for '{op_name}' must be a mapping")
+            targets = name_map.get(op_name, [])
+            if not targets:
+                raise ValueError(f"Curriculum override references op '{op_name}' with no instances")
+            for param_name, raw_value in param_overrides.items():
+                if param_name not in base_params:
+                    raise ValueError(
+                        f"Curriculum override references unknown param '{op_name}.{param_name}'"
+                    )
+                base_numeric = base_params[param_name]
+                override_numeric = NumericParam.from_raw(raw_value)
+                if len(base_numeric.values) != len(override_numeric.values):
+                    raise ValueError(
+                        f"Curriculum override for '{op_name}.{param_name}' has dimension {len(override_numeric.values)}, "
+                        f"expected {len(base_numeric.values)}"
+                    )
+                if _is_prob_field(param_name):
+                    for v in override_numeric.values:
+                        if v < 0.0 or v > 1.0:
+                            raise ValueError(
+                                f"Curriculum override for '{op_name}.{param_name}' must be within [0, 1]; got {v}"
+                            )
+                override_value = override_numeric.to_python_value()
+                for op in targets:
                     current = getattr(op, param_name, None)
-                    coerced = _coerce_value(current, value)
+                    coerced = _coerce_value(current, override_value)
                     setattr(op, param_name, coerced)
-                except Exception:
-                    continue
 
     def _update_geometry_field(
         self, obj: Dict[str, Any], new_geom: Dict[str, Any]

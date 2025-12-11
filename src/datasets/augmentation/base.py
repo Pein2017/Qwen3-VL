@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, List, Optional, Protocol, Tuple
+
+from .curriculum import NumericParam
 
 from PIL import Image
 
@@ -10,6 +13,89 @@ from ..geometry import (
     transform_geometry,
 )
 from ..contracts import AugmentationTelemetry
+
+
+def _is_prob_field(name: str) -> bool:
+    lowered = name.lower()
+    return lowered == "prob" or lowered.endswith("_prob")
+
+
+class CurriculumMixin:
+    """
+    Shared helper for ops that expose curriculum-adjustable numeric parameters.
+    Subclasses set `curriculum_param_names` to the list of attribute names that are
+    eligible for curriculum overrides. Only scalars or 2-element numeric ranges are
+    allowed; invalid values raise ValueError (fail-fast).
+    """
+
+    curriculum_param_names: Tuple[str, ...] = tuple()
+
+    @property
+    def curriculum_params(self) -> Dict[str, NumericParam]:
+        params: Dict[str, NumericParam] = {}
+        for name in self.curriculum_param_names:
+            if not hasattr(self, name):
+                continue
+            raw = getattr(self, name)
+            numeric = NumericParam.from_raw(raw)
+            if _is_prob_field(name):
+                vals = numeric.values
+                for v in vals:
+                    if v < 0.0 or v > 1.0:
+                        raise ValueError(
+                            f"Curriculum param '{name}' must be within [0, 1]; got {v}"
+                        )
+            params[name] = numeric
+        return params
+
+
+class AffineOp(CurriculumMixin):
+    kind = "affine"
+    allows_geometry_drops: bool = False
+    curriculum_param_names: Tuple[str, ...] = ("prob",)
+
+    def affine(self, width: int, height: int, rng: Any):
+        raise NotImplementedError
+
+
+class ColorOp(CurriculumMixin):
+    kind = "color"
+    allows_geometry_drops: bool = False
+    curriculum_param_names: Tuple[str, ...] = ("prob",)
+
+    def apply(
+        self,
+        images: List[Any],
+        geoms: List[Dict[str, Any]],
+        *,
+        width: int,
+        height: int,
+        rng: Any,
+    ) -> Tuple[List[Any], List[Dict[str, Any]]]:
+        raise NotImplementedError
+
+
+class PatchOp(CurriculumMixin):
+    """
+    Patch-style ops (crop or copy/paste) that may change geometry count or ordering.
+    Compose flushes pending affines before invoking a PatchOp and records telemetry
+    from crop-style implementations that populate kept/coverage metadata.
+    """
+
+    kind = "patch"
+    allows_geometry_drops: bool = False
+    curriculum_param_names: Tuple[str, ...] = ("prob",)
+
+    def apply(
+        self,
+        images: List[Any],
+        geoms: List[Dict[str, Any]],
+        *,
+        width: int,
+        height: int,
+        rng: Any,
+    ) -> Tuple[List[Any], List[Dict[str, Any]]]:
+        raise NotImplementedError
 
 
 class ImageAugmenter(Protocol):
@@ -110,6 +196,33 @@ class Compose:
             getattr(op, "allows_geometry_drops", False) for op in ops
         )
 
+        # Best-effort name and curriculum metadata for pipelines built without the YAML builder
+        name_map: Dict[str, List[ImageAugmenter]] = {}
+        curriculum_base: Dict[str, Dict[str, NumericParam]] = {}
+        for op in self.ops:
+            name = getattr(op, "_aug_name", None)
+            if not name:
+                name = re.sub(r"(?<!^)(?=[A-Z])", "_", op.__class__.__name__).lower()
+                setattr(op, "_aug_name", name)
+            name_map.setdefault(name, []).append(op)
+            raw_curr = getattr(op, "curriculum_params", None)
+            if callable(raw_curr):
+                raw_curr = raw_curr()
+            if isinstance(raw_curr, dict):
+                for param_name, value in raw_curr.items():
+                    numeric = (
+                        value if isinstance(value, NumericParam) else NumericParam.from_raw(value)
+                    )
+                    if _is_prob_field(param_name):
+                        for v in numeric.values:
+                            if v < 0.0 or v > 1.0:
+                                raise ValueError(
+                                    f"augmentation op '{name}' probability '{param_name}' must be within [0,1]; got {v}"
+                                )
+                    curriculum_base.setdefault(name, {})[param_name] = numeric
+        self._augmentation_name_map = name_map  # type: ignore[attr-defined]
+        self._curriculum_base_ops = curriculum_base  # type: ignore[attr-defined]
+
     def apply(
         self,
         images: List[Any],
@@ -200,48 +313,68 @@ class Compose:
             self.last_image_width = current_width
             self.last_image_height = current_height
 
+        def _is_affine_op(op: Any) -> bool:
+            return isinstance(op, AffineOp) or getattr(op, "kind", None) == "affine"
+
+        def _is_color_op(op: Any) -> bool:
+            return isinstance(op, ColorOp) or getattr(op, "kind", None) == "color"
+
+        def _is_patch_op(op: Any) -> bool:
+            return isinstance(op, PatchOp) or getattr(op, "kind", None) == "patch"
+
         for op in self.ops:
-            kind = getattr(op, "kind", None)
-            if kind == "affine":
+            if _is_affine_op(op):
                 M_op = op.affine(
                     current_width, current_height, rng
                 )  # may be None on skip
                 if M_op is not None:
                     M_total = compose_affine(M_op, M_total)
-            elif kind == "color":
+                continue
+
+            if _is_color_op(op):
                 deferred_color_ops.append(op)
-            else:
-                # Barrier: check for pre-flush hook, then flush, then apply barrier op
-                if hasattr(op, "pre_flush_hook"):
-                    M_total, current_width, current_height = op.pre_flush_hook(
-                        M_total, current_width, current_height, rng
-                    )
-                force_flush = getattr(op, "force_flush_affine", False)
-                _flush_affine(force=force_flush)
-                out_images, out_geoms = op.apply(
-                    out_images,
-                    out_geoms,
-                    width=current_width,
-                    height=current_height,
-                    rng=rng,
+                continue
+
+            # Barrier or Patch op: flush accumulated affines first
+            if hasattr(op, "pre_flush_hook"):
+                M_total, current_width, current_height = op.pre_flush_hook(
+                    M_total, current_width, current_height, rng
                 )
+            force_flush = getattr(op, "force_flush_affine", False) or _is_patch_op(op)
+            _flush_affine(force=force_flush)
 
-                # Propagate crop metadata from operator to Compose
-                if hasattr(op, "last_kept_indices") or hasattr(
-                    op, "last_crop_skip_reason"
-                ):
+            out_images, out_geoms = op.apply(
+                out_images,
+                out_geoms,
+                width=current_width,
+                height=current_height,
+                rng=rng,
+            )
+
+            # Barrier/Patch may change image size (e.g., padding, crop); update width/height
+            if isinstance(out_images, list) and out_images:
+                im0 = out_images[0]
+                if isinstance(im0, Image.Image):
+                    current_width, current_height = im0.width, im0.height
+                    self.last_image_width = current_width
+                    self.last_image_height = current_height
+                    # Update padding ratio if available
+                    if hasattr(op, "padding_ratio"):
+                        self.last_padding_ratio = getattr(op, "padding_ratio")
+                    else:
+                        self.last_padding_ratio = None
+
+            # Propagate telemetry from crop-style PatchOps or barriers that emit it
+            if _is_patch_op(op):
+                has_crop_meta = bool(
+                    getattr(op, "last_kept_indices", None)
+                    or getattr(op, "last_crop_skip_reason", None)
+                    or getattr(op, "last_object_coverages", None)
+                )
+                if has_crop_meta:
                     self._record_telemetry(op)
-
-                # Barrier may change image size (e.g., padding); update width/height
-                if isinstance(out_images, list) and out_images:
-                    im0 = out_images[0]
-                    if isinstance(im0, Image.Image):
-                        current_width, current_height = im0.width, im0.height
-                        # Update padding ratio if available
-                        if hasattr(op, "padding_ratio"):
-                            self.last_padding_ratio = getattr(op, "padding_ratio")
-                        else:
-                            self.last_padding_ratio = None
+            elif hasattr(op, "last_kept_indices") or hasattr(op, "last_crop_skip_reason"):
+                self._record_telemetry(op)
 
         # Final flush for any remaining accumulated affines
         _flush_affine()
@@ -289,4 +422,11 @@ class Compose:
         self.last_skip_counters = dict(telemetry.skip_counts)
 
 
-__all__ = ["ImageAugmenter", "Compose", "AugmentationPipeline"]
+__all__ = [
+    "ImageAugmenter",
+    "Compose",
+    "AugmentationPipeline",
+    "AffineOp",
+    "ColorOp",
+    "PatchOp",
+]

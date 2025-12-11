@@ -1,10 +1,13 @@
-from .base import Compose, ImageAugmenter
+from .base import Compose, ImageAugmenter, AffineOp, ColorOp, PatchOp
 from .registry import register, get, available
 from .builder import build_compose_from_config
 
 __all__ = [
     "Compose",
     "ImageAugmenter",
+    "AffineOp",
+    "ColorOp",
+    "PatchOp",
     "register",
     "get",
     "available",

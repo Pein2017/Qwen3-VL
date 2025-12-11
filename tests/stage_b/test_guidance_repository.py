@@ -42,7 +42,6 @@ def test_guidance_repository_load_step_and_experiences(tmp_path):
         "G1": "摘要置信度低时请返回不通过并说明原因",
     }
     assert guidance.metadata == {}
-    assert guidance.focus == "挡风板安装检查任务要点"
     assert guidance.updated_at.isoformat() == now_iso
 
 
@@ -214,14 +213,21 @@ def test_guidance_repository_remove_all_experiences_raises(tmp_path):
 
     guidance_path = tmp_path / "guidance.json"
     repo = GuidanceRepository(guidance_path, retention=2)
-    guidance_path.write_text(json.dumps({
-        "挡风板安装检查": {
-            "focus": "挡风板安装检查任务要点",
-            "step": 1,
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-            "experiences": {"G0": "初始经验"}
-        }
-    }, ensure_ascii=False, indent=2), encoding="utf-8")
+    guidance_path.write_text(
+        json.dumps(
+            {
+                "挡风板安装检查": {
+                    "focus": "挡风板安装检查任务要点",
+                    "step": 1,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                    "experiences": {"G0": "初始经验"},
+                }
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
     original_guidance = repo.get("挡风板安装检查")
     assert original_guidance.experiences
@@ -259,14 +265,21 @@ def test_guidance_repository_creates_snapshot_atomic_write(tmp_path):
 
     guidance_path = tmp_path / "guidance.json"
     repo = GuidanceRepository(guidance_path, retention=2)
-    guidance_path.write_text(json.dumps({
-        "挡风板安装检查": {
-            "focus": "挡风板安装检查任务要点",
-            "step": 1,
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-            "experiences": {"G0": "初始经验"}
-        }
-    }, ensure_ascii=False, indent=2), encoding="utf-8")
+    guidance_path.write_text(
+        json.dumps(
+            {
+                "挡风板安装检查": {
+                    "focus": "挡风板安装检查任务要点",
+                    "step": 1,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                    "experiences": {"G0": "初始经验"},
+                }
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
     with guidance_path.open("r", encoding="utf-8") as fh:
         original_payload = json.load(fh)

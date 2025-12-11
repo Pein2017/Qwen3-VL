@@ -96,6 +96,24 @@ def test_percent_curriculum_resolves_with_total_steps():
     assert state_mid["ops"]["rotate"]["prob"] == pytest.approx(0.62)
 
 
+def test_override_unknown_param_fail_fast():
+    curriculum = {
+        "phases": [{"until_step": 5, "ops": {"rotate": {"unknown_param": 0.5}}}]
+    }
+    with pytest.raises(ValueError):
+        AugmentationCurriculumScheduler.from_config(
+            base_bypass=0.1, op_meta=_build_op_meta(), curriculum_raw=curriculum
+        )
+
+
+def test_probability_bounds_enforced():
+    curriculum = {"phases": [{"until_step": 5, "ops": {"rotate": {"prob": 1.2}}}]}
+    with pytest.raises(ValueError):
+        AugmentationCurriculumScheduler.from_config(
+            base_bypass=0.1, op_meta=_build_op_meta(), curriculum_raw=curriculum
+        )
+
+
 def test_curriculum_override_preserves_types_for_ops():
     op = SmallObjectZoomPaste(
         prob=1.0, max_targets=1, max_attempts=3, scale=(1.2, 1.3), max_size=96

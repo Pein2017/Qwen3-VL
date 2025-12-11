@@ -1,0 +1,43 @@
+{
+  "images": [
+    "/data/Qwen3-VL/tests/augmentation/fixtures/input/scene0_img0.png",
+    "/data/Qwen3-VL/tests/augmentation/fixtures/input/scene0_img1.png"
+  ],
+  "width": 80,
+  "height": 64,
+  "objects": [
+    {
+      "bbox_2d": [
+        10.0,
+        12.0,
+        26.0,
+        30.0
+      ],
+      "desc": "螺丝/fastener"
+    },
+    {
+      "poly": [
+        40.0,
+        15.0,
+        52.0,
+        14.0,
+        55.0,
+        25.0,
+        42.0,
+        26.0
+      ],
+      "desc": "金属板/plate"
+    },
+    {
+      "line": [
+        15.0,
+        40.0,
+        50.0,
+        45.0,
+        60.0,
+        55.0
+      ],
+      "desc": "线缆/cable"
+    }
+  ]
+}

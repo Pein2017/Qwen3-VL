@@ -32,7 +32,7 @@ from ..geometry import (
     compute_polygon_coverage,
     translate_geometry,
 )
-from .base import ImageAugmenter
+from .base import AffineOp, ColorOp, PatchOp, CurriculumMixin, ImageAugmenter
 from .registry import register
 
 
@@ -59,10 +59,11 @@ def _pad_to_multiple(img: Image.Image, *, mult: int = 32) -> Image.Image:
 
 
 @register("hflip")
-class HFlip(ImageAugmenter):
+class HFlip(AffineOp):
+    curriculum_param_names = ("prob",)
+
     def __init__(self, prob: float = 0.5):
         self.prob = float(prob)
-        self.kind = "affine"
 
     def affine(self, width: int, height: int, rng: Any):
         if rng.random() >= self.prob:
@@ -71,10 +72,11 @@ class HFlip(ImageAugmenter):
 
 
 @register("vflip")
-class VFlip(ImageAugmenter):
+class VFlip(AffineOp):
+    curriculum_param_names = ("prob",)
+
     def __init__(self, prob: float = 0.1):
         self.prob = float(prob)
-        self.kind = "affine"
 
     def affine(self, width: int, height: int, rng: Any):
         if rng.random() >= self.prob:
@@ -83,11 +85,12 @@ class VFlip(ImageAugmenter):
 
 
 @register("rotate")
-class Rotate(ImageAugmenter):
+class Rotate(AffineOp):
+    curriculum_param_names = ("max_deg", "prob")
+
     def __init__(self, max_deg: float = 10.0, prob: float = 0.5):
         self.max_deg = float(max_deg)
         self.prob = float(prob)
-        self.kind = "affine"
 
     def affine(self, width: int, height: int, rng: Any):
         if self.max_deg <= 0 or rng.random() >= self.prob:
@@ -98,12 +101,13 @@ class Rotate(ImageAugmenter):
 
 
 @register("scale")
-class Scale(ImageAugmenter):
+class Scale(AffineOp):
+    curriculum_param_names = ("lo", "hi", "prob")
+
     def __init__(self, lo: float = 0.9, hi: float = 1.1, prob: float = 0.5):
         self.lo = float(lo)
         self.hi = float(hi)
         self.prob = float(prob)
-        self.kind = "affine"
 
     def affine(self, width: int, height: int, rng: Any):
         if rng.random() >= self.prob:
@@ -113,7 +117,9 @@ class Scale(ImageAugmenter):
 
 
 @register("color_jitter")
-class ColorJitter(ImageAugmenter):
+class ColorJitter(ColorOp):
+    curriculum_param_names = ("brightness", "contrast", "saturation", "prob")
+
     def __init__(
         self,
         brightness=(0.7, 1.3),
@@ -125,7 +131,6 @@ class ColorJitter(ImageAugmenter):
         self.contrast = tuple(map(float, contrast))
         self.saturation = tuple(map(float, saturation))
         self.prob = float(prob)
-        self.kind = "color"
 
     def apply(
         self,
@@ -152,12 +157,13 @@ class ColorJitter(ImageAugmenter):
 
 
 @register("pad_to_multiple")
-class PadToMultiple(ImageAugmenter):
+class PadToMultiple(CurriculumMixin, ImageAugmenter):
     def __init__(self, multiple: int = 32):
         if multiple <= 0:
             raise ValueError(f"multiple must be > 0, got {multiple}")
         self.multiple = int(multiple)
         self.kind = "barrier"
+        self.curriculum_param_names = ("multiple",)
 
     def apply(
         self,
@@ -177,7 +183,7 @@ class PadToMultiple(ImageAugmenter):
 
 
 @register("expand_to_fit_affine")
-class ExpandToFitAffine(ImageAugmenter):
+class ExpandToFitAffine(CurriculumMixin, ImageAugmenter):
     """
     Barrier op: expand canvas to enclose the image after applying accumulated affines, then pad to multiple.
 
@@ -195,6 +201,10 @@ class ExpandToFitAffine(ImageAugmenter):
         self.max_pixels = int(max_pixels)
         self.kind = "barrier"
         self.force_flush_affine = True
+        names = ["max_pixels"]
+        if self.multiple is not None:
+            names.insert(0, "multiple")
+        self.curriculum_param_names = tuple(names)
 
     def pre_flush_hook(
         self, M_total: List[List[float]], width: int, height: int, rng: Any
@@ -417,7 +427,7 @@ class ExpandToFitAffine(ImageAugmenter):
 
 
 @register("resize_by_scale")
-class ResizeByScale(ImageAugmenter):
+class ResizeByScale(CurriculumMixin, ImageAugmenter):
     def __init__(
         self,
         lo: float = 0.8,
@@ -432,6 +442,7 @@ class ResizeByScale(ImageAugmenter):
         self.align_multiple = int(align_multiple) if align_multiple else None
         self.prob = float(prob)
         self.kind = "barrier"
+        self.curriculum_param_names = ("lo", "hi", "prob")
 
     def apply(
         self,
@@ -527,12 +538,13 @@ class ResizeByScale(ImageAugmenter):
 
 
 @register("gamma")
-class Gamma(ImageAugmenter):
+class Gamma(ColorOp):
+    curriculum_param_names = ("gamma", "gain", "prob")
+
     def __init__(self, gamma=(0.7, 1.4), gain: float = 1.0, prob: float = 1.0):
         self.gamma = (float(gamma[0]), float(gamma[1]))
         self.gain = float(gain)
         self.prob = float(prob)
-        self.kind = "color"
 
     def apply(
         self,
@@ -559,7 +571,9 @@ class Gamma(ImageAugmenter):
 
 
 @register("hsv")
-class HueSaturationValue(ImageAugmenter):
+class HueSaturationValue(ColorOp):
+    curriculum_param_names = ("hue_delta_deg", "sat", "val", "prob")
+
     def __init__(
         self,
         hue_delta_deg=(-20.0, 20.0),
@@ -571,7 +585,6 @@ class HueSaturationValue(ImageAugmenter):
         self.sat = (float(sat[0]), float(sat[1]))
         self.val = (float(val[0]), float(val[1]))
         self.prob = float(prob)
-        self.kind = "color"
 
     def apply(
         self,
@@ -607,7 +620,9 @@ class HueSaturationValue(ImageAugmenter):
 
 
 @register("clahe")
-class CLAHE(ImageAugmenter):
+class CLAHE(ColorOp):
+    curriculum_param_names = ("clip_limit", "prob")
+
     def __init__(
         self, clip_limit: float = 3.0, tile_grid_size=(8, 8), prob: float = 0.5
     ):
@@ -620,7 +635,6 @@ class CLAHE(ImageAugmenter):
         if len(self.tile_grid_size) != 2:
             raise ValueError(f"tile_grid_size must have 2 elements, got {len(self.tile_grid_size)}")
         self.prob = float(prob)
-        self.kind = "color"
 
     def apply(
         self,
@@ -660,11 +674,12 @@ class CLAHE(ImageAugmenter):
 
 
 @register("auto_contrast")
-class AutoContrast(ImageAugmenter):
+class AutoContrast(ColorOp):
+    curriculum_param_names = ("cutoff", "prob")
+
     def __init__(self, cutoff: int = 0, prob: float = 0.5):
         self.cutoff = int(cutoff)
         self.prob = float(prob)
-        self.kind = "color"
 
     def apply(
         self,
@@ -685,11 +700,12 @@ class AutoContrast(ImageAugmenter):
 
 
 @register("solarize")
-class Solarize(ImageAugmenter):
+class Solarize(ColorOp):
+    curriculum_param_names = ("threshold", "prob")
+
     def __init__(self, threshold: int = 128, prob: float = 0.3):
         self.threshold = int(threshold)
         self.prob = float(prob)
-        self.kind = "color"
 
     def apply(
         self,
@@ -710,11 +726,12 @@ class Solarize(ImageAugmenter):
 
 
 @register("posterize")
-class Posterize(ImageAugmenter):
+class Posterize(ColorOp):
+    curriculum_param_names = ("bits", "prob")
+
     def __init__(self, bits: int = 4, prob: float = 0.3):
         self.bits = int(bits)
         self.prob = float(prob)
-        self.kind = "color"
 
     def apply(
         self,
@@ -735,11 +752,12 @@ class Posterize(ImageAugmenter):
 
 
 @register("sharpness")
-class Sharpness(ImageAugmenter):
+class Sharpness(ColorOp):
+    curriculum_param_names = ("factor", "prob")
+
     def __init__(self, factor=(0.5, 1.8), prob: float = 0.4):
         self.factor = (float(factor[0]), float(factor[1]))
         self.prob = float(prob)
-        self.kind = "color"
 
     def apply(
         self,
@@ -761,11 +779,12 @@ class Sharpness(ImageAugmenter):
 
 
 @register("albumentations_color")
-class AlbumentationsColor(ImageAugmenter):
+class AlbumentationsColor(ColorOp):
+    curriculum_param_names = ("prob",)
+
     def __init__(self, preset: str = "strong", prob: float = 1.0):
         self.preset = str(preset)
         self.prob = float(prob)
-        self.kind = "color"
 
     def _build_pipeline(self):
         try:
@@ -916,7 +935,7 @@ def _buffer_aabb(bbox: List[float], pad: float, width: int, height: int) -> List
 
 
 @register("small_object_zoom_paste")
-class SmallObjectZoomPaste(ImageAugmenter):
+class SmallObjectZoomPaste(PatchOp):
     """
     Single-image small-object zoom-and-paste to boost recall.
 
@@ -940,6 +959,17 @@ class SmallObjectZoomPaste(ImageAugmenter):
         line_buffer: float = 4.0,
         class_whitelist: List[str] | None = None,
     ):
+        self.curriculum_param_names = (
+            "prob",
+            "max_targets",
+            "max_attempts",
+            "scale",
+            "max_size",
+            "max_line_length",
+            "context",
+            "overlap_threshold",
+            "line_buffer",
+        )
         self.prob = float(prob)
         self.max_targets = int(max_targets)
         self.max_attempts = int(max_attempts)
@@ -950,7 +980,6 @@ class SmallObjectZoomPaste(ImageAugmenter):
         self.overlap_threshold = float(overlap_threshold)
         self.line_buffer = float(line_buffer)
         self.class_whitelist = list(class_whitelist) if class_whitelist else None
-        self.kind = "barrier"
         self.allows_geometry_drops = True  # geometry count may increase; allow validation bypass
 
     def _is_small(self, geom: Dict[str, Any]) -> bool:
@@ -1100,7 +1129,7 @@ class SmallObjectZoomPaste(ImageAugmenter):
 
 
 @register("random_crop")
-class RandomCrop(ImageAugmenter):
+class RandomCrop(PatchOp):
     """
     Random crop with label filtering for dense captioning.
 
@@ -1128,6 +1157,14 @@ class RandomCrop(ImageAugmenter):
         skip_if_line: bool = True,
         prob: float = 1.0,
     ):
+        self.curriculum_param_names = (
+            "scale",
+            "aspect_ratio",
+            "min_coverage",
+            "completeness_threshold",
+            "min_objects",
+            "prob",
+        )
         self.scale = (float(scale[0]), float(scale[1]))
         self.aspect_ratio = (float(aspect_ratio[0]), float(aspect_ratio[1]))
         self.min_coverage = float(min_coverage)
@@ -1135,7 +1172,6 @@ class RandomCrop(ImageAugmenter):
         self.min_objects = int(min_objects)
         self.skip_if_line = bool(skip_if_line)
         self.prob = float(prob)
-        self.kind = "barrier"
 
         # Metadata storage (set by apply, read by preprocessor)
         self.last_kept_indices: List[int] | None = None

@@ -1,0 +1,18 @@
+{
+  "kept_indices": [
+    0,
+    1,
+    2
+  ],
+  "coverages": [
+    1.0,
+    1.0,
+    0.9767441860465116
+  ],
+  "allows_geometry_drops": true,
+  "width": 73,
+  "height": 80,
+  "padding_ratio": null,
+  "skip_reason": null,
+  "skip_counts": {}
+}

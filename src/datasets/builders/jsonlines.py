@@ -10,6 +10,7 @@ from ..contracts import ConversationRecord, validate_conversation_record
 from ..geometry import normalize_points
 from ..utils import extract_object_points
 from .base import BaseBuilder
+from data_conversion.utils.sorting import sort_objects_tlbr
 
 
 class JSONLinesBuilder(BaseBuilder):
@@ -97,6 +98,7 @@ class JSONLinesBuilder(BaseBuilder):
 
         images = record.get("images", []) or []
         objects = record.get("objects", []) or []
+        sorted_objects = sort_objects_tlbr(list(objects))
 
         for image in images:
             user_contents.append({"type": "image", "image": self._to_url(image)})
@@ -104,8 +106,8 @@ class JSONLinesBuilder(BaseBuilder):
         if self.mode == "summary":
             assistant_payload: Any = self._get_summary_text(record, 0)
         else:
-            assistant_payload = self._build_group_entry(objects, record)
-            self._update_objects_metadata(objects_out, objects, 0)
+            assistant_payload = self._build_group_entry(sorted_objects, record)
+            self._update_objects_metadata(objects_out, sorted_objects, 0)
             objects_payload = assistant_payload
 
         user_contents.append({"type": "text", "text": self.user_prompt})

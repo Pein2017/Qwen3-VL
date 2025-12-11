@@ -71,8 +71,9 @@ def _render_summaries(stage_a_summaries: Dict[str, str]) -> str:
 
 def build_system_prompt(guidance: MissionGuidance) -> str:
     clauses: List[str] = [BASE_SYSTEM_PROMPT]
-    if guidance.focus:
-        clauses.append(f"任务要点：{guidance.focus}")
+    g0 = guidance.experiences.get("G0")
+    if g0:
+        clauses.append(f"任务要点：{g0}")
     if guidance.experiences:
         clauses.append("若已有提示仍无法判断，请记录需要补充的规则，便于后续指导更新。")
     return "\n\n".join(clauses)
@@ -83,11 +84,15 @@ def build_user_prompt(ticket: GroupTicket, guidance: MissionGuidance) -> str:
 
     if not guidance.experiences:
         raise ValueError("Experiences dict must be non-empty (no empty fallback)")
-    guidance_block = _render_guidance_snippets(guidance.experiences)
-    guidance_section = f"补充提示：\n{guidance_block}\n\n"
+    # Do not repeat G0 (mission headline) inside the guidance block
+    filtered_experiences = {k: v for k, v in guidance.experiences.items() if k != "G0"}
+    guidance_section = ""
+    if filtered_experiences:
+        guidance_block = _render_guidance_snippets(filtered_experiences)
+        guidance_section = f"补充提示：\n{guidance_block}\n\n"
 
     summaries_text = _render_summaries(ticket.summaries.as_dict())
-    mission_label = guidance.focus or ticket.mission
+    mission_label = guidance.experiences.get("G0") or ticket.mission
 
     return (
         f"任务: {ticket.mission}\n"

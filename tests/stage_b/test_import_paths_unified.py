@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 from src.stage_b import build_messages as build_messages_from_pkg
 from src.stage_b.sampling.prompts import build_messages as build_messages_canonical
-from src.stage_b.types import GroupTicket, StageASummaries, MissionGuidance
+from src.stage_b.types import GroupTicket, MissionGuidance, StageASummaries
 
 
 def test_build_messages_reexport_and_canonical_equivalence():
@@ -18,7 +18,6 @@ def test_build_messages_reexport_and_canonical_equivalence():
 
     guidance = MissionGuidance(
         mission="挡风板安装检查",
-        focus="检查挡风板",
         experiences={"G0": "若挡风板缺失则判定不通过"},
         step=1,
         updated_at=datetime.now(timezone.utc),
@@ -35,4 +34,3 @@ def test_build_messages_reexport_and_canonical_equivalence():
     assert m1 == m2
     assert m1[0]["role"] == "system" and m1[1]["role"] == "user"
     assert m1[0]["content"] and m1[1]["content"]
-

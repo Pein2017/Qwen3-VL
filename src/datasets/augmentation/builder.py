@@ -4,6 +4,7 @@ from copy import deepcopy
 from typing import Any, Dict, List
 
 from .base import Compose, ImageAugmenter
+from .curriculum import NumericParam
 from .registry import get as get_augmenter
 
 
@@ -31,6 +32,11 @@ def build_compose_from_config(cfg: Dict[str, Any]) -> Compose:
         raise TypeError("augmentation.ops must be a list of operations")
     ops: List[ImageAugmenter] = []
     ops_meta: List[Dict[str, Any]] = []
+    curriculum_base: Dict[str, Dict[str, NumericParam]] = {}
+
+    def _is_prob_field(name: str) -> bool:
+        n = name.lower()
+        return n == "prob" or n.endswith("_prob")
     for op in ops_cfg:
         if not isinstance(op, dict):
             raise TypeError(
@@ -47,13 +53,36 @@ def build_compose_from_config(cfg: Dict[str, Any]) -> Compose:
         augmenter_instance = cls(**params_copy)
         setattr(augmenter_instance, "_aug_name", name)
         ops.append(augmenter_instance)
-        ops_meta.append({"name": name, "params": deepcopy(params_copy)})
+        # Capture curriculum-exposed numeric params (typed) from the instance
+        curr_params: Dict[str, NumericParam] = {}
+        raw_curr = getattr(augmenter_instance, "curriculum_params", None)
+        if callable(raw_curr):
+            raw_curr = raw_curr()
+        if isinstance(raw_curr, dict):
+            for param_name, value in raw_curr.items():
+                numeric = value if isinstance(value, NumericParam) else NumericParam.from_raw(value)
+                if _is_prob_field(param_name):
+                    for v in numeric.values:
+                        if v < 0.0 or v > 1.0:
+                            raise ValueError(
+                                f"augmentation op '{name}' param '{param_name}' must be within [0, 1]; got {v}"
+                            )
+                curr_params[param_name] = numeric
+                curriculum_base.setdefault(name, {}).update({param_name: numeric})
+
+        meta_entry: Dict[str, Any] = {"name": name, "params": deepcopy(params_copy)}
+        if curr_params:
+            meta_entry["curriculum_params"] = {
+                k: v.to_python_value() for k, v in curr_params.items()
+            }
+        ops_meta.append(meta_entry)
     pipeline = Compose(ops)
     pipeline._augmentation_meta = ops_meta  # type: ignore[attr-defined]
     name_map: Dict[str, List[ImageAugmenter]] = {}
     for meta, instance in zip(ops_meta, ops):
         name_map.setdefault(meta["name"], []).append(instance)
     pipeline._augmentation_name_map = name_map  # type: ignore[attr-defined]
+    pipeline._curriculum_base_ops = curriculum_base  # type: ignore[attr-defined]
     return pipeline
 
 

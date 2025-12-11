@@ -104,7 +104,7 @@ def _parse_mission_section(
     mission: str, payload: Mapping[str, object]
 ) -> MissionGuidance:
     focus_value = payload.get("focus")
-    focus = (
+    focus_text = (
         focus_value.strip()
         if isinstance(focus_value, str) and focus_value.strip()
         else None
@@ -126,11 +126,17 @@ def _parse_mission_section(
     # Require 'experiences' mapping; no legacy 'guidance' fallback
     experiences = _parse_experiences_dict(mission, payload)
 
+    # Legacy support: if focus exists and G0 is missing or placeholder, promote focus into G0
+    if focus_text:
+        existing_g0 = experiences.get("G0")
+        if existing_g0 is None or existing_g0.strip() == "Initial guidance placeholder":
+            experiences = dict(experiences)
+            experiences["G0"] = focus_text
+
     metadata = _parse_metadata_dict(mission, payload)
 
     return MissionGuidance(
         mission=mission,
-        focus=focus,
         experiences=experiences,
         step=step,
         updated_at=updated_at,
@@ -211,7 +217,6 @@ class GuidanceRepository:
         self,
         mission: str,
         *,
-        focus: Optional[str] = None,
         experiences: Optional[Dict[str, str]] = None,
     ) -> MissionGuidance:
         guidance_map = self.load()
@@ -219,9 +224,6 @@ class GuidanceRepository:
             raise MissionGuidanceError(f"Mission {mission} guidance not found")
 
         current = guidance_map[mission]
-        new_focus = (
-            focus.strip() if isinstance(focus, str) and focus.strip() else current.focus
-        )
         new_experiences = (
             experiences if experiences is not None else current.experiences
         )
@@ -232,7 +234,6 @@ class GuidanceRepository:
 
         updated = MissionGuidance(
             mission=current.mission,
-            focus=new_focus,
             experiences=new_experiences,
             step=current.step + 1,
             updated_at=_now(),
@@ -423,7 +424,6 @@ class GuidanceRepository:
 
         return MissionGuidance(
             mission=current.mission,
-            focus=current.focus,
             experiences=experiences,
             step=current.step + 1,
             updated_at=now,
@@ -653,7 +653,6 @@ class GuidanceRepository:
         now = _now()
         updated = MissionGuidance(
             mission=current.mission,
-            focus=current.focus,
             experiences=experiences,
             step=current.step,  # Don't increment step for cleanup
             updated_at=now,
@@ -716,7 +715,6 @@ class GuidanceRepository:
 
         updated = MissionGuidance(
             mission=current.mission,
-            focus=current.focus,
             experiences=current.experiences,
             step=current.step,
             updated_at=now,

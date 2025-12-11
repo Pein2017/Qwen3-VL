@@ -14,7 +14,7 @@ guidance:
 
 output:
   root: output_post/stage_b
-  run_name: distill_qwen32_teacher  # Distill run name; artifacts under {root}/{run_name}/{mission}/
+  run_name: distill_qwen32_teacher-more_guidance  # Distill run name; artifacts under {root}/{run_name}/{mission}/
   group_report: true
 
 sampler:

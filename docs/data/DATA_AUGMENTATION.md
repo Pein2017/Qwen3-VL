@@ -252,6 +252,14 @@ No additional logging is emitted by default; the training loop applies the share
 - Can change canvas dimensions
 - Optional `pre_flush_hook()` to modify affines before warp
 
+**Why these stay barriers (not AffineOps)**:
+- They resample pixels and set a new canvas; accumulating them as pure affines would delay the resize/pad and lose control over interpolation/alignment.
+- They intentionally interrupt accumulation to lock in image size, then let later affines accumulate again.
+
+**Recommended placement**:
+- Put `random_crop` / `resize_by_scale` before color ops.
+- Keep `expand_to_fit_affine` at the very end to enforce final padding/alignment (32×).
+
 ### 4. Crop Operators with Label Filtering (`kind="barrier"`)
 **Example**: `RandomCrop`
 
@@ -884,4 +892,23 @@ If your config has `expand_to_fit_affine` before size-changing operations, move 
 
 ---
 
-**Last Updated**: 2025-11-19 (v1.1.3)
+### December 2025: Base Ops, Typed Curriculum, TL→BR Ordering
+**Status**: ✅ Deployed  
+**Change ID**: `refactor-augmentation-baseops`
+
+**What Changed**:
+- Added three base operator classes:
+  - **AffineOp** accumulates matrices; Compose flushes once to images + geometries.
+  - **ColorOp** defers pixel-only transforms until after affine flush.
+  - **PatchOp** (crop/copy-paste) flushes affines first, preserves deterministic ordering, and propagates crop telemetry.
+- All ops expose typed `curriculum_params` (numeric scalar or 2-element range only). Curriculum setup and preprocessor sync now fail fast on unknown params, dimension mismatches, or probability fields outside `[0, 1]`.
+- Dense-caption builders re-sort objects **top-to-bottom, then left-to-right** after augmentation using the same `sort_objects_tlbr` helper as data conversion, guaranteeing `object_n` order matches the prompt contract even after rotate/crop/paste.
+
+**Impact**:
+- New ops plug into Compose without custom glue; patch telemetry stays consistent.
+- Curriculum overrides are validated early, avoiding silent training drift.
+- TL→BR ordering is enforced at training time, keeping captions aligned with spatial prompts.
+
+---
+
+**Last Updated**: 2025-12-11 (refactor-augmentation-baseops)

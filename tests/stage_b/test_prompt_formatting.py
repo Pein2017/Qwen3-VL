@@ -60,7 +60,6 @@ def test_build_user_prompt_with_experiences():
 
     guidance = MissionGuidance(
         mission="挡风板安装检查",
-        focus="挡风板安装检查任务要点",
         experiences={
             "G0": "若挡风板缺失则判定不通过",
             "G1": "摘要置信度低时请返回不通过并说明原因",
@@ -71,10 +70,11 @@ def test_build_user_prompt_with_experiences():
 
     prompt = build_user_prompt(ticket, guidance)
 
-    # Verify experiences are prepended
-    assert "[G0]. 若挡风板缺失则判定不通过" in prompt
+    # Verify headline uses G0 and guidance block starts at G1
+    assert "重点: 若挡风板缺失则判定不通过" in prompt
     assert "[G1]. 摘要置信度低时请返回不通过并说明原因" in prompt
     assert "补充提示：" in prompt
+    assert "[G0]. 若挡风板缺失则判定不通过" not in prompt
 
     # Verify Stage-A summaries are included
     assert "1. 摘要内容" in prompt
@@ -92,7 +92,6 @@ def test_build_user_prompt_empty_experiences_raises_error():
 
     guidance = MissionGuidance(
         mission="挡风板安装检查",
-        focus="挡风板安装检查任务要点",
         experiences={},  # Empty experiences
         step=1,
         updated_at=datetime.now(timezone.utc),
@@ -113,7 +112,6 @@ def test_build_messages_with_experiences():
 
     guidance = MissionGuidance(
         mission="挡风板安装检查",
-        focus="挡风板安装检查任务要点",
         experiences={
             "G0": "若挡风板缺失则判定不通过",
         },
@@ -127,11 +125,39 @@ def test_build_messages_with_experiences():
     assert messages[0]["role"] == "system"
     assert messages[1]["role"] == "user"
 
-    # Verify experiences are in user prompt
+    # Verify G0 is used as headline and not duplicated in guidance block
     user_content = messages[1]["content"]
-    assert "[G0]. 若挡风板缺失则判定不通过" in user_content
-    assert "补充提示：" in user_content
+    assert "重点: 若挡风板缺失则判定不通过" in user_content
+    assert "补充提示：" not in user_content  # only G0 present, no extra rules
 
-    # Verify system prompt includes focus
+    # Verify system prompt includes G0 as mission focus
     system_content = messages[0]["content"]
-    assert "任务要点" in system_content or "挡风板安装检查任务要点" in system_content
+    assert "任务要点：若挡风板缺失则判定不通过" in system_content
+
+
+def test_build_user_prompt_headline_and_list_start_at_g1():
+    """G0 becomes headline, guidance list starts from G1."""
+    ticket = GroupTicket(
+        group_id="QC-002",
+        mission="挡风板安装检查",
+        label="fail",  # type: ignore[arg-type]
+        summaries=StageASummaries(per_image={"图片_1": "摘要内容"}),
+    )
+
+    guidance = MissionGuidance(
+        mission="挡风板安装检查",
+        experiences={
+            "G0": "若挡风板缺失则判定不通过",
+            "G1": "当摘要无法确认挡风板是否存在时，判定不通过",
+            "G2": "若安装方向错误则判定不通过",
+        },
+        step=2,
+        updated_at=datetime.now(timezone.utc),
+    )
+
+    prompt = build_user_prompt(ticket, guidance)
+
+    assert "重点: 若挡风板缺失则判定不通过" in prompt
+    assert "[G1]. 当摘要无法确认挡风板是否存在时，判定不通过" in prompt
+    assert "[G2]. 若安装方向错误则判定不通过" in prompt
+    assert "[G0]. 若挡风板缺失则判定不通过" not in prompt

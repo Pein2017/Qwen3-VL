@@ -2,10 +2,10 @@ from datetime import datetime, timezone
 
 import pytest
 
+from src.stage_b.config import ReflectionConfig
 from src.stage_b.io.guidance import GuidanceRepository
 from src.stage_b.reflection.engine import ReflectionEngine
-from src.stage_b.config import ReflectionConfig
-from src.stage_b.types import MissionGuidance, ExperienceMetadata
+from src.stage_b.types import ExperienceMetadata, MissionGuidance
 
 
 class _DummyModel:
@@ -38,7 +38,9 @@ def _mk_engine(tmp_path):
     repo = GuidanceRepository(tmp_path / "guidance.json", retention=2)
     model = _DummyModel()
     tokenizer = _DummyTokenizer()
-    return ReflectionEngine(model=model, tokenizer=tokenizer, config=cfg, guidance_repo=repo)
+    return ReflectionEngine(
+        model=model, tokenizer=tokenizer, config=cfg, guidance_repo=repo
+    )
 
 
 def test_compact_guidance_dedup_and_reindex(tmp_path):
@@ -47,11 +49,17 @@ def test_compact_guidance_dedup_and_reindex(tmp_path):
 
     mg = MissionGuidance(
         mission="m",
-        focus=None,
         experiences={"G0": "规则A", "G1": "规则B", "G2": "规则A"},
         step=1,
         updated_at=datetime.now(timezone.utc),
-        metadata={"G0": ExperienceMetadata(updated_at=datetime.now(timezone.utc), reflection_id="r", sources=("s",), rationale=None)},
+        metadata={
+            "G0": ExperienceMetadata(
+                updated_at=datetime.now(timezone.utc),
+                reflection_id="r",
+                sources=("s",),
+                rationale=None,
+            )
+        },
     )
     repo._write({"m": mg})
 
@@ -66,7 +74,6 @@ def test_compact_guidance_rejects_stage_a_like_text(tmp_path):
     repo = engine.guidance_repo
     mg = MissionGuidance(
         mission="m",
-        focus=None,
         experiences={"G0": "标签/测试×1"},
         step=1,
         updated_at=datetime.now(timezone.utc),

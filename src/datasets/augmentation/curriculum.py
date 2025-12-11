@@ -11,6 +11,11 @@ def _is_sequence_of_numbers(value: SequenceABC) -> bool:
     return len(value) == 2 and all(isinstance(item, _NUMERIC_TYPES) for item in value)
 
 
+def _is_prob_field(name: str) -> bool:
+    n = name.lower()
+    return n == "prob" or n.endswith("_prob")
+
+
 @dataclass(frozen=True)
 class NumericParam:
     values: Tuple[float, ...]
@@ -175,6 +180,12 @@ class AugmentationCurriculumScheduler:
                         raise ValueError(
                             f"phase[{idx}] override for '{op_name}.{param_name}' must match base dimension"
                         )
+                    if _is_prob_field(param_name):
+                        for v in numeric_value.values:
+                            if v < 0.0 or v > 1.0:
+                                raise ValueError(
+                                    f"phase[{idx}] override for '{op_name}.{param_name}' must be within [0, 1]; got {v}"
+                                )
                     field_overrides[param_name] = numeric_value
                 op_overrides[op_name] = field_overrides
             phases.append(
@@ -316,15 +327,22 @@ def _build_base_ops(
         if not isinstance(entry, MappingABC):
             continue
         name = entry.get('name')
-        params = entry.get('params', {})
+        params = entry.get('curriculum_params') or entry.get('params', {})
         if not name or not isinstance(params, MappingABC):
             continue
         numeric_params: Dict[str, NumericParam] = {}
         for param_name, value in params.items():
-            try:
+            if isinstance(value, NumericParam):
+                numeric_param = value
+            else:
                 numeric_param = NumericParam.from_raw(value)
-            except ValueError:
-                continue
+            if _is_prob_field(param_name) and len(numeric_param.values) == 1:
+                vals = numeric_param.values
+                for v in vals:
+                    if v < 0.0 or v > 1.0:
+                        raise ValueError(
+                            f"augmentation op '{name}' probability '{param_name}' must be within [0,1]; got {v}"
+                        )
             numeric_params[param_name] = numeric_param
         base_ops.setdefault(name, {}).update(numeric_params)
     return base_ops

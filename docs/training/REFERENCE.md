@@ -20,7 +20,7 @@ Comprehensive guide for training, inference, deployment, and advanced topics.
 
 ### Inspection Pipeline (Stage‑1 → Stage‑2)
 - **Stage‑1 / Stage‑A (Basic Object Recognition)**: `src/stage_a/` emits per-image evidence/rare-object summaries used as inputs to Stage‑2. Runbook: `docs/runtime/STAGE_A_RUNTIME.md`.
-- **Stage‑2 / Stage‑B (Group Ticket Verification)**: `src/stage_b/` ingests Stage‑A JSONL + labels and returns `pass|fail` verdicts with **prompt-only rollouts** plus optional reflection updates. No CriticEngine; manual-review and failure queues live under each mission run dir. Runbook: `docs/runtime/STAGE_B_RUNTIME.md` and business context in `docs/runtime/STAGE_A_STAGE_B.md`.
+- **Stage‑2 / Stage‑B (Group Ticket Verification)**: `src/stage_b/` ingests Stage‑A JSONL + labels and returns `pass|fail` verdicts with **prompt-only rollouts** plus optional reflection updates. Reflection supports `add|update|delete|merge|none`; `merge` lets the LLM fold semantically duplicate guidance while preserving evidence metadata. No CriticEngine; manual-review and failure queues live under each mission run dir. Runbook: `docs/runtime/STAGE_B_RUNTIME.md` and business context in `docs/runtime/STAGE_A_STAGE_B.md`.
 - **Offline preprocessing (optional)**: `data_conversion/` normalizes annotation exports into train/val/tiny JSONL and QA reports. Guide: `docs/data/DATA_PREPROCESSING_PIPELINE.md`.
 
 ### Source Code Layout

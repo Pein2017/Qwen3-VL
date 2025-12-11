@@ -71,10 +71,14 @@ class ExperienceMetadata:
         hit_count = int(hit_count_raw) if isinstance(hit_count_raw, (int, float)) else 0
 
         miss_count_raw = payload.get("miss_count", 0)
-        miss_count = int(miss_count_raw) if isinstance(miss_count_raw, (int, float)) else 0
+        miss_count = (
+            int(miss_count_raw) if isinstance(miss_count_raw, (int, float)) else 0
+        )
 
         confidence_raw = payload.get("confidence", 1.0)
-        confidence = float(confidence_raw) if isinstance(confidence_raw, (int, float)) else 1.0
+        confidence = (
+            float(confidence_raw) if isinstance(confidence_raw, (int, float)) else 1.0
+        )
 
         return ExperienceMetadata(
             updated_at=updated_at,
@@ -105,6 +109,7 @@ ChineseVerdict = Literal["通过", "不通过"]
 
 class ReflectionAction(str):
     """String subclass for reflection actions ('refine' or 'noop')."""
+
     pass
 
 
@@ -143,7 +148,6 @@ class MissionGuidance:
     """Mission-level guidance entries with step metadata."""
 
     mission: str
-    focus: Optional[str]
     experiences: Dict[str, str]
     step: int
     updated_at: datetime
@@ -155,8 +159,6 @@ class MissionGuidance:
             "updated_at": self.updated_at.isoformat(),
             "experiences": self.experiences,
         }
-        if self.focus is not None:
-            payload["focus"] = self.focus
         if self.metadata:
             payload["metadata"] = {
                 key: meta.to_payload() for key, meta in self.metadata.items()

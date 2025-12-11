@@ -246,7 +246,6 @@ class ReflectionEngine:
             raise MissionGuidanceError("Compaction would remove all experiences")
         compacted = MissionGuidance(
             mission=current.mission,
-            focus=current.focus,
             experiences=new_experiences,
             step=current.step,
             updated_at=current.updated_at,
@@ -478,13 +477,14 @@ class ReflectionEngine:
                 evid = evidence_default
 
             merged_from_raw = entry.get("merged_from")
-            merged_from: Tuple[str, ...] = tuple(
-                str(x).strip()
-                for x in merged_from_raw
-                if isinstance(merged_from_raw, Sequence)
-                and not isinstance(merged_from_raw, (str, bytes))
-                and str(x).strip()
-            )
+            if isinstance(merged_from_raw, Sequence) and not isinstance(
+                merged_from_raw, (str, bytes)
+            ):
+                merged_from: Tuple[str, ...] = tuple(
+                    str(x).strip() for x in merged_from_raw if str(x).strip()
+                )
+            else:
+                merged_from = tuple()
 
             if op_raw == "delete":
                 if not key:
@@ -1239,10 +1239,11 @@ class ReflectionEngine:
             ]
             experiences_text = "\n".join(experiences_lines)
 
-        # Focus text (mission-specific)
-        if current_guidance and current_guidance.focus:
-            task_focus = current_guidance.focus
-        else:
+        # Focus text (mission-specific) — prefer G0; fallback to static map
+        task_focus = None
+        if current_guidance:
+            task_focus = current_guidance.experiences.get("G0")
+        if not task_focus:
             task_focus = STAGE_B_MISSION_FOCUS.get(bundle.mission, "未定义任务侧重点")
 
         # Preamble (does not depend on chosen records)

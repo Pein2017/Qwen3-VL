@@ -23,6 +23,7 @@ config=configs/stage_b/run.yaml gpus=0 log_level=logging \
 - Shared Qwen3-VL model is reused by sampler and reflection; **no CriticEngine**。
 - 生产部署约束：Stage‑A 摘要和 Stage‑B 判决在同一 Qwen3‑VL checkpoint 上运行（同一套权重/LoRA），通过不同的 prompt 实现任务切换，因此任何针对摘要的 SFT/LoRA 调整都必须兼顾 Stage‑B 的 rollout 推理质量。
 - Reflection runs only on explainable mismatches (GT vs model) and proposes ≤3 micro-guidance edits; malformed or non-explainable samples are logged and skipped.
+- Reflection prompt ops: `add|update|delete|merge|none`. Use `merge` when two guidance lines are semantically redundant—LLM picks a canonical `key` and lists `merged_from`; the engine folds sources/hit-miss stats into the keeper, removes merged keys, then exact-compacts.
 - `stage_a_paths` must point to Stage-A JSONL files containing `mission`, `group_id`, `label` (`pass|fail`), and `per_image`; keys are normalized to `image_{n}`.
 
 ##### Config Breakdown (`src/stage_b/config.py`)
