@@ -16,7 +16,13 @@ from typing import Dict, List, Optional, Tuple
 
 import torch
 from tqdm import tqdm
-from transformers import AutoProcessor, AutoTokenizer, Qwen3VLForConditionalGeneration
+from transformers import (
+    AutoConfig,
+    AutoModelForCausalLM,
+    AutoProcessor,
+    AutoTokenizer,
+    Qwen3VLForConditionalGeneration,
+)
 
 from ..utils import configure_logging, get_logger
 from .config import StageBConfig, load_stage_b_config
@@ -26,6 +32,7 @@ from .io.group_report import build_group_report
 from .io.guidance import GuidanceRepository
 from .reflection import ReflectionEngine
 from .rollout import RolloutSampler
+from .sampling.prompts import build_messages
 from .types import (
     DeterministicSignals,
     ExperienceRecord,
@@ -44,25 +51,61 @@ def _dtype_from_str(name: str):
     return getattr(torch, lowered)
 
 
+def _detect_model_variant(model_path: str) -> str:
+    """Return 'vl' for multi-modal Qwen3-VL checkpoints, else 'lm'."""
+
+    try:
+        cfg = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(
+            f"Failed to read model config at {model_path}: {exc}"
+        ) from exc
+
+    model_type = getattr(cfg, "model_type", "") or ""
+    has_vision = getattr(cfg, "vision_config", None) is not None
+
+    if "vl" in str(model_type).lower() or has_vision:
+        return "vl"
+    return "lm"
+
+
 def _load_model(config: StageBConfig):
+    variant = _detect_model_variant(config.model.model_name_or_path)
+    logger.info(
+        "Detected model variant '%s' for %s",
+        variant,
+        config.model.model_name_or_path,
+    )
+
     tokenizer = AutoTokenizer.from_pretrained(
-        config.model.model_name_or_path, padding_side="left"
+        config.model.model_name_or_path,
+        padding_side="left",
+        trust_remote_code=True,
     )
     dtype = _dtype_from_str(config.model.torch_dtype)
     model_kwargs = {
         "torch_dtype": dtype,
         "device_map": config.model.device_map,
     }
-    model = Qwen3VLForConditionalGeneration.from_pretrained(
-        config.model.model_name_or_path,
-        **model_kwargs,
-    )
+    if variant == "vl":
+        model = Qwen3VLForConditionalGeneration.from_pretrained(
+            config.model.model_name_or_path,
+            **model_kwargs,
+        )
+        processor = AutoProcessor.from_pretrained(
+            config.model.model_name_or_path, trust_remote_code=True
+        )
+    else:
+        model = AutoModelForCausalLM.from_pretrained(
+            config.model.model_name_or_path,
+            **model_kwargs,
+            trust_remote_code=True,
+        )
+        processor = None
+
     if tokenizer.pad_token is None and tokenizer.eos_token is not None:
         tokenizer.pad_token = tokenizer.eos_token
     model.eval()
-    processor = AutoProcessor.from_pretrained(
-        config.model.model_name_or_path, trust_remote_code=True
-    )
     return model, tokenizer, processor
 
 
@@ -223,7 +266,9 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
 
     run_dir = config.output.root / config.output.run_name
     if run_dir.exists():
-        logger.info("Cleaning existing run directory to avoid stale artifacts: %s", run_dir)
+        logger.info(
+            "Cleaning existing run directory to avoid stale artifacts: %s", run_dir
+        )
         shutil.rmtree(run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
 
@@ -271,6 +316,14 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
         # Setup mission-specific directory structure
         mission_dir = run_dir / mission
         _reset_mission_artifacts(mission_dir)
+        distill_cfg = config.stage_b_distillation
+        distill_enabled = bool(distill_cfg.enabled) if distill_cfg else False
+        default_distill_path = mission_dir / "distill_chatml.jsonl"
+        distill_path = (
+            Path(distill_cfg.log_chatml_path)
+            if distill_enabled and distill_cfg and distill_cfg.log_chatml_path
+            else default_distill_path
+        )
 
         # Setup mission-specific guidance
         mission_guidance_repo = _setup_mission_guidance(
@@ -297,7 +350,13 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
 
         mission_selection_count = 0
         total_groups = len(mission_tickets)
+        # Initialize loop-scoped flags to satisfy static analysis and clarify defaults
+        guidance_updated_epoch: bool = False
+        distill_records_epoch: List[Dict[str, object]] = []
+        epoch = 0
         for epoch in range(1, config.runner.epochs + 1):
+            guidance_updated_epoch = False
+            distill_records_epoch = []
             logger.info(
                 f"Starting Stage-B epoch {epoch}/{config.runner.epochs} for mission {mission}"
             )
@@ -316,7 +375,9 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
             reflection_cycle = 0
             pending_records: List[ExperienceRecord] = []
             last_reflection_id: Optional[str] = None
-            last_applied_rule_keys: List[str] = []  # Track rules applied in last reflection
+            last_applied_rule_keys: List[
+                str
+            ] = []  # Track rules applied in last reflection
 
             manual_review_path = mission_dir / "manual_review_queue.jsonl"
             failure_path = mission_dir / "failure_malformed.jsonl"
@@ -493,6 +554,16 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                     _append_jsonl(selections_path, selection_payload)
                     mission_selection_count += 1
 
+                    # Buffer selected candidate for potential distillation logging
+                    if distill_enabled:
+                        distill_records_epoch.append(
+                            {
+                                "ticket": ticket,
+                                "verdict": selection.verdict,
+                                "reason": selection.reason,
+                            }
+                        )
+
                     # Two-line protocol: always forward usable candidates to reflection
                     record = reflection_engine.build_record(
                         ticket,
@@ -513,6 +584,8 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                             epoch=epoch,
                             log=True,
                         )
+                        if outcome.applied:
+                            guidance_updated_epoch = True
                         if outcome.proposal.uncertainty_note == "no_evidence_for_label":
                             # No evidence supporting the label - route to manual review
                             for rec in pending_records:
@@ -552,10 +625,18 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                                 continue
                             win_idx = rec.winning_candidate
                             win_cand = next(
-                                (c for c in rec.candidates if c.candidate_index == win_idx),
+                                (
+                                    c
+                                    for c in rec.candidates
+                                    if c.candidate_index == win_idx
+                                ),
                                 None,
                             )
-                            if win_cand and win_cand.signals and win_cand.signals.label_match is False:
+                            if (
+                                win_cand
+                                and win_cand.signals
+                                and win_cand.signals.label_match is False
+                            ):
                                 _append_jsonl(
                                     manual_review_path,
                                     {
@@ -574,6 +655,7 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                                     logger.debug(
                                         f"Updated miss_count for rules {last_applied_rule_keys} due to prediction failure on {rec.ticket.group_id}"
                                     )
+                                    guidance_updated_epoch = True
 
                         # Extract and track applied rules for miss_count updates
                         if outcome.applied:
@@ -584,7 +666,9 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                                     applied_keys.append(op.key)
                                 elif op.op == "upsert" and op.text:
                                     # For new rules without explicit key, use text as identifier
-                                    applied_keys.append(f"_text_{hash(op.text) % (10**8)}")
+                                    applied_keys.append(
+                                        f"_text_{hash(op.text) % (10**8)}"
+                                    )
                             last_applied_rule_keys = applied_keys
                             logger.debug(
                                 f"Reflection applied {len(applied_keys)} rule(s): {applied_keys}"
@@ -613,6 +697,8 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                     epoch=epoch,
                     log=True,
                 )
+                if outcome.applied:
+                    guidance_updated_epoch = True
                 if outcome.proposal.uncertainty_note == "no_evidence_for_label":
                     # No evidence supporting the label - route to manual review
                     for rec in pending_records:
@@ -655,7 +741,11 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                         (c for c in rec.candidates if c.candidate_index == win_idx),
                         None,
                     )
-                    if win_cand and win_cand.signals and win_cand.signals.label_match is False:
+                    if (
+                        win_cand
+                        and win_cand.signals
+                        and win_cand.signals.label_match is False
+                    ):
                         _append_jsonl(
                             mission_dir / "manual_review_queue.jsonl",
                             {
@@ -674,6 +764,7 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                             logger.debug(
                                 f"Updated miss_count for rules {last_applied_rule_keys} due to prediction failure on {rec.ticket.group_id}"
                             )
+                            guidance_updated_epoch = True
 
                 # Extract and track applied rules from end-of-epoch reflection
                 if outcome.applied:
@@ -706,10 +797,9 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                     logger.info(
                         f"Epoch {epoch}: cleanup_low_confidence removed {len(removed)} rule(s): {removed}"
                     )
+                    guidance_updated_epoch = True
             except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    f"Failed to perform cleanup at epoch {epoch}: {exc}"
-                )
+                logger.warning(f"Failed to perform cleanup at epoch {epoch}: {exc}")
 
         total_selections += mission_selection_count
 
@@ -723,6 +813,42 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                 logger.info("Wrote grouped report to %s", report_path)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Failed to build group report for %s: %s", mission, exc)
+
+        # If guidance did not change this epoch and distillation is enabled, emit distill chatml and stop further epochs
+        if distill_enabled and not guidance_updated_epoch:
+            guidance_map = mission_guidance_repo.load()
+            if mission not in guidance_map:
+                raise RuntimeError(f"Mission {mission} guidance missing at convergence")
+            guidance = guidance_map[mission]
+            distill_path.parent.mkdir(parents=True, exist_ok=True)
+            with distill_path.open("w", encoding="utf-8") as fh:
+                for record in distill_records_epoch:
+                    ticket: GroupTicket = record["ticket"]  # type: ignore[assignment]
+                    verdict: str = record["verdict"]  # type: ignore[assignment]
+                    reason: Optional[str] = record["reason"]  # type: ignore[assignment]
+                    messages = build_messages(ticket, guidance)
+                    verdict_text = "通过" if verdict == "pass" else "不通过"
+                    reason_text = reason or ""
+                    assistant_content = (
+                        f"Verdict: {verdict_text}\nReason: {reason_text}"
+                    )
+                    messages.append({"role": "assistant", "content": assistant_content})
+                    payload = {
+                        "group_id": ticket.group_id,
+                        "mission": ticket.mission,
+                        "label": ticket.label,
+                        "messages": messages,
+                    }
+                    fh.write(json.dumps(payload, ensure_ascii=False))
+                    fh.write("\n")
+            logger.info(
+                "Early stop: guidance unchanged in epoch %d. Wrote %d distill records to %s; halting remaining epochs for mission %s.",
+                epoch,
+                len(distill_records_epoch),
+                distill_path,
+                mission,
+            )
+            break
 
     logger.info(
         f"Completed Stage-B pipeline across {config.runner.epochs} epoch(s) and {processed_missions} mission(s): {total_selections} total selections"

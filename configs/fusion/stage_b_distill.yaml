@@ -1,0 +1,13 @@
+targets:
+  - name: stageb_teacher
+    dataset: chat
+    train_jsonl: data/stage_b/distill_chatml.train.jsonl
+    val_jsonl: data/stage_b/distill_chatml.val.jsonl
+    template: chatml
+    mode: dense
+    sample_without_replacement: true
+    augmentation_enabled: false
+    curriculum_enabled: false
+
+# Auxiliary sources can be added here when mixing with other tasks.
+sources: []

@@ -98,6 +98,14 @@ class RunnerConfig:
 
 
 @dataclass(frozen=True)
+class StageBDistillationConfig:
+    """Optional distillation logging."""
+
+    enabled: bool = True
+    log_chatml_path: Optional[Path] = None
+
+
+@dataclass(frozen=True)
 class StageBConfig:
     seed: int
     stage_a_paths: Tuple[Path, ...]
@@ -110,6 +118,7 @@ class StageBConfig:
     runner: RunnerConfig
     manual_review: ManualReviewConfig
     guidance_lifecycle: Optional[GuidanceLifecycleConfig] = None
+    stage_b_distillation: Optional[StageBDistillationConfig] = None
 
 
 def _decode_config(section: Mapping[str, Any]) -> DecodeConfig:
@@ -315,7 +324,7 @@ def _load_runner(section: Mapping[str, Any]) -> RunnerConfig:
 
 def _load_guidance_lifecycle(
     section: Optional[Mapping[str, Any]],
-) -> Optional[GuidanceLifecycleConfig]:
+    ) -> Optional[GuidanceLifecycleConfig]:
     """Load optional guidance lifecycle configuration."""
     if section is None:
         return None
@@ -327,6 +336,17 @@ def _load_guidance_lifecycle(
         min_miss_before_drop=min_miss,
         enable_auto_cleanup=enable_cleanup,
     )
+
+
+def _load_distillation(
+    section: Optional[Mapping[str, Any]],
+) -> Optional[StageBDistillationConfig]:
+    if section is None:
+        return StageBDistillationConfig()
+    enabled = bool(section.get("enabled", True))
+    raw_path = section.get("log_chatml_path")
+    log_chatml_path = Path(raw_path) if raw_path else None
+    return StageBDistillationConfig(enabled=enabled, log_chatml_path=log_chatml_path)
 
 
 def load_stage_b_config(path: str | Path) -> StageBConfig:
@@ -349,6 +369,7 @@ def load_stage_b_config(path: str | Path) -> StageBConfig:
     runner = _load_runner(_require(raw_config, "runner", "Stage-B config"))
     seed_value = _load_seed(raw_config)
     guidance_lifecycle = _load_guidance_lifecycle(raw_config.get("guidance_lifecycle"))
+    stage_b_distillation = _load_distillation(raw_config.get("stage_b_distillation"))
 
     return StageBConfig(
         seed=seed_value,
@@ -362,6 +383,7 @@ def load_stage_b_config(path: str | Path) -> StageBConfig:
         runner=runner,
         manual_review=manual_review,
         guidance_lifecycle=guidance_lifecycle,
+        stage_b_distillation=stage_b_distillation,
     )
 
 
@@ -369,6 +391,7 @@ __all__ = [
     "GuidanceConfig",
     "GuidanceLifecycleConfig",
     "RunnerConfig",
+    "StageBDistillationConfig",
     "ModelConfig",
     "OutputConfig",
     "ReflectionConfig",

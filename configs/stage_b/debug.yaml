@@ -1,9 +1,9 @@
 stage_a_paths:
-  - output_post/stage_a/挡风板安装检查_stage_a_tiny.jsonl
+  - output_post/stage_a/挡风板安装检查_stage_a.jsonl
 seed: 17
 
 model:
-  model_name_or_path: output/12-9/summary_merged/checkpoint-558
+  model_name_or_path: model_cache/models/Qwen/Qwen3-32B
   torch_dtype: bfloat16
   device_map: auto
 
@@ -14,7 +14,7 @@ guidance:
 
 output:
   root: output_post/stage_b
-  run_name: debug-0.1-0.4-0.7-original_non_summary
+  run_name: distill_qwen32_teacher  # Distill run name; artifacts under {root}/{run_name}/{mission}/
   group_report: true
 
 sampler:
@@ -55,14 +55,14 @@ sampler:
 reflection:
   prompt_path: configs/prompts/stage_b_reflection_prompt.txt
   batch_size: 8  # Debug: 保持较小批次，便于观察每次反思
-  max_operations: 3  # Debug: 每次最多 3 条经验修改
+  max_operations: 5  # Debug: 每次最多 3 条经验修改
 
   temperature: 0.001  # Higher temperature for more diverse guidance entries
   top_p: 0.9  # Higher top_p for more diverse sampling
   repetition_penalty: 1.05
-  max_new_tokens: 2048  # Allow longer responses to avoid truncation (G1 case)
-  max_reflection_length: 12000  # Larger packed context
-  token_budget: 12000  # Allow larger packed context to avoid dropping records
+  max_new_tokens: 12000  # Allow longer responses to avoid truncation (G1 case)
+  max_reflection_length: 24000  # Larger packed context
+  token_budget: 24000  # Allow larger packed context to avoid dropping records
 
 selection:
   policy: top_label
@@ -73,8 +73,13 @@ manual_review:
   min_verdict_agreement: 0.8  # fraction of candidates sharing the same verdict
 
 runner:
-  epochs: 3 # Tiny smoke: 单轮
+  epochs: 5 # Tiny smoke: 单轮
   rollout_batch_size: 1
+
+stage_b_distillation:
+  enabled: true
+  # Override only if you want a custom location; default is {root}/{run_name}/{mission}/distill_chatml.jsonl
+  # log_chatml_path: output_post/stage_b/distill_chatml.jsonl
 
 # Guidance lifecycle management (optional)
 guidance_lifecycle:
