@@ -6,18 +6,18 @@ model:
 training:
   output_dir: ./output/12-9/res_1024_fusion
   logging_dir: ./tb/12-9/res_1024_fusion
-  run_name: from_original-epoch_30-lrs_4-2-8
+  run_name: from_original-epoch_30-lrs_2-1-6-smoother_aug
   num_train_epochs: 30
   warmup_ratio: 0.1
-  learning_rate: 4.0e-4
-  vit_lr: 2.0e-4
-  aligner_lr: 8.0e-4
-  save_delay_steps: 1600
+  learning_rate: 2.0e-4
+  vit_lr: 1.0e-4
+  aligner_lr: 6.0e-4
+  save_delay_steps: 800
   # logging_steps: 1
   # eval_steps: 1
   per_device_train_batch_size: 2
   per_device_eval_batch_size: 4
-  effective_batch_size: 36
+  effective_batch_size: 32
 
 custom:
   fusion_config: configs/fusion/bbu_rru_lvis_coig_1024.yaml

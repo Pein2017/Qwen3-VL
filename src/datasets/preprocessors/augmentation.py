@@ -1,14 +1,15 @@
 """Augmentation preprocessor - decoupled from dataset logic"""
 
+import copy
 import random
 import re
 from typing import Any, Dict, List, Mapping, MutableMapping, Optional
 
-from .base import BasePreprocessor
-from ..utils import extract_geometry
 from ...utils.logger import get_logger
-from ..contracts import ConversationRecord, AugmentationTelemetry
 from ..augmentation.curriculum import NumericParam, _build_base_ops
+from ..contracts import AugmentationTelemetry, ConversationRecord
+from ..utils import extract_geometry
+from .base import BasePreprocessor
 
 
 class AugmentationPreprocessor(BasePreprocessor):
@@ -89,12 +90,16 @@ class AugmentationPreprocessor(BasePreprocessor):
         images = rec.get("images") or []
         objs = rec.get("objects") or []
 
-        # Extract geometries
+        # Extract geometries and keep an index mapping back to the object list.
+        # This lets us append new duplicated objects when PatchOps increase geometry count
+        # (e.g., small_object_zoom_paste).
         per_obj_geoms: List[Dict[str, Any]] = []
-        for obj in objs:
+        obj_idx_with_geom: List[int] = []
+        for idx, obj in enumerate(objs):
             g = extract_geometry(obj)
             if g:
                 per_obj_geoms.append(g)
+                obj_idx_with_geom.append(idx)
 
         # Apply augmentations using unified pipeline API only
         if Compose is None or not isinstance(self.augmenter, Compose):
@@ -113,17 +118,35 @@ class AugmentationPreprocessor(BasePreprocessor):
 
         if telemetry is None or not telemetry.kept_indices:
             # No crop applied (or crop was skipped) - update geometries only
-            j = 0
-            for i, obj in enumerate(objs):
-                if (
-                    obj.get("bbox_2d") is not None
-                    or obj.get("poly") is not None
-                    or obj.get("line") is not None
-                ):
-                    g = per_obj_geoms_new[j]
-                    j += 1
-                    # Update with new geometry, clear others
-                    self._update_geometry_field(obj, g)
+            if len(per_obj_geoms_new) < len(obj_idx_with_geom):
+                raise ValueError(
+                    "augmentation returned fewer geometries than input objects without crop telemetry: "
+                    f"got {len(per_obj_geoms_new)}, expected >= {len(obj_idx_with_geom)}"
+                )
+
+            # 1) Update existing objects in-place.
+            for j, obj_idx in enumerate(obj_idx_with_geom):
+                self._update_geometry_field(objs[obj_idx], per_obj_geoms_new[j])
+
+            # 2) Append any extra geometries as duplicated objects (labeled).
+            extra_geoms = per_obj_geoms_new[len(obj_idx_with_geom) :]
+            if extra_geoms and obj_idx_with_geom:
+                appended_objs: List[Dict[str, Any]] = []
+                for geom in extra_geoms:
+                    src_idx = geom.get("__src_geom_idx")
+                    try:
+                        src_idx_int = int(src_idx) if src_idx is not None else 0
+                    except (TypeError, ValueError):
+                        src_idx_int = 0
+                    if src_idx_int < 0 or src_idx_int >= len(obj_idx_with_geom):
+                        src_idx_int = 0
+
+                    src_obj = objs[obj_idx_with_geom[src_idx_int]]
+                    dup_obj = copy.deepcopy(src_obj)
+                    self._update_geometry_field(dup_obj, geom)
+                    appended_objs.append(dup_obj)
+                objs.extend(appended_objs)
+                rec["objects"] = objs  # type: ignore[typeddict-item]
         else:
             # Crop was applied - filter objects and update completeness
             filtered_objects: List[Dict[str, Any]] = []
@@ -137,18 +160,14 @@ class AugmentationPreprocessor(BasePreprocessor):
             # Try to get from pipeline's crop operators
             for op in pipeline.ops if hasattr(pipeline, "ops") else []:
                 if hasattr(op, "completeness_threshold"):
-                    completeness_threshold = op.completeness_threshold
+                    completeness_threshold = getattr(op, "completeness_threshold", 0.95)
                     break
 
-            # Build mapping from original obj indices to new geometries
-            obj_idx_with_geom = []
-            for i, obj in enumerate(objs):
-                if (
-                    obj.get("bbox_2d") is not None
-                    or obj.get("poly") is not None
-                    or obj.get("line") is not None
-                ):
-                    obj_idx_with_geom.append(i)
+            if len(per_obj_geoms_new) < len(kept_indices):
+                raise ValueError(
+                    "augmentation returned fewer geometries than kept crop indices: "
+                    f"got {len(per_obj_geoms_new)}, expected >= {len(kept_indices)}"
+                )
 
             # Filter and update objects
             completeness_updates = 0
@@ -192,8 +211,27 @@ class AugmentationPreprocessor(BasePreprocessor):
 
                 filtered_objects.append(obj)
 
+            # Append any extra geometries as duplicated objects (labeled).
+            extra_geoms = per_obj_geoms_new[len(kept_indices) :]
+            if extra_geoms and filtered_objects:
+                appended_objs_crop: List[Dict[str, Any]] = []
+                for geom in extra_geoms:
+                    src_idx = geom.get("__src_geom_idx")
+                    try:
+                        src_idx_int = int(src_idx) if src_idx is not None else 0
+                    except (TypeError, ValueError):
+                        src_idx_int = 0
+                    if src_idx_int < 0 or src_idx_int >= len(filtered_objects):
+                        src_idx_int = 0
+
+                    src_obj = filtered_objects[src_idx_int]
+                    dup_obj = copy.deepcopy(src_obj)
+                    self._update_geometry_field(dup_obj, geom)
+                    appended_objs_crop.append(dup_obj)
+                filtered_objects.extend(appended_objs_crop)
+
             # Replace objects list with filtered objects
-            rec["objects"] = filtered_objects
+            rec["objects"] = filtered_objects  # type: ignore[typeddict-item]
 
             # Log crop filtering results (debug level)
             logger = get_logger("augmentation.preprocessor")
@@ -202,20 +240,21 @@ class AugmentationPreprocessor(BasePreprocessor):
                 f"({completeness_updates} desc updates, {structured_updates} attribute updates)"
             )
 
-        rec["images"] = images_bytes
+        rec["images"] = images_bytes  # type: ignore[typeddict-item]
 
         # Update record width/height to reflect any resize/pad ops in augmentation
         try:
             if images_bytes:
                 import io
+
                 from PIL import Image  # type: ignore
 
                 b0 = images_bytes[0].get("bytes")
                 if isinstance(b0, (bytes, bytearray)):
                     with Image.open(io.BytesIO(b0)) as im0:
                         im0 = im0.convert("RGB")
-                        rec["width"] = int(im0.width)
-                        rec["height"] = int(im0.height)
+                        rec["width"] = int(im0.width)  # type: ignore[typeddict-item]
+                        rec["height"] = int(im0.height)  # type: ignore[typeddict-item]
         except Exception:
             # Non-fatal: leave original width/height
             pass
@@ -238,9 +277,13 @@ class AugmentationPreprocessor(BasePreprocessor):
             try:
                 value = float(bypass)
             except (TypeError, ValueError) as exc:
-                raise ValueError(f"Curriculum bypass_prob must be numeric; got {bypass}") from exc
+                raise ValueError(
+                    f"Curriculum bypass_prob must be numeric; got {bypass}"
+                ) from exc
             if value < 0.0 or value > 1.0:
-                raise ValueError(f"Curriculum bypass_prob must be within [0, 1]; got {value}")
+                raise ValueError(
+                    f"Curriculum bypass_prob must be within [0, 1]; got {value}"
+                )
             self.bypass_prob = value
         ops = state.get("ops") or {}
         if isinstance(ops, Mapping):
@@ -270,48 +313,66 @@ class AugmentationPreprocessor(BasePreprocessor):
             if isinstance(current, tuple):
                 if not isinstance(new_value, (list, tuple)):
                     raise TypeError("tuple override must be list/tuple")
-                return tuple(_coerce_value(current[i], new_value[i]) for i in range(len(new_value)))
+                return tuple(
+                    _coerce_value(current[i], new_value[i])
+                    for i in range(len(new_value))
+                )
             if isinstance(current, list):
                 if not isinstance(new_value, (list, tuple)):
                     raise TypeError("list override must be list/tuple")
-                return [_coerce_value(current[i], new_value[i]) for i in range(len(new_value))]
+                return [
+                    _coerce_value(current[i], new_value[i])
+                    for i in range(len(new_value))
+                ]
             return new_value
 
         name_map = getattr(self.augmenter, "_augmentation_name_map", {}) or {}
         if not name_map:
             for op in getattr(self.augmenter, "ops", []):
-                n = getattr(op, "_aug_name", None) or re.sub(
-                    r"(?<!^)(?=[A-Z])", "_", op.__class__.__name__
-                ).lower()
+                n = (
+                    getattr(op, "_aug_name", None)
+                    or re.sub(r"(?<!^)(?=[A-Z])", "_", op.__class__.__name__).lower()
+                )
                 name_map.setdefault(n, []).append(op)
-        base_map: Dict[str, Dict[str, NumericParam]] = getattr(
-            self.augmenter, "_curriculum_base_ops", {}
-        ) or {}
+        base_map: Dict[str, Dict[str, NumericParam]] = (
+            getattr(self.augmenter, "_curriculum_base_ops", {}) or {}
+        )
         if not base_map:
             meta = getattr(self.augmenter, "_augmentation_meta", [])
             base_map = _build_base_ops(meta)
         if not base_map:
             for op in getattr(self.augmenter, "ops", []):
-                n = getattr(op, "_aug_name", None) or re.sub(
-                    r"(?<!^)(?=[A-Z])", "_", op.__class__.__name__
-                ).lower()
+                n = (
+                    getattr(op, "_aug_name", None)
+                    or re.sub(r"(?<!^)(?=[A-Z])", "_", op.__class__.__name__).lower()
+                )
                 raw_curr = getattr(op, "curriculum_params", None)
                 if callable(raw_curr):
                     raw_curr = raw_curr()
                 if isinstance(raw_curr, Mapping):
                     for param_name, value in raw_curr.items():
-                        numeric = value if isinstance(value, NumericParam) else NumericParam.from_raw(value)
+                        numeric = (
+                            value
+                            if isinstance(value, NumericParam)
+                            else NumericParam.from_raw(value)
+                        )
                         base_map.setdefault(n, {})[param_name] = numeric
 
         for op_name, param_overrides in overrides.items():
             if op_name not in base_map:
-                raise ValueError(f"Curriculum override references unknown op '{op_name}'")
+                raise ValueError(
+                    f"Curriculum override references unknown op '{op_name}'"
+                )
             base_params = base_map[op_name]
             if not isinstance(param_overrides, Mapping):
-                raise TypeError(f"Curriculum override for '{op_name}' must be a mapping")
+                raise TypeError(
+                    f"Curriculum override for '{op_name}' must be a mapping"
+                )
             targets = name_map.get(op_name, [])
             if not targets:
-                raise ValueError(f"Curriculum override references op '{op_name}' with no instances")
+                raise ValueError(
+                    f"Curriculum override references op '{op_name}' with no instances"
+                )
             for param_name, raw_value in param_overrides.items():
                 if param_name not in base_params:
                     raise ValueError(

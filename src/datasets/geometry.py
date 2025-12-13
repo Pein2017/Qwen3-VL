@@ -882,12 +882,15 @@ def transform_geometry(
     - Polyline is transformed and clipped to rect; degenerate outputs dropped.
     - Rounding/clamping to integer pixel grid occurs at the end.
     """
+    # Preserve any non-geometry metadata keys carried alongside the geometry.
+    # This is used by augmentation ops to keep provenance through later transforms.
+    meta = {k: v for k, v in g.items() if k not in {"bbox_2d", "poly", "line"}}
     obj = geometry_from_dict(g)
     if isinstance(obj, BBox):
         res = obj.apply_affine(M)
         if isinstance(res, BBox):
             bb = clamp_points([res.x1, res.y1, res.x2, res.y2], width, height)
-            return {"bbox_2d": bb}
+            return {**meta, "bbox_2d": bb}
         # BBox promoted to Polygon under general affine (rotation/shear)
         t = list(res.points)
         # Check if polygon is fully inside image bounds - if so, skip clipping to preserve exact rotation
@@ -899,7 +902,7 @@ def transform_geometry(
         if all_inside:
             # Polygon fully inside - use rotated points directly, just round/clamp
             q = clamp_points(to_clockwise(t), width, height)
-            return {"poly": q}
+            return {**meta, "poly": q}
         # Polygon needs clipping - use Sutherland-Hodgman
         clipped = sutherland_hodgman_clip(t, width, height)
         if len(clipped) // 2 >= 3:
@@ -907,10 +910,10 @@ def transform_geometry(
             if len(poly) // 2 != 4:
                 poly = min_area_rect(poly)
             q = clamp_points(poly, width, height)
-            return {"poly": q}
+            return {**meta, "poly": q}
         # fully outside: keep clamped transform to preserve geometry (degenerate possible)
         q = clamp_points(to_clockwise(t), width, height)
-        return {"poly": q}
+        return {**meta, "poly": q}
     if isinstance(obj, Polygon):
         t = list(obj.apply_affine(M).points)
         # Check if polygon is fully inside image bounds - if so, skip clipping to preserve exact rotation
@@ -922,7 +925,7 @@ def transform_geometry(
         if all_inside:
             # Polygon fully inside - use rotated points directly, just round/clamp
             q = clamp_points(to_clockwise(t), width, height)
-            return {"poly": q}
+            return {**meta, "poly": q}
         # Polygon needs clipping - use Sutherland-Hodgman
         clipped = sutherland_hodgman_clip(t, width, height)
         if len(clipped) // 2 >= 3:
@@ -930,9 +933,9 @@ def transform_geometry(
             if len(poly) // 2 != 4:
                 poly = min_area_rect(poly)
             q = clamp_points(poly, width, height)
-            return {"poly": q}
+            return {**meta, "poly": q}
         q = clamp_points(to_clockwise(t), width, height)
-        return {"poly": q}
+        return {**meta, "poly": q}
     # Polyline
     pl = obj.apply_affine(M)
     clipped = clip_polyline_to_rect(list(pl.points), width, height)
@@ -943,12 +946,12 @@ def transform_geometry(
         raw = clamp_points(list(pl.points), width, height)
         raw = dedupe_consecutive_points(raw)
         if len(raw) >= 4:
-            return {"line": raw[:4]}
+            return {**meta, "line": raw[:4]}
         # fallback to a point repeated
         if len(raw) >= 2:
-            return {"line": [raw[0], raw[1], raw[0], raw[1]]}
-        return {"line": [0, 0, 0, 0]}
-    return {"line": line_points}
+            return {**meta, "line": [raw[0], raw[1], raw[0], raw[1]]}
+        return {**meta, "line": [0, 0, 0, 0]}
+    return {**meta, "line": line_points}
 
 
 __all_typed__ = [

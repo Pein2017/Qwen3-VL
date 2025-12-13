@@ -5,6 +5,7 @@ seed: 17
 model:
   model_name_or_path: model_cache/models/Qwen/Qwen3-32B
   torch_dtype: bfloat16
+
   device_map: auto
 
 guidance:
@@ -14,7 +15,7 @@ guidance:
 
 output:
   root: output_post/stage_b
-  run_name: distill_qwen32_teacher-more_guidance  # Distill run name; artifacts under {root}/{run_name}/{mission}/
+  run_name: distill_qwen32_teacher-concise  # Distill run name; artifacts under {root}/{run_name}/{mission}/
   group_report: true
 
 sampler:

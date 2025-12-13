@@ -138,6 +138,7 @@ def _reset_mission_artifacts(mission_dir: Path) -> None:
         "manual_review_queue.jsonl",
         "failure_malformed.jsonl",
         "reflection.jsonl",
+        "metrics_epoch.jsonl",
     ):
         path = mission_dir / filename
         if path.exists():
@@ -166,6 +167,34 @@ def _append_jsonl(path: Path, payload: dict) -> None:
 def _chunked(seq: List, size: int):
     for i in range(0, len(seq), size):
         yield seq[i : i + size]
+
+
+def _compute_metrics(records: List[Dict[str, object]]) -> Dict[str, float]:
+    correct = 0
+    fn = 0
+    fp = 0
+    total = len(records)
+
+    for record in records:
+        verdict = record.get("model_verdict")
+        gt_label = record.get("gt_label")
+        if verdict is None:
+            if gt_label == "pass":
+                fn += 1
+            else:
+                fp += 1
+            continue
+
+        if verdict == gt_label:
+            correct += 1
+        elif verdict == "pass" and gt_label == "fail":
+            fp += 1
+        elif verdict == "fail" and gt_label == "pass":
+            fn += 1
+
+    acc = correct / total if total else 0.0
+
+    return {"acc": acc, "fn": fn, "fp": fp, "n": total}
 
 
 def _setup_mission_guidance(
@@ -336,6 +365,7 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
 
         # Prepare mission-specific output paths
         trajectories_path, selections_path = _prepare_mission_output_paths(mission_dir)
+        metrics_path = mission_dir / "metrics_epoch.jsonl"
 
         # Reflection log goes under {root}/{run_name}/{mission}/
         reflection_log_path = mission_dir / "reflection.jsonl"
@@ -357,6 +387,21 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
         for epoch in range(1, config.runner.epochs + 1):
             guidance_updated_epoch = False
             distill_records_epoch = []
+            epoch_outcomes: Dict[str, Dict[str, object]] = {}
+
+            def record_outcome(
+                ticket: GroupTicket,
+                *,
+                model_verdict: Optional[str],
+                in_manual_review: bool,
+            ) -> None:
+                epoch_outcomes[ticket.group_id] = {
+                    "group_id": ticket.group_id,
+                    "mission": ticket.mission,
+                    "gt_label": ticket.label,
+                    "model_verdict": model_verdict,
+                    "in_manual_review": in_manual_review,
+                }
             logger.info(
                 f"Starting Stage-B epoch {epoch}/{config.runner.epochs} for mission {mission}"
             )
@@ -425,20 +470,22 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                             "reason": "no_candidates",
                         }
                         _append_jsonl(manual_review_path, manual_entry)
+                        record_outcome(
+                            ticket,
+                            model_verdict=None,
+                            in_manual_review=True,
+                        )
                         continue
 
                     wrapped_candidates: List[TrajectoryWithSignals] = []
                     for cand in parsed_candidates:
                         reason_text = cand.reason or ""
                         verdict_val = cand.verdict
-                        contains_review = any(
-                            term in reason_text for term in ("需复核", "需人工复核")
-                        )
+                        # Accept outputs that mention review/复核; keep them in flow instead of flagging format_error.
                         format_ok = (
                             cand.format_ok
                             and verdict_val is not None
                             and bool(reason_text.strip())
-                            and not (verdict_val == "pass" and contains_review)
                         )
                         if not format_ok:
                             failure_entry = {
@@ -456,6 +503,11 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                                 "reason": "format_error",
                             }
                             _append_jsonl(manual_review_path, manual_entry)
+                            record_outcome(
+                                ticket,
+                                model_verdict=None,
+                                in_manual_review=True,
+                            )
                             continue
 
                         label_match = (
@@ -483,6 +535,11 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                             "reason": "no_valid_candidates",
                         }
                         _append_jsonl(manual_review_path, manual_entry)
+                        record_outcome(
+                            ticket,
+                            model_verdict=None,
+                            in_manual_review=True,
+                        )
                         continue
 
                     # Select final verdict
@@ -513,6 +570,11 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                             "reason": "selection_error",
                         }
                         _append_jsonl(manual_review_path, manual_entry)
+                        record_outcome(
+                            ticket,
+                            model_verdict=None,
+                            in_manual_review=True,
+                        )
                         continue
 
                     low_agreement_flag = (
@@ -553,6 +615,12 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                     selection_payload["epoch"] = epoch
                     _append_jsonl(selections_path, selection_payload)
                     mission_selection_count += 1
+
+                    record_outcome(
+                        ticket,
+                        model_verdict=selection.verdict,
+                        in_manual_review=bool(selection.needs_manual_review),
+                    )
 
                     # Buffer selected candidate for potential distillation logging
                     if distill_enabled:
@@ -599,6 +667,11 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                                         "reason": "no_evidence_for_label",
                                     },
                                 )
+                                record_outcome(
+                                    rec.ticket,
+                                    model_verdict=None,
+                                    in_manual_review=True,
+                                )
                             logger.info(
                                 f"Reflection found no evidence for {len(pending_records)} tickets; routed to manual review"
                             )
@@ -618,6 +691,11 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                                             "model_verdict": None,
                                             "reason": "no_support_after_reflection",
                                         },
+                                    )
+                                    record_outcome(
+                                        rec.ticket,
+                                        model_verdict=None,
+                                        in_manual_review=True,
                                     )
                         # If winning candidate still mismatches label, enqueue manual review
                         for rec in pending_records:
@@ -646,6 +724,11 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                                         "model_verdict": win_cand.verdict,
                                         "reason": "label_mismatch_after_reflection",
                                     },
+                                )
+                                record_outcome(
+                                    rec.ticket,
+                                    model_verdict=None,
+                                    in_manual_review=True,
                                 )
                                 # Update miss_count for rules that led to this failed prediction
                                 if last_applied_rule_keys:
@@ -712,6 +795,11 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                                 "reason": "no_evidence_for_label",
                             },
                         )
+                        record_outcome(
+                            rec.ticket,
+                            model_verdict=None,
+                            in_manual_review=True,
+                        )
                     logger.info(
                         f"Reflection found no evidence for {len(pending_records)} tickets; routed to manual review"
                     )
@@ -731,6 +819,11 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                                     "model_verdict": None,
                                     "reason": "no_support_after_reflection",
                                 },
+                            )
+                            record_outcome(
+                                rec.ticket,
+                                model_verdict=None,
+                                in_manual_review=True,
                             )
                 # If winning candidate still mismatches label, enqueue manual review
                 for rec in pending_records:
@@ -755,6 +848,11 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                                 "model_verdict": win_cand.verdict,
                                 "reason": "label_mismatch_after_reflection",
                             },
+                        )
+                        record_outcome(
+                            rec.ticket,
+                            model_verdict=None,
+                            in_manual_review=True,
                         )
                         # Update miss_count for rules that led to this failed prediction
                         if last_applied_rule_keys:
@@ -784,6 +882,41 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                 last_reflection_id = outcome.reflection_id if outcome.applied else None
                 pending_records.clear()
                 reflection_cycle += 1
+
+            records_this_epoch = list(epoch_outcomes.values())
+            clean_records = [
+                record
+                for record in records_this_epoch
+                if not record.get("in_manual_review")
+            ]
+            metrics_exclude_mr = _compute_metrics(clean_records)
+            metrics_include_mr = _compute_metrics(records_this_epoch)
+
+            logger.info(
+                "Epoch %d metrics (exclude MR): acc=%.4f, fn=%d, fp=%d, n=%d",
+                epoch,
+                metrics_exclude_mr["acc"],
+                metrics_exclude_mr["fn"],
+                metrics_exclude_mr["fp"],
+                metrics_exclude_mr["n"],
+            )
+            logger.info(
+                "Epoch %d metrics (include MR): acc=%.4f, fn=%d, fp=%d, n=%d",
+                epoch,
+                metrics_include_mr["acc"],
+                metrics_include_mr["fn"],
+                metrics_include_mr["fp"],
+                metrics_include_mr["n"],
+            )
+
+            _append_jsonl(
+                metrics_path,
+                {
+                    "epoch": epoch,
+                    "exclude_manual_review": metrics_exclude_mr,
+                    "include_manual_review": metrics_include_mr,
+                },
+            )
 
         # Epoch-end cleanup: remove low-confidence rules
         if config.guidance_lifecycle and config.guidance_lifecycle.enable_auto_cleanup:

@@ -18,48 +18,71 @@ Keep this managed block so 'openspec update' can refresh the instructions.
 <!-- OPENSPEC:END -->
 
 # Project Overview
-AI quality‑inspection system with two stages:
-- **Stage‑1 (Stage‑A) Basic Object Recognition** — single‑image evidence capture with rare/long‑tail object coverage.
-- **Stage‑2 (Stage‑B) Group‑Ticket Verification** — consumes Stage‑1 evidence + labels to issue binary `pass|fail` verdicts with auditable rationale.
+This repository primarily supports dense‑caption SFT for Qwen3‑VL and the data/tooling around it:
+- **Dense caption SFT + summary‑mode SFT** — `src/sft.py`, `src/datasets/`, `configs/`, `scripts/train.sh`
+- **Geometry‑aware augmentation** — `src/datasets/augmentation/`, `src/datasets/geometry.py`
+- **Data conversion & fusion** — internal exports via `data_conversion/`, public/aux sources via `public_data/`
+- **Visualization & QA** — `vis_tools/` for augmentation/prompt/prediction inspection
 
-This is the canonical global instruction set for all agents (Claude, Codex, etc.). Keep any agent-specific ergonomics as tiny addenda; agent files (e.g., `CLAUDE.md`) should symlink here so updates stay in one place.
+Stage‑A/B inference pipelines still exist for two‑stage QC runtime, but are secondary to training/data workflows.
 
-Training, inference, and guidance workflows share a single repository. Start with `docs/README.md` (index) and `docs/training/REFERENCE.md` (architecture map).
+This is the canonical global instruction set for all agents (Claude, Codex, etc.). Keep any agent‑specific ergonomics as tiny addenda; agent files (e.g., `CLAUDE.md`) should symlink here so updates stay in one place.
 
-## Component Roles
-- **Stage‑1 (Stage‑A) Inference** — `src/stage_a/`, `scripts/stage_a.sh`; owns per‑image prompts, mission validation, and summary JSONL emission.
-- **Stage‑2 (Stage‑B) Verdict & Guidance** — `src/stage_b/`, `scripts/stage_b.sh`; ingests Stage‑A JSONL + labels, runs rollout/critic/selection/reflection, returns `pass|fail` per ticket.
-- **Data Preprocessing & Intake** — `data_conversion/`; optional offline step that normalizes human‑annotated exports (taxonomy, geometry canonicalization, smart resize) into train/val JSONL plus QA artifacts.
-- **Training & Fusion** — `src/sft.py`, `src/datasets/`, `configs/`, `scripts/train.sh`; config‑first fine‑tuning and multi‑dataset fusion.
-- **Docs & Runbooks** — `docs/` (public), `openspec/` (governance); keep doc ↔ code pointers current.
+Start with `docs/README.md` (doc index + directory↔doc map) and `docs/training/REFERENCE.md` (training architecture).
 
-## Standard Workflow Outline
-1. **Data intake** → optional `data_conversion/convert_dataset.sh` to produce train/val/tiny JSONL and validation reports.
-2. **Fusion/curation** → prepare `custom.train_jsonl` or `custom.fusion_config` (see `docs/data/DATA_AND_DATASETS.md`, `docs/data/UNIFIED_FUSION_DATASET.md`).
-3. **Train/finetune** → run `scripts/train.sh --config <yaml>`; update `docs/training/TRAINING_PLAYBOOK.md` & `docs/training/REFERENCE.md` if behaviors change.
-4. **Stage‑1 inference** → `scripts/stage_a.sh` wraps `python -m src.stage_a.cli` and writes per‑image summaries; verify outputs before Stage‑2.
-5. **Stage‑2 verdicts** → `scripts/stage_b.sh` wraps `python -m src.stage_b.runner` and emits selections/reflection logs; promote guidance snapshots as needed.
-6. **Documentation & governance** → sync `docs/` with changes; open/modify OpenSpec changes only when behavior or contracts shift.
+## Where Things Live
+- `src/sft.py`, `scripts/train.sh`, `configs/` — config‑first SFT training entrypoints.
+- `src/datasets/` — JSONL contracts, builders, dense/summary modes, unified fusion datasets.
+- `src/datasets/augmentation/`, `src/datasets/geometry.py` — augmentation ops + geometry transforms/canonicalization.
+- `data_conversion/` — offline conversion from raw annotations to canonical JSONL + reports.
+- `public_data/` — LVIS/aux datasets, converters, sampling, and fusion inputs.
+- `vis_tools/` — augmentation comparison, crop/label QA, prediction visualization.
+- `src/stage_a/`, `src/stage_b/`, `scripts/stage_*.sh` — optional two‑stage QC inference runtime.
+- `docs/`, `openspec/` — runbooks and governance.
 
-## Codebase Layout
-- `src/` — Training/inference code (datasets, config, stage_a, stage_b, utils)
-- `configs/` — YAML for training, Stage‑B, fusion, prompts
-- `scripts/` — Canonical entrypoints (train, infer, stage_a, stage_b, fusion helpers); see `scripts/README.md`
-- `data_conversion/` — Offline preprocessing from annotation platform exports
-- `docs/` — Authoritative documentation, pipeline guides, data contracts
-- `openspec/` — Change management specs and proposals
-- `vis_tools/` — Visualization & QA helpers
+## Default Workflows
 
-## Key Code Anchors
-- Training entry: `src/sft.py` (SwiftSft integration)
-- Config loading: `src/config/loader.py` (frozen dataclasses + validation)
-- Dense caption dataset: `src/datasets/dense_caption.py`
-- Message builder: `src/datasets/builders/jsonlines.py`
-- Geometry helpers: `src/datasets/geometry.py`
-- Augmentation ops: `src/datasets/augmentation/ops.py`
-- Stage‑A pipeline: `src/stage_a/`
-- Stage‑B pipeline: `src/stage_b/`
-- Logging: `src/utils/logger.py` (use `get_logger`)
+### 1) Dense‑Caption / Summary SFT
+1. Read the target YAML in `configs/` and any referenced docs.
+2. Verify dataset paths (`custom.train_jsonl` or `custom.fusion_config`) and geometry validity.
+3. Run training through `scripts/train.sh` (see Quick Commands).
+4. If you change behavior, configs, or contracts, update the mapped docs.
+
+### 2) Data Conversion + Fusion
+1. Convert internal exports with `data_conversion/convert_dataset.sh`.
+2. Prepare public/aux sources under `public_data/` as needed.
+3. Validate output JSONL against `docs/data/DATA_JSONL_CONTRACT.md`.
+4. Build mixes via fusion YAML or `scripts/fuse_datasets.py`, keeping seeds deterministic.
+
+### 3) Visualization / Debugging
+1. Reproduce on the smallest slice first (tiny JSONL / single image).
+2. Use `vis_tools/vis_augment_compare.py`, `vis_qwen3.py`, etc. to confirm pixel‑level alignment.
+3. Add targeted probes/tests when changing augmentation or geometry.
+
+## How to Work Here (Explorative Norms)
+- Explore before editing: read relevant docs/configs, then `rg` for similar patterns.
+- Prefer config‑first surfaces; validate early via frozen dataclasses in `src/config/schema.py`.
+- Keep docs in sync with any visible behavior/contract changes (see `docs/README.md` doc map).
+- Use rank‑aware logging via `src/utils/logger.get_logger`; avoid print/debug spam.
+- Seed and log new randomness sources for reproducibility.
+- Keep geometry canonical and deterministic; never drop/re‑order points silently.
+- When uncertain, propose 2–3 options with tradeoffs and suggest a tiny experiment/vis to decide.
+- Interrupt for clarification if labels, schema, expected outputs, or mission semantics are ambiguous.
+
+## Key Anchors
+- Training: `src/sft.py`, `scripts/train.sh`, `src/config/loader.py`
+- Dense/summary datasets: `src/datasets/dense_caption.py`, `src/datasets/builders/jsonlines.py`
+- Fusion: `src/datasets/unified_fusion_dataset.py`, `src/datasets/fusion.py`
+- Augmentation/geometry: `src/datasets/augmentation/ops.py`, `src/datasets/augmentation/builder.py`, `src/datasets/geometry.py`
+- Conversion: `data_conversion/pipeline/unified_processor.py`, `data_conversion/convert_dataset.sh`
+- Visualization: `vis_tools/vis_augment_compare.py`, `vis_tools/vis_qwen3.py`
+
+## Geometry & Data Flow Notes
+- Canonical geometry keys: `bbox_2d`, `poly` (even‑length list ≥6), `line`. Preserve order and point identity.
+- Typical path: JSONL → optional augmentation (epoch‑seeded RNG) → builder → chat template (adds vision tokens, normalizes coords) → trainer.
+
+## OpenSpec
+- For new capabilities, breaking schema/API changes, or major refactors, follow OpenSpec (managed block above + `openspec/AGENTS.md`).
 
 ## Environment
 - Use `ms` conda environment for all Python scripts
@@ -76,43 +99,9 @@ Training, inference, and guidance workflows share a single repository. Start wit
 - Visualization: `conda run -n ms python vis_tools/vis_augment_compare.py --config /abs/config.yaml`
 - LoRA merge: `conda run -n ms bash scripts/merge_stage2_lora.sh`
 
-## Development Approach
-- **Configuration-first**: Edit YAML in `configs/` rather than adding ad‑hoc flags
-- **Reuse over custom**: Prefer ms‑swift/transformers primitives before adding custom modules
-- **Documentation**: Update `docs/` when visible behavior, configs, or workflows change
-- **Spec-driven**: For features or major changes, consult `openspec/AGENTS.md` and follow the change process
-- **Geometry-aware**: Keep augmentation and data handling geometry‑aware; add tests/visualization when touching `src/datasets/`
-
-## Geometry & Data Flow Notes
-- Canonical geometry keys: `bbox_2d`, `poly` (even-length list ≥), `line`.
-- Typical sample path: load JSONL record → optional augmentation (epoch-seeded RNG) → build one-turn messages with embedded images → template encodes (adds vision tokens, normalizes coords to norm1000) → train on `input_ids`, `labels`, `pixel_values`, `image_grid_thw`, `objects`.
-
-## Design Principles (High-Level)
-- **Explicit over implicit**: No silent defaults; all config via YAML/CLI/constructor with early validation
-- **Type safety**: Strong typing, frozen configs (`@dataclass(frozen=True)`), predictable APIs
-- **Clean architecture**: Small public interfaces, dependency injection, compose over inherit, clean import graph (never import upward)
-- **Fail fast**: Validate early, clear error messages with remediation hints, no silent failures
-- **Extensibility**: Extend via new `Builder`/`Preprocessor`/`Template`, not by editing core logic
-
-## Common Rules & Preferences
-- **Docs stay in lockstep with code**: touch the mapped doc when you touch its directory (see `docs/README.md` doc map). Stage‑A/B changes require updates to `docs/training/REFERENCE.md` and the Stage‑A/B runbooks.
-- **Config-first surface**: prefer adding YAML knobs in `configs/` over new CLI flags; validate early via dataclasses in `src/config/schema.py`.
-- **Determinism**: seed everything (`seed`, `fusion seed`, `sampler` grids) and log seeds in new entrypoints; avoid implicit randomness.
-- **Geometry & grounding**: never drop or re-order geometry silently; use helpers in `src/datasets/geometry.py` and keep `poly` canonicalization rules consistent with `data_conversion/`.
-- **Logging**: use `src/utils/logger.get_logger` (rank-aware) and emit remediation hints in errors; avoid print/debug spam.
-- **Pass/Fail canonicals**: treat verdicts as `pass|fail` (lowercase) using `GroupLabel`; normalize variants via `normalize_verdict` helpers.
-- **Third-party additions**: prefer ms‑swift/transformers primitives; justify new deps and update `docs/platform/UPSTREAM_DEPENDENCIES.md` when behavior changes.
-- **Validation before merge**: run existing tests or targeted probes for dataset/geometry changes; add probes when altering preprocessing.
-
-## OpenSpec workflow for behavior changes
-- For capability/behavior shifts, create a spec under `openspec/changes/<change-id>/` and validate with `openspec validate <change-id> --strict` before implementation.
-- Skip proposals only for bug fixes, typos, dependency bumps, config-only changes, or tests for existing behavior.
-
 ## Important
 - **Always interrupt if clarification is needed or anything is vague, ambiguous, or uncertain**
-- Run all Python scripts with `ms` conda environment
 - For commands and detailed configs, see `docs/README.md` and `docs/training/REFERENCE.md`
 - Do not hand-craft `<|image_pad|>` tokens (chat template handles it)
 - Packing is removed; training uses padded batches only
-- With `truncation_strategy: raise`, over-length samples drop and retry
 - Hard-sample mining is deprecated; configs with `custom.hard_sample_mining` fail validation

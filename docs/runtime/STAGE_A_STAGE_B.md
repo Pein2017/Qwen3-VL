@@ -64,7 +64,7 @@ The Stage-A/Stage-B stack addresses these by standardizing summaries, orchestrat
 | ---- | ---------------------- |
 | Input | Stage-A summaries + ground-truth labels + current mission guidance. |
 | Process | Prompt-only rollouts（提示=guidance+Stage-A 摘要，不含 GT）；必须输出两行 Verdict+Reason，缺一记为格式错误；多数表决 selection；反思阶段复用同一模型（无 CriticEngine），以批次方式读取多个工单的 Stage-A 摘要+候选 Verdict/Reason/信号，生成严格 JSON 的规则增删改；若整批无指导更新且该批某组找不到支持 GT 的候选，则该组进入 manual_review。重跑同一 run_name 时重建 trajectories/selections/manual_review/failure 与 reflection_cache，指导沿用上次快照（除非显式 reset）。 |
-| Output | Final binary verdicts (`pass` / `fail`) in JSONL, trajectories for audit, reflection log, manual-review queue, and updated mission-specific guidance repository. |
+| Output | Final binary verdicts (`pass` / `fail`) in JSONL, trajectories for audit, per-epoch metrics (`metrics_epoch.jsonl`), reflection log, manual-review queue, and updated mission-specific guidance repository. |
 
 **Experiences = living policy**
 - Guidance entries (`[G0]`, `[G1]`, …) are policy snippets the model reads before making a decision.
@@ -114,7 +114,7 @@ The Stage-A/Stage-B stack addresses these by standardizing summaries, orchestrat
 - **Verdict/Reason Drift**: Monitor verdict分布与 Reason 关键要素是否异常；持续偏移时检查 prompt 和数据。
 - **Supplier Impact**: Number of adverse decisions per supplier; feed into commercial scorecards.
 
-Each KPI is reported via `reflection.jsonl` and `selections.jsonl` exports. Analytics teams tie these into Tableau/Looker dashboards.
+Each KPI is reported via `reflection.jsonl`, `selections.jsonl`, and per-epoch telemetry in `metrics_epoch.jsonl`（包含/排除人工复核两套 acc/fn/fp/n）. Analytics teams tie these into Tableau/Looker dashboards.
 
 ---
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 from typing import Any, Dict, List, Tuple
 
-from PIL import Image, ImageEnhance, ImageOps
+from PIL import Image, ImageDraw, ImageEnhance, ImageOps
 import numpy as np
 
 from ...utils.logger import get_logger
@@ -483,11 +483,12 @@ class ResizeByScale(CurriculumMixin, ImageAugmenter):
         # scale geometries in pixel space
         out_geoms: List[Dict[str, Any]] = []
         for g in geoms:
+            meta = {k: v for k, v in g.items() if k not in {"bbox_2d", "poly", "line"}}
             if "bbox_2d" in g:
                 x1, y1, x2, y2 = g["bbox_2d"]
                 bb = [x1 * sx, y1 * sy, x2 * sx, y2 * sy]
                 bb = clamp_points(bb, new_w, new_h)
-                out_geoms.append({"bbox_2d": bb})
+                out_geoms.append({**meta, "bbox_2d": bb})
             elif "poly" in g:
                 pts = g["poly"]
                 scaled: List[float] = []
@@ -504,11 +505,11 @@ class ResizeByScale(CurriculumMixin, ImageAugmenter):
                         # else: keep clipped polygon even if not exactly 4 points
                     clipped = to_clockwise(clipped)
                     q = clamp_points(clipped, new_w, new_h)
-                    out_geoms.append({"poly": q})
+                    out_geoms.append({**meta, "poly": q})
                 else:
                     # Degenerate: preserve by clamping original scaled coords
                     q = clamp_points(to_clockwise(scaled), new_w, new_h)
-                    out_geoms.append({"poly": q})
+                    out_geoms.append({**meta, "poly": q})
             elif "line" in g:
                 pts = g["line"]
                 scaled: List[float] = []
@@ -519,18 +520,18 @@ class ResizeByScale(CurriculumMixin, ImageAugmenter):
                 clipped = clamp_points(clipped, new_w, new_h)
                 clipped = dedupe_consecutive_points(clipped)
                 if len(clipped) >= 4:
-                    out_geoms.append({"line": clipped})
+                    out_geoms.append({**meta, "line": clipped})
                 else:
                     # Degenerate: preserve by collapsing to minimal 2-point line
                     raw = clamp_points(scaled, new_w, new_h)
                     raw = dedupe_consecutive_points(raw)
                     if len(raw) >= 4:
-                        out_geoms.append({"line": raw[:4]})
+                        out_geoms.append({**meta, "line": raw[:4]})
                     elif len(raw) >= 2:
-                        out_geoms.append({"line": [raw[0], raw[1], raw[0], raw[1]]})
+                        out_geoms.append({**meta, "line": [raw[0], raw[1], raw[0], raw[1]]})
                     else:
                         # Extreme fallback: point at (0,0)
-                        out_geoms.append({"line": [0.0, 0.0, 0.0, 0.0]})
+                        out_geoms.append({**meta, "line": [0.0, 0.0, 0.0, 0.0]})
             else:
                 out_geoms.append(g)
 
@@ -934,6 +935,71 @@ def _buffer_aabb(bbox: List[float], pad: float, width: int, height: int) -> List
     ]
 
 
+def _geom_mask_iou(
+    a: Dict[str, Any],
+    b: Dict[str, Any],
+    *,
+    width: int,
+    height: int,
+    line_buffer: float,
+) -> float:
+    """Approximate IoU by rasterizing geometry regions into a per-pixel mask.
+
+    This mimics COCO-style mask IoU (but implemented via PIL+NumPy to avoid pycocotools).
+    It's used only for overlap rejection in copy/paste-style ops, so a small amount of
+    discretization error is acceptable.
+    """
+
+    def _geom_aabb(g: Dict[str, Any]) -> List[float]:
+        aabb = get_aabb(g)
+        pad = line_buffer if "line" in g else 0.0
+        return _buffer_aabb(aabb, pad, width, height)
+
+    aabb_a = _geom_aabb(a)
+    aabb_b = _geom_aabb(b)
+    if aabb_area(intersect_aabb(aabb_a, aabb_b)) <= 0.0:
+        return 0.0
+
+    # Rasterize inside a tight union window for speed.
+    ux1 = max(0, int(math.floor(min(aabb_a[0], aabb_b[0]))))
+    uy1 = max(0, int(math.floor(min(aabb_a[1], aabb_b[1]))))
+    ux2 = min(width, int(math.ceil(max(aabb_a[2], aabb_b[2]))))
+    uy2 = min(height, int(math.ceil(max(aabb_a[3], aabb_b[3]))))
+    w = max(1, ux2 - ux1)
+    h = max(1, uy2 - uy1)
+
+    line_width = max(1, int(round(line_buffer * 2.0)))
+
+    def _rasterize(g: Dict[str, Any]) -> np.ndarray:
+        mask = Image.new("L", (w, h), 0)
+        draw = ImageDraw.Draw(mask)
+
+        if "bbox_2d" in g:
+            x1, y1, x2, y2 = map(float, g["bbox_2d"])
+            draw.rectangle([x1 - ux1, y1 - uy1, x2 - ux1, y2 - uy1], fill=255)
+        elif "poly" in g:
+            pts = g.get("poly") or []
+            xy = [(float(pts[i]) - ux1, float(pts[i + 1]) - uy1) for i in range(0, len(pts), 2)]
+            if len(xy) >= 3:
+                draw.polygon(xy, fill=255)
+        elif "line" in g:
+            pts = g.get("line") or []
+            xy = [(float(pts[i]) - ux1, float(pts[i + 1]) - uy1) for i in range(0, len(pts), 2)]
+            if len(xy) >= 2:
+                draw.line(xy, fill=255, width=line_width)
+        else:
+            # Unknown geometry - treat as empty mask.
+            return np.zeros((h, w), dtype=bool)
+
+        return np.asarray(mask, dtype=np.uint8) > 0
+
+    ma = _rasterize(a)
+    mb = _rasterize(b)
+    inter = int(np.logical_and(ma, mb).sum())
+    union = int(np.logical_or(ma, mb).sum())
+    return (inter / union) if union > 0 else 0.0
+
+
 @register("small_object_zoom_paste")
 class SmallObjectZoomPaste(PatchOp):
     """
@@ -957,6 +1023,7 @@ class SmallObjectZoomPaste(PatchOp):
         context: float = 4.0,
         overlap_threshold: float = 0.1,
         line_buffer: float = 4.0,
+        overlap_mode: str = "aabb",
         class_whitelist: List[str] | None = None,
     ):
         self.curriculum_param_names = (
@@ -979,6 +1046,11 @@ class SmallObjectZoomPaste(PatchOp):
         self.context = float(context)
         self.overlap_threshold = float(overlap_threshold)
         self.line_buffer = float(line_buffer)
+        self.overlap_mode = str(overlap_mode or "aabb").lower()
+        if self.overlap_mode not in {"aabb", "mask"}:
+            raise ValueError(
+                f"overlap_mode must be one of {{'aabb','mask'}}, got {overlap_mode!r}"
+            )
         self.class_whitelist = list(class_whitelist) if class_whitelist else None
         self.allows_geometry_drops = True  # geometry count may increase; allow validation bypass
 
@@ -1036,12 +1108,29 @@ class SmallObjectZoomPaste(PatchOp):
         height: int,
     ) -> bool:
         new_aabb = get_aabb(new_geom)
-        new_aabb = _buffer_aabb(new_aabb, self.line_buffer if "line" in new_geom else 0.0, width, height)
+        new_aabb = _buffer_aabb(
+            new_aabb, self.line_buffer if "line" in new_geom else 0.0, width, height
+        )
         for g in existing:
             aabb = get_aabb(g)
             pad = self.line_buffer if "line" in g else 0.0
             aabb = _buffer_aabb(aabb, pad, width, height)
-            if _aabb_iou(new_aabb, aabb) > self.overlap_threshold:
+
+            # Quick reject on bbox overlap first (cheap).
+            if aabb_area(intersect_aabb(new_aabb, aabb)) <= 0.0:
+                continue
+
+            if self.overlap_mode == "mask":
+                iou = _geom_mask_iou(
+                    new_geom,
+                    g,
+                    width=width,
+                    height=height,
+                    line_buffer=self.line_buffer,
+                )
+            else:
+                iou = _aabb_iou(new_aabb, aabb)
+            if iou > self.overlap_threshold:
                 return True
         return False
 
@@ -1107,6 +1196,10 @@ class SmallObjectZoomPaste(PatchOp):
                 )
                 if transformed is None:
                     continue
+                # Track which source geometry produced this duplicate (used by the record-level
+                # augmentation preprocessor to append the corresponding duplicated object).
+                transformed["__src_geom_idx"] = int(idx)
+                transformed["__aug_op"] = "small_object_zoom_paste"
                 if self._iou_too_high(transformed, working_geoms, width, height):
                     continue
 

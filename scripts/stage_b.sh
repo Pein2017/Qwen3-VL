@@ -30,7 +30,7 @@ case "${LOG_LEVEL,,}" in
 esac
 
 # Environment variable overrides (lowercase)
-gpu_id="${gpus:-0}"
+gpu_id="${gpus:-1}"
 CUDA_VISIBLE_DEVICES="${gpu_id}"
 
 # Resolve CONFIG_PATH to absolute if relative

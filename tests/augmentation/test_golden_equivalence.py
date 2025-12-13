@@ -84,7 +84,14 @@ def _assert_images_close(current: List[Image.Image], expected: List[Image.Image]
 def _assert_geoms_close(current: List[Dict[str, Any]], expected: List[Dict[str, Any]]):
     assert len(current) == len(expected)
     for cur, exp in zip(current, expected):
-        assert set(cur.keys()) == set(exp.keys())
+        # Ignore internal augmentation provenance keys (e.g., copy/paste source tracking).
+        def _geom_kind(g: Dict[str, Any]) -> str:
+            for key in ("bbox_2d", "poly", "line"):
+                if key in g:
+                    return key
+            return ""
+
+        assert _geom_kind(cur) == _geom_kind(exp)
         cur_vals = _flatten_geom(cur)
         exp_vals = _flatten_geom(exp)
         assert len(cur_vals) == len(exp_vals)

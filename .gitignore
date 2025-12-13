@@ -66,6 +66,7 @@
 **/.DS_Store
 **/.vscode/
 **/.idea/
+**/.codex/
 **/*.swp
 **/*.swo
 **/*~
