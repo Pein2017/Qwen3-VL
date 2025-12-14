@@ -27,7 +27,7 @@ Turn vague or partial input into a crisp prompt that another agent can execute s
 5) Safety check: ensure no fictional files/APIs; keep dependencies justified; avoid broad try/except; fail fast with remediation hints.
 
 **Output**  
-Return a single polished prompt in plain language that includes:
+Return a single polished prompt wrapped in a markdown code block (```markdown ... ```) so it can be directly copied. The prompt should include:
 - Clear goal and scope (don’t force a stage; use user’s intent).
 - Minimal but essential repo context you found relevant.
 - Explicit inputs/outputs (paths/configs/artifacts), validation or test steps if applicable.
