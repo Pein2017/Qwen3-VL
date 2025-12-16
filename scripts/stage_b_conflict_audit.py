@@ -120,14 +120,18 @@ def audit_mission(mission_dir: Path) -> None:
         print(f"[ok] {mission_dir.name}: no unresolved conflict_flag groups")
         return
 
-    print(f"[warn] {mission_dir.name}: unresolved conflict_flag groups (count, epochs, attempted_reflection?)")
+    print(
+        f"[warn] {mission_dir.name}: unresolved conflict_flag groups (count, epochs, attempted_reflection?)"
+    )
     for gid, count, epochs, reason, notes, attempted in sorted(
         unresolved, key=lambda x: (-x[1], x[0])
     ):
         epoch_str = ",".join(map(str, epochs)) if epochs else "-"
         note_str = "|".join(notes) if notes else ""
         attempted_flag = "yes" if attempted else "no"
-        print(f"  {gid}: count={count} epochs={epoch_str} attempted_reflection={attempted_flag}")
+        print(
+            f"  {gid}: count={count} epochs={epoch_str} attempted_reflection={attempted_flag}"
+        )
         if reason:
             print(f"    reason: {reason}")
         if note_str:
@@ -135,7 +139,9 @@ def audit_mission(mission_dir: Path) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Audit unresolved conflict_flag groups")
+    parser = argparse.ArgumentParser(
+        description="Audit unresolved conflict_flag groups"
+    )
     parser.add_argument(
         "--run-dir",
         required=True,

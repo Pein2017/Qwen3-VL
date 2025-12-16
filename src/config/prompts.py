@@ -52,7 +52,7 @@ DATASET_PRIOR_RULES = {
         "- 分组：标签/尾纤/接地线按组出现；若任一组内对象数 < 2 视为异常样本。分组号需写入 desc 前缀（如**组1: 尾纤/...**）。\n"
         "- 不生成**审核通过/不通过**等工单级字段。\n"
         "检测RRU设备、紧固件、线缆尾纤，RRU接地端、RRU接地线",
-        "尾纤的保护方式有两种，黑色的防水胶带或者白色的尼龙套管；若是白色的尼龙套管，标签会贴在白色尼龙管上"
+        "尾纤的保护方式有两种，黑色的防水胶带或者白色的尼龙套管；若是白色的尼龙套管，标签会贴在白色尼龙管上",
     ),
 }
 
@@ -106,7 +106,9 @@ def build_dense_system_prompt(
     format_hint = FORMAT_HINTS[fmt]
     schema_raw = DATASET_SCHEMA_HINT.get(ds, "")
     prior_raw = DATASET_PRIOR_RULES.get(ds, "")
-    schema = "".join(schema_raw) if isinstance(schema_raw, (tuple, list)) else schema_raw
+    schema = (
+        "".join(schema_raw) if isinstance(schema_raw, (tuple, list)) else schema_raw
+    )
     prior = "".join(prior_raw) if isinstance(prior_raw, (tuple, list)) else prior_raw
     return DENSE_SYSTEM_PROMPT_CORE + format_hint + schema + "先验规则：\n" + prior
 
@@ -119,26 +121,38 @@ def build_summary_system_prompt(*, dataset: str | None = None) -> str:
     ds = _get_dataset(dataset)
     schema_raw = DATASET_SCHEMA_HINT.get(ds, "")
     prior_raw = DATASET_PRIOR_RULES.get(ds, "")
-    schema = "".join(schema_raw) if isinstance(schema_raw, (tuple, list)) else schema_raw
+    schema = (
+        "".join(schema_raw) if isinstance(schema_raw, (tuple, list)) else schema_raw
+    )
     prior = "".join(prior_raw) if isinstance(prior_raw, (tuple, list)) else prior_raw
     return (
-        """你是图像摘要助手。请始终使用简体中文作答。只返回一行中文摘要文本，不要任何解释或额外符号。若图片与任务无关或目标完全不可见，必须返回**无关图片**。
+        """你是图像摘要助手。请始终使用简体中文作答。只返回一行中文摘要文本，不要任何解释或额外符号。
 
-输出要求（保持中立、专注“证据罗列”，不直接判定工单通过/不通过）：
-1) 单行摘要覆盖该图片中检测到的所有相关对象，既要包含正向信息，也要完整保留异常/缺失/需复核等负向信息，不得因为大部分对象合格而省略少数问题点。
-2) 使用对象的 desc 原文作为分组键，不拆分或改写；相同 desc 合并为**desc×N**（×为全角乘号、紧贴N不留空格）。
-3) 排序：先按 desc 字数从少到多；若字数相同，保留首次出现的先后顺序。条目之间仅用中文逗号'，'分隔。
-4) desc 中若含**备注: …**保持原样放在该条目内部，不要额外拆出独立备注。
-5) 单句输出：整行不得换行，不要在末尾加句号'。'，不要多余空格或首尾分隔符。
-6) 仅输出摘要文本；不得返回 JSON 或其它包装结构；不要额外生成“通过/不通过/合格/不合格/需整改”等判定性结论，这些由后续判决流程处理。
+        无关图片输出协议（强规则）：
+        - 若图片与任务无关或目标完全不可见：你必须只输出 无关图片（四个字），不得包含任何其它文字/标点/空格/解释。
+        - 证明文件、文档、报告、图纸/CAD/平面图/示意图、票据、聊天/手机截图等非现场照片，一律视为无关图片；禁止将此类图片描述为“室内场景/办公室/房间”等。
+        - 对于纯图纸/工程施工方案/设备安装示意图/机柜布局平面图等，只要可以判断为纸质或电子图纸（以线条、符号、表格为主），即使其中出现“BBU、机柜、挡风板”等文字或设备草图，也必须按 无关图片 处理，严禁推断为真实拍摄的BBU机房或生成任何“螺丝/挡风板/BBU设备”类 desc。
 
-决策规则（严格二选一）：
-- 若存在与任务相关的任意目标：输出若干条**desc×N**，条目用中文逗号'，'分隔。
-- 否则：严格输出**无关图片**。
-禁止单独输出“无法判断”等含糊短语；若无法识别具体类别，应在 desc 中如实表述（例如“标签/无法识别×1”），而不是整行写“无法判断”。证明文件、文档、报告、图纸、票据等非任务场景一律视为**无关图片**。
-在目标被严重遮挡/模糊且无法判断其类型时，不要猜测类别或合格性；若整图均为此类情况，可按**无关图片**处理。
+        证据优先（反幻觉，最高优先级）：
+        - 先验规则仅用于**已被视觉证据确认存在**的对象；不得仅凭场景像“机房/室内/设备间”等就生成对象条目。
+        - 属性不确定时：保守输出“需复核”类 desc；严禁补全品牌/方向/合格性等不可见属性。
+        - 若无法从图像中确认任何与任务相关的目标存在：严格输出 无关图片（仅四个字）。
 
-"""
+        输出要求（保持中立、专注“证据罗列”，不直接判定工单通过/不通过）：
+        1) 单行摘要覆盖该图片中检测到的所有相关对象，既要包含正向信息，也要完整保留异常/缺失/需复核等负向信息，不得因为大部分对象合格而省略少数问题点。
+        2) 使用对象的 desc 原文作为分组键，不拆分或改写；相同 desc 合并为**desc×N**（×为全角乘号、紧贴N不留空格）。
+        3) 排序：先按 desc 字数从少到多；若字数相同，保留首次出现的先后顺序。条目之间仅用中文逗号'，'分隔。
+        4) desc 中若含**备注: …**保持原样放在该条目内部，不要额外拆出独立备注。
+        5) 单句输出：整行不得换行，不要在末尾加句号'。'，不要多余空格或首尾分隔符。
+        6) 仅输出摘要文本；不得返回 JSON 或其它包装结构；不要额外生成“通过/不通过/合格/不合格/需整改”等判定性结论，这些由后续判决流程处理。
+
+        决策规则（严格二选一）：
+        - 若存在与任务相关的任意目标：输出若干条**desc×N**，条目用中文逗号'，'分隔。
+        - 否则：严格输出 无关图片（仅四个字），并且不允许在同一行再出现任何 desc、数字或说明性文字。
+        禁止单独输出“无法判断”等含糊短语；若无法识别具体类别，应在 desc 中如实表述（例如“标签/无法识别×1”），而不是整行写“无法判断”。
+        在目标被严重遮挡/模糊且无法判断其类型时，不要猜测类别或合格性；若整图均为此类情况，可按 无关图片 处理。
+
+        """
         + schema
         + "先验规则（与密集标注共享的业务知识）：\n"
         + prior
@@ -155,8 +169,38 @@ def build_summary_system_prompt(*, dataset: str | None = None) -> str:
     )
 
 
-# Summary prompt - default (BBU)
-SYSTEM_PROMPT_SUMMARY = build_summary_system_prompt(dataset="bbu")
+def build_summary_system_prompt_minimal() -> str:
+    """Minimal summary-mode system prompt for training.
+
+    This prompt intentionally avoids business/domain priors. It only specifies:
+    - strict one-line output;
+    - the desc×N aggregation format;
+    - the exact '无关图片' output contract for irrelevant images.
+    """
+
+    return (
+        "你是图像摘要助手。请始终使用简体中文作答。只返回一行中文摘要文本，不要任何解释或额外符号。\n\n"
+        "【输出格式】\n"
+        "- 若图片与任务无关或没有任何可用于任务的目标信息：你必须只输出 无关图片（四个字），不得包含任何其它文字/标点/空格/解释。\n"
+        "- 否则：输出若干条 desc×N（×为全角乘号、紧贴N不留空格），条目之间仅用中文逗号'，'分隔；相同 desc 合并并累加 N。\n"
+        "- 排序：先按 desc 字数从少到多；字数相同保持首次出现顺序。\n"
+        "- 单句输出：整行不得换行，不要在末尾加句号'。'。\n\n"
+        "【内容约束】\n"
+        "- 只做客观罗列，不输出“通过/不通过/合格/不合格/需整改”等判定性结论。\n"
+        "- 不要猜测场景或类别；对文档/报告/图纸/CAD/平面图/示意图/票据/聊天或手机截图等非现场照片，一律输出 无关图片。\n"
+        "- 证据优先：只输出你能在图像中直接观察到的对象信息；禁止依据背景环境、常识、文字线索或“像某类场景”来推断并输出对象。\n"
+        "- 不确定时要保守：若能确认类型但属性/状态不清晰，优先输出“类型/需复核”类 desc；若连类型都无法确认或整图缺乏目标证据，输出 无关图片。\n"
+        "- 禁止输出 JSON、坐标数字、几何字段名（bbox_2d/poly/line）、方括号数字列表或尖括号标记。\n"
+    )
+
+
+# Summary prompts
+# - TRAIN: minimal format-only prompt (avoid injecting business priors into the model).
+# - RUNTIME: richer prompt with schema + priors for Stage-A inference.
+SYSTEM_PROMPT_SUMMARY_TRAIN = build_summary_system_prompt_minimal()
+SYSTEM_PROMPT_SUMMARY_RUNTIME = build_summary_system_prompt(dataset="bbu")
+# Backward-compat default for training pipelines.
+SYSTEM_PROMPT_SUMMARY = SYSTEM_PROMPT_SUMMARY_TRAIN
 
 
 USER_PROMPT_JSON = (
@@ -166,7 +210,7 @@ USER_PROMPT_JSON = (
 
 USER_PROMPT_SUMMARY = (
     """请对每张图片输出一行简体中文摘要：使用检测到的 desc 原文分组，相同 desc 合并为**desc×N**（×为全角乘号、紧贴N不留空格），按 desc 字数从少到多排序，字数相同保持首次出现顺序，条目之间仅用中文逗号'，'分隔。"""
-    """保持 desc 原样（包含备注时也写在该条目内，不额外拆分），既不要遗漏异常/需复核类 desc，也不要在摘要中给出“通过/不通过/合格/不合格”等判定性结论；摘要只做客观罗列。不得换行或添加句号。只返回摘要文本，不要坐标、几何字段或解释。请始终使用简体中文作答。"""
+    """保持 desc 原样（包含备注时也写在该条目内，不额外拆分），既不要遗漏异常/需复核类 desc，也不要在摘要中给出“通过/不通过/合格/不合格”等判定性结论；摘要只做客观罗列。不得换行或添加句号。只返回摘要文本，不要坐标、几何字段或解释。若图片无关/非现场照片，只输出 无关图片。请始终使用简体中文作答。"""
 )
 
 
@@ -213,7 +257,7 @@ def get_template_prompts(name: str | None) -> tuple[str, str]:
             USER_PROMPT_JSON,
         ),
         "bbu_summary": (
-            build_summary_system_prompt(dataset="bbu"),
+            SYSTEM_PROMPT_SUMMARY_TRAIN,
             USER_PROMPT_SUMMARY,
         ),
         # RRU
@@ -222,7 +266,7 @@ def get_template_prompts(name: str | None) -> tuple[str, str]:
             USER_PROMPT_JSON,
         ),
         "rru_summary": (
-            build_summary_system_prompt(dataset="rru"),
+            SYSTEM_PROMPT_SUMMARY_TRAIN,
             USER_PROMPT_SUMMARY,
         ),
     }
@@ -245,6 +289,8 @@ __all__ = [
     "SYSTEM_PROMPT",
     "SYSTEM_PROMPT_JSON",
     "SYSTEM_PROMPT_SUMMARY",
+    "SYSTEM_PROMPT_SUMMARY_TRAIN",
+    "SYSTEM_PROMPT_SUMMARY_RUNTIME",
     "SYSTEM_PROMPT_CHAT",
     "USER_PROMPT",
     "USER_PROMPT_JSON",
@@ -255,6 +301,7 @@ __all__ = [
     "get_template_prompts",
     "build_dense_system_prompt",
     "build_summary_system_prompt",
+    "build_summary_system_prompt_minimal",
     "DATASET_PRIOR_RULES",
     "DATASET_SCHEMA_HINT",
 ]

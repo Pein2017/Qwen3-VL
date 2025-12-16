@@ -22,6 +22,8 @@ from ..utils.chinese import normalize_spaces, to_simplified
 
 logger = logging.getLogger(__name__)
 
+_CLEANUP_PROTECTED_EXPERIENCE_KEYS = frozenset({"G0"})
+
 
 class MissionGuidanceError(RuntimeError):
     """Raised when mission guidance files are malformed."""
@@ -634,6 +636,8 @@ class GuidanceRepository:
         metadata = dict(current.metadata)
 
         for key, meta in list(metadata.items()):
+            if key in _CLEANUP_PROTECTED_EXPERIENCE_KEYS:
+                continue
             if (
                 meta.confidence < confidence_threshold
                 and meta.miss_count >= min_miss_before_drop
@@ -647,6 +651,14 @@ class GuidanceRepository:
                 removed_keys.append(key)
 
         if not removed_keys:
+            return []
+
+        if not experiences:
+            logger.warning(
+                "Skipping cleanup_low_confidence for %s because it would remove all experiences (removed=%s)",
+                mission,
+                removed_keys,
+            )
             return []
 
         # Rebuild guidance with remaining experiences

@@ -119,7 +119,7 @@ def _engine_with_budget(budget: int) -> ReflectionEngine:
 
 
 def test_token_budget_trims_records():
-    engine = _engine_with_budget(budget=400)  # very small
+    engine = _engine_with_budget(budget=200)  # very small
     # Build 3 records with sizeable text
     recs = [
         _make_record("g1", "MISSION_X", "pass", "R1", win_idx=0, match_true=False, match_false=True),
@@ -137,7 +137,7 @@ def test_token_budget_trims_records():
 
 
 def test_prioritization_keeps_contradictions_first():
-    engine = _engine_with_budget(budget=350)
+    engine = _engine_with_budget(budget=200)
     # rec_a: no contradiction (both label_match False)
     rec_a = _make_record("ga", "MISSION_Y", "pass", "NO_CONTRA", win_idx=0, match_true=False, match_false=False)
     # rec_b: contradiction across candidates (True + False)

@@ -1,0 +1,7 @@
+extends: ../debug.yaml
+
+training:
+  run_name: smoke_dense_tiny
+
+custom:
+  use_summary: false

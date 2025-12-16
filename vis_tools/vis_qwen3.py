@@ -82,13 +82,13 @@ def _parse_args():
 # ==============================
 
 # Required paths
-CKPT_PATH = "output/12-4/res_1024_fusion_merged/checkpoint-1116"  # HF dir or merged checkpoint  # HF dir or merged checkpoint
+CKPT_PATH = "output/12-9/res_1024_fusion_merged/epoch50-updated_aug-checkpoint-2000"  # HF dir or merged checkpoint  # HF dir or merged checkpoint
 JSONL_PATH = "data/bbu_full_1024_poly-need_review/val.jsonl"
 
 # Runtime settings
 LIMIT = 10
-DEVICE = "cuda:0"  # Default device; can be overridden by CLI arg in main()
-SAVE_DIR = "vis_out/12-4/res_1024_fusion_merged/bbu-1024"
+DEVICE = "cuda:1"  # Default device; can be overridden by CLI arg in main()
+SAVE_DIR = "vis_out/12-9/res_1024_fusion_merged/epoch50-updated_aug-checkpoint-2000"
 MAX_NEW_TOKENS = 2048
 TEMPERATURE = 0.01  # Moderate temperature for diversity without excessive randomness
 TOP_P = 0.95  # Nucleus sampling - cuts off low-probability tail for better diversity

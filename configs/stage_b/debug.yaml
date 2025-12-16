@@ -15,7 +15,7 @@ guidance:
 
 output:
   root: output_post/stage_b
-  run_name: distill_qwen32_teacher-concise  # Distill run name; artifacts under {root}/{run_name}/{mission}/
+  run_name: distill_qwen32_teacher-concise-epoch-10  # Distill run name; artifacts under {root}/{run_name}/{mission}/
   group_report: true
 
 sampler:
@@ -55,7 +55,7 @@ sampler:
 
 reflection:
   prompt_path: configs/prompts/stage_b_reflection_prompt.txt
-  batch_size: 8  # Debug: 保持较小批次，便于观察每次反思
+  batch_size: 128  # Debug: 保持较小批次，便于观察每次反思
   max_operations: 5  # Debug: 每次最多 3 条经验修改
 
   temperature: 0.001  # Higher temperature for more diverse guidance entries
@@ -74,13 +74,11 @@ manual_review:
   min_verdict_agreement: 0.8  # fraction of candidates sharing the same verdict
 
 runner:
-  epochs: 5 # Tiny smoke: 单轮
-  rollout_batch_size: 1
+  epochs: 10 # Tiny smoke: 单轮
+  rollout_batch_size: 16
 
 stage_b_distillation:
   enabled: true
-  # Override only if you want a custom location; default is {root}/{run_name}/{mission}/distill_chatml.jsonl
-  # log_chatml_path: output_post/stage_b/distill_chatml.jsonl
 
 # Guidance lifecycle management (optional)
 guidance_lifecycle:

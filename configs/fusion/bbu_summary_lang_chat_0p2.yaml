@@ -1,8 +1,8 @@
 targets:
   - name: bbu_summary
     dataset: bbu
-    train_jsonl: data/bbu_full_768_poly-need_review/train.jsonl
-    val_jsonl: data/bbu_full_768_poly-need_review/val.jsonl
+    train_jsonl: data/bbu_full_1024_poly-need_review/train.jsonl
+    val_jsonl: data/bbu_full_1024_poly-need_review/val.jsonl
     template: bbu_summary
     mode: summary
     ratio: 1.0
@@ -12,7 +12,7 @@ sources:
   # Small regularization mix from dense BBU/RRU and LVIS detection.
   - name: bbu_dense
     dataset: bbu
-    train_jsonl: data/bbu_full_768_poly-need_review/train.jsonl
+    train_jsonl: data/bbu_full_1024_poly-need_review/train.jsonl
     ratio: 0.1
     template: bbu_dense
     mode: dense

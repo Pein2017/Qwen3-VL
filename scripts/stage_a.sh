@@ -6,12 +6,13 @@ set -euo pipefail
 # Example: mission=BBU安装方式检查（正装） gpu=1 bash scripts/stage_a_infer.sh
 
 # Fixed configuration
-CHECKPOINT="output/11-30/summary_merged/epoch_10-lr_2e-4-bs_32-res_1024"
+# CHECKPOINT="output/11-30/summary_merged/epoch_10-lr_2e-4-bs_32-res_1024"
+CHECKPOINT="output/12-9/summary_merged/res_1024-last_4"
 INPUT_DIR="group_data/bbu_scene_2.0_order"
 OUTPUT_DIR="output_post/stage_a"
 
 # Environment variable overrides (lowercase)
-MISSION="${mission:-BBU线缆布放要求}"
+MISSION="${mission:-挡风板安装检查}"
 gpu_id="${gpu:-7}"
 no_mission_flag="${no_mission:-true}"
 verify_flag="${verify_inputs:-true}"
@@ -26,7 +27,7 @@ else
 fi
 
 # Fixed parameters
-BATCH_SIZE="16"
+BATCH_SIZE="64"
 MAX_PIXELS="1048576"
 MAX_NEW_TOKENS="1024"
 TEMPERATURE="0.0001"

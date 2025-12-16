@@ -26,6 +26,17 @@ from transformers import (
 
 from ..utils import configure_logging, get_logger
 from .config import StageBConfig, load_stage_b_config
+from .distributed import (
+    barrier,
+    broadcast_int,
+    broadcast_object,
+    gather_object,
+    get_local_rank,
+    get_rank,
+    get_world_size,
+    init_distributed,
+    is_main_process,
+)
 from .ingest import ingest_stage_a
 from .io.export import serialize_selection, serialize_trajectory
 from .io.group_report import build_group_report
@@ -83,9 +94,20 @@ def _load_model(config: StageBConfig):
         trust_remote_code=True,
     )
     dtype = _dtype_from_str(config.model.torch_dtype)
+    device_map: object = config.model.device_map
+    if get_world_size() > 1 and torch.cuda.is_available():
+        local_rank = get_local_rank()
+        device_map = {"": local_rank}
+        if is_main_process():
+            logger.info(
+                "Distributed mode: forcing per-rank single-GPU model placement (LOCAL_RANK=%d, device_map=%r -> %r)",
+                local_rank,
+                config.model.device_map,
+                device_map,
+            )
     model_kwargs = {
         "torch_dtype": dtype,
-        "device_map": config.model.device_map,
+        "device_map": device_map,
     }
     if variant == "vl":
         model = Qwen3VLForConditionalGeneration.from_pretrained(
@@ -136,6 +158,8 @@ def _reset_mission_artifacts(mission_dir: Path) -> None:
         "trajectories.jsonl",
         "selections.jsonl",
         "manual_review_queue.jsonl",
+        "need_review_queue.jsonl",
+        "prompt_wishlist.jsonl",
         "failure_malformed.jsonl",
         "reflection.jsonl",
         "metrics_epoch.jsonl",
@@ -167,6 +191,22 @@ def _append_jsonl(path: Path, payload: dict) -> None:
 def _chunked(seq: List, size: int):
     for i in range(0, len(seq), size):
         yield seq[i : i + size]
+
+
+def _shard_bounds(total: int, *, world_size: int, rank: int) -> Tuple[int, int]:
+    """Return [start, end) bounds for stable sharding across ranks."""
+    if world_size <= 1:
+        return 0, total
+    if rank < 0 or rank >= world_size:
+        raise ValueError(f"rank must be in [0, {world_size}), got {rank}")
+
+    base = total // world_size
+    remainder = total % world_size
+
+    start = rank * base + min(rank, remainder)
+    count = base + (1 if rank < remainder else 0)
+    end = start + count
+    return start, end
 
 
 def _compute_metrics(records: List[Dict[str, object]]) -> Dict[str, float]:
@@ -291,15 +331,33 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
         "Stage-B starting with reflection-first pipeline (single mission, no critic)"
     )
 
+    init_distributed()
+    world_size = get_world_size()
+    rank = get_rank()
+    distributed = world_size > 1
+    if distributed and is_main_process():
+        logger.info("Stage-B distributed ticket-parallel rollout enabled (world_size=%d)", world_size)
+
     seed_everything(config.seed)
 
     run_dir = config.output.root / config.output.run_name
-    if run_dir.exists():
-        logger.info(
-            "Cleaning existing run directory to avoid stale artifacts: %s", run_dir
-        )
-        shutil.rmtree(run_dir)
-    run_dir.mkdir(parents=True, exist_ok=True)
+    if distributed:
+        if is_main_process():
+            if run_dir.exists():
+                logger.info(
+                    "Cleaning existing run directory to avoid stale artifacts: %s",
+                    run_dir,
+                )
+                shutil.rmtree(run_dir)
+            run_dir.mkdir(parents=True, exist_ok=True)
+        barrier()
+    else:
+        if run_dir.exists():
+            logger.info(
+                "Cleaning existing run directory to avoid stale artifacts: %s", run_dir
+            )
+            shutil.rmtree(run_dir)
+        run_dir.mkdir(parents=True, exist_ok=True)
 
     # Ingest all tickets to discover missions
     logger.info("Ingesting Stage-A outputs")
@@ -344,7 +402,6 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
 
         # Setup mission-specific directory structure
         mission_dir = run_dir / mission
-        _reset_mission_artifacts(mission_dir)
         distill_cfg = config.stage_b_distillation
         distill_enabled = bool(distill_cfg.enabled) if distill_cfg else False
         default_distill_path = mission_dir / "distill_chatml.jsonl"
@@ -354,29 +411,38 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
             else default_distill_path
         )
 
-        # Setup mission-specific guidance
-        mission_guidance_repo = _setup_mission_guidance(
-            startup_path=config.guidance.path,
-            mission_dir=mission_dir,
-            mission=mission,
-            retention=config.guidance.retention,
-            reset=config.guidance.reset_on_rerun,
-        )
-
-        # Prepare mission-specific output paths
-        trajectories_path, selections_path = _prepare_mission_output_paths(mission_dir)
+        mission_guidance_repo: Optional[GuidanceRepository] = None
+        reflection_engine: Optional[ReflectionEngine] = None
+        trajectories_path = mission_dir / "trajectories.jsonl"
+        selections_path = mission_dir / "selections.jsonl"
         metrics_path = mission_dir / "metrics_epoch.jsonl"
-
-        # Reflection log goes under {root}/{run_name}/{mission}/
         reflection_log_path = mission_dir / "reflection.jsonl"
 
-        reflection_engine = ReflectionEngine(
-            model=model,
-            tokenizer=tokenizer,
-            config=config.reflection,
-            guidance_repo=mission_guidance_repo,
-            reflection_log=reflection_log_path,
-        )
+        if is_main_process():
+            _reset_mission_artifacts(mission_dir)
+
+            # Setup mission-specific guidance
+            mission_guidance_repo = _setup_mission_guidance(
+                startup_path=config.guidance.path,
+                mission_dir=mission_dir,
+                mission=mission,
+                retention=config.guidance.retention,
+                reset=config.guidance.reset_on_rerun,
+            )
+
+            # Prepare mission-specific output paths
+            trajectories_path, selections_path = _prepare_mission_output_paths(
+                mission_dir
+            )
+
+            # Reflection log goes under {root}/{run_name}/{mission}/
+            reflection_engine = ReflectionEngine(
+                model=model,
+                tokenizer=tokenizer,
+                config=config.reflection,
+                guidance_repo=mission_guidance_repo,
+                reflection_log=reflection_log_path,
+            )
 
         mission_selection_count = 0
         total_groups = len(mission_tickets)
@@ -405,16 +471,23 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
             logger.info(
                 f"Starting Stage-B epoch {epoch}/{config.runner.epochs} for mission {mission}"
             )
-            ordered_indices = _shuffle_indices(
-                total_groups, epoch=epoch, base_seed=config.seed
+            ordered_indices = broadcast_object(
+                _shuffle_indices(total_groups, epoch=epoch, base_seed=config.seed)
+                if is_main_process()
+                else None,
+                src=0,
             )
 
-            epoch_progress = tqdm(
-                total=len(ordered_indices),
-                desc=f"Stage-B epoch {epoch}/{config.runner.epochs} [{mission}]",
-                unit="group",
-                mininterval=0.1,  # Update at least every 0.1 seconds
-                maxinterval=1.0,  # Force update every 1 second max
+            epoch_progress = (
+                tqdm(
+                    total=len(ordered_indices),
+                    desc=f"Stage-B epoch {epoch}/{config.runner.epochs} [{mission}]",
+                    unit="group",
+                    mininterval=0.1,  # Update at least every 0.1 seconds
+                    maxinterval=1.0,  # Force update every 1 second max
+                )
+                if is_main_process()
+                else None
             )
 
             reflection_cycle = 0
@@ -430,7 +503,11 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
             epoch_tickets = [mission_tickets[i] for i in ordered_indices]
 
             for batch in _chunked(epoch_tickets, config.runner.rollout_batch_size):
-                guidance_map = mission_guidance_repo.load()
+                guidance_map = None
+                if is_main_process():
+                    assert mission_guidance_repo is not None
+                    guidance_map = mission_guidance_repo.load()
+                guidance_map = broadcast_object(guidance_map, src=0)
 
                 logger.debug(
                     "Rollout batch len=%d (configured=%d), grid=%d, samples_per_decode=%d",
@@ -440,7 +517,22 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                     config.sampler.samples_per_decode,
                 )
 
-                parsed_map = sampler.generate_for_batch(batch, guidance_map)
+                shard_start, shard_end = _shard_bounds(
+                    len(batch), world_size=world_size, rank=rank
+                )
+                shard = batch[shard_start:shard_end]
+                shard_parsed_map = (
+                    sampler.generate_for_batch(shard, guidance_map) if shard else {}
+                )
+                gathered = gather_object(shard_parsed_map, dst=0)
+                if not is_main_process():
+                    continue
+                assert gathered is not None
+
+                parsed_map: Dict[str, List] = {}
+                for partial in gathered:
+                    for group_id, candidates in partial.items():
+                        parsed_map[group_id] = candidates
 
                 for ticket in batch:
                     guidance = guidance_map[ticket.mission]
@@ -481,11 +573,8 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                     for cand in parsed_candidates:
                         reason_text = cand.reason or ""
                         verdict_val = cand.verdict
-                        # Accept outputs that mention review/复核; keep them in flow instead of flagging format_error.
-                        format_ok = (
-                            cand.format_ok
-                            and verdict_val is not None
-                            and bool(reason_text.strip())
+                        format_ok = cand.format_ok and verdict_val is not None and bool(
+                            reason_text.strip()
                         )
                         if not format_ok:
                             failure_entry = {
@@ -549,6 +638,7 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                         selection = select_for_group(
                             ticket,
                             wrapped_candidates,
+                            mission_g0=guidance.experiences.get("G0"),
                             guidance_step=guidance.step,
                             reflection_cycle=reflection_cycle,
                             reflection_change=last_reflection_id,
@@ -768,9 +858,12 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                         {"group": ticket.group_id, "verdict": selection.verdict}
                     )
 
-            epoch_progress.close()
+            if epoch_progress is not None:
+                epoch_progress.close()
 
-            if pending_records:
+            if is_main_process() and pending_records:
+                assert reflection_engine is not None
+                assert mission_guidance_repo is not None
                 bundle = reflection_engine.build_bundle(
                     pending_records,
                     reflection_cycle=reflection_cycle,
@@ -883,105 +976,125 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                 pending_records.clear()
                 reflection_cycle += 1
 
-            records_this_epoch = list(epoch_outcomes.values())
-            clean_records = [
-                record
-                for record in records_this_epoch
-                if not record.get("in_manual_review")
-            ]
-            metrics_exclude_mr = _compute_metrics(clean_records)
-            metrics_include_mr = _compute_metrics(records_this_epoch)
+            if is_main_process():
+                records_this_epoch = list(epoch_outcomes.values())
+                clean_records = [
+                    record
+                    for record in records_this_epoch
+                    if not record.get("in_manual_review")
+                ]
+                metrics_exclude_mr = _compute_metrics(clean_records)
+                metrics_include_mr = _compute_metrics(records_this_epoch)
 
-            logger.info(
-                "Epoch %d metrics (exclude MR): acc=%.4f, fn=%d, fp=%d, n=%d",
-                epoch,
-                metrics_exclude_mr["acc"],
-                metrics_exclude_mr["fn"],
-                metrics_exclude_mr["fp"],
-                metrics_exclude_mr["n"],
-            )
-            logger.info(
-                "Epoch %d metrics (include MR): acc=%.4f, fn=%d, fp=%d, n=%d",
-                epoch,
-                metrics_include_mr["acc"],
-                metrics_include_mr["fn"],
-                metrics_include_mr["fp"],
-                metrics_include_mr["n"],
-            )
-
-            _append_jsonl(
-                metrics_path,
-                {
-                    "epoch": epoch,
-                    "exclude_manual_review": metrics_exclude_mr,
-                    "include_manual_review": metrics_include_mr,
-                },
-            )
-
-        # Epoch-end cleanup: remove low-confidence rules
-        if config.guidance_lifecycle and config.guidance_lifecycle.enable_auto_cleanup:
-            try:
-                removed = mission_guidance_repo.cleanup_low_confidence(
-                    mission,
-                    confidence_threshold=config.guidance_lifecycle.confidence_drop_threshold,
-                    min_miss_before_drop=config.guidance_lifecycle.min_miss_before_drop,
+                logger.info(
+                    "Epoch %d metrics (exclude MR): acc=%.4f, fn=%d, fp=%d, n=%d",
+                    epoch,
+                    metrics_exclude_mr["acc"],
+                    metrics_exclude_mr["fn"],
+                    metrics_exclude_mr["fp"],
+                    metrics_exclude_mr["n"],
                 )
-                if removed:
-                    logger.info(
-                        f"Epoch {epoch}: cleanup_low_confidence removed {len(removed)} rule(s): {removed}"
-                    )
-                    guidance_updated_epoch = True
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(f"Failed to perform cleanup at epoch {epoch}: {exc}")
+                logger.info(
+                    "Epoch %d metrics (include MR): acc=%.4f, fn=%d, fp=%d, n=%d",
+                    epoch,
+                    metrics_include_mr["acc"],
+                    metrics_include_mr["fn"],
+                    metrics_include_mr["fp"],
+                    metrics_include_mr["n"],
+                )
 
-        total_selections += mission_selection_count
+                _append_jsonl(
+                    metrics_path,
+                    {
+                        "epoch": epoch,
+                        "exclude_manual_review": metrics_exclude_mr,
+                        "include_manual_review": metrics_include_mr,
+                    },
+                )
 
-        logger.info(
-            f"Completed mission {mission}: {mission_selection_count} selections"
-        )
-
-        if config.output.group_report:
-            try:
-                report_path = build_group_report(mission_dir, config.stage_a_paths)
-                logger.info("Wrote grouped report to %s", report_path)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("Failed to build group report for %s: %s", mission, exc)
-
-        # If guidance did not change this epoch and distillation is enabled, emit distill chatml and stop further epochs
-        if distill_enabled and not guidance_updated_epoch:
-            guidance_map = mission_guidance_repo.load()
-            if mission not in guidance_map:
-                raise RuntimeError(f"Mission {mission} guidance missing at convergence")
-            guidance = guidance_map[mission]
-            distill_path.parent.mkdir(parents=True, exist_ok=True)
-            with distill_path.open("w", encoding="utf-8") as fh:
-                for record in distill_records_epoch:
-                    ticket: GroupTicket = record["ticket"]  # type: ignore[assignment]
-                    verdict: str = record["verdict"]  # type: ignore[assignment]
-                    reason: Optional[str] = record["reason"]  # type: ignore[assignment]
-                    messages = build_messages(ticket, guidance)
-                    verdict_text = "通过" if verdict == "pass" else "不通过"
-                    reason_text = reason or ""
-                    assistant_content = (
-                        f"Verdict: {verdict_text}\nReason: {reason_text}"
-                    )
-                    messages.append({"role": "assistant", "content": assistant_content})
-                    payload = {
-                        "group_id": ticket.group_id,
-                        "mission": ticket.mission,
-                        "label": ticket.label,
-                        "messages": messages,
-                    }
-                    fh.write(json.dumps(payload, ensure_ascii=False))
-                    fh.write("\n")
-            logger.info(
-                "Early stop: guidance unchanged in epoch %d. Wrote %d distill records to %s; halting remaining epochs for mission %s.",
-                epoch,
-                len(distill_records_epoch),
-                distill_path,
-                mission,
+            should_continue = 1 if epoch < config.runner.epochs else 0
+            should_continue = broadcast_int(
+                should_continue if is_main_process() else 0, src=0
             )
-            break
+            if should_continue == 0:
+                break
+
+        if is_main_process():
+            # Epoch-end cleanup: remove low-confidence rules
+            if (
+                config.guidance_lifecycle
+                and config.guidance_lifecycle.enable_auto_cleanup
+            ):
+                assert mission_guidance_repo is not None
+                try:
+                    removed = mission_guidance_repo.cleanup_low_confidence(
+                        mission,
+                        confidence_threshold=config.guidance_lifecycle.confidence_drop_threshold,
+                        min_miss_before_drop=config.guidance_lifecycle.min_miss_before_drop,
+                    )
+                    if removed:
+                        logger.info(
+                            f"Epoch {epoch}: cleanup_low_confidence removed {len(removed)} rule(s): {removed}"
+                        )
+                        guidance_updated_epoch = True
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(f"Failed to perform cleanup at epoch {epoch}: {exc}")
+
+            total_selections += mission_selection_count
+
+            logger.info(
+                f"Completed mission {mission}: {mission_selection_count} selections"
+            )
+
+            if config.output.group_report:
+                try:
+                    report_path = build_group_report(mission_dir, config.stage_a_paths)
+                    logger.info("Wrote grouped report to %s", report_path)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "Failed to build group report for %s: %s", mission, exc
+                    )
+
+            # If guidance did not change this epoch and distillation is enabled, emit distill chatml and stop further epochs
+            if distill_enabled and not guidance_updated_epoch:
+                assert mission_guidance_repo is not None
+                guidance_map = mission_guidance_repo.load()
+                if mission not in guidance_map:
+                    raise RuntimeError(
+                        f"Mission {mission} guidance missing at convergence"
+                    )
+                guidance = guidance_map[mission]
+                distill_path.parent.mkdir(parents=True, exist_ok=True)
+                with distill_path.open("w", encoding="utf-8") as fh:
+                    for record in distill_records_epoch:
+                        ticket: GroupTicket = record["ticket"]  # type: ignore[assignment]
+                        verdict: str = record["verdict"]  # type: ignore[assignment]
+                        reason: Optional[str] = record["reason"]  # type: ignore[assignment]
+                        messages = build_messages(ticket, guidance)
+                        verdict_text = "通过" if verdict == "pass" else "不通过"
+                        reason_text = reason or ""
+                        assistant_content = (
+                            f"Verdict: {verdict_text}\nReason: {reason_text}"
+                        )
+                        messages.append(
+                            {"role": "assistant", "content": assistant_content}
+                        )
+                        payload = {
+                            "group_id": ticket.group_id,
+                            "mission": ticket.mission,
+                            "label": ticket.label,
+                            "messages": messages,
+                        }
+                        fh.write(json.dumps(payload, ensure_ascii=False))
+                        fh.write("\n")
+                logger.info(
+                    "Early stop: guidance unchanged in epoch %d. Wrote %d distill records to %s; halting remaining epochs for mission %s.",
+                    epoch,
+                    len(distill_records_epoch),
+                    distill_path,
+                    mission,
+                )
+                break
 
     logger.info(
         f"Completed Stage-B pipeline across {config.runner.epochs} epoch(s) and {processed_missions} mission(s): {total_selections} total selections"

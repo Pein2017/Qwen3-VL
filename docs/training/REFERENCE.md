@@ -20,7 +20,7 @@ Comprehensive guide for training, inference, deployment, and advanced topics.
 
 ### Inspection Pipeline (Stage‑1 → Stage‑2)
 - **Stage‑1 / Stage‑A (Basic Object Recognition)**: `src/stage_a/` emits per-image evidence/rare-object summaries used as inputs to Stage‑2. Runbook: `docs/runtime/STAGE_A_RUNTIME.md`.
-- **Stage‑2 / Stage‑B (Group Ticket Verification)**: `src/stage_b/` ingests Stage‑A JSONL + labels and returns `pass|fail` verdicts with **prompt-only rollouts** plus optional reflection updates. Reflection supports `add|update|delete|merge|none`; `merge` lets the LLM fold semantically duplicate guidance while preserving evidence metadata. No CriticEngine; manual-review and failure queues live under each mission run dir. Runbook: `docs/runtime/STAGE_B_RUNTIME.md` and business context in `docs/runtime/STAGE_A_STAGE_B.md`.
+- **Stage‑2 / Stage‑B (Group Ticket Verification)**: `src/stage_b/` ingests Stage‑A JSONL + labels and returns group verdicts with **prompt-only rollouts** under a strict two-line binary contract (`Verdict: 通过|不通过` + `Reason: ...`; no third-state wording). Inference is guarded by deterministic, **mission‑scoped fail‑first** signals (mission‑agnostic negative triggers + generalized patterns like `不符合要求/<issue>`, gated by the current mission `G0`). Reflection supports `add|update|delete|merge|none` and quarantines label/Stage‑A contradictions into `need_review_queue.jsonl` (do not learn pass/fail rules from noisy evidence). No CriticEngine; manual-review and failure queues live under each mission run dir. Runbook: `docs/runtime/STAGE_B_RUNTIME.md` and business context in `docs/runtime/STAGE_A_STAGE_B.md`.
 - **Offline preprocessing (optional)**: `data_conversion/` normalizes annotation exports into train/val/tiny JSONL and QA reports. Guide: `docs/data/DATA_PREPROCESSING_PIPELINE.md`.
 
 ### Source Code Layout
@@ -100,6 +100,12 @@ Comprehensive guide for training, inference, deployment, and advanced topics.
 # 3. Color ops deferred (applied after geometric ops)
 # 4. Propagates crop metadata (kept_indices, coverages)
 ```
+
+**Copy/Paste Patch Bank** (single-node):
+- Enabled by copy/paste PatchOps (`small_object_zoom_paste`, `object_cluster_copy_paste`, `line_segment_copy_paste`) when `source_mode: mixed|bank` and `bank_add_prob > 0`.
+- Directory is `QWEN3_VL_PATCH_BANK_DIR` (defaults to `<output_dir>/patch_bank` via `src/sft.py`).
+- Shared across dataloader workers and distributed ranks **on a single node**; multi-node jobs are not supported (fail-fast).
+- Sampling is deterministic when step context is available (selection derived from per-record `sample_id`, not by consuming RNG).
 
 ### Token Flow Details
 
@@ -218,7 +224,7 @@ Core SFT/LoRA recipes, KL anchoring overlays, augmentation telemetry, and troubl
 **Token-type telemetry (optional)**  
 - Config: `custom.token_type_metrics.enabled` (default `false`), `include` (default `['target','lvis']`), `exclude` (default `['coig_lang_chat']`).  
 - Behavior: collator reconstructs assistant JSON, tokenizes with the active template, aligns token types (1=desc, 2=coord numbers, 3=format), and pads/truncates to supervised positions; rows outside `include` get IGNORE.  
-- Metrics: per dataset label, logs `{label}_token_acc` (all supervised tokens, naturally weighted), type-sliced accuracies/entropy `{label}_{desc|coord|format}_token_acc|entropy`, plus token-count companions `{label}_token_count` and `{label}_{type}_token_count` to make weighting explicit.  
+- Metrics: per dataset label, logs `{label}_token_acc` (all supervised tokens, naturally weighted), type-sliced accuracies `{label}_{desc|coord|format}_token_acc`.  
 - Validation: smoke run on 2025-12-04 with `configs/smoke/group_metrics.yaml` (4B checkpoint, tiny fusion `configs/fusion/bbu_rru_lvis_coig_tiny.yaml`, `logging_steps=1`, `eval_steps=1`, `save_strategy=no`, `max_steps=20`) produced the expected token-type metrics; see `output/smoke/group_metrics/v0-20251204-062817/smoke_group_metrics_4b/logging.jsonl`.
 
 Keep configs under `configs/` in sync with the playbook when making behavioral changes.
@@ -229,7 +235,7 @@ Runtime/deployment instructions for Stage-A summaries and the Stage-B verdict lo
 - Adapter vs merged checkpoints, export commands, and decoding tips
 - Dense captioning usage examples
 - Stage-A CLI guardrails and output schemas
-- Stage-B sampler/selection/manual-review/reflection flow (prompt-only, no CriticEngine); rollout 提示=guidance+Stage-A 摘要（不含 GT），严格两行解析；低一致性/标签冲突仅作为反思触发，manual-review 在反思后判定：若整批无指导更新且该组无任何候选支持 GT，则写入 manual_review_queue。反思输出严格 JSON 的 add/update/delete 规则，批处理更新 guidance，重跑同一 run_name 重建 per-run artifacts，指导沿用上次快照。
+- Stage-B sampler/selection/manual-review/reflection flow (prompt-only, no CriticEngine); rollout 提示=guidance+Stage-A 摘要（不含 GT），推理输出严格两行二分类（`Verdict: 通过|不通过` + `Reason: ...`）且禁止任何第三状态词面；若确定性护栏覆盖模型采样 verdict，则必须重写 `Reason` 以与最终 `Verdict` 一致。护栏包含 **mission‑scoped fail‑first**（仅当负项与当前 mission 的 `G0` 相关时触发，含 pattern-first `不符合要求/<issue>`）；Stage‑A summary 中的 `需复核,备注:` 视为软信号，需读取备注综合判断，不能把 `需复核` 硬等价为 fail。反思阶段将 label 与 Stage‑A summary 明显矛盾的样本写入 `need_review_queue.jsonl` 并禁止学习 pass/fail 规则；`manual_review_queue.jsonl` 仍用于 malformed/无可用候选等需人工排查的 case。重跑同一 run_name 重建 per-run artifacts，指导沿用上次快照。
 - Stage-B 每个 epoch 生成 `metrics_epoch.jsonl`（含/不含人工复核两套 acc/fn/fp/n 计数），与 trajectories/selections 并列用于快速健康检查。
 - 生产约束：Stage‑A 与 Stage‑B 在最终环境中共用同一个 Qwen3‑VL 模型（同一组权重 / LoRA 组合），通过不同 prompt 和 config 切换任务；训练 summary‑mode 或添加新 LoRA 时，需要显式评估对 Stage‑B rollout/verdict 行为的影响。
 

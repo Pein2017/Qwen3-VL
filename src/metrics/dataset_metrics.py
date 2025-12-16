@@ -96,8 +96,6 @@ class DatasetMetricsMixin:
             if not mask.any():
                 continue
 
-            supervised_token_count = int(mask.sum().detach())
-
             if not domain_skip:
                 with torch.no_grad():
                     seg_loss = F.cross_entropy(
@@ -112,9 +110,6 @@ class DatasetMetricsMixin:
 
                 metrics[f"{label_str}_loss"].update(float(seg_loss.detach().item()))
                 metrics[f"{label_str}_token_acc"].update(float(seg_acc.detach().item()))
-                metrics[f"{label_str}_token_count"].update(
-                    float(supervised_token_count)
-                )
 
             # Token-type metrics (optional)
             if token_types_next is None:
@@ -126,27 +121,17 @@ class DatasetMetricsMixin:
                 type_mask = (sample_types == typ_id) & mask
                 if not type_mask.any():
                     continue
-                type_token_count = int(type_mask.sum().detach())
                 with torch.no_grad():
                     type_logits = sample_logits[type_mask]
                     type_labels = sample_labels[type_mask]
                     type_preds = type_logits.argmax(dim=-1)
                     acc = (type_preds == type_labels).float().mean()
-                    # Entropy: mean over tokens, sum over vocab
-                    probs = F.softmax(type_logits, dim=-1)
-                    entropy = (-probs * probs.log()).sum(dim=-1).mean()
 
-                    # Skip token-type metrics when entropy or accuracy is non-finite.
-                    if not torch.isfinite(acc) or not torch.isfinite(entropy):
+                    # Skip token-type metrics when accuracy is non-finite.
+                    if not torch.isfinite(acc):
                         continue
                 metrics[f"{label_str}_{suffix}_token_acc"].update(
                     float(acc.detach().item())
-                )
-                metrics[f"{label_str}_{suffix}_entropy"].update(
-                    float(entropy.detach().item())
-                )
-                metrics[f"{label_str}_{suffix}_token_count"].update(
-                    float(type_token_count)
                 )
 
     def _sync_dataset_metrics(self) -> None:

@@ -4,7 +4,7 @@
 - Stage-A：逐图片的客观事实归纳（摘要）
 - Stage-B：基于多图摘要与业务规则的组级判定与反思更新
 
-Stage-B 现为“prompt-only”流程：模型输出固定两行（Verdict/Reason），不再运行 CriticEngine，也不使用证据数组或置信度/自洽度信号；无法解析的样本会进入 `manual_review_queue.jsonl`，解析失败会写入 `failure_malformed.jsonl` 以便改进提示。
+Stage-B 现为“prompt-only”流程：推理输出**严格两行二分类**（`Verdict: 通过|不通过` + `Reason: ...`），且最终输出中**禁止任何第三状态词面**（例如“需复核/证据不足/待定/need-review”等）。不满足两行协议或无法解析的样本会进入 `manual_review_queue.jsonl`；解析失败会写入 `failure_malformed.jsonl` 以便改进提示。反思/训练阶段另有 `need_review_queue.jsonl` 用于隔离“标签与 Stage-A 摘要明显矛盾”的样本（不影响推理输出协议）。
 
 业务目标：
 - 最大化与历史人工审核一致性（主指标：Label Match）
@@ -103,7 +103,7 @@ Stage-B 现为“prompt-only”流程：模型输出固定两行（Verdict/Reaso
 1) Ingest：读取 Stage-A JSONL，规范化成组级工单（GroupTicket）
 2) Rollout：按解码网格（温度、top_p、max_new_tokens 等）对每组生成一个或多个候选判定，每个候选都遵守两行输出协议（Verdict/Reason）。
 3) Signals：为候选附加确定性信号（如与历史标签的一致性 `label_match`、在候选集合中的自洽度 self_consistency 等），不再调用 CriticEngine。
-4) Selection：基于多数表决 + fail-first 策略选择最终判定（多数票若打平，优先选择 verdict=`fail` 的候选；再按温度和候选索引打破平局）。
+4) Selection：基于多数表决 + fail-first 策略选择最终判定；并叠加 **mission-scoped fail-first** 确定性护栏（仅当负项与当前 mission 的 `G0` 相关时触发整组不通过；支持 pattern-first `不符合要求/<issue>`）。若护栏覆盖采样 verdict，则必须重写最终 `Reason` 以与最终 `Verdict` 一致，且仍不得出现第三状态词面。
 5) Reflection：对近期包含标签冲突或部分正确的轨迹进行批处理，比较模型判定与 GT 差异，构造 JSON-only 的 guidance 变更提案（增加/更新/删除经验规则）。
 6) Guidance Repository：对提案进行应用/留存，并以快照形式记录每次变更，支持回滚与再训练使用。
 - LLM 输出协议：Rollout 使用两行判定格式（`Verdict:` / `Reason:`）；Reflection 输出合法 JSON 数组，每个元素代表一条规则操作（add/update/delete/none）。
@@ -113,12 +113,16 @@ Stage-B 现为“prompt-only”流程：模型输出固定两行（Verdict/Reaso
 - trajectories.jsonl：候选级别的完整生成与解析轨迹（含解码温度、候选索引、解析是否成功等）
 - guidance.json + snapshots/：当前生效 guidance 及每次变更的快照
 - reflection.jsonl：反思提案、是否应用、关联样本 ID 与指导变更记录
+- need_review_queue.jsonl：反思/训练阶段的“证据一致性治理”队列（label 与 Stage-A 摘要明显矛盾时入队；不作为学习 pass/fail 规则的样本）
+- manual_review_queue.jsonl：格式错误/无法解析/无可用候选等需人工排查的队列
+- failure_malformed.jsonl：无法解析的原始输出与调试信息（用于提示词/解析器迭代）
 
 策略与信号（当前实现）：
 - label_match：候选 verdict 与历史人工标签是否一致
 - self_consistency：在同一组候选中，某一 verdict 出现的比例（启发式一致性）
 - vote_strength：最终被选 verdict 在候选集合中的票数占比
 - conflict_flag：最终选择与标签明显矛盾时为 true，用于后续反思和人工排查
+- deterministic_fail_first：命中 mission‑relevant 的明确负项（含通用触发词与 `不符合要求/<issue>` 模式）时强制整组不通过，并重写 `Reason`
 
 ---
 
@@ -143,7 +147,7 @@ Stage-B 现为“prompt-only”流程：模型输出固定两行（Verdict/Reaso
 
 ## 判定规则示例（对齐属性映射）
 
-> 说明：以下示例用于提示 LLM 聚焦的关键对象，不再作为硬编码规则执行。Stage-B 以 prompt + guidance 为主，历史标签只作为冲突标记和反思信号，不做硬兜底。当前对挡风板等高风险任务采用“只要存在明显问题或无法确认关键要素，就判为不通过”的保守策略；极端矛盾或难以解释的样本会写入 `manual_review_queue.jsonl` 供人工复核。
+> 说明：以下示例用于提示 LLM 聚焦的关键对象，不再作为硬编码规则执行。Stage-B 以 prompt + guidance 为主，历史标签只作为冲突标记与反思信号；推理阶段**只输出“通过/不通过”两类**，不输出任何第三状态。`需复核,备注:` 与“无法确认/模糊/只显示部分”等属于软信号：不得作为硬触发词直接否决，但若无法从摘要/备注/多图证据给出覆盖当前 mission `G0` 关键点的通过证据，则按安全约束判为“不通过”。标签与 Stage-A 摘要明显矛盾（疑似噪声）的样本在反思/训练阶段写入 `need_review_queue.jsonl`；格式错误/无法解析等写入 `manual_review_queue.jsonl`。
 
 将“先验要求”具体化为可执行检查（基于 Stage-A 摘要）：
 - BBU安装（正装）：必须同时出现“BBU设备/显示完整”与“螺丝、光纤插头/BBU安装螺丝/显示完整/符合要求”；若摘要出现“不符合要求/未拧紧/露铜/复接/生锈”，则直接“不通过”
@@ -152,16 +156,16 @@ Stage-B 现为“prompt-only”流程：模型输出固定两行（Verdict/Reaso
 - 挡风板安装：若“BBU设备/机柜空间充足需要安装”，则必须“挡风板/显示完整/安装方向正确”或“BBU设备/按要求配备挡风板”；否则“不通过”；若“无需安装”，以其他要点决定
 
 特殊情况处理：
-- `备注` 作为 override 线索（如：施工临时方案/勘误说明），可触发“需要人工复核”而非直接通过
-- 遇到“无法判断/模糊/遮挡/只显示部分”等描述且影响到任务关注的关键要素（如挡风板是否配备、接地线是否存在、线缆是否有保护等）时，当前策略是直接判为“不通过”，在 Reason 中明确写出“关键要素无法确认”的原因；仅在反思环节发现“完全找不到支持标签的证据”或其它异常情况时，才将样本写入 `manual_review_queue.jsonl` 交由人工复核
+- Stage-A 摘要中出现 `需复核,备注:` 时，`需复核` 仅是提示需要重点阅读 `备注:` 的软信号；判定以备注与多图证据为准，仍需输出“通过/不通过”。
+- 遇到“无法判断/模糊/遮挡/只显示部分”等不确定表述时，不作为硬 fail-first 触发词；但若其影响到当前 mission `G0` 的关键要素，且其它图片/备注无法提供支持通过的证据，则判为“不通过”，并在 Reason 中明确说明缺失的关键证据。对 label 与 Stage-A 摘要明显矛盾的样本，在反思/训练阶段写入 `need_review_queue.jsonl` 并禁止学习 pass/fail 规则；格式错误/无可用候选等仍进入 `manual_review_queue.jsonl` 供人工排查。
 
 ---
 
 ## 风险、边界与质量控制
 
 - 双重噪声：Stage-A 与人工标签均可能有偏；通过多候选 + 确定性信号 + 反思提案缓解
-- 误放行控制：通过保守的判定 prompt（关键要素只要存在问题或无法确认即判为“不通过”）+ fail-first 选择策略，把“人工 fail 而 AI pass”的风险压到最低；冲突样本通过 `conflict_flag` 与 `manual_review_queue.jsonl` 路由给人工排查，而不是简单用标签覆盖模型判定
-- 冲突/不确定反馈：`conflict_flag` 表示与历史标签矛盾；需要人工介入的样本会追加到 `manual_review_queue.jsonl` 并标记原因（如 `no_evidence_for_label`、`no_support_after_reflection` 等），供质检同学重点复核
+- 误放行控制：通过 **mission-scoped fail-first**（负项需与当前 `G0` 相关才触发）+ 安全约束（无通过证据则不通过）+ 多候选多数表决，把“人工 fail 而 AI pass”的风险压到最低；冲突样本通过 `conflict_flag` 路由给反思与排查，而不是简单用标签覆盖模型判定
+- 冲突/不确定反馈：`conflict_flag` 表示与历史标签矛盾；反思/训练阶段将“标签与 Stage-A 摘要明显矛盾”的样本写入 `need_review_queue.jsonl`（避免把噪声学成规则），格式错误/无可用候选等进入 `manual_review_queue.jsonl` 并标记原因（如 `no_evidence_for_label`、`no_support_after_reflection` 等），供质检同学重点复核
 - 指标退化监控：持续追踪 Label Match、误放行率、verdict/Reason 分布，异常时冻结 guidance 变更并回滚到最近的稳定快照
 - 词表与格式漂移：严守 `DATA_AND_DATASETS.md` 摘要规范；新增检查点须同步更新属性映射与摘要生成
 

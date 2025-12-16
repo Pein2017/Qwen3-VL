@@ -50,6 +50,7 @@ class SamplerConfig:
 
 @dataclass(frozen=True)
 class SignalsConfig:
+    store_confidence: bool = False
     enable_consistency: bool = False
 
 
@@ -58,6 +59,10 @@ class ReflectionConfig:
     prompt_path: Path
     batch_size: int
     max_operations: Optional[int] = None  # Per reflection cycle cap; None = unlimited
+    allow_uncertain: bool = False
+    eligibility_policy: str = "selected_mismatch_or_all_wrong"
+    all_wrong_strategy: str = "learn"
+    change_cap_per_epoch: Optional[int] = None
     temperature: float = 1.0
     top_p: float = 0.95
     max_new_tokens: int = 1024
@@ -234,10 +239,11 @@ def _load_model(section: Mapping[str, Any]) -> ModelConfig:
 
 
 def _load_signals(section: Mapping[str, Any]) -> SignalsConfig:
-    enable_consistency = bool(
-        _require(section, "enable_consistency", "signals section")
+    store_confidence = bool(section.get("store_confidence", False))
+    enable_consistency = bool(_require(section, "enable_consistency", "signals section"))
+    return SignalsConfig(
+        store_confidence=store_confidence, enable_consistency=enable_consistency
     )
-    return SignalsConfig(enable_consistency=enable_consistency)
 
 
 def _load_reflection(section: Mapping[str, Any]) -> ReflectionConfig:
@@ -255,6 +261,15 @@ def _load_reflection(section: Mapping[str, Any]) -> ReflectionConfig:
         if max_operations_val <= 0:
             raise ValueError("reflection.max_operations must be > 0 if set")
     # Generation parameters with defaults for diversity
+    allow_uncertain = bool(section.get("allow_uncertain", False))
+    eligibility_policy = str(
+        section.get("eligibility_policy", "selected_mismatch_or_all_wrong")
+    )
+    all_wrong_strategy = str(section.get("all_wrong_strategy", "learn"))
+    change_cap_raw = section.get("change_cap_per_epoch")
+    change_cap_per_epoch = int(change_cap_raw) if change_cap_raw is not None else None
+    if change_cap_per_epoch is not None and change_cap_per_epoch <= 0:
+        raise ValueError("reflection.change_cap_per_epoch must be > 0 if set")
     temperature = float(section.get("temperature", 1.0))
     top_p = float(section.get("top_p", 0.95))
     max_new_tokens = int(section.get("max_new_tokens", 1024))
@@ -269,6 +284,10 @@ def _load_reflection(section: Mapping[str, Any]) -> ReflectionConfig:
         prompt_path=prompt_path,
         batch_size=batch_size,
         max_operations=max_operations_val,
+        allow_uncertain=allow_uncertain,
+        eligibility_policy=eligibility_policy,
+        all_wrong_strategy=all_wrong_strategy,
+        change_cap_per_epoch=change_cap_per_epoch,
         temperature=temperature,
         top_p=top_p,
         max_new_tokens=max_new_tokens,

@@ -68,64 +68,63 @@ def _normalize_verdict(text: str) -> Optional[GroupLabel]:
         return "pass"
     if cleaned in {"不通过", "fail", "未通过", "不通过。"}:
         return "fail"
-    if any(
-        term in cleaned for term in ["复核", "不确定", "无法判断", "无法判定", "待复核"]
-    ):
-        return "fail"
+    # Third-state / pending phrases are forbidden in Stage-B inference outputs.
+    if any(term in cleaned for term in ["复核", "不确定", "无法判断", "无法判定", "待复核"]):
+        return None
     if cleaned in {"通过需复核", "通过需要复核", "通过需要复核。", "通过需复核。"}:
-        return "pass"
+        return None
     return None
 
 
 def _parse_two_line_response(
     response: str,
 ) -> Tuple[bool, Optional[GroupLabel], Optional[str]]:
-    """Parse minimal two-line protocol: Verdict + Reason."""
+    """Parse strict two-line protocol: Verdict + Reason (binary only)."""
 
     text = _trim_assistant_prefix(response).strip()
     if not text:
         return False, None, None
 
     lines = [line.strip() for line in text.splitlines() if line.strip()]
-    if not lines:
+    if len(lines) != 2:
         return False, None, None
 
-    verdict = None
-    reason = None
+    verdict_line, reason_line = lines
+    if not verdict_line.lower().startswith("verdict"):
+        return False, None, None
+    if not reason_line.lower().startswith("reason"):
+        return False, None, None
 
-    for line in lines:
-        lower = line.lower()
-        if verdict is None and (
-            lower.startswith(("verdict", "判定", "结论"))
-            or line.startswith(("通过", "不通过"))
-        ):
-            parts = re.split(r"[:：]", line, maxsplit=1)
-            verdict_text = parts[1].strip() if len(parts) == 2 else line.strip()
-            verdict = _normalize_verdict(verdict_text)
-            continue
-        if reason is None and lower.startswith(("reason", "理由")):
-            parts = re.split(r"[:：]", line, maxsplit=1)
-            reason = parts[1].strip() if len(parts) == 2 else line.strip()
-            continue
-
+    verdict_parts = re.split(r"[:：]", verdict_line, maxsplit=1)
+    if len(verdict_parts) != 2:
+        return False, None, None
+    verdict_text = verdict_parts[1].strip()
+    verdict = _normalize_verdict(verdict_text)
     if verdict is None:
-        # Try fallback: first token containing 通过/不通过
-        for line in lines:
-            match = re.search(r"(通过|不通过)", line)
-            if match:
-                verdict = _normalize_verdict(match.group(1))
-                break
+        return False, None, None
 
-    if reason is None:
-        # Use first non-verdict line as reason fallback
-        for line in lines:
-            if "通过" in line or "不通过" in line:
-                continue
-            reason = line.strip()
-            break
+    reason_parts = re.split(r"[:：]", reason_line, maxsplit=1)
+    if len(reason_parts) != 2:
+        return False, None, None
+    reason = reason_parts[1].strip()
+    if not reason:
+        return False, None, None
 
-    format_ok = verdict is not None and reason is not None and bool(reason.strip())
-    return format_ok, verdict, reason
+    forbidden = (
+        "需复核",
+        "需人工复核",
+        "need-review",
+        "needreview",
+        "证据不足",
+        "待定",
+        "通过但需复核",
+        "通过但需人工复核",
+    )
+    simplified_reason = normalize_spaces(to_simplified(reason))
+    if any(term in simplified_reason for term in forbidden):
+        return False, None, None
+
+    return True, verdict, reason
 
 
 class RolloutSampler:

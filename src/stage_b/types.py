@@ -199,6 +199,7 @@ class ParsedTrajectory:
     verdict: Optional[GroupLabel]
     reason: Optional[str]
     format_ok: bool
+    confidence: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -211,6 +212,7 @@ class DeterministicSignals:
     needs_manual_review: bool = False
     vote_strength: Optional[float] = None
     low_agreement: bool = False
+    confidence: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -265,6 +267,7 @@ class ExperienceCandidate:
     verdict: Optional[GroupLabel]
     reason: Optional[str]
     signals: DeterministicSignals
+    confidence: Optional[float] = None
     # Critic insights (populated from CriticOutput when available)
     summary: Optional[str] = None
     critique: Optional[str] = None

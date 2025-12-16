@@ -1,0 +1,4 @@
+- [ ] Ship a helper script that builds irrelevant summary JSONL (`summary: 无关图片`, width/height from images, dummy full-frame bbox) from `data/irrelevant_summary/images/*.jpeg`.
+- [ ] Update the summary fusion config to include the `irrelevant_summary` target (reuse `dataset: bbu`, `template: bbu_summary`, `mode: summary`, `ratio: 1`, `val_jsonl: data/irrelevant_summary/train.jsonl`, and disable aug/curriculum).
+- [ ] Add spec deltas for multi-dataset fusion to cover the irrelevant target stream and JSONL generation contract.
+- [ ] Run `openspec validate add-irrelevant-summary-source --strict`.

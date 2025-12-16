@@ -55,12 +55,12 @@ def test_verdict_normalisation_chinese_aliases():
 
 
 def test_verdict_normalisation_review_aliases():
-    """Test that review/uncertain verdicts fall back to canonical labels."""
-    assert normalize_verdict("需复核") == "fail"
-    assert normalize_verdict("需要复核") == "fail"
-    assert normalize_verdict("无法判断") == "fail"
-    assert normalize_verdict("通过需要复核") == "pass"
-    assert normalize_verdict("通过需复核") == "pass"
+    """Third-state / uncertain verdicts are forbidden and should not be normalized."""
+    assert normalize_verdict("需复核") is None
+    assert normalize_verdict("需要复核") is None
+    assert normalize_verdict("无法判断") is None
+    assert normalize_verdict("通过需要复核") is None
+    assert normalize_verdict("通过需复核") is None
 
 
 def test_verdict_normalisation_mixed_language_trajectories(tmp_path):
@@ -80,7 +80,6 @@ def test_verdict_normalisation_mixed_language_trajectories(tmp_path):
             candidate_index=0,
             verdict="通过",  # Chinese "pass"
             reason="检查通过",
-            confidence=0.9,
             signals=DeterministicSignals(
                 label_match=None,
                 self_consistency=None,
@@ -91,7 +90,6 @@ def test_verdict_normalisation_mixed_language_trajectories(tmp_path):
             candidate_index=1,
             verdict="fail",  # English "fail"
             reason="Missing component",
-            confidence=0.8,
             signals=DeterministicSignals(
                 label_match=None,
                 self_consistency=None,

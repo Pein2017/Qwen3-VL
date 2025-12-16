@@ -81,6 +81,31 @@ def test_build_user_prompt_with_experiences():
     assert "任务: 挡风板安装检查" in prompt
 
 
+def test_build_user_prompt_sanitizes_need_review_marker():
+    """Stage-B user prompt must not leak '需复核' tokens from Stage-A summaries."""
+    ticket = GroupTicket(
+        group_id="QC-NEED-REVIEW-001",
+        mission="挡风板安装检查",
+        label="pass",  # type: ignore[arg-type]
+        summaries=StageASummaries(
+            per_image={
+                "image_1": "BBU设备/需复核,备注:无法判断品牌×1，标签/无法识别×1",
+            }
+        ),
+    )
+
+    guidance = MissionGuidance(
+        mission="挡风板安装检查",
+        experiences={"G0": "至少需要检测到BBU设备并判断挡风板是否按要求"},
+        step=1,
+        updated_at=datetime.now(timezone.utc),
+    )
+
+    prompt = build_user_prompt(ticket, guidance)
+    assert "需复核" not in prompt
+    assert "备注:" in prompt
+
+
 def test_build_user_prompt_empty_experiences_raises_error():
     """Test that empty experiences dict causes abort."""
     ticket = GroupTicket(
@@ -132,7 +157,8 @@ def test_build_messages_with_experiences():
 
     # Verify system prompt includes G0 as mission focus
     system_content = messages[0]["content"]
-    assert "任务要点：若挡风板缺失则判定不通过" in system_content
+    assert "【G0】" in system_content
+    assert "若挡风板缺失则判定不通过" in system_content
 
 
 def test_build_user_prompt_headline_and_list_start_at_g1():

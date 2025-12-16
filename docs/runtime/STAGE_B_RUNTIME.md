@@ -6,19 +6,29 @@ Technical runbook for the Stage-B prompt-only verdict loop. Stage-A summarizatio
 
 ## Stage-B Runtime (group verdicts)
 
-#### Stage-B Runner (`src/stage_b/runner.py`, `scripts/stage_b_run.sh`)
+#### Stage-B Runner (`src/stage_b/runner.py`, `scripts/stage_b.sh`)
 
 Purpose: Training-free、prompt-only verdict loop：ingest → rollout → selection → optional reflection，附带 mission guidance 更新。已移除 critic 模块与置信度/自洽度信号，输出为两行 Verdict/Reason。
 
 ```bash
 # Default debug config bundled with the repo
-gpus=0 bash scripts/stage_b_run.sh
+gpus=0 bash scripts/stage_b.sh
+
+# Multi-GPU (single node): ticket-parallel rollout via torchrun
+# Note: `runner.rollout_batch_size` remains the GLOBAL batch size (not per-GPU).
+gpus=0,1,2,3,4,5,6,7 bash scripts/stage_b.sh
 
 # Use the production run config
 config=configs/stage_b/run.yaml gpus=0 log_level=logging \
-  bash scripts/stage_b_run.sh
+  bash scripts/stage_b.sh
+
+# No-model audit of core logic (fast)
+bash scripts/stage_b.sh smoke
 ```
 
+- When `gpus` contains multiple devices, `scripts/stage_b.sh` auto-launches single-node `torchrun`; Stage-B runs **ticket-parallel rollout** across ranks while keeping **selection + reflection sequential on rank 0**.
+- In multi-GPU mode, the model is replicated per rank (data-parallel); `model.device_map` is overridden to force single-GPU placement per rank (avoid accidental model-parallel sharding).
+- Only rank 0 writes `{output.root}/{output.run_name}/...` artifacts; other ranks are rollout workers.
 - `GuidanceRepository` copies the global guidance file into `{output.root}/{output.run_name}/{mission}/guidance.json` so edits stay isolated until you manually promote them back.
 - Shared Qwen3-VL model is reused by sampler and reflection; **no CriticEngine**。
 - 生产部署约束：Stage‑A 摘要和 Stage‑B 判决在同一 Qwen3‑VL checkpoint 上运行（同一套权重/LoRA），通过不同的 prompt 实现任务切换，因此任何针对摘要的 SFT/LoRA 调整都必须兼顾 Stage‑B 的 rollout 推理质量。

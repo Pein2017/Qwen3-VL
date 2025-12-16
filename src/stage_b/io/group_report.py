@@ -83,7 +83,7 @@ def build_group_report(run_dir: Path, stage_a_paths: Optional[Iterable[Path]] = 
     selections = _load_jsonl(run_dir / "selections.jsonl")
     trajectories = _load_jsonl(run_dir / "trajectories.jsonl")
     manual = _index_by_group(_load_jsonl(run_dir / "manual_review_queue.jsonl"))
-    noise = _index_by_group(_load_jsonl(run_dir / "label_or_stageA_noise.jsonl"))
+    need_review = _index_by_group(_load_jsonl(run_dir / "need_review_queue.jsonl"))
     reflection = _reflection_ops(run_dir / "reflection.jsonl")
     labels = _stage_a_labels(stage_a_paths)
 
@@ -105,7 +105,13 @@ def build_group_report(run_dir: Path, stage_a_paths: Optional[Iterable[Path]] = 
                 }
             )
 
-    group_ids = set(sel_map.keys()) | set(cand_map.keys()) | set(manual.keys()) | set(noise.keys()) | set(reflection.keys())
+    group_ids = (
+        set(sel_map.keys())
+        | set(cand_map.keys())
+        | set(manual.keys())
+        | set(need_review.keys())
+        | set(reflection.keys())
+    )
 
     out_path = run_dir / "group_report.jsonl"
     with out_path.open("w", encoding="utf-8") as f:
@@ -119,13 +125,13 @@ def build_group_report(run_dir: Path, stage_a_paths: Optional[Iterable[Path]] = 
                 selection_result = dict(selection_result)  # Make a copy
                 selection_result["reason"] = _normalize_reason(selection_result.get("reason"))
             
-            # Normalize reasons in noise entries
-            normalized_noise = []
-            for noise_entry in noise.get(gid, []):
-                normalized_entry = dict(noise_entry)
-                if "why" in normalized_entry:
-                    normalized_entry["why"] = _normalize_reason(normalized_entry.get("why"))
-                normalized_noise.append(normalized_entry)
+            # Normalize fields in need-review entries
+            normalized_need_review = []
+            for review_entry in need_review.get(gid, []):
+                normalized_entry = dict(review_entry)
+                if "reason" in normalized_entry:
+                    normalized_entry["reason"] = _normalize_reason(normalized_entry.get("reason"))
+                normalized_need_review.append(normalized_entry)
             
             # Normalize text in reflection entries
             normalized_reflection = []
@@ -142,7 +148,7 @@ def build_group_report(run_dir: Path, stage_a_paths: Optional[Iterable[Path]] = 
                 "selection": selection_result,
                 "candidates": cand_map.get(gid, []),
                 "manual_review": manual.get(gid, []),
-                "label_or_stageA_noise": normalized_noise,
+                "need_review_queue": normalized_need_review,
                 "reflection": normalized_reflection,
             }
             f.write(json.dumps(record, ensure_ascii=False) + "\n")

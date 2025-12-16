@@ -1,0 +1,13 @@
+- [x] Update `scripts/stage_b.sh` to launch `torchrun` when multiple GPUs are provided via the `gpus` list (single-node only).
+- [x] Implement distributed init + rank/world-size helpers for Stage-B runner (env://, NCCL for GPU; no-op in single-process).
+- [x] Refactor `src/stage_b/runner.py` to support ticket-parallel rollout:
+  - rank 0-only run directory cleanup + artifact writes
+  - broadcast `ordered_indices` per epoch
+  - broadcast guidance snapshot per global rollout batch
+  - shard each global batch across ranks with stable size math
+  - gather rollout outputs to rank 0 for selection + reflection
+  - broadcast epoch-level continue/stop flags to keep ranks in sync
+- [x] Enforce per-rank single-GPU model placement in distributed mode (override `device_map="auto"` to local rank).
+- [x] Add unit tests for batch-sharding math and distributed control-flow flags (CPU-only; avoid requiring GPUs/models).
+- [x] Update runtime docs with multi-GPU Stage-B command examples (`docs/runtime/STAGE_B_RUNTIME.md`).
+- [x] Validate with `openspec validate add-stageb-distributed-rollout --strict`.

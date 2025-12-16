@@ -1,7 +1,7 @@
 extends: ./sft_base.yaml
 
 model:
-  model: output/12-9/fusion_merged/checkpoint-1880
+  model: output/12-9/res_1024_fusion_merged/epoch50-updated_aug-checkpoint-4650
 
 tuner:
   # Freeze vision/aligner; LoRA only on last-2 LLM blocks (lm_head fixed)
@@ -9,7 +9,7 @@ tuner:
   freeze_vit: true    # Freeze vision encoder
   freeze_aligner: true  # Freeze MLP aligner
   # LoRA targets: LLM layers 34-35 (q/k/v/o + MLP) excluding lm_head
-  target_regex: '^(?:model\.)?language_model\.layers\.(?:30|31|32|33|34|35)\.(?:self_attn\.(?:q_proj|k_proj|v_proj|o_proj)|mlp\.(?:gate_proj|up_proj|down_proj))$'
+  target_regex: '^(?:model\.)?language_model\.layers\.(?:32|33|34|35)\.(?:self_attn\.(?:q_proj|k_proj|v_proj|o_proj)|mlp\.(?:gate_proj|up_proj|down_proj))$'
   modules_to_save: []  # Keep lm_head fixed (no tuning/saving)
   lora_rank: 16
   lora_alpha: 32
@@ -21,7 +21,7 @@ training:
   num_train_epochs: 6
   output_dir: ./output/12-9/summary
   logging_dir: ./tb/12-9/summary
-  run_name: res_768-bbu_rru_fused-lrs_1e-4-dlora_16_32-last_6_llm-fusion_all-aug_off
+  run_name: res_1024-bbu_rru_fused-lrs_1e-4-dlora_16_32-last_4_llm-fusion_all-aug_off
   learning_rate: 1.0e-4
   vit_lr: 1.0e-7
   aligner_lr: 1.0e-7
@@ -40,33 +40,3 @@ custom:
   # Disable augmentation completely (override parent config)
   augmentation: null
   augmentation_curriculum: null
-  #   phases:
-  #     - until_percent: 5
-  #       bypass_prob: 0.5
-  #       ops: {}
-  #     - until_percent: 20
-  #       bypass_prob: 0.35
-  #       ops:
-  #         rotate: { prob: 0.20, max_deg: 12.0 }
-  #         resize_by_scale: { prob: 0.40, lo: 0.90, hi: 1.08 }
-  #         color_jitter: { prob: 0.25, brightness: [0.95, 1.05], contrast: [0.95, 1.05], saturation: [0.95, 1.05] }
-  #     - until_percent: 45
-  #       bypass_prob: 0.32
-  #       ops:
-  #         rotate: { prob: 0.28, max_deg: 16.0 }
-  #         resize_by_scale: { prob: 0.50, lo: 0.88, hi: 1.12 }
-  #         color_jitter: { prob: 0.30, brightness: [0.92, 1.08], contrast: [0.92, 1.08], saturation: [0.92, 1.08] }
-  #     - until_percent: 70
-  #       bypass_prob: 0.30
-  #       ops:
-  #         rotate: { prob: 0.32, max_deg: 18.0 }
-  #         resize_by_scale: { prob: 0.55, lo: 0.87, hi: 1.13 }
-  #         color_jitter: { prob: 0.32, brightness: [0.90, 1.10], contrast: [0.90, 1.10], saturation: [0.90, 1.10] }
-  #         hsv: { prob: 0.15, hue_delta_deg: [-6, 6], sat: [0.94, 1.06], val: [0.94, 1.06] }
-  #     - until_percent: 100
-  #       bypass_prob: 0.30
-  #       ops:
-  #         rotate: { prob: 0.35, max_deg: 20.0 }
-  #         resize_by_scale: { prob: 0.60, lo: 0.85, hi: 1.15 }
-  #         color_jitter: { prob: 0.35, brightness: [0.90, 1.10], contrast: [0.90, 1.10], saturation: [0.90, 1.10] }
-  #         hsv: { prob: 0.20, hue_delta_deg: [-8, 8], sat: [0.92, 1.08], val: [0.92, 1.08] }
