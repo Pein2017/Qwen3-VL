@@ -26,7 +26,7 @@ from transformers import (
 )
 
 from ..utils import configure_logging, get_logger
-from .config import StageBConfig, load_stage_b_config
+from .config import StageBConfig, load_stage_b_config, resolve_domain_for_mission
 from .distributed import (
     barrier,
     broadcast_int,
@@ -625,6 +625,8 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
             continue
 
         logger.info(f"Processing mission: {mission} ({len(mission_tickets)} tickets)")
+        domain_map = {mission: resolve_domain_for_mission(config, mission)}
+        logger.info("Stage-B domain: %s", domain_map[mission])
 
         processed_missions += 1
 
@@ -1328,7 +1330,9 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                 )
                 shard = batch[shard_start:shard_end]
                 shard_parsed_map = (
-                    sampler.generate_for_batch(shard, guidance_map) if shard else {}
+                    sampler.generate_for_batch(shard, guidance_map, domain_map)
+                    if shard
+                    else {}
                 )
                 maybe_empty_cache("runner.rollout_batch")
                 gathered = gather_object(shard_parsed_map, dst=0)
@@ -1757,7 +1761,9 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                         ticket: GroupTicket = record["ticket"]  # type: ignore[assignment]
                         verdict: str = record["verdict"]  # type: ignore[assignment]
                         reason: Optional[str] = record["reason"]  # type: ignore[assignment]
-                        messages = build_messages(ticket, guidance)
+                        messages = build_messages(
+                            ticket, guidance, domain=domain_map[mission]
+                        )
                         verdict_text = "通过" if verdict == "pass" else "不通过"
                         reason_text = reason or ""
                         assistant_content = (

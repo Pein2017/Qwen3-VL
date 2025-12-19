@@ -9,11 +9,10 @@ import yaml
 from swift.llm.argument import RLHFArguments, TrainArguments
 from swift.utils import get_dist_setting
 
-from .prompts import (
-    SYSTEM_PROMPT_SUMMARY,
-    USER_PROMPT_JSON,
-    USER_PROMPT_SUMMARY,
-    build_dense_system_prompt,
+from .prompts import USER_PROMPT_JSON, USER_PROMPT_SUMMARY, build_dense_system_prompt
+from ..prompts.summary_profiles import (
+    DEFAULT_SUMMARY_PROFILE_TRAIN,
+    build_summary_system_prompt,
 )
 from .schema import PromptOverrides, SaveDelayConfig, TrainingConfig
 
@@ -162,13 +161,20 @@ class ConfigLoader:
                 json_format_hint = str(json_format_hint_raw)
 
         if use_summary:
-            default_system = SYSTEM_PROMPT_SUMMARY
-            default_user = USER_PROMPT_SUMMARY
             output_variant = "summary"
+            default_user = USER_PROMPT_SUMMARY
+            profile_name = prompts_config.get("profile", DEFAULT_SUMMARY_PROFILE_TRAIN)
+            domain_name = prompts_config.get("domain")
+            if "system" in prompts_config:
+                default_system = prompts_config.get("system")
+            else:
+                default_system = build_summary_system_prompt(
+                    profile_name, domain=domain_name
+                )
         else:
+            output_variant = "dense"
             default_system = build_dense_system_prompt(json_format_hint)
             default_user = USER_PROMPT_JSON
-            output_variant = "dense"
 
         system_prompt = prompts_config.get("system", default_system)
         user_prompt = prompts_config.get("user", default_user)

@@ -3,6 +3,7 @@ stage_a_paths:
   # - output_post/stage_a/BBU接地线检查_stage_a.jsonl
   - output_post/stage_a/BBU线缆布放要求_stage_a.jsonl
 seed: 17
+default_domain: bbu
 
 model:
   model_name_or_path: model_cache/models/Qwen/Qwen3-32B

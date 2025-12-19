@@ -12,6 +12,11 @@ from pathlib import Path
 from typing import Optional
 
 from src.config.missions import SUPPORTED_MISSIONS, validate_mission
+from src.prompts.summary_profiles import (
+    DEFAULT_SUMMARY_PROFILE_RUNTIME,
+    SUMMARY_PROMPT_PROFILES,
+    get_summary_profile,
+)
 
 from ..utils import configure_logging, get_logger
 from .inference import run_stage_a_inference
@@ -24,6 +29,7 @@ class StageAConfig:
     output_dir: str
     mission: str
     dataset: str = "bbu"
+    prompt_profile: str = DEFAULT_SUMMARY_PROFILE_RUNTIME
     device: str = "cuda:0"
     batch_size: int = 8
     max_pixels: int = 786432
@@ -48,6 +54,7 @@ class StageAConfig:
             output_dir=args.output_dir,
             mission=args.mission,
             dataset=args.dataset,
+            prompt_profile=args.prompt_profile,
             device=args.device,
             batch_size=int(args.batch_size),
             max_pixels=int(args.max_pixels),
@@ -93,6 +100,7 @@ class StageAConfig:
         if self.dataset not in {"bbu", "rru"}:
             raise ValueError("dataset must be one of: bbu|rru")
 
+        get_summary_profile(self.prompt_profile)
         validate_mission(self.mission)
 
         input_path = Path(self.input_dir)
@@ -170,6 +178,13 @@ Examples:
         default="bbu",
         choices=["bbu", "rru"],
         help="Dataset type: bbu or rru (default: bbu). Affects prompt schema and prior rules.",
+    )
+    parser.add_argument(
+        "--prompt_profile",
+        type=str,
+        default=DEFAULT_SUMMARY_PROFILE_RUNTIME,
+        choices=sorted(SUMMARY_PROMPT_PROFILES.keys()),
+        help="Summary prompt profile: summary_runtime or summary_train_min (default: summary_runtime).",
     )
 
     # Optional runtime parameters
@@ -338,6 +353,7 @@ def main() -> None:
             output_dir=cfg.output_dir,
             mission=cfg.mission,
             dataset=cfg.dataset,
+            prompt_profile=cfg.prompt_profile,
             device=cfg.device,
             gen_params=gen_params,
             batch_size=cfg.batch_size,

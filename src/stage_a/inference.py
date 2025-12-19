@@ -23,6 +23,7 @@ from data_conversion.utils.exif_utils import apply_exif_orientation
 
 from ..utils import get_logger
 from .prompts import SUMMARY_SYSTEM_PROMPT, build_system_prompt, build_user_prompt
+from src.prompts.summary_profiles import DEFAULT_SUMMARY_PROFILE_RUNTIME
 
 # Import distributed helpers from stage_b (reusable lightweight module)
 try:
@@ -836,6 +837,7 @@ def process_group(
     processor: AutoProcessor,
     mission: Optional[str],
     dataset: str = "bbu",
+    prompt_profile: str = DEFAULT_SUMMARY_PROFILE_RUNTIME,
     gen_config: Optional[Dict[str, Any]] = None,
     batch_size: int = 8,
     include_mission_focus: bool = True,
@@ -862,7 +864,9 @@ def process_group(
     # Build mission-dependent prompts
     user_text = build_user_prompt(mission if include_mission_focus else None)
     system_text = build_system_prompt(
-        mission if include_mission_focus else None, dataset=dataset
+        mission if include_mission_focus else None,
+        dataset=dataset,
+        profile_name=prompt_profile,
     )
 
     # Default generation config if not provided
@@ -958,6 +962,7 @@ def run_stage_a_inference(
     output_dir: str,
     mission: str,
     dataset: str = "bbu",
+    prompt_profile: str = DEFAULT_SUMMARY_PROFILE_RUNTIME,
     device: str = "cuda:0",
     gen_params: Optional[Dict[str, Any]] = None,
     batch_size: int = 8,
@@ -977,6 +982,7 @@ def run_stage_a_inference(
         input_dir: Root directory with mission/label/group structure
         output_dir: Output directory for JSONL files
         mission: Mission name to process
+        prompt_profile: Summary prompt profile (e.g., summary_runtime)
         device: Device string (cuda:N or cpu) - overridden by per-rank device in distributed mode
         gen_params: Generation parameters dict
         batch_size: Batch size for inference (default 8, set 1 for sequential)
@@ -1024,6 +1030,7 @@ def run_stage_a_inference(
         logger.info(f"Output directory: {output_dir}")
         logger.info(f"Mission: {mission}")
         logger.info(f"Dataset: {dataset}")
+        logger.info(f"Prompt profile: {prompt_profile}")
         logger.info(f"Device: {device}")
         if distributed:
             logger.info(f"Distributed mode: WORLD_SIZE={world_size}, RANK={rank}")
@@ -1117,6 +1124,7 @@ def run_stage_a_inference(
             processor=processor,
             mission=mission,
             dataset=dataset,
+            prompt_profile=prompt_profile,
             gen_config=gen_params,
             batch_size=batch_size,
             include_mission_focus=include_mission_focus,
@@ -1212,6 +1220,7 @@ def run_stage_a_inference(
         processor=processor,
         mission=mission,
         dataset=dataset,
+        prompt_profile=prompt_profile,
         gen_config=gen_params,
         batch_size=batch_size,
         include_mission_focus=include_mission_focus,
@@ -1267,6 +1276,7 @@ def _run_per_group(
     processor: AutoProcessor,
     mission: str,
     dataset: str,
+    prompt_profile: str,
     gen_config: Dict[str, Any],
     batch_size: int,
     include_mission_focus: bool,
@@ -1289,6 +1299,7 @@ def _run_per_group(
                     processor=processor,
                     mission=mission,
                     dataset=dataset,
+                    prompt_profile=prompt_profile,
                     gen_config=gen_config,
                     batch_size=batch_size,
                     include_mission_focus=include_mission_focus,
@@ -1347,6 +1358,7 @@ def _run_per_image_jobs(
     processor: AutoProcessor,
     mission: str,
     dataset: str,
+    prompt_profile: str,
     gen_config: Dict[str, Any],
     batch_size: int,
     include_mission_focus: bool,
@@ -1366,7 +1378,9 @@ def _run_per_image_jobs(
 
     user_text = build_user_prompt(mission if include_mission_focus else None)
     system_text = build_system_prompt(
-        mission if include_mission_focus else None, dataset=dataset
+        mission if include_mission_focus else None,
+        dataset=dataset,
+        profile_name=prompt_profile,
     )
 
     processed = 0

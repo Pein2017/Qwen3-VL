@@ -7,6 +7,8 @@ from __future__ import annotations
 import re
 from typing import Dict, List, Tuple
 
+from src.prompts.domain_packs import get_domain_pack
+
 from ..types import GroupTicket, MissionGuidance
 from ..utils.chinese import normalize_spaces, to_simplified
 
@@ -124,7 +126,7 @@ def _render_image_stats(stage_a_summaries: Dict[str, str]) -> str:
     return "统计: " + ", ".join(parts)
 
 
-def build_system_prompt(guidance: MissionGuidance) -> str:
+def build_system_prompt(guidance: MissionGuidance, *, domain: str) -> str:
     clauses: List[str] = [_INTRO_SYSTEM_PROMPT]
     g0 = guidance.experiences.get("G0")
     if g0:
@@ -132,6 +134,8 @@ def build_system_prompt(guidance: MissionGuidance) -> str:
     clauses.append(_FAIL_FIRST_SYSTEM_PROMPT)
     clauses.append(_SOFT_SIGNALS_SYSTEM_PROMPT)
     clauses.append(_OUTPUT_SYSTEM_PROMPT)
+    pack = get_domain_pack(domain)
+    clauses.append(f"【领域提示（只读，不参与经验更新）】\n{pack.block}")
     return "\n\n".join(clauses)
 
 
@@ -176,9 +180,9 @@ def build_user_prompt(ticket: GroupTicket, guidance: MissionGuidance) -> str:
 
 
 def build_messages(
-    ticket: GroupTicket, guidance: MissionGuidance
+    ticket: GroupTicket, guidance: MissionGuidance, *, domain: str
 ) -> List[Dict[str, str]]:
-    system_prompt = build_system_prompt(guidance)
+    system_prompt = build_system_prompt(guidance, domain=domain)
     user_prompt = build_user_prompt(ticket, guidance)
     return [
         {"role": "system", "content": system_prompt},

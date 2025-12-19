@@ -4,9 +4,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, MutableMapping, Optional, Sequence, Tuple
+
+from src.prompts.domain_packs import get_domain_pack
 
 import yaml
 
@@ -132,6 +134,38 @@ class StageBConfig:
     manual_review: ManualReviewConfig
     guidance_lifecycle: Optional[GuidanceLifecycleConfig] = None
     stage_b_distillation: Optional[StageBDistillationConfig] = None
+    domain_map: Mapping[str, str] = field(default_factory=dict)
+    default_domain: Optional[str] = None
+
+
+def _load_domain_map(raw: Any) -> Mapping[str, str]:
+    if raw is None:
+        return {}
+    if not isinstance(raw, Mapping):
+        raise TypeError("domain_map must be a mapping of mission -> domain")
+    return {str(key): str(value) for key, value in raw.items()}
+
+
+def _load_default_domain(raw: Any) -> Optional[str]:
+    if raw is None:
+        return None
+    value = str(raw).strip()
+    return value if value else None
+
+
+def resolve_domain_for_mission(config: StageBConfig, mission: str) -> str:
+    domain_raw = None
+    if config.domain_map:
+        domain_raw = config.domain_map.get(mission)
+    if domain_raw is None:
+        domain_raw = config.default_domain
+    if not domain_raw:
+        raise ValueError(
+            f"Stage-B domain is not configured for mission '{mission}'. "
+            "Provide domain_map or default_domain in the Stage-B config."
+        )
+    pack = get_domain_pack(domain_raw)
+    return pack.domain
 
 
 def _decode_config(section: Mapping[str, Any]) -> DecodeConfig:
@@ -439,6 +473,8 @@ def load_stage_b_config(path: str | Path) -> StageBConfig:
     seed_value = _load_seed(raw_config)
     guidance_lifecycle = _load_guidance_lifecycle(raw_config.get("guidance_lifecycle"))
     stage_b_distillation = _load_distillation(raw_config.get("stage_b_distillation"))
+    domain_map = _load_domain_map(raw_config.get("domain_map"))
+    default_domain = _load_default_domain(raw_config.get("default_domain"))
 
     return StageBConfig(
         seed=seed_value,
@@ -453,6 +489,8 @@ def load_stage_b_config(path: str | Path) -> StageBConfig:
         manual_review=manual_review,
         guidance_lifecycle=guidance_lifecycle,
         stage_b_distillation=stage_b_distillation,
+        domain_map=domain_map,
+        default_domain=default_domain,
     )
 
 
@@ -469,4 +507,5 @@ __all__ = [
     "SelectionConfig",
     "StageBConfig",
     "load_stage_b_config",
+    "resolve_domain_for_mission",
 ]

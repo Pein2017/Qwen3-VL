@@ -149,8 +149,10 @@ class RolloutSampler:
     # ------------------------------------------------------------------
     # Prompt building
     # ------------------------------------------------------------------
-    def _build_prompt(self, ticket: GroupTicket, guidance: MissionGuidance) -> str:
-        messages = build_messages(ticket, guidance)
+    def _build_prompt(
+        self, ticket: GroupTicket, guidance: MissionGuidance, *, domain: str
+    ) -> str:
+        messages = build_messages(ticket, guidance, domain=domain)
         rendered = self.tokenizer.apply_chat_template(
             messages,
             tokenize=False,
@@ -276,6 +278,7 @@ class RolloutSampler:
         self,
         tickets: Sequence[GroupTicket],
         guidance_map: Mapping[str, MissionGuidance],
+        domain_map: Mapping[str, str],
     ) -> Mapping[str, List[ParsedTrajectory]]:
         if not tickets:
             return {}
@@ -284,7 +287,17 @@ class RolloutSampler:
         for ticket in tickets:
             if ticket.mission not in guidance_map:
                 raise KeyError(f"Missing mission guidance for {ticket.mission}")
-            prompts.append(self._build_prompt(ticket, guidance_map[ticket.mission]))
+            if ticket.mission not in domain_map:
+                raise ValueError(
+                    f"Missing domain mapping for mission '{ticket.mission}'"
+                )
+            prompts.append(
+                self._build_prompt(
+                    ticket,
+                    guidance_map[ticket.mission],
+                    domain=domain_map[ticket.mission],
+                )
+            )
 
         per_group: Dict[str, List[ParsedTrajectory]] = {
             ticket.key: [] for ticket in tickets

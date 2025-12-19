@@ -21,6 +21,7 @@ OUTPUT_DIR="output_post/stage_a_bbu_rru_summary"
 
 MISSION="${mission:-挡风板安装检查}"
 DATASET="${dataset:-bbu}"
+PROMPT_PROFILE="${prompt_profile:-summary_runtime}"
 CUDA_VISIBLE_DEVICES="${gpus:-0}"
 no_mission_flag="${no_mission:-true}"
 verify_flag="${verify_inputs:-true}"
@@ -79,6 +80,7 @@ echo "Stage-A Inference Launcher"
 echo "=================================="
 echo "Mission:      $MISSION"
 echo "Dataset:      $DATASET"
+echo "Profile:      $PROMPT_PROFILE"
 echo "Checkpoint:   $CHECKPOINT"
 echo "Input:        $INPUT_DIR"
 echo "Output:       $OUTPUT_DIR"
@@ -143,6 +145,7 @@ if [[ "${NUM_GPUS}" -gt 1 ]]; then
     --output_dir "$OUTPUT_DIR" \
     --mission "$MISSION" \
     --dataset "$DATASET" \
+    --prompt_profile "$PROMPT_PROFILE" \
     --device "$DEVICE" \
     --batch_size "$BATCH_SIZE_PER_RANK" \
     --sharding_mode "$SHARDING_MODE" \
@@ -160,6 +163,7 @@ else
     --output_dir "$OUTPUT_DIR" \
     --mission "$MISSION" \
     --dataset "$DATASET" \
+    --prompt_profile "$PROMPT_PROFILE" \
     --device "$DEVICE" \
     --batch_size "$BATCH_SIZE_PER_RANK" \
     --sharding_mode "$SHARDING_MODE" \

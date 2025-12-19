@@ -20,33 +20,41 @@ from src.config.missions import (
 )
 
 # Import runtime summary prompt builder (not the training-minimal default)
-from src.config.prompts import (
-    SYSTEM_PROMPT_SUMMARY_RUNTIME,
-    USER_PROMPT_SUMMARY,
+from src.config.prompts import USER_PROMPT_SUMMARY
+from src.prompts.summary_profiles import (
+    DEFAULT_SUMMARY_PROFILE_RUNTIME,
     build_summary_system_prompt,
 )
 
 # Stage-A runtime system prompt (richer than training-minimal)
-# Default: use runtime prompt without mission (backward compat)
-SUMMARY_SYSTEM_PROMPT = SYSTEM_PROMPT_SUMMARY_RUNTIME
+# Default: use runtime profile without mission (backward compat)
+SUMMARY_SYSTEM_PROMPT = build_summary_system_prompt(
+    DEFAULT_SUMMARY_PROFILE_RUNTIME,
+    domain="bbu",
+)
 
 
 def build_system_prompt(
-    mission: Optional[str] = None, dataset: Optional[str] = None
+    mission: Optional[str] = None,
+    dataset: Optional[str] = None,
+    profile_name: str = DEFAULT_SUMMARY_PROFILE_RUNTIME,
 ) -> str:
     """Build mission-dependent system prompt.
 
     Args:
         mission: Mission name (one of SUPPORTED_MISSIONS) or None
         dataset: Dataset type ("bbu" or "rru"), defaults to "bbu"
+        profile_name: Summary prompt profile name
 
     Returns:
         System prompt string with optional mission-specific prior rules
     """
     ds = dataset or "bbu"
-    if mission:
-        return build_summary_system_prompt(dataset=ds, mission=mission)
-    return build_summary_system_prompt(dataset=ds)
+    return build_summary_system_prompt(
+        profile_name,
+        domain=ds,
+        mission=mission,
+    )
 
 
 # Base user prompt from training (summary-specific, no coordinates)
