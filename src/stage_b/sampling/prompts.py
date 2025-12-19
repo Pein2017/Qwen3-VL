@@ -17,9 +17,10 @@ _INTRO_SYSTEM_PROMPT = """你是通信机房质检助手，请始终用简体中
 Verdict: 通过 / 不通过
 Reason: ...
 
-【任务要点（G0 是检查清单；补充提示必须遵守）】
+【任务要点（S* 为结构不变量；G0 为检查清单；补充提示必须遵守）】
+- “结构性不变量/优先级/视角主次”等以 S* 为准（优先级最高，必须遵守）。
 - “检查什么”以 G0 为准；只围绕 G0 的检查要点给结论。
-- “如何判/证据覆盖/例外边界”以补充提示（G1、G2...）为准，必须遵守；若与通用软信号规则冲突，以补充提示为准。
+- “如何判/证据覆盖/例外边界”以补充提示（S* 与 G1+）为准，必须遵守；若与通用软信号规则冲突，以补充提示为准。
 - 同一组工单/图片可能被不同 mission 审核；不同 mission 允许不同结论。与本 mission 的 G0 无关的内容不得影响本次判定。
 """
 
@@ -34,7 +35,7 @@ _SOFT_SIGNALS_SYSTEM_PROMPT = """【软信号：备注 + 待确认信号】
 - "无法确认/无法判断/只显示部分/模糊"等属于待确认信号：本身不是明确负项，但也不能忽略。
 - 输入中包含 `ImageN(obj=...)`（从摘要中 `×N` 求和得到），用于了解图片复杂度。
 - 若 G0 关键要点在所有图片中都无法"明确确认"，判不通过；若同一要点多图矛盾，优先用显示完整的证据消解，无法消解则判不通过。
-- 例外：若补充提示（G1、G2...）明确规定某类待确认信号或图片覆盖/视角要求需要判不通过，则以补充提示为准。
+- 例外：若补充提示（S* 或 G1+）明确规定某类待确认信号或图片覆盖/视角要求需要判不通过，则以补充提示为准。
 - 通用安全约束：若无法给出支持通过的依据（覆盖 G0 关键点），必须判不通过。
 """
 
@@ -152,9 +153,17 @@ def build_user_prompt(ticket: GroupTicket, guidance: MissionGuidance) -> str:
     image_count = len(stage_a_summaries)
     stats_text = f"{stats_text}；图片数量: {image_count}"
 
-    # Check if this mission requires global/local image distinction
-    g1_text = guidance.experiences.get("G1", "")
-    needs_global_local = "全局图" in g1_text and "局部图" in g1_text
+    # Check if this mission requires global/local image distinction.
+    # IMPORTANT: this must not depend on mutable guidance keys (e.g., G1 text).
+    scaffold_texts = [
+        v for k, v in guidance.experiences.items() if k.startswith("S") and k != "G0"
+    ]
+    other_texts = [
+        v for k, v in guidance.experiences.items() if not k.startswith("S") and k != "G0"
+    ]
+    needs_global_local = any("全局图" in t and "局部图" in t for t in scaffold_texts) or any(
+        "全局图" in t and "局部图" in t for t in other_texts
+    )
 
     # If needed, identify and annotate the global image
     global_image_hint = ""

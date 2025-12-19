@@ -31,18 +31,22 @@ from src.config.prompts import (
 SUMMARY_SYSTEM_PROMPT = SYSTEM_PROMPT_SUMMARY_RUNTIME
 
 
-def build_system_prompt(mission: Optional[str] = None) -> str:
+def build_system_prompt(
+    mission: Optional[str] = None, dataset: Optional[str] = None
+) -> str:
     """Build mission-dependent system prompt.
 
     Args:
         mission: Mission name (one of SUPPORTED_MISSIONS) or None
+        dataset: Dataset type ("bbu" or "rru"), defaults to "bbu"
 
     Returns:
         System prompt string with optional mission-specific prior rules
     """
+    ds = dataset or "bbu"
     if mission:
-        return build_summary_system_prompt(dataset="bbu", mission=mission)
-    return SYSTEM_PROMPT_SUMMARY_RUNTIME
+        return build_summary_system_prompt(dataset=ds, mission=mission)
+    return build_summary_system_prompt(dataset=ds)
 
 
 # Base user prompt from training (summary-specific, no coordinates)

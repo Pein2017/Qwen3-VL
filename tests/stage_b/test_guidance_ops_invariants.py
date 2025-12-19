@@ -69,7 +69,11 @@ def test_reject_ops_that_empty_experiences(tmp_path):
             source_group_ids=("g2",),
         )
     except Exception as e:
-        assert "non-empty" in str(e).lower() or "cannot empty" in str(e).lower()
+        lowered = str(e).lower()
+        assert (
+            "non-empty" in lowered
+            or "cannot empty" in lowered
+            or "cannot remove" in lowered
+        )
     else:
         raise AssertionError("Expected exception rejecting empty experiences")
-

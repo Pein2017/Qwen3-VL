@@ -233,7 +233,6 @@ def _reset_mission_artifacts(mission_dir: Path) -> None:
     for filename in (
         "trajectories.jsonl",
         "selections.jsonl",
-        "manual_review_queue.jsonl",
         "need_review_queue.jsonl",
         "prompt_wishlist.jsonl",
         "failure_malformed.jsonl",
@@ -250,6 +249,10 @@ def _reset_mission_artifacts(mission_dir: Path) -> None:
     legacy_metrics_path = mission_dir / "metrics_epoch.jsonl"
     if legacy_metrics_path.exists():
         legacy_metrics_path.unlink()
+
+    legacy_manual_review_path = mission_dir / "manual_review_queue.jsonl"
+    if legacy_manual_review_path.exists():
+        legacy_manual_review_path.unlink()
 
     need_review_summary_path = mission_dir / "need_review.json"
     if need_review_summary_path.exists():
@@ -657,7 +660,6 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
 
         mission_selection_count = 0
         total_groups = len(mission_tickets)
-        manual_review_path = mission_dir / "manual_review_queue.jsonl"
         need_review_path = mission_dir / "need_review_queue.jsonl"
         failure_path = mission_dir / "failure_malformed.jsonl"
         reflection_cycle = 0
@@ -1453,43 +1455,9 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                     record_outcome(
                         ticket,
                         model_verdict=selection.verdict,
-                        in_manual_review=bool(selection.needs_manual_review),
+                        in_manual_review=False,
                     )
 
-                    manual_tag: Optional[str] = None
-                    if selection.needs_manual_review:
-                        # `needs_manual_review` is a signal-only uncertainty queue (NOT stop-gradient).
-                        # Keep a primary tag for quick aggregation in offline tools.
-                        priority = (
-                            "low_agreement",
-                            "rollout_contradiction",
-                            "pending_signal_hit",
-                            "tied_vote",
-                            "fail_first_irrelevant_hit",
-                        )
-                        manual_tag = next(
-                            (p for p in priority if p in selection.warnings),
-                            "needs_manual_review",
-                        )
-                        _append_jsonl(
-                            manual_review_path,
-                            {
-                                "ticket_key": ticket.key,
-                                "group_id": ticket.group_id,
-                                "mission": ticket.mission,
-                                "gt_label": ticket.label,
-                                "pred_verdict": selection.verdict,
-                                "pred_reason": selection.reason,
-                                "tag": manual_tag,
-                                "vote_strength": selection.vote_strength,
-                                "warnings": list(selection.warnings),
-                                "epoch": epoch,
-                                "epoch_step": epoch_step,
-                                "global_step": global_step,
-                                "reflection_cycle": reflection_cycle,
-                                "guidance_step": guidance.step,
-                            },
-                        )
                     candidates_payload = []
                     for candidate in wrapped_candidates:
                         parsed = candidate.parsed
@@ -1517,8 +1485,8 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                         ticket,
                         guidance_step=guidance.step,
                         model_verdict=selection.verdict,
-                        in_manual_review=bool(selection.needs_manual_review),
-                        manual_reason=manual_tag,
+                        in_manual_review=False,
+                        manual_reason=None,
                         selection_payload=selection_payload,
                         candidates_payload=candidates_payload,
                     )

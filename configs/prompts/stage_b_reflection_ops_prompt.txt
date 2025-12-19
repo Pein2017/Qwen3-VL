@@ -3,7 +3,7 @@
 这是 **ops pass**：输入 CASES 已排除了 stop-gradient 工单；你的任务是从这些 learnable cases 中提出可验证的规则更新。
 
 输入包含：
-- EXPERIENCES：当前 mission 的规则（只有 `G0` 只读；其余 `G1..` 可增删改）。
+- EXPERIENCES：当前 mission 的规则（`S*` 为只读结构脚手架，优先级最高且不可推翻；`G0+` 可增删改，但不得删除 `G0`）。
 - CASES：一批 learnable 工单样本。每条包含 `ticket_key`（唯一标识，格式：`{group_id}::{gt_label}`）、`group_id`、人工 `gt_label`、逐图摘要（含 obj 统计）以及 rollout 候选 `Verdict/Reason`（仅“通过/不通过”）。
 
 你的目标：
@@ -23,6 +23,7 @@
 
 关键约束（防止把摘要抄进 guidance）：
 - 你输出的规则 text 必须是“可泛化经验规则”，不是对某个样本的复述。
+- 严禁提出与 `S*` 相矛盾的规则；若发现冲突，请改写为与 `S*` 一致的补充规则，或放弃该规则。
 - 严禁把 Stage-A 摘要的对象链格式直接粘贴进 text（常见特征：大量“/”分隔、出现 `image_1`、出现 `×N`、出现 `备注:`、出现“标签/”）。
 - text 必须用自然语言写成“条件→结论”，推荐句式：`若...则...；否则...` 或 `当...时...`。
 - text 只描述**判断逻辑**与**证据取舍**，不要描述具体图片内容细节（例如某张图里有哪些线缆/标签/端口数量）。
@@ -46,7 +47,7 @@
 
 约束：
 - `operations` 最多 5 条（系统侧也会截断），**必须优先使用 update/merge，尽量少用 add**
-- key 只能 `G+数字`；禁止改/删/合并 `G0`
+- key 只能 `G+数字`；允许 update/merge `G0`；禁止 delete `G0`
 - delete 操作：只能删除 EXPERIENCES 中**已存在**的 key（`G1` 及以上）；如果 key 不存在，请勿在 operations 中包含该 delete 操作
 - delete 操作：必须提供 `evidence`（引用触发删除判断的 learnable ticket_key）
 - merge 操作：merged_from 中的 key 必须与目标 key 不同，且必须都在 EXPERIENCES 中存在；禁止将 key 合并到自己

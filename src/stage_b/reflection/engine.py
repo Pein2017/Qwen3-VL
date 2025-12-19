@@ -43,7 +43,24 @@ from ..utils.perf import maybe_empty_cache
 
 logger = logging.getLogger(__name__)
 
-_IMMUTABLE_EXPERIENCE_KEYS = frozenset({"G0"})
+_SCAFFOLD_KEY_RE = re.compile(r"S\d+")
+
+
+def _is_scaffold_experience_key(key: object) -> bool:
+    """Return True for mission-scoped scaffold keys (S*), e.g. 'S1'.
+
+    Scaffold keys are immutable and MUST NOT be modified by reflection ops.
+    """
+
+    value = str(key or "").strip()
+    return bool(_SCAFFOLD_KEY_RE.fullmatch(value))
+
+
+def _is_non_removable_experience_key(key: object) -> bool:
+    """Return True for experiences that must never be removed."""
+
+    value = str(key or "").strip()
+    return value == "G0" or _is_scaffold_experience_key(value)
 
 
 def _balanced_json_span(text: str, start: int) -> Optional[str]:
@@ -318,7 +335,6 @@ class ReflectionEngine:
 
         evidence_analysis = str(payload.get("evidence_analysis") or "").strip()
 
-        protected_keys = frozenset(_IMMUTABLE_EXPERIENCE_KEYS)
         max_ops = self.config.max_operations
         max_ops = int(max_ops) if max_ops is not None else None
 
@@ -355,7 +371,7 @@ class ReflectionEngine:
 
             key_raw = entry.get("key")
             key = str(key_raw).strip() if key_raw is not None else None
-            if key in protected_keys:
+            if _is_scaffold_experience_key(key):
                 continue
 
             rationale_raw = entry.get("rationale")
@@ -393,6 +409,8 @@ class ReflectionEngine:
 
             if op_raw == "delete":
                 if not key:
+                    continue
+                if _is_non_removable_experience_key(key):
                     continue
                 norm_key = f"del::{key}::{evidence}"
                 if norm_key in seen_op_norms:
@@ -458,7 +476,7 @@ class ReflectionEngine:
             elif op_raw == "merge":
                 if not key or not merged_from:
                     continue
-                if any(mkey in protected_keys for mkey in merged_from):
+                if any(_is_non_removable_experience_key(mkey) for mkey in merged_from):
                     continue
                 operations.append(
                     ExperienceOperation(
@@ -856,4 +874,3 @@ class ReflectionEngine:
 
 
 __all__ = ["ReflectionEngine"]
-

@@ -1,7 +1,7 @@
 你是质检 stop-gradient 判定助手，只输出简体中文。
 
 输入包含：
-- EXPERIENCES：当前 mission 的规则（`G0` 只读；其余 `G1..` 可变，但**本阶段不输出任何 operations**）。
+- EXPERIENCES：当前 mission 的规则（`S*` 为只读结构脚手架，优先级最高且不可推翻；`G0+` 可变，但**本阶段不输出任何 operations**）。
 - CASES：一批工单样本。每条包含 `ticket_key`（唯一标识，格式：`{group_id}::{gt_label}`）、`group_id`、人工 `gt_label`、逐图摘要以及 rollout 候选 `Verdict/Reason`（仅“通过/不通过”）。
 
 你的目标：

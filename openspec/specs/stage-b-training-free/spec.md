@@ -46,7 +46,7 @@ Signal definitions:
 Decision pass output schema MUST be a single strict JSON object:
 ```json
 {
-  "no_evidence_group_ids": ["QC-xxx", "QC-yyy"],
+  "no_evidence_group_ids": ["QC-xxx::fail", "QC-yyy::pass"],
   "decision_analysis": "..."
 }
 ```
@@ -67,11 +67,12 @@ Ops pass output schema MUST be a single strict JSON object:
 ```
 Notes:
 - `coverage` is optional and MUST be treated as advisory (system-computed sets are source of truth).
-- `G0` MUST be treated as read-only; `G1+` MUST be mutable (add/update/delete/merge allowed).
+- `S*` MUST be treated as read-only scaffold (mission-wise structural invariants, highest priority).
+- `G0+` MUST be mutable (add/update/delete/merge allowed), except `G0` MUST NOT be deleted.
 
 Strict evidence requirements:
 - Every operation (including `delete`) MUST include non-empty `evidence`.
-- `operations[*].evidence` MUST be a subset of learnable group_ids (ops pass input).
+- `operations[*].evidence` MUST be a subset of learnable `ticket_key`s (ops pass input; i.e., `{group_id}::{gt_label}`).
 - The system MUST NOT apply any “missing evidence ⇒ default whole bundle” fallback.
 
 Learnability closure and bounded retries:
@@ -93,7 +94,7 @@ Learnability closure and bounded retries:
 Stage‑B MUST treat `need_review_queue.jsonl` / `need_review.json` as the **stop-gradient queue**: tickets that remain unlearnable after seeing `gt_label` (root cause is intentionally not distinguished).
 
 Need-review routing MUST be:
-- **Strict group_id granularity** (ticket-level),
+- **Strict ticket_key granularity** (i.e., `{group_id}::{gt_label}`),
 - **Decision-pass single source of truth** (`no_evidence_group_ids`),
 - **Non-sticky across epochs** (re-evaluated each epoch),
 - **Stop-gradient isolation** (stop-gradient tickets MUST NOT appear in ops pass inputs nor in validated `operations[*].evidence`, and MUST NOT drive rule hit/miss feedback).
@@ -101,7 +102,7 @@ Need-review routing MUST be:
 When bounded retry budgets are exhausted for uncovered learnable groups, the system MUST route them to need-review with a distinct `reason_code` (e.g., `budget_exhausted`) to preserve auditability.
 
 #### Scenario: Decision pass declares no-evidence → ticket is routed to need-review and excluded from ops pass
-- **WHEN** decision pass includes a ticket’s `group_id` in `no_evidence_group_ids`.
+- **WHEN** decision pass includes a ticket’s `ticket_key` (i.e., `{group_id}::{gt_label}`) in `no_evidence_group_ids`.
 - **THEN** Stage‑B MUST append the ticket to `need_review_queue.jsonl` and aggregate into `need_review.json`.
 - **AND THEN** the ticket MUST NOT appear in ops pass inputs and MUST NOT be counted in evidence coverage `E`.
 

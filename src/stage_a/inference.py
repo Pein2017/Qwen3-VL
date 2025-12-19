@@ -371,7 +371,9 @@ def load_model_processor(
                 getattr(tok, "truncation_side", None),
             )
     except Exception:
-        logger.warning("Failed to set tokenizer padding/truncation side", exc_info=False)
+        logger.warning(
+            "Failed to set tokenizer padding/truncation side", exc_info=False
+        )
 
     # Configure max_pixels for compute efficiency
     # Lower values = faster inference but lower image quality
@@ -833,7 +835,8 @@ def process_group(
     model: Qwen3VLForConditionalGeneration,
     processor: AutoProcessor,
     mission: Optional[str],
-    gen_config: Dict[str, Any],
+    dataset: str = "bbu",
+    gen_config: Optional[Dict[str, Any]] = None,
     batch_size: int = 8,
     include_mission_focus: bool = True,
     verify: bool = False,
@@ -846,6 +849,7 @@ def process_group(
         model: Qwen3-VL model
         processor: AutoProcessor
         mission: Mission name (for prompt building)
+        dataset: Dataset type ("bbu" or "rru")
         gen_config: Generation config dict
         batch_size: Batch size for inference (1 = sequential)
 
@@ -857,7 +861,19 @@ def process_group(
     """
     # Build mission-dependent prompts
     user_text = build_user_prompt(mission if include_mission_focus else None)
-    system_text = build_system_prompt(mission if include_mission_focus else None)
+    system_text = build_system_prompt(
+        mission if include_mission_focus else None, dataset=dataset
+    )
+
+    # Default generation config if not provided
+    if gen_config is None:
+        gen_config = {
+            "max_new_tokens": 256,
+            "do_sample": True,
+            "temperature": 0.3,
+            "top_p": 0.9,
+            "repetition_penalty": 1.05,
+        }
 
     # Load images
     images: List[Image.Image] = []
@@ -941,6 +957,7 @@ def run_stage_a_inference(
     input_dir: str,
     output_dir: str,
     mission: str,
+    dataset: str = "bbu",
     device: str = "cuda:0",
     gen_params: Optional[Dict[str, Any]] = None,
     batch_size: int = 8,
@@ -1006,6 +1023,7 @@ def run_stage_a_inference(
         logger.info(f"Input directory: {input_dir}")
         logger.info(f"Output directory: {output_dir}")
         logger.info(f"Mission: {mission}")
+        logger.info(f"Dataset: {dataset}")
         logger.info(f"Device: {device}")
         if distributed:
             logger.info(f"Distributed mode: WORLD_SIZE={world_size}, RANK={rank}")
@@ -1098,6 +1116,7 @@ def run_stage_a_inference(
             model=model,
             processor=processor,
             mission=mission,
+            dataset=dataset,
             gen_config=gen_params,
             batch_size=batch_size,
             include_mission_focus=include_mission_focus,
@@ -1192,6 +1211,7 @@ def run_stage_a_inference(
         model=model,
         processor=processor,
         mission=mission,
+        dataset=dataset,
         gen_config=gen_params,
         batch_size=batch_size,
         include_mission_focus=include_mission_focus,
@@ -1246,6 +1266,7 @@ def _run_per_group(
     model: Qwen3VLForConditionalGeneration,
     processor: AutoProcessor,
     mission: str,
+    dataset: str,
     gen_config: Dict[str, Any],
     batch_size: int,
     include_mission_focus: bool,
@@ -1267,6 +1288,7 @@ def _run_per_group(
                     model=model,
                     processor=processor,
                     mission=mission,
+                    dataset=dataset,
                     gen_config=gen_config,
                     batch_size=batch_size,
                     include_mission_focus=include_mission_focus,
@@ -1324,6 +1346,7 @@ def _run_per_image_jobs(
     model: Qwen3VLForConditionalGeneration,
     processor: AutoProcessor,
     mission: str,
+    dataset: str,
     gen_config: Dict[str, Any],
     batch_size: int,
     include_mission_focus: bool,
@@ -1342,7 +1365,9 @@ def _run_per_image_jobs(
         raise ValueError("batch_size must be a positive integer")
 
     user_text = build_user_prompt(mission if include_mission_focus else None)
-    system_text = build_system_prompt(mission if include_mission_focus else None)
+    system_text = build_system_prompt(
+        mission if include_mission_focus else None, dataset=dataset
+    )
 
     processed = 0
     errors = 0
@@ -1610,7 +1635,9 @@ def _merge_per_image_outputs(
 
     with final_output_path.open("w", encoding="utf-8") as f_out:
         for group_seq, info in enumerate(groups):
-            missing = [idx for idx, v in enumerate(per_group[group_seq], start=1) if v is None]
+            missing = [
+                idx for idx, v in enumerate(per_group[group_seq], start=1) if v is None
+            ]
             if failed[group_seq] or missing:
                 if not failed[group_seq] and missing:
                     _mark_failed(group_seq, reason=f"missing image indices: {missing}")
@@ -1655,6 +1682,7 @@ def _run_cross_group_batches(
     model: Qwen3VLForConditionalGeneration,
     processor: AutoProcessor,
     mission: str,
+    dataset: str,
     gen_config: Dict[str, Any],
     batch_size: int,
     include_mission_focus: bool,
@@ -1674,7 +1702,9 @@ def _run_cross_group_batches(
         raise ValueError("batch_size must be a positive integer")
 
     user_text = build_user_prompt(mission if include_mission_focus else None)
-    system_text = build_system_prompt(mission if include_mission_focus else None)
+    system_text = build_system_prompt(
+        mission if include_mission_focus else None, dataset=dataset
+    )
 
     accums: List[_GroupAccum] = []
     for seq, info in enumerate(groups):
@@ -1788,7 +1818,12 @@ def _run_cross_group_batches(
                 try:
                     img = apply_exif_orientation(Image.open(path))
                 except Exception as exc:
-                    logger.error("Failed to open image %s (group=%s): %s", path, acc.info.group_id, exc)
+                    logger.error(
+                        "Failed to open image %s (group=%s): %s",
+                        path,
+                        acc.info.group_id,
+                        exc,
+                    )
                     _mark_group_failed(acc.seq)
                     local_group_cursor += 1
                     local_image_cursor = 0
@@ -1863,7 +1898,9 @@ def _run_cross_group_batches(
                                 )
                             )
                         except Exception as per_exc:
-                            logger.error("Inference failed for %s: %s", job.path, per_exc)
+                            logger.error(
+                                "Inference failed for %s: %s", job.path, per_exc
+                            )
                             _mark_group_failed(job.group_seq)
                             outputs.append(("", ""))
 

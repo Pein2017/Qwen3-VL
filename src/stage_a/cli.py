@@ -23,6 +23,7 @@ class StageAConfig:
     input_dir: str
     output_dir: str
     mission: str
+    dataset: str = "bbu"
     device: str = "cuda:0"
     batch_size: int = 8
     max_pixels: int = 786432
@@ -46,6 +47,7 @@ class StageAConfig:
             input_dir=args.input_dir,
             output_dir=args.output_dir,
             mission=args.mission,
+            dataset=args.dataset,
             device=args.device,
             batch_size=int(args.batch_size),
             max_pixels=int(args.max_pixels),
@@ -87,6 +89,9 @@ class StageAConfig:
             raise ValueError("sample_seed must be >= 0")
         if self.sharding_mode not in {"per_group", "per_image"}:
             raise ValueError("sharding_mode must be one of: per_group|per_image")
+
+        if self.dataset not in {"bbu", "rru"}:
+            raise ValueError("dataset must be one of: bbu|rru")
 
         validate_mission(self.mission)
 
@@ -158,6 +163,13 @@ Examples:
         required=True,
         choices=SUPPORTED_MISSIONS,
         help="Mission to process (must be one of the 4 supported missions)",
+    )
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        default="bbu",
+        choices=["bbu", "rru"],
+        help="Dataset type: bbu or rru (default: bbu). Affects prompt schema and prior rules.",
     )
 
     # Optional runtime parameters
@@ -325,6 +337,7 @@ def main() -> None:
             input_dir=str(input_path),
             output_dir=cfg.output_dir,
             mission=cfg.mission,
+            dataset=cfg.dataset,
             device=cfg.device,
             gen_params=gen_params,
             batch_size=cfg.batch_size,

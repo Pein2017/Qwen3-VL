@@ -115,7 +115,6 @@ def build_group_report(
 
     selections = _load_jsonl(run_dir / "selections.jsonl")
     trajectories = _load_jsonl(run_dir / "trajectories.jsonl")
-    manual = _index_by_ticket_key(_load_jsonl(run_dir / "manual_review_queue.jsonl"))
     need_review = _index_by_ticket_key(_load_jsonl(run_dir / "need_review_queue.jsonl"))
     reflection = _reflection_ops(run_dir / "reflection.jsonl")
     labels = _stage_a_labels(stage_a_paths)
@@ -146,7 +145,6 @@ def build_group_report(
     group_ids = (
         set(sel_map.keys())
         | set(cand_map.keys())
-        | set(manual.keys())
         | set(need_review.keys())
     )
 
@@ -157,7 +155,7 @@ def build_group_report(
             sel = sel_map.get(ticket_key)
             mission = sel.get("mission") if sel else None
             if mission is None:
-                for pool in (manual.get(ticket_key), need_review.get(ticket_key), cand_map.get(ticket_key)):
+                for pool in (need_review.get(ticket_key), cand_map.get(ticket_key)):
                     if pool:
                         mission = pool[0].get("mission")
                         break
@@ -199,7 +197,6 @@ def build_group_report(
                 ),
                 "selection": selection_result,
                 "candidates": cand_map.get(ticket_key, []),
-                "manual_review": manual.get(ticket_key, []),
                 "need_review_queue": normalized_need_review,
                 "reflection": normalized_reflection,
             }

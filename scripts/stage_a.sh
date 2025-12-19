@@ -8,9 +8,9 @@ set -euo pipefail
 
 # Fixed configuration
 # CHECKPOINT="output/11-30/summary_merged/epoch_10-lr_2e-4-bs_32-res_1024"
-CHECKPOINT="output/12-18/summary_merged/res_1024-with_irrelevant_summary"
+CHECKPOINT="output/12-18/summary_merged/epoch_4-bbu_rru_summary"
 INPUT_DIR="group_data/bbu_scene_2.0_order"
-OUTPUT_DIR="output_post/stage_a"
+OUTPUT_DIR="output_post/stage_a_bbu_rru_summary"
 
 # Environment variable overrides (lowercase)
 # BBU接地线检查
@@ -20,6 +20,7 @@ OUTPUT_DIR="output_post/stage_a"
 
 
 MISSION="${mission:-挡风板安装检查}"
+DATASET="${dataset:-bbu}"
 CUDA_VISIBLE_DEVICES="${gpus:-0}"
 no_mission_flag="${no_mission:-true}"
 verify_flag="${verify_inputs:-true}"
@@ -76,6 +77,7 @@ echo "=================================="
 echo "Stage-A Inference Launcher"
 echo "=================================="
 echo "Mission:      $MISSION"
+echo "Dataset:      $DATASET"
 echo "Checkpoint:   $CHECKPOINT"
 echo "Input:        $INPUT_DIR"
 echo "Output:       $OUTPUT_DIR"
@@ -139,6 +141,7 @@ if [[ "${NUM_GPUS}" -gt 1 ]]; then
     --input_dir "$INPUT_DIR" \
     --output_dir "$OUTPUT_DIR" \
     --mission "$MISSION" \
+    --dataset "$DATASET" \
     --device "$DEVICE" \
     --batch_size "$BATCH_SIZE_PER_RANK" \
     --sharding_mode "$SHARDING_MODE" \
@@ -155,6 +158,7 @@ else
     --input_dir "$INPUT_DIR" \
     --output_dir "$OUTPUT_DIR" \
     --mission "$MISSION" \
+    --dataset "$DATASET" \
     --device "$DEVICE" \
     --batch_size "$BATCH_SIZE_PER_RANK" \
     --sharding_mode "$SHARDING_MODE" \

@@ -23,6 +23,11 @@ from ..utils.chinese import normalize_spaces, to_simplified
 logger = logging.getLogger(__name__)
 
 _CLEANUP_PROTECTED_EXPERIENCE_KEYS = frozenset({"G0"})
+_SCAFFOLD_KEY_RE = re.compile(r"S\d+")
+
+
+def _is_scaffold_experience_key(key: str) -> bool:
+    return bool(_SCAFFOLD_KEY_RE.fullmatch((key or "").strip()))
 
 
 class MissionGuidanceError(RuntimeError):
@@ -288,6 +293,7 @@ class GuidanceRepository:
 
         # Track removed keys to avoid duplicate remove operations in the same batch
         removed_keys_in_batch: set[str] = set()
+        forbidden_removals: List[str] = []
 
         for op in operations:
             normalized_op = op.op
@@ -307,6 +313,9 @@ class GuidanceRepository:
 
             if normalized_op == "remove":
                 if key is None:
+                    continue
+                if key == "G0":
+                    forbidden_removals.append(key)
                     continue
                 # Skip if already removed in this batch (deduplication)
                 if key in removed_keys_in_batch:
@@ -424,6 +433,11 @@ class GuidanceRepository:
             applied_any = True
 
         if not applied_any:
+            if forbidden_removals:
+                raise MissionGuidanceError(
+                    f"Mission {current.mission} experiences dict must be non-empty "
+                    f"(cannot remove non-removable experience keys: {sorted(set(forbidden_removals))})"
+                )
             raise MissionGuidanceError(
                 "Reflection refine proposal did not modify guidance"
             )
@@ -646,7 +660,9 @@ class GuidanceRepository:
         metadata = dict(current.metadata)
 
         for key, meta in list(metadata.items()):
-            if key in _CLEANUP_PROTECTED_EXPERIENCE_KEYS:
+            if key in _CLEANUP_PROTECTED_EXPERIENCE_KEYS or _is_scaffold_experience_key(
+                key
+            ):
                 continue
             if (
                 meta.confidence < confidence_threshold

@@ -152,6 +152,19 @@ def build_summary_system_prompt(
         if mission_prior:
             mission_prior = f"\n【{mission}任务特定规则】\n{mission_prior}"
 
+    # 为 BBU 数据集添加禁止规则
+    dataset_restrictions = ""
+    if ds == "bbu":
+        dataset_restrictions = (
+            "\n【BBU任务禁止项】\n"
+            "- 禁止输出任何与**站点距离**相关的内容。\n"
+            '- 禁止输出任何与**RRU**相关的内容（如"RRU设备"、"RRU接地端"、"RRU接地线"等所有以RRU开头的内容）。\n'
+            '- 禁止输出任何与**紧固件**相关的内容（如"紧固件/合格"、"地排接地端螺丝"等）。\n'
+            '- 禁止输出任何与**接地线**相关的内容（如"接地线/带标签"、"接地线/不带标签"等）。\n'
+            '- 禁止输出任何与**分组**相关的内容（如"组1:"、"组N:"等分组前缀）。\n'
+            "BBU任务仅关注：BBU设备、挡风板、螺丝、光纤插头、光纤、电线、标签等对象，不得包含上述禁止项。\n"
+        )
+
     return (
         """你是图像摘要助手。请始终使用简体中文作答。只返回一行中文摘要文本，不要任何解释或额外符号。
 
@@ -184,6 +197,7 @@ def build_summary_system_prompt(
         + "先验规则（与密集标注共享的业务知识）：\n"
         + prior
         + mission_prior
+        + dataset_restrictions
         + """
 
 【严格禁止】
