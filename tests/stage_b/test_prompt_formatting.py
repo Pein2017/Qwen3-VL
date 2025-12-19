@@ -144,7 +144,7 @@ def test_build_messages_with_experiences():
         updated_at=datetime.now(timezone.utc),
     )
 
-    messages = build_messages(ticket, guidance)
+    messages = build_messages(ticket, guidance, domain="bbu")
 
     assert len(messages) == 2
     assert messages[0]["role"] == "system"
