@@ -53,6 +53,8 @@ Troubleshooting symptom:
 
 ## Key Flags / Env Vars
 - `mission` (required) — must match `SUPPORTED_MISSIONS`.
+- `dataset` — `bbu|rru`; controls which domain knowledge pack is appended to the runtime summary prompt.
+- `prompt_profile` — summary prompt profile (`summary_runtime` default; `summary_train_min` for smoke/debug).
 - `verify_inputs` — logs first-chunk hashes and grid/token counts; optional.
 - `no_mission` — skip mission focus text for smoke tests.
 - `gpus` — GPU device selection (comma-separated list, e.g., `gpus=0` or `gpus=0,1,2,3`). Use `gpus=cpu` for CPU mode.

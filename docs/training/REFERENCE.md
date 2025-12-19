@@ -229,6 +229,13 @@ Core SFT/LoRA recipes, KL anchoring overlays, augmentation telemetry, and troubl
 
 Keep configs under `configs/` in sync with the playbook when making behavioral changes.
 
+### Summary Prompt Profiles (Training vs Inference)
+- **Training default**: `summary_train_min` (format + task criterion only, evidence-only/no-hallucination constraints).
+- **Config knobs** (summary mode only):
+  - `prompts.profile`: `summary_train_min` | `summary_runtime`
+  - `prompts.domain`: `bbu` | `rru` (required only when using runtime profile)
+  - `prompts.system` / `prompts.user` remain authoritative overrides and bypass profile composition.
+
 ## Inference
 
 Runtime/deployment instructions for Stage-A summaries and the Stage-B verdict loop live in [STAGE_A_RUNTIME.md](../runtime/STAGE_A_RUNTIME.md) and [STAGE_B_RUNTIME.md](../runtime/STAGE_B_RUNTIME.md):

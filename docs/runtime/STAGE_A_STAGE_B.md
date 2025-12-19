@@ -58,6 +58,7 @@ Note: The same `group_id` may appear in both label folders for resubmitted batch
 - Image catalog must stay synchronized with mission focus; onboarding checklists ensure a representative sample per verdict.
 - Data Ops spot-checks Stage-A JSONL outputs before releasing batches to Stage-B.
   - Throughput note: Stage-A supports a `sharding_mode=per_image` runtime mode to improve load balancing and batch utilization across GPUs; see `./STAGE_A_RUNTIME.md` for details and determinism notes.
+- Prompt profile note: Stage‑A runtime composes the **summary_runtime** profile (base summary prompt + concise domain glossary for `bbu|rru`). Summary SFT training stays on the **summary_train_min** profile (format + task criterion only).
 
 ---
 
@@ -66,7 +67,7 @@ Note: The same `group_id` may appear in both label folders for resubmitted batch
 | What | Business Interpretation |
 | ---- | ---------------------- |
 | Input | Stage-A summaries + ground-truth labels + current mission guidance. |
-| Process | Prompt-only rollouts（提示=guidance+Stage-A 摘要，不含 GT；S* 为只读结构不变量，G0+ 为可学习规则）；推理输出必须严格两行二分类：`Verdict: 通过|不通过` + `Reason: ...`，且最终输出禁止任何第三状态词面。多数表决 selection + **mission-scoped fail-first** 确定性护栏：仅当负项与当前 mission 的 `G0` 相关时才触发整组不通过（含 pattern-first `不符合要求/<issue>`）；若护栏覆盖采样 verdict，则必须重写 `Reason` 以与最终 `Verdict` 一致。Stage‑B 仅对**梯度候选**触发反思（错例、rollout 矛盾/低一致性、冲突/需复核信号）；反思为 two-pass：decision pass 在看到 `gt_label` 后判定 stop-gradient（`no_evidence_group_ids`），ops pass 仅基于 learnable groups 产出严格 JSON ops + hypotheses（含严格 evidence）。系统对未覆盖 learnable groups 做 bounded retry（默认 2 次）并设置成本上界；耗尽预算者进入 `need_review_queue.jsonl`（stop-gradient, `reason_code=budget_exhausted`）。两行协议解析失败/无可用候选/selection 报错等硬故障仅写入 `failure_malformed.jsonl`。重跑同一 run_name 时重建 per-run artifacts 与 reflection_cache，指导沿用上次快照（除非显式 reset）。 |
+| Process | Prompt-only rollouts（提示=guidance+Stage-A 摘要，不含 GT；**领域提示以只读块追加在 system prompt**，由 Stage‑B config 的 `domain_map/default_domain` 决定；S* 为只读结构不变量，G0+ 为可学习规则）；推理输出必须严格两行二分类：`Verdict: 通过|不通过` + `Reason: ...`，且最终输出禁止任何第三状态词面。多数表决 selection + **mission-scoped fail-first** 确定性护栏：仅当负项与当前 mission 的 `G0` 相关时才触发整组不通过（含 pattern-first `不符合要求/<issue>`）；若护栏覆盖采样 verdict，则必须重写 `Reason` 以与最终 `Verdict` 一致。Stage‑B 仅对**梯度候选**触发反思（错例、rollout 矛盾/低一致性、冲突/需复核信号）；反思为 two-pass：decision pass 在看到 `gt_label` 后判定 stop-gradient（`no_evidence_group_ids`），ops pass 仅基于 learnable groups 产出严格 JSON ops + hypotheses（含严格 evidence）。系统对未覆盖 learnable groups 做 bounded retry（默认 2 次）并设置成本上界；耗尽预算者进入 `need_review_queue.jsonl`（stop-gradient, `reason_code=budget_exhausted`）。两行协议解析失败/无可用候选/selection 报错等硬故障仅写入 `failure_malformed.jsonl`。重跑同一 run_name 时重建 per-run artifacts 与 reflection_cache，指导沿用上次快照（除非显式 reset）。 |
 | Output | Final binary verdicts (`pass` / `fail`) in JSONL, trajectories for audit, step-wise + epoch summary metrics (`metrics.jsonl`), optional step-wise group snapshot deltas (`group_report_delta.jsonl`), reflection log, hypothesis pool (`hypotheses.json` + `hypothesis_events.jsonl`), `need_review_queue.jsonl` + `need_review.json`（人工复核）, `failure_malformed.jsonl`（硬故障调试）, and updated mission-specific guidance repository (full `group_report.jsonl` generated at run end). |
 
 **Experiences = living policy**
@@ -170,7 +171,7 @@ Ensure downstream teams understand schema stability commitments; breaking change
 ## 10. Support & Further Reading
 
 - Technical operations guide: `./STAGE_B_RUNTIME.md`
-- Prompt templates & schema: `configs/prompts/`, `src/stage_b/prompts.py`
+- Prompt templates & schema: `configs/prompts/`, `src/prompts/summary_profiles.py`, `src/prompts/domain_packs.py`, `src/stage_b/sampling/prompts.py`
 - Reflection change log & rationale: `openspec/changes/2025-11-03-adopt-training-free-stage-b/`
 - Visualization utilities for QA spot checks: `vis_tools/`
 

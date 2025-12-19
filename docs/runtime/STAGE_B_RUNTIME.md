@@ -52,6 +52,7 @@ bash scripts/stage_b.sh smoke
 - `runner`: epochs, `per_rank_rollout_batch_size` (per-rank batch size; global effective batch = per_rank × WORLD_SIZE in ticket-parallel mode), and `logging_steps` (emit step-wise telemetry every N groups).
 - `output`: Root/run_name plus mission subdirs for artifacts.
 - `guidance`: Global seed file and snapshot retention count.
+- `domain_map` / `default_domain`: Mission → domain mapping for runtime domain packs (`bbu|rru`). Stage‑B appends the domain block as a read‑only system prompt section; missing/unknown domains raise errors before rollout.
 
 ##### Outputs & Directory Layout
 
