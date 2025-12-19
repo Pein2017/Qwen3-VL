@@ -63,6 +63,7 @@ REP_PENALTY="1.1"
 LOG_LEVEL="INFO"
 SHARDING_MODE="${sharding_mode:-per_group}"  # per_group | per_image
 KEEP_INTERMEDIATE_OUTPUTS="${keep_intermediate_outputs:-false}"
+DEDUPLICATE="${deduplicate:-true}"  # Enable deduplication by default
 
 # Resolve repository root from this script's location and set PYTHONPATH
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -173,4 +174,42 @@ fi
 STATUS=$?
 if [[ ${STATUS} -ne 0 ]]; then
   exit ${STATUS}
+fi
+
+# Run deduplication if enabled
+if [[ "${DEDUPLICATE,,}" == "true" ]] || [[ "${DEDUPLICATE}" == "1" ]]; then
+  echo ""
+  echo "=================================="
+  echo "Running Deduplication"
+  echo "=================================="
+  
+  # Determine output file path
+  OUTPUT_FILE="${OUTPUT_DIR}/${MISSION}_stage_a.jsonl"
+  
+  if [[ ! -f "${OUTPUT_FILE}" ]]; then
+    echo "[WARNING] Output file not found: ${OUTPUT_FILE}"
+    echo "Skipping deduplication."
+  else
+    echo "Processing: ${OUTPUT_FILE}"
+    echo "Mode: In-place (overwriting original file)"
+    # Run deduplication (summary will be printed to stderr by the script)
+    # --in-place flag overwrites the original file, no separate .deduplicated.jsonl is created
+    conda run -n "${CONDA_ENV}" --no-capture-output python -u \
+      "${REPO_DIR}/scripts/deduplicate_stage_a.py" \
+      "${OUTPUT_FILE}" \
+      --in-place 2>&1
+    
+    DEDUP_STATUS=$?
+    if [[ ${DEDUP_STATUS} -eq 0 ]]; then
+      echo ""
+      echo "[SUCCESS] Deduplication completed successfully"
+      echo "Original file overwritten: ${OUTPUT_FILE}"
+    else
+      echo ""
+      echo "[ERROR] Deduplication failed with status ${DEDUP_STATUS}"
+      echo "Original file preserved: ${OUTPUT_FILE}"
+      # Don't fail the entire script if deduplication fails
+    fi
+  fi
+  echo "=================================="
 fi

@@ -18,10 +18,10 @@ training:
   per_device_train_batch_size: 4
   per_device_eval_batch_size: 8
   effective_batch_size: 32
-  num_train_epochs: 2
+  num_train_epochs: 4
   output_dir: ./output/12-18/summary
   logging_dir: ./tb/12-18/summary
-  run_name: epoch_2-res_1024-bbu_rru_fused-lrs_1e-4_mlp_1e-6_with_irrelevant_summary-aug_off-with_rru_summary
+  run_name: epoch_4-res_1024-bbu_rru_fused-lrs_1e-4_mlp_1e-6_with_irrelevant_summary-aug_off-with_rru_summary
   learning_rate: 1.0e-4
   vit_lr: 1.0e-7
   aligner_lr: 1.0e-6
