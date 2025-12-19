@@ -30,11 +30,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH}"
 
-# Dynamically determine project root from script location
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# Set PROJECT_ROOT dynamically
-PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-
 export MODELSCOPE_CACHE="./modelscope/hub"
 
 # ============================================================================
@@ -45,7 +40,7 @@ export MODELSCOPE_CACHE="./modelscope/hub"
 MODE="${MODE:-prod}"
 
 # Dataset selector: bbu | rru
-DATASET="${DATASET:-rru}"
+DATASET="${DATASET:-bbu}"
 
 # Processing parameters
 VAL_RATIO="${VAL_RATIO:-0.2}"

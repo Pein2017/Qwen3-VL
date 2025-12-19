@@ -48,6 +48,7 @@ Whenever you add or modify code in the directories above, update the associated 
 | `stage_b_smoke.py` | `scripts/` | No-model Stage-B smoke/audit (config+ingest+guidance+prompt+parse+export). |
 | `validate_sft_config.py` | `scripts/` | Fast YAML validation for SFT configs (no model weights). |
 | `validate_dense_jsonl_contract.py` | `scripts/` | Fast JSONL contract validation for dense-caption records. |
+| `build_irrelevant_summary_jsonl.py` | `scripts/` | Builds `data/irrelevant_summary/train.jsonl` from `data/irrelevant_summary/images/*.jpg|*.jpeg` with `summary: 无关图片` (dummy full-frame bbox for contract compatibility). |
 | `debug_fusion_template_clone.py` | `scripts/` | Smoke-test for template reuse in fused datasets (regression guard for cloning bugs). |
 | `merge_stage2_lora.sh` | `scripts/` | Utility to merge staged LoRA checkpoints for deployment. |
 

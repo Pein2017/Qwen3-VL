@@ -74,7 +74,7 @@ def sanitize_text(desc: Optional[str]) -> Optional[str]:
     s = s.translate({ord(c): "-" for c in dash_like_chars})
 
     # Convert circled/parenthesized digits to plain ASCII digits
-    circled_map = {ord("\u24EA"): "0"}  # ⓪
+    circled_map = {ord("\u24ea"): "0"}  # ⓪
     for i in range(1, 21):
         circled_map[ord(chr(0x2460 + i - 1))] = str(i)  # ①..⑳
         circled_map[ord(chr(0x2474 + i - 1))] = str(i)  # ⑴..⒇
@@ -167,9 +167,7 @@ def remove_screw_completeness_attributes(desc: Optional[str]) -> Optional[str]:
     remainder = parts[2] if len(parts) > 2 else None
 
     tokens = [tok.strip() for tok in attribute_segment.split(",")]
-    filtered = [
-        tok for tok in tokens if tok and tok not in {"只显示部分", "显示完整"}
-    ]
+    filtered = [tok for tok in tokens if tok and tok not in {"只显示部分", "显示完整"}]
     cleaned_segment = ",".join(filtered)
 
     rebuilt = [parts[0]]
@@ -178,3 +176,29 @@ def remove_screw_completeness_attributes(desc: Optional[str]) -> Optional[str]:
         rebuilt.append(remainder)
 
     return "/".join(rebuilt)
+
+
+def remove_specific_annotation_remark(desc: Optional[str]) -> Optional[str]:
+    """
+    Remove specific annotation remark that contains '这里已经帮助修改,请注意参考学习'.
+
+    This function removes the remark pattern ',备注:这里已经帮助修改,请注意参考学习'
+    from the description string.
+
+    Example:
+        Input:  'BBU安装螺丝,符合要求,备注:这里已经帮助修改,请注意参考学习'
+        Output: 'BBU安装螺丝,符合要求'
+    """
+    if not desc or not isinstance(desc, str):
+        return desc
+
+    s = desc.strip()
+    if not s:
+        return s
+
+    # Pattern to match: ,备注:这里已经帮助修改,请注意参考学习
+    # Also handle variations with fullwidth colon
+    pattern = r",备注[:：]这里已经帮助修改,请注意参考学习$"
+    s = re.sub(pattern, "", s)
+
+    return s

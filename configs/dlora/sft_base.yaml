@@ -119,6 +119,7 @@ custom:
           overlap_threshold: 0.1
           context: 4
           line_buffer: 4
+          class_whitelist: ["螺丝、光纤插头", "光纤", "标签", "电线"]
       - name: resize_by_scale
         params: { lo: 0.92, hi: 1.10, align_multiple: 32, prob: 0.40 }
       - name: color_jitter

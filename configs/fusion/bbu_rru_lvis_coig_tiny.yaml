@@ -3,13 +3,13 @@ targets:
     dataset: bbu
     train_jsonl: data/bbu_full_768_poly-need_review/train_tiny.jsonl
     val_jsonl: data/bbu_full_768_poly-need_review/val_tiny.jsonl
-    template: bbu_dense
+    template: target_dense
     ratio: 1.0
   - name: rru
     dataset: rru
     train_jsonl: data/rru_full_768_poly/train_tiny.jsonl
     val_jsonl: data/rru_full_768_poly/val_tiny.jsonl
-    template: bbu_dense
+    template: target_dense
     ratio: 1.0
 
 sources:
@@ -18,7 +18,7 @@ sources:
     dataset: lvis
     train_jsonl: public_data/lvis/rescale_32_768_poly_max_12/train_tiny.jsonl
     ratio: 0.5
-    template: aux_dense
+    template: source_dense
     max_objects_per_image: 5
 
   # Text-only chat source to preserve language capacity.

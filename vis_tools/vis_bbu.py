@@ -31,8 +31,10 @@ limit = 20  # Max number of samples to visualize (0 means all)
 dpi = 120  # Matplotlib savefig DPI
 color_by = "type"  # Color by object type or full desc prefix ("type" or "desc")
 # Filter by image filename (set to None to visualize all, or a substring to match)
-filter_image_name = "QC-20231218-0025165_4127784"  # Set to None to disable filtering
-filter_image_name = None
+filter_image_name = (
+    "QC-TEMP-20241212-0015541_4369990"  # Set to None to disable filtering
+)
+# filter_image_name = None
 
 
 def read_jsonl(path: Path) -> Iterable[Dict[str, Any]]:

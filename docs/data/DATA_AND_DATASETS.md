@@ -96,6 +96,12 @@ Format requirements (aligned with training/inference prompts):
 - Optional training toggle: set `custom.summary_label_grouping: true` to collapse all 标签/* entries that are not `标签/无法识别` into `标签/可以识别×N` while preserving the `无法识别` count separately.
 - Conversion is fail-fast: if a sample has no objects or all `desc` are空/缺失，`build_summary_from_objects` raises `ValueError` and the sample is rejected.
 
+#### RRU Summary Guidance
+
+- RRU now reuses `build_summary_from_objects` without filtering any `desc` values; every annotated entry (including `标签/*` and `站点距离/*`) contributes to the grouped summary string, so the existing `desc×N` ordering rules continue to apply.
+- To propose a summary for RRU, inspect `data/rru_full_1024_poly/label_vocabulary.json` and follow the same `desc×N` grouping/ordering rules as BBU to draft the single-line summary.
+- Train a summary-only stream against RRU data via `configs/summary_rru.yaml`, which inherits the BBU summary settings but points to `data/rru_full_1024_poly` and the new model run directory.
+
 **Example**: `光模块×3，线缆×2，BBU设备/需复核,备注:无法判断品牌×1`
 
 ---
@@ -187,6 +193,14 @@ When you want BBU/RRU multi-target dense-caption training to consume auxiliary d
 - **Object caps**: applied deterministically after augmentation and before encoding. Sources cap by default; targets may opt in via `max_objects_per_image`.
 - **Telemetry**: `last_sample_debug` exposes `dataset`, `prompt_source`, augmentation on/off, cap applied/limit, and input length for every sample; per-epoch `epoch_plan` reports counts and policy flags.
 - **No online smart-resize**: inputs are assumed pre-filtered/resized offline; resizing occurs only through augmentation ops when configured. If you need smart-resize, run it during conversion and provide the resized `train/val` JSONLs explicitly.
+
+### Irrelevant Summary Target (Negative Stream)
+
+For summary-mode SFT regularization (reduce hallucinations on out-of-domain images), you can add a small **irrelevant** target stream whose samples always have `summary: 无关图片`.
+
+- Generate the JSONL from a folder of JPEGs (EXIF-aware width/height) and keep the global contract by emitting a single dummy full-frame bbox per image:
+  - `conda run -n ms python scripts/build_irrelevant_summary_jsonl.py --images-dir data/irrelevant_summary/images --output-jsonl data/irrelevant_summary/train.jsonl`
+- Reference it as an additional **target** (target ratios scale by the dataset’s own pool size; `ratio: 1` means each image appears once per epoch). See `configs/fusion/summary_lang_chat_0p2.yaml` for a concrete example.
 
 Example fusion config:
 

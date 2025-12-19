@@ -1,19 +1,27 @@
 #!/bin/bash
 # Merge LoRA adapter into base model for end2end inference
+# Usage: gpus=0 bash scripts/merge_stage2_lora.sh
+# Usage: gpus=0,1 bash scripts/merge_stage2_lora.sh
 
-adapters=output/12-9/summary/v0-20251215-121307/res_1024-bbu_rru_fused-lrs_1e-4-dlora_16_32-last_4_llm-fusion_all-aug_off/checkpoint-558
+set -euo pipefail
+
+# GPU configuration (unified API)
+CUDA_VISIBLE_DEVICES="${gpus:-0}"
+
+adapters=output/12-18/summary/v0-20251218-081823/epoch_4-res_1024-bbu_rru_fused-lrs_1e-4_mlp_1e-6_with_irrelevant_summary-aug_off/checkpoint-384
 
 # Extract base model path from adapter_config.json
 base_model=$(python3 -c "import json; print(json.load(open(\"$adapters/adapter_config.json\"))[\"base_model_name_or_path\"])")
 
 
-output_dir=output/12-9/summary_merged/res_1024-last_4
+output_dir=output/12-18/summary_merged/res_1024-with_irrelevant_summary
 
 echo "Detected base model: $base_model"
 echo "Adapters: $adapters"
+echo "GPUs: ${CUDA_VISIBLE_DEVICES}"
 
 
-CUDA_VISIBLE_DEVICES=0 \
+export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}
 swift export \
     --model $base_model \
     --adapters $adapters \
@@ -25,4 +33,4 @@ swift export \
 echo "Merged model saved to: $output_dir"
 echo ""
 echo "Test inference with:"
-echo "CUDA_VISIBLE_DEVICES=0 swift infer --model $output_dir --stream true"
+echo "gpus=${CUDA_VISIBLE_DEVICES} swift infer --model $output_dir --stream true"

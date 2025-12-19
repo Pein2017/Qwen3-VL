@@ -231,6 +231,17 @@ custom:
   fusion_config: configs/fusion/bbu_with_lvis.yaml
 ```
 
+#### Summary fusion + irrelevant negatives
+
+For summary-mode SFT, you can mix a small "irrelevant image" negative pool as an additional **target** stream (so `ratio` scales by that pool’s own size). The default summary fusion config `configs/fusion/summary_lang_chat_0p2.yaml` includes `irrelevant_summary` backed by `data/irrelevant_summary/train.jsonl` (built from `data/irrelevant_summary/images/*.jpg|*.jpeg`).
+
+Generate and validate the JSONL:
+
+```bash
+conda run -n ms python scripts/build_irrelevant_summary_jsonl.py
+conda run -n ms python scripts/validate_dense_jsonl_contract.py --jsonl data/irrelevant_summary/train.jsonl --limit 0
+```
+
 ### Code Integration
 
 In `src/sft.py`:
@@ -307,6 +318,8 @@ if custom_config.fusion_config:
 - **Implementation**: `src/datasets/unified_fusion_dataset.py`
 - **Verification Script**: `check_mask_labels_simple.py`
 - **Fusion Config**: `configs/fusion/bbu_with_lvis.yaml`
+- **Summary Fusion Config**: `configs/fusion/summary_lang_chat_0p2.yaml`
+- **Irrelevant JSONL Helper**: `scripts/build_irrelevant_summary_jsonl.py`
 - **Training Integration**: `src/sft.py`
 
 ---

@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import abc
 from pathlib import Path
-from typing import Any, Dict, Mapping, Optional, Type, Literal
+from typing import Any, Dict, Literal, Mapping, Optional, Type
 
-from ..fusion_types import DatasetSpec, FALLBACK_OPTIONS
+from ..fusion_types import FALLBACK_OPTIONS, DatasetSpec
 
 # Default cap for source-domain datasets to keep sequences bounded unless explicitly disabled.
 DEFAULT_SOURCE_OBJECT_CAP = 64
@@ -82,7 +82,9 @@ def _parse_prompt(value: Any, *, field_name: str) -> Optional[str]:
     raise TypeError(f"{field_name} must be a string if provided")
 
 
-def _parse_mode(value: Any, *, field_name: str) -> Optional[Literal["dense", "summary"]]:
+def _parse_mode(
+    value: Any, *, field_name: str
+) -> Optional[Literal["dense", "summary"]]:
     if value is None:
         return None
     if isinstance(value, bool):
@@ -104,7 +106,7 @@ class DatasetWrapper(abc.ABC):
     key: str
     default_name: str = "dataset"
     domain: DatasetDomain = "target"
-    template_id: str = "bbu_dense"
+    template_id: str = "target_dense"
     summary_template_id: Optional[str] = None
     supports_augmentation: bool = True
     supports_curriculum: bool = True
@@ -121,9 +123,7 @@ class DatasetWrapper(abc.ABC):
         mapping = _as_mapping(params, field_name=f"{cls.__name__}.params")
         train_jsonl = mapping.get("train_jsonl")
         if not train_jsonl:
-            raise ValueError(
-                f"{cls.__name__} requires params.train_jsonl to be set"
-            )
+            raise ValueError(f"{cls.__name__} requires params.train_jsonl to be set")
         val_jsonl = mapping.get("val_jsonl")
         mode_declared = _parse_mode(
             mapping.get("mode"),
@@ -245,15 +245,15 @@ def build_dataset_spec(
 
 class TargetDatasetWrapper(DatasetWrapper):
     domain: DatasetDomain = "target"
-    template_id = "bbu_dense"
-    summary_template_id = "bbu_summary"
+    template_id = "target_dense"
+    summary_template_id = "summary"
     supports_augmentation = True
     supports_curriculum = True
 
 
 class PublicDetectionDatasetWrapper(DatasetWrapper):
     domain: DatasetDomain = "source"
-    template_id = "aux_dense"
+    template_id = "source_dense"
     supports_augmentation = False
     supports_curriculum = False
     default_max_objects_per_image = DEFAULT_SOURCE_OBJECT_CAP
@@ -267,7 +267,6 @@ class BbuDatasetWrapper(TargetDatasetWrapper):
 @register_dataset_wrapper("rru")
 class RruDatasetWrapper(TargetDatasetWrapper):
     default_name = "rru"
-    summary_template_id = "rru_summary"
 
 
 @register_dataset_wrapper("coco")

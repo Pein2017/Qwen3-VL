@@ -10,7 +10,7 @@ import logging
 import sys
 from multiprocessing import Pool, cpu_count
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 try:
     from tqdm import tqdm
@@ -30,25 +30,26 @@ from data_conversion.pipeline.flexible_taxonomy_processor import (
 )
 from data_conversion.pipeline.format_converter import FormatConverter
 from data_conversion.pipeline.summary_builder import build_summary_from_objects
+from data_conversion.pipeline.validation_manager import (
+    StructureValidator,
+    ValidationManager,
+)
+from data_conversion.pipeline.vision_process import ImageProcessor
 from data_conversion.utils.file_ops import FileOperations
+from data_conversion.utils.review_flagger import flag_objects_for_review
 from data_conversion.utils.sanitizer_pipeline import (
     SanitizerPipeline,
     SanitizerStep,
 )
 from data_conversion.utils.sanitizers import (
     remove_screw_completeness_attributes,
+    remove_specific_annotation_remark,
     sanitize_text,
     standardize_label_description,
     strip_annotator_notes,
     strip_occlusion_tokens,
 )
 from data_conversion.utils.sorting import sort_objects_tlbr
-from data_conversion.utils.review_flagger import flag_objects_for_review
-from data_conversion.pipeline.validation_manager import (
-    StructureValidator,
-    ValidationManager,
-)
-from data_conversion.pipeline.vision_process import ImageProcessor
 
 # Configure UTF-8 encoding for stdout/stderr if supported
 try:
@@ -128,8 +129,9 @@ class UnifiedProcessor:
         self.config = config
         self.input_dir = Path(config.input_dir)
         self.output_dir = config.get_dataset_output_dir()
+        dataset_name = getattr(config, "dataset_name", "") or ""
         self.is_rru = "rru" in str(self.input_dir).lower() or (
-            getattr(config, "dataset_name", "") and "rru" in config.dataset_name.lower()
+            dataset_name and "rru" in dataset_name.lower()
         )
 
         # Initialize components - no token mapping needed for Chinese-only
@@ -281,6 +283,15 @@ class UnifiedProcessor:
             SanitizerStep(
                 "remove_screw_completeness_attributes",
                 remove_screw_completeness_attributes,
+                mandatory=False,
+            )
+        )
+
+        # Always remove specific annotation remark: ',备注:这里已经帮助修改,请注意参考学习'
+        steps.append(
+            SanitizerStep(
+                "remove_specific_annotation_remark",
+                remove_specific_annotation_remark,
                 mandatory=False,
             )
         )
@@ -544,7 +555,7 @@ class UnifiedProcessor:
 
             # Summary 直接继承处理后的 desc（含需复核）
             if self.is_rru:
-                summary_text = self._build_simple_summary(objects)
+                summary_text = self._build_rru_summary(objects)
             else:
                 summary_objects = [obj.copy() for obj in objects]
                 summary_text = build_summary_from_objects(summary_objects)
@@ -645,11 +656,13 @@ class UnifiedProcessor:
         if "objects" not in sample_data or not sample_data["objects"]:
             # No objects to process, just get final dimensions
             if enable_smart_resize:
-                from data_conversion.pipeline.vision_process import MIN_PIXELS
-                from data_conversion.pipeline.vision_process import smart_resize
+                from data_conversion.pipeline.vision_process import (
+                    MIN_PIXELS,
+                    smart_resize,
+                )
 
-                _, _, _, final_w, final_h, _ = CoordinateManager.get_exif_transform_matrix(
-                    image_path
+                _, _, _, final_w, final_h, _ = (
+                    CoordinateManager.get_exif_transform_matrix(image_path)
                 )
 
                 resize_h, resize_w = smart_resize(
@@ -661,8 +674,8 @@ class UnifiedProcessor:
                 )
                 return sample_data, resize_w, resize_h
             else:
-                _, _, _, final_w, final_h, _ = CoordinateManager.get_exif_transform_matrix(
-                    image_path
+                _, _, _, final_w, final_h, _ = (
+                    CoordinateManager.get_exif_transform_matrix(image_path)
                 )
                 return sample_data, final_w, final_h
 
@@ -953,12 +966,16 @@ class UnifiedProcessor:
 
         return all_samples
 
-    def _process_samples_parallel(self, json_files: List[Path], num_workers: int) -> List[Dict]:
+    def _process_samples_parallel(
+        self, json_files: List[Path], num_workers: int
+    ) -> List[Dict]:
         """Process samples in parallel using multiprocessing."""
         # Limit workers to available CPU cores
         max_workers = min(num_workers, cpu_count(), len(json_files))
         logger.info(f"🚀 Processing samples in parallel with {max_workers} workers")
-        logger.info("ℹ️  Worker initialization logs suppressed (only warnings/errors shown)")
+        logger.info(
+            "ℹ️  Worker initialization logs suppressed (only warnings/errors shown)"
+        )
 
         # Process samples in parallel
         all_samples: List[Dict] = []
@@ -970,18 +987,22 @@ class UnifiedProcessor:
             with Pool(
                 processes=max_workers,
                 initializer=_init_worker,
-                initargs=(self.config, self.label_hierarchy)
+                initargs=(self.config, self.label_hierarchy),
             ) as pool:
                 # Use ordered imap to preserve input ordering for deterministic outputs
                 if tqdm is not None:
-                    results = list(tqdm(
-                        pool.imap(_process_sample_worker, json_files),
-                        total=len(json_files),
-                        desc=f"Processing samples ({max_workers} workers)",
-                        unit="sample"
-                    ))
+                    results = list(
+                        tqdm(
+                            pool.imap(_process_sample_worker, json_files),
+                            total=len(json_files),
+                            desc=f"Processing samples ({max_workers} workers)",
+                            unit="sample",
+                        )
+                    )
                 else:
-                    logger.info(f"Processing {len(json_files)} samples with {max_workers} workers...")
+                    logger.info(
+                        f"Processing {len(json_files)} samples with {max_workers} workers..."
+                    )
                     results = list(pool.imap(_process_sample_worker, json_files))
 
             # Post-process results: validate and filter
@@ -1040,9 +1061,7 @@ class UnifiedProcessor:
 
         return all_samples
 
-    def split_into_sets(
-        self, all_samples: List[Dict]
-    ) -> Tuple[List[Dict], List[Dict]]:
+    def split_into_sets(self, all_samples: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
         """Split samples into training and validation sets.
 
         Teacher pool selection has been removed; all samples are used for train/val.
@@ -1122,6 +1141,9 @@ class UnifiedProcessor:
     def _export_label_vocabulary(self, all_samples: List[Dict]) -> None:
         """Extract and export unique labels from all samples."""
         unique_labels = set()
+        unique_labels_excluded_tag = (
+            set()
+        )  # Labels excluding those with object_type="标签"
         object_types = set()
         properties = set()
         full_descriptions = set()
@@ -1140,16 +1162,25 @@ class UnifiedProcessor:
                     prop = components.get("property", "").strip()
                     extra = components.get("extra_info", "").strip()
 
+                    # Skip labels with object_type="标签" for excluded set
+                    is_tag_label = obj_type == "标签"
+
                     if obj_type:
                         object_types.add(obj_type)
                         unique_labels.add(obj_type)
+                        if not is_tag_label:
+                            unique_labels_excluded_tag.add(obj_type)
 
                     if prop:
                         properties.add(prop)
                         unique_labels.add(prop)
+                        if not is_tag_label:
+                            unique_labels_excluded_tag.add(prop)
 
                     if extra:
                         unique_labels.add(extra)
+                        if not is_tag_label:
+                            unique_labels_excluded_tag.add(extra)
 
         # Create comprehensive label vocabulary
         label_vocabulary = {
@@ -1164,18 +1195,21 @@ class UnifiedProcessor:
             },
             "statistics": {
                 "unique_labels_count": len(unique_labels),
+                "unique_labels_excluded_tag_count": len(unique_labels_excluded_tag),
                 "object_types_count": len(object_types),
                 "properties_count": len(properties),
                 "full_descriptions_count": len(full_descriptions),
             },
             "vocabulary": {
                 "all_unique_labels": sorted(list(unique_labels)),
+                "unique_labels_excluded_tag": sorted(list(unique_labels_excluded_tag)),
                 "object_types": sorted(list(object_types)),
                 "properties": sorted(list(properties)),
                 "full_descriptions": sorted(list(full_descriptions)),
             },
             "usage_notes": {
                 "training_prompts": "Use 'all_unique_labels' for comprehensive label-aware training",
+                "training_prompts_excluded_tag": "Use 'unique_labels_excluded_tag' for training without tag labels (标签/xxxx)",
                 "object_detection": "Use 'object_types' for class-specific detection tasks",
                 "attribute_prediction": "Use 'properties' for attribute/property prediction",
                 "full_context": "Use 'full_descriptions' for complete description generation",
@@ -1187,7 +1221,10 @@ class UnifiedProcessor:
         FileOperations.save_json_data(label_vocabulary, output_path, indent=2)
 
         logger.info(f"📋 Label vocabulary exported to {output_path}")
-        logger.info(f"   📊 {len(unique_labels)} unique labels")
+        logger.info(f"   📊 {len(unique_labels)} unique labels (all)")
+        logger.info(
+            f"   📊 {len(unique_labels_excluded_tag)} unique labels (excluding tag labels)"
+        )
         logger.info(f"   🔖 {len(object_types)} object types")
         logger.info(f"   🏷️  {len(properties)} properties")
         logger.info(f"   📝 {len(full_descriptions)} complete descriptions")
@@ -1290,28 +1327,40 @@ class UnifiedProcessor:
 
         return result
 
-    def _build_simple_summary(self, objects: List[Dict]) -> str:
+    def _build_rru_summary(self, objects: List[Dict[str, Any]]) -> str:
         """
-        RRU 汇总：按 desc 完整字符串聚合计数（包含组/备注等全部信息）。
-        形式：desc×N，使用中文逗号分隔；N=1 时不附 ×N。
+        Build RRU summary text by grouping descriptions with the same rules as BBU.
+        Special handling: remove ×1 suffix from 站点距离/* entries since they always appear once.
         """
-        if not objects:
-            return "无关图片"
-        counts = {}
+        summary_objects = []
         for obj in objects:
-            desc = obj.get("desc", "") or ""
+            desc = obj.get("desc", "")
+            if not isinstance(desc, str):
+                desc = str(desc)
             desc = desc.strip()
-            if desc:
-                counts[desc] = counts.get(desc, 0) + 1
-        if not counts:
+            if not desc:
+                continue
+            summary_objects.append({"desc": desc})
+
+        if not summary_objects:
             return "无关图片"
-        parts = []
-        for desc, n in counts.items():
-            if n == 1:
-                parts.append(desc)
-            else:
-                parts.append(f"{desc}×{n}")
-        return "，".join(parts)
+
+        try:
+            summary = build_summary_from_objects(summary_objects)
+            # Post-process: remove ×1 from 站点距离/* entries
+            # Split by Chinese comma, process each segment, then rejoin
+            segments = summary.split("，")
+            processed_segments = []
+            for segment in segments:
+                segment = segment.strip()
+                if segment.startswith("站点距离/") and segment.endswith("×1"):
+                    # Remove ×1 suffix for 站点距离/* entries
+                    processed_segments.append(segment[:-2])
+                else:
+                    processed_segments.append(segment)
+            return "，".join(processed_segments)
+        except ValueError:
+            return "无关图片"
 
 
 # TeacherSelector has been extracted to data_conversion.teacher_selector
@@ -1381,7 +1430,6 @@ def main():
         help="Continue processing after invalid samples are detected (skip them)",
     )
     parser.set_defaults(fail_fast=True)
-
 
     # New filtering flag
     parser.add_argument(

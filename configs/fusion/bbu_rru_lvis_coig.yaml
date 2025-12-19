@@ -3,13 +3,13 @@ targets:
     dataset: bbu
     train_jsonl: data/bbu_full_768_poly-need_review/train.jsonl
     val_jsonl: data/bbu_full_768_poly-need_review/val.jsonl
-    template: bbu_dense
+    template: target_dense
     ratio: 1.0
   - name: rru
     dataset: rru
     train_jsonl: data/rru_full_768_poly/train.jsonl
     val_jsonl: data/rru_full_768_poly/val.jsonl
-    template: rru_dense
+    template: target_dense
     ratio: 1.0
 
 sources:
@@ -18,7 +18,7 @@ sources:
     dataset: lvis
     train_jsonl: public_data/lvis/rescale_32_768_poly_max_12/train.jsonl
     ratio: 0.1
-    template: aux_dense
+    template: source_dense
     sample_without_replacement: true
     max_objects_per_image: 20
     augmentation_enabled: false

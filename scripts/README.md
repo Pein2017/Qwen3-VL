@@ -14,6 +14,7 @@ Canonical entrypoints for training, inference, and inspection runs. Prefer these
 | `debug_fusion_template_clone.py` | Regression probe for fusion template reuse (mask ratio / template cloning). | `docs/data/UNIFIED_FUSION_DATASET.md` |
 | `validate_sft_config.py` | Fast YAML validation for SFT configs (no model weights). | `docs/training/REFERENCE.md` |
 | `validate_dense_jsonl_contract.py` | Fast JSONL contract validation for dense-caption records. | `docs/data/DATA_JSONL_CONTRACT.md` |
+| `build_irrelevant_summary_jsonl.py` | Builds `data/irrelevant_summary/train.jsonl` from `data/irrelevant_summary/images/*.jpg|*.jpeg` with summary `无关图片` (dummy full-frame bbox). | `docs/data/DATA_JSONL_CONTRACT.md` |
 
 Usage tips
 - Run with `ms` conda env activated (`conda activate ms`), unless the script handles it.

@@ -42,7 +42,7 @@ def apply_augmentations(
         raise TypeError("augmentation pipeline must provide an 'apply' method")
 
     if rng is None:
-        rng = random
+        rng = random.Random(42)
 
     pil_images: List[Image.Image] = []
     for p in images:
