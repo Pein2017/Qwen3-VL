@@ -261,9 +261,34 @@ def test_atomic_snapshot_rotation_with_simulated_failure(tmp_path):
 class MockModel:
     device = "cpu"
 
+    def generate(self, **kwargs):
+        import torch
+
+        prompt_len = int(kwargs["input_ids"].size(1))
+        # Return dummy tokens: [prompt ...][generated ...]
+        return torch.zeros((1, prompt_len + 8), dtype=torch.long)
+
 
 class MockTokenizer:
-    pass
+    pad_token_id = 0
+    eos_token_id = 1
+
+    def apply_chat_template(self, messages, add_generation_prompt=True, tokenize=False, **kwargs):
+        # Minimal deterministic prompt for tests.
+        return "PROMPT"
+
+    def __call__(self, text, **kwargs):
+        import torch
+
+        n = 16
+        return {
+            "input_ids": torch.zeros((1, n), dtype=torch.long),
+            "attention_mask": torch.ones((1, n), dtype=torch.long),
+        }
+
+    def decode(self, tokens, **kwargs):
+        # Always return invalid JSON to trigger the parser failure path.
+        return "This is not valid JSON at all { broken"
 
 
 def test_json_parse_failure_fatal_with_debug_info(tmp_path):
@@ -275,7 +300,8 @@ def test_json_parse_failure_fatal_with_debug_info(tmp_path):
     )
     
     config = ReflectionConfig(
-        prompt_path=prompt_file,
+        decision_prompt_path=prompt_file,
+        ops_prompt_path=prompt_file,
         batch_size=2,
         allow_uncertain=True,
         max_operations=3,
@@ -285,49 +311,11 @@ def test_json_parse_failure_fatal_with_debug_info(tmp_path):
         model=MockModel(),  # type: ignore
         tokenizer=MockTokenizer(),  # type: ignore
         config=config,
-        guidance_repo=None,  # type: ignore
+        guidance_repo=type("_FakeRepo", (), {"load": lambda self: {}})(),  # type: ignore
     )
-    
-    ticket = GroupTicket(
-        group_id="QC-001",
-        mission="test",
-        label="pass",  # type: ignore
-        summaries=StageASummaries(per_image={"img1": "test"}),
-    )
-    
-    candidate = ExperienceCandidate(
-        candidate_index=0,
-        verdict="pass",
-        reason="test",
-        confidence=0.9,
-        signals=DeterministicSignals(
-            label_match=True,
-            self_consistency=None,
-            confidence=0.9,
-        ),
-        summary="test summary",
-        critique="test critique",
-    )
-    
-    record = ExperienceRecord(
-        ticket=ticket,
-        candidates=(candidate,),
-        winning_candidate=0,
-        guidance_step=1,
-    )
-    
-    bundle = ExperienceBundle(
-        mission="test",
-        records=(record,),
-        reflection_cycle=0,
-        guidance_step=1,
-    )
-    
-    # Invalid JSON response
-    invalid_json = "This is not valid JSON at all { broken"
-    
+
     with pytest.raises(ValueError, match="No valid JSON"):
-        engine._parse_reflection_response(invalid_json, bundle)
+        engine._generate_json_payload(system_template="noop", user_prompt="noop")
     
     # Verify debug_info was stored
     assert engine._last_debug_info is not None

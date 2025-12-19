@@ -137,3 +137,58 @@ def test_parse_two_line_protocol_rejects_third_state_and_extra_lines():
     bad_extra = "Verdict: 不通过\nReason: 缺失关键要素\n补充: xxx"
     ok3, _, _ = _parse_two_line_response(bad_extra)
     assert ok3 is False
+
+
+def test_anchor_only_match_is_not_mission_relevant_when_g0_has_specific_terms():
+    """If G0 has both a broad '设备' anchor and more specific terms, anchor-only matches
+    should not trigger mission-scoped fail-first (avoids false relevance)."""
+    stage_a = {"image_1": "BBU设备/未按要求配备挡风板×1"}
+    g0 = "至少需要检测到BBU设备，BBU安装螺丝且需要符合要求"
+    evidence = extract_mission_evidence(stage_a, mission_g0=g0)
+
+    assert not evidence.relevant_negative_hits
+    assert evidence.irrelevant_negative_hits
+
+
+def test_selection_does_not_override_single_image_without_negative_evidence():
+    ticket = GroupTicket(
+        group_id="QC-MULTI-001",
+        mission="挡风板安装检查",
+        label="pass",  # type: ignore[arg-type]
+        summaries=StageASummaries(per_image={"image_1": "挡风板/显示完整,安装方向正确×1"}),
+    )
+
+    decode = DecodeConfig(temperature=0.1, top_p=0.9, max_new_tokens=64)
+    base = Trajectory(
+        group_id=ticket.group_id,
+        mission=ticket.mission,
+        candidate_index=0,
+        decode=decode,
+        response_text="Verdict: 通过\nReason: Image1: 关键要点可确认且符合要求; 总结: 通过",
+        created_at=datetime.now(timezone.utc),
+    )
+    parsed = ParsedTrajectory(
+        base=base,
+        verdict="pass",
+        reason="Image1: 关键要点可确认且符合要求; 总结: 通过",
+        format_ok=True,
+    )
+    tws = TrajectoryWithSignals(
+        parsed=parsed,
+        signals=DeterministicSignals(label_match=True, self_consistency=None),
+    )
+
+    result = select_for_group(
+        ticket,
+        [tws],
+        mission_g0="至少需要检测到BBU设备并根据情况判断是否需要安装挡风板。若需要安装，则判断是否符合要求。",
+        guidance_step=1,
+        reflection_cycle=0,
+        reflection_change=None,
+        config=SelectionConfig(policy="top_label", tie_break="temperature"),
+        manual_review=ManualReviewConfig(min_verdict_agreement=0.8),
+    )
+
+    assert result.verdict == "pass"
+    assert "missing_multi_view" not in result.warnings
+    assert "multi_view_override" not in result.warnings

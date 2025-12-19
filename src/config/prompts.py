@@ -37,7 +37,7 @@ DATASET_PRIOR_RULES = {
         "- 可能混杂无关内容（如施工图纸、杂物等），仅识别与任务相关的对象。\n"
         "- 爱立信品牌BBU：不安装挡风板。\n"
         "- 一个华为挡风板对应着一个黄色箭头。如果有两个黄色箭头，那通常意为着存在两个挡风板。"
-        "- 仅当存在两台BBU时，在两台BBU之间安装挡风板；单台BBU无需安装。\n"
+        "- 仅当存在两台BBU时，在两台BBU之间必须安装挡风板；单台BBU通常无需安装。\n"
         "- 螺丝/挡风板与本体强关联，不会远离对应设备；BBU端光纤插头多为蓝白色且插在 BBU 设备上。\n"
         "- 标签通常为黄色纸质，贴在插头处或电线上。\n"
         "- 光纤对象：若同一根光纤被分段检测到（颜色/路径连续），必须合并为一个对象，不得拆分。\n"
@@ -57,6 +57,18 @@ DATASET_PRIOR_RULES = {
 }
 
 _DEFAULT_DATASET = "bbu"
+
+# ============================================================================
+# Mission-specific prior rules (appended to dataset priors)
+# ============================================================================
+# 任务特定先验规则：在数据集级别先验规则基础上，为特定任务添加额外规则
+MISSION_SPECIFIC_PRIOR_RULES: dict[str, str] = {
+    "挡风板安装检查": (
+        "- 爱立信品牌BBU：不安装挡风板。\n"
+        "- 一个华为挡风板对应着一个黄色箭头。如果有两个黄色箭头，那通常意为着存在两个挡风板。\n"
+        "- 仅当存在两台BBU时，在两台BBU之间必须安装挡风板；单台BBU通常无需安装。\n"
+    ),
+}
 
 # ============================================================================
 # Prompt Schemes
@@ -117,7 +129,9 @@ def build_dense_system_prompt(
 SYSTEM_PROMPT_JSON = build_dense_system_prompt(_DEFAULT_JSON_FORMAT, dataset="bbu")
 
 
-def build_summary_system_prompt(*, dataset: str | None = None) -> str:
+def build_summary_system_prompt(
+    *, dataset: str | None = None, mission: str | None = None
+) -> str:
     ds = _get_dataset(dataset)
     schema_raw = DATASET_SCHEMA_HINT.get(ds, "")
     prior_raw = DATASET_PRIOR_RULES.get(ds, "")
@@ -125,37 +139,51 @@ def build_summary_system_prompt(*, dataset: str | None = None) -> str:
         "".join(schema_raw) if isinstance(schema_raw, (tuple, list)) else schema_raw
     )
     prior = "".join(prior_raw) if isinstance(prior_raw, (tuple, list)) else prior_raw
+
+    # 添加任务特定先验规则
+    mission_prior = ""
+    if mission and mission in MISSION_SPECIFIC_PRIOR_RULES:
+        mission_prior_raw = MISSION_SPECIFIC_PRIOR_RULES[mission]
+        mission_prior = (
+            "".join(mission_prior_raw)
+            if isinstance(mission_prior_raw, (tuple, list))
+            else mission_prior_raw
+        )
+        if mission_prior:
+            mission_prior = f"\n【{mission}任务特定规则】\n{mission_prior}"
+
     return (
         """你是图像摘要助手。请始终使用简体中文作答。只返回一行中文摘要文本，不要任何解释或额外符号。
 
         无关图片输出协议（强规则）：
         - 若图片与任务无关或目标完全不可见：你必须只输出 无关图片（四个字），不得包含任何其它文字/标点/空格/解释。
-        - 证明文件、文档、报告、图纸/CAD/平面图/示意图、票据、聊天/手机截图等非现场照片，一律视为无关图片；禁止将此类图片描述为“室内场景/办公室/房间”等。
-        - 对于纯图纸/工程施工方案/设备安装示意图/机柜布局平面图等，只要可以判断为纸质或电子图纸（以线条、符号、表格为主），即使其中出现“BBU、机柜、挡风板”等文字或设备草图，也必须按 无关图片 处理，严禁推断为真实拍摄的BBU机房或生成任何“螺丝/挡风板/BBU设备”类 desc。
+        - 证明文件、文档、报告、图纸/CAD/平面图/示意图、票据、聊天/手机截图等非现场照片，一律视为无关图片；禁止将此类图片描述为"室内场景/办公室/房间"等。
+        - 对于纯图纸/工程施工方案/设备安装示意图/机柜布局平面图等，只要可以判断为纸质或电子图纸（以线条、符号、表格为主），即使其中出现"BBU、机柜、挡风板"等文字或设备草图，也必须按 无关图片 处理，严禁推断为真实拍摄的BBU机房或生成任何"螺丝/挡风板/BBU设备"类 desc。
 
         证据优先（反幻觉，最高优先级）：
-        - 先验规则仅用于**已被视觉证据确认存在**的对象；不得仅凭场景像“机房/室内/设备间”等就生成对象条目。
-        - 属性不确定时：保守输出“需复核”类 desc；严禁补全品牌/方向/合格性等不可见属性。
+        - 先验规则仅用于**已被视觉证据确认存在**的对象；不得仅凭场景像"机房/室内/设备间"等就生成对象条目。
+        - 属性不确定时：保守输出"需复核"类 desc；严禁补全品牌/方向/合格性等不可见属性。
         - 若无法从图像中确认任何与任务相关的目标存在：严格输出 无关图片（仅四个字）。
 
-        输出要求（保持中立、专注“证据罗列”，不直接判定工单通过/不通过）：
+        输出要求（保持中立、专注"证据罗列"，不直接判定工单通过/不通过）：
         1) 单行摘要覆盖该图片中检测到的所有相关对象，既要包含正向信息，也要完整保留异常/缺失/需复核等负向信息，不得因为大部分对象合格而省略少数问题点。
         2) 使用对象的 desc 原文作为分组键，不拆分或改写；相同 desc 合并为**desc×N**（×为全角乘号、紧贴N不留空格）。
         3) 排序：先按 desc 字数从少到多；若字数相同，保留首次出现的先后顺序。条目之间仅用中文逗号'，'分隔。
         4) desc 中若含**备注: …**保持原样放在该条目内部，不要额外拆出独立备注。
         5) 单句输出：整行不得换行，不要在末尾加句号'。'，不要多余空格或首尾分隔符。
-        6) 仅输出摘要文本；不得返回 JSON 或其它包装结构；不要额外生成“通过/不通过/合格/不合格/需整改”等判定性结论，这些由后续判决流程处理。
+        6) 仅输出摘要文本；不得返回 JSON 或其它包装结构；不要额外生成"通过/不通过/合格/不合格/需整改"等判定性结论，这些由后续判决流程处理。
 
         决策规则（严格二选一）：
         - 若存在与任务相关的任意目标：输出若干条**desc×N**，条目用中文逗号'，'分隔。
         - 否则：严格输出 无关图片（仅四个字），并且不允许在同一行再出现任何 desc、数字或说明性文字。
-        禁止单独输出“无法判断”等含糊短语；若无法识别具体类别，应在 desc 中如实表述（例如“标签/无法识别×1”），而不是整行写“无法判断”。
+        禁止单独输出"无法判断"等含糊短语；若无法识别具体类别，应在 desc 中如实表述（例如"标签/无法识别×1"），而不是整行写"无法判断"。
         在目标被严重遮挡/模糊且无法判断其类型时，不要猜测类别或合格性；若整图均为此类情况，可按 无关图片 处理。
 
         """
         + schema
         + "先验规则（与密集标注共享的业务知识）：\n"
         + prior
+        + mission_prior
         + """
 
 【严格禁止】
@@ -196,7 +224,7 @@ def build_summary_system_prompt_minimal() -> str:
 
 # Summary prompts
 # - TRAIN: minimal format-only prompt (avoid injecting business priors into the model).
-# - RUNTIME: richer prompt with schema + priors for Stage-A inference.
+# - RUNTIME: richer prompt with schema + priors for Stage-A inference (default, no mission).
 SYSTEM_PROMPT_SUMMARY_TRAIN = build_summary_system_prompt_minimal()
 SYSTEM_PROMPT_SUMMARY_RUNTIME = build_summary_system_prompt(dataset="bbu")
 # Backward-compat default for training pipelines.
@@ -247,28 +275,20 @@ def get_template_prompts(name: str | None) -> tuple[str, str]:
         raise ValueError(f"Invalid template name '{name}'; no fallback is permitted")
 
     registry = {
-        # auxiliary
-        "aux_dense": (SYSTEM_PROMPT_AUX, USER_PROMPT_AUX),
+        # Target datasets (BBU, RRU) - unified dense template
+        "target_dense": (
+            build_dense_system_prompt(_DEFAULT_JSON_FORMAT, dataset=None),
+            USER_PROMPT_JSON,
+        ),
+        # Source datasets (LVIS, COCO, etc.) - unified dense template
+        "source_dense": (SYSTEM_PROMPT_AUX, USER_PROMPT_AUX),
+        # Summary mode (unified for all datasets)
+        "summary": (
+            SYSTEM_PROMPT_SUMMARY_TRAIN,
+            USER_PROMPT_SUMMARY,
+        ),
         # language-only chat
         "chatml": (SYSTEM_PROMPT_CHAT, USER_PROMPT_CHAT),
-        # BBU
-        "bbu_dense": (
-            build_dense_system_prompt(_DEFAULT_JSON_FORMAT, dataset="bbu"),
-            USER_PROMPT_JSON,
-        ),
-        "bbu_summary": (
-            SYSTEM_PROMPT_SUMMARY_TRAIN,
-            USER_PROMPT_SUMMARY,
-        ),
-        # RRU
-        "rru_dense": (
-            build_dense_system_prompt(_DEFAULT_JSON_FORMAT, dataset="rru"),
-            USER_PROMPT_JSON,
-        ),
-        "rru_summary": (
-            SYSTEM_PROMPT_SUMMARY_TRAIN,
-            USER_PROMPT_SUMMARY,
-        ),
     }
 
     try:
@@ -304,4 +324,5 @@ __all__ = [
     "build_summary_system_prompt_minimal",
     "DATASET_PRIOR_RULES",
     "DATASET_SCHEMA_HINT",
+    "MISSION_SPECIFIC_PRIOR_RULES",
 ]

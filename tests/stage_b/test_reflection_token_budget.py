@@ -88,7 +88,12 @@ def _make_record(group_id: str, mission: str, label: str, reason: str, *,
         group_id=group_id,
         mission=mission,
         label=label,  # type: ignore[arg-type]
-        summaries=StageASummaries(per_image={"a.jpg": "清晰，无遮挡。", "b.jpg": "角度不足。"}),
+        summaries=StageASummaries(
+            per_image={
+                "a.jpg": ("清晰，无遮挡，摘要很长。" * 50),
+                "b.jpg": ("角度不足，摘要很长。" * 50),
+            }
+        ),
     )
     return ExperienceRecord(
         ticket=ticket,
@@ -100,7 +105,12 @@ def _make_record(group_id: str, mission: str, label: str, reason: str, *,
 
 def _engine_with_budget(budget: int) -> ReflectionEngine:
     cfg = ReflectionConfig(
-        prompt_path=__import__("pathlib").Path("configs/prompts/stage_b_reflection_prompt.txt"),
+        decision_prompt_path=__import__("pathlib").Path(
+            "configs/prompts/stage_b_reflection_decision_prompt.txt"
+        ),
+        ops_prompt_path=__import__("pathlib").Path(
+            "configs/prompts/stage_b_reflection_ops_prompt.txt"
+        ),
         batch_size=8,
         allow_uncertain=True,
         token_budget=budget,
@@ -128,7 +138,9 @@ def test_token_budget_trims_records():
     ]
     bundle = ExperienceBundle(mission="MISSION_X", records=tuple(recs), reflection_cycle=0, guidance_step=1)
 
-    prompt = engine._build_reflection_prompt(bundle)
+    prompt = engine._build_reflection_prompt(
+        bundle, system_template=engine.ops_prompt_template
+    )
     m = re.search(r"批次: (\d+) 组", prompt)
     assert m, f"missing 批次 line in prompt: {prompt[:200]}"
     kept = int(m.group(1))
@@ -145,7 +157,9 @@ def test_prioritization_keeps_contradictions_first():
     # budget should allow only one block; we expect HAS_CONTRA present
     bundle = ExperienceBundle(mission="MISSION_Y", records=(rec_a, rec_b), reflection_cycle=0, guidance_step=1)
 
-    prompt = engine._build_reflection_prompt(bundle)
+    prompt = engine._build_reflection_prompt(
+        bundle, system_template=engine.ops_prompt_template
+    )
     m = re.search(r"批次: (\d+) 组", prompt)
     kept = int(m.group(1)) if m else 0
     assert kept == 1, "expected only one record due to budget"

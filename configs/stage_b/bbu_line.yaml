@@ -1,7 +1,7 @@
 stage_a_paths:
   # - output_post/stage_a/挡风板安装检查_stage_a.jsonl
-  # - output_post/stage_a/BBU接地线检查_stage_a.jsonl
-  - output_post/stage_a/BBU安装方式检查（正装）_stage_a.jsonl
+  - output_post/stage_a/BBU接地线检查_stage_a.jsonl
+  # - output_post/stage_a/BBU安装方式检查（正装）_stage_a.jsonl
 seed: 17
 
 model:
@@ -49,7 +49,7 @@ sampler:
 reflection:
   decision_prompt_path: configs/prompts/stage_b_reflection_decision_prompt.txt
   ops_prompt_path: configs/prompts/stage_b_reflection_ops_prompt.txt
-  batch_size: 16  # Debug: 保持较小批次，便于观察每次反思
+  batch_size: 32  # Debug: 保持较小批次，便于观察每次反思
   max_operations: 5  # Debug: 每次最多 3 条经验修改
 
   temperature: 0.1  # Higher temperature for more diverse guidance entries

@@ -286,6 +286,9 @@ class GuidanceRepository:
             _normalize_text(text): key for key, text in experiences.items()
         }
 
+        # Track removed keys to avoid duplicate remove operations in the same batch
+        removed_keys_in_batch: set[str] = set()
+
         for op in operations:
             normalized_op = op.op
             if normalized_op not in {"upsert", "remove", "merge"}:
@@ -305,13 +308,20 @@ class GuidanceRepository:
             if normalized_op == "remove":
                 if key is None:
                     continue
+                # Skip if already removed in this batch (deduplication)
+                if key in removed_keys_in_batch:
+                    continue
                 if key in experiences:
                     del experiences[key]
                     metadata.pop(key, None)
+                    removed_keys_in_batch.add(key)
                     applied_any = True
                 else:
-                    logger.warning(
-                        f"remove operation skipped for missing key '{key}' in mission {current.mission}"
+                    # Model suggested removing a non-existent key (likely based on stale information).
+                    # This is expected and handled gracefully, so log at debug level.
+                    logger.debug(
+                        f"remove operation skipped for missing key '{key}' in mission {current.mission} "
+                        f"(key may have been removed in a previous operation or model used stale information)"
                     )
                 continue
 
@@ -678,6 +688,65 @@ class GuidanceRepository:
         self.invalidate()
 
         return removed_keys
+
+    def increment_hit_count(
+        self,
+        mission: str,
+        experience_keys: Sequence[str],
+    ) -> None:
+        """Increment hit count for experiences that led to correct predictions.
+
+        Args:
+            mission: The mission containing the experiences.
+            experience_keys: Keys of experiences to increment hit count for.
+        """
+        guidance_map = self.load()
+        current = guidance_map.get(mission)
+        if current is None:
+            return
+
+        metadata = dict(current.metadata)
+        now = _now()
+        updated_any = False
+
+        for key in experience_keys:
+            if key not in metadata:
+                continue
+
+            meta = metadata[key]
+            new_hit_count = meta.hit_count + 1
+            new_confidence = new_hit_count / (new_hit_count + meta.miss_count + 1e-5)
+
+            metadata[key] = ExperienceMetadata(
+                updated_at=now,
+                reflection_id=meta.reflection_id,
+                sources=meta.sources,
+                rationale=meta.rationale,
+                hit_count=new_hit_count,
+                miss_count=meta.miss_count,
+                confidence=new_confidence,
+            )
+            updated_any = True
+            logger.debug(
+                f"Incremented hit_count for {key} in {mission}: "
+                f"hit={new_hit_count}, confidence={new_confidence:.3f}"
+            )
+
+        if not updated_any:
+            return
+
+        updated = MissionGuidance(
+            mission=current.mission,
+            experiences=current.experiences,
+            step=current.step,
+            updated_at=now,
+            metadata=metadata,
+        )
+
+        guidance_map = dict(guidance_map)
+        guidance_map[mission] = updated
+        self._write(guidance_map)
+        self.invalidate()
 
     def increment_miss_count(
         self,

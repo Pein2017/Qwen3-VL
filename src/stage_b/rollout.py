@@ -23,6 +23,7 @@ from .types import (
     Trajectory,
 )
 from .utils.chinese import normalize_spaces, to_simplified
+from .utils.perf import maybe_empty_cache
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +70,9 @@ def _normalize_verdict(text: str) -> Optional[GroupLabel]:
     if cleaned in {"不通过", "fail", "未通过", "不通过。"}:
         return "fail"
     # Third-state / pending phrases are forbidden in Stage-B inference outputs.
-    if any(term in cleaned for term in ["复核", "不确定", "无法判断", "无法判定", "待复核"]):
+    if any(
+        term in cleaned for term in ["复核", "不确定", "无法判断", "无法判定", "待复核"]
+    ):
         return None
     if cleaned in {"通过需复核", "通过需要复核", "通过需要复核。", "通过需复核。"}:
         return None
@@ -210,14 +213,16 @@ class RolloutSampler:
             or (eos_ids[0] if eos_ids else None),
             "eos_token_id": eos_ids or None,
             "return_dict_in_generate": True,
+            "use_cache": True,  # Explicitly enable KV cache for faster inference
         }
         generator_kwargs = {k: v for k, v in generator_kwargs.items() if v is not None}
 
         if decode.seed is not None:
             torch.manual_seed(decode.seed + sample_offset)
 
-        with torch.no_grad():
+        with torch.inference_mode():
             generation = self.model.generate(**inputs, **generator_kwargs)  # type: ignore[operator]
+            maybe_empty_cache("rollout.generate")
 
         sequences = (
             generation.sequences if hasattr(generation, "sequences") else generation
@@ -282,9 +287,9 @@ class RolloutSampler:
             prompts.append(self._build_prompt(ticket, guidance_map[ticket.mission]))
 
         per_group: Dict[str, List[ParsedTrajectory]] = {
-            ticket.group_id: [] for ticket in tickets
+            ticket.key: [] for ticket in tickets
         }
-        counters: Dict[str, int] = {ticket.group_id: 0 for ticket in tickets}
+        counters: Dict[str, int] = {ticket.key: 0 for ticket in tickets}
 
         for decode in self.config.grid:
             for sample_index in range(self.config.samples_per_decode):
@@ -294,8 +299,9 @@ class RolloutSampler:
 
                 current_time = datetime.now(timezone.utc)
                 for ticket, response_text in zip(tickets, responses):
-                    candidate_index = counters[ticket.group_id]
-                    counters[ticket.group_id] += 1
+                    ticket_key = ticket.key
+                    candidate_index = counters[ticket_key]
+                    counters[ticket_key] += 1
 
                     # Normalize response text (convert to simplified Chinese and normalize spaces)
                     normalized_response_text = to_simplified(response_text)
@@ -320,7 +326,7 @@ class RolloutSampler:
                         reason = to_simplified(reason)
                         reason = normalize_spaces(reason)
 
-                    per_group[ticket.group_id].append(
+                    per_group[ticket_key].append(
                         ParsedTrajectory(
                             base=base,
                             verdict=verdict,
@@ -328,6 +334,8 @@ class RolloutSampler:
                             format_ok=format_ok,
                         )
                     )
+
+        maybe_empty_cache("rollout.batch_end")
 
         return per_group
 

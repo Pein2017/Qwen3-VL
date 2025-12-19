@@ -122,13 +122,13 @@ def ingest_stage_a(
                         metadata=None,
                     )
 
-
                     ticket = GroupTicket(
                         group_id=group_id,
                         mission=mission,
                         label=label,
                         summaries=StageASummaries(per_image=normalized),
                         provenance=provenance,
+                        uid=f"{group_id}::{label}",
                     )
                     records.append(ticket)
                 except Exception as exc:  # noqa: BLE001 - contextual logging

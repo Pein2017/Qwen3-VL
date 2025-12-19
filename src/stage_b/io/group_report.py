@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from collections import defaultdict
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional
+from typing import Dict, Iterable, List, Mapping, Optional, Tuple
 
 from ..utils.chinese import normalize_spaces, to_simplified
 
@@ -22,8 +22,8 @@ def _load_jsonl(path: Path) -> List[dict]:
         return [json.loads(line) for line in f if line.strip()]
 
 
-def _stage_a_labels(paths: Optional[Iterable[Path]]) -> Dict[tuple, str]:
-    labels: Dict[tuple, str] = {}
+def _stage_a_labels(paths: Optional[Iterable[Path]]) -> Dict[Tuple[str, str], str]:
+    labels: Dict[Tuple[str, str], str] = {}
     if not paths:
         return labels
     for path in paths:
@@ -34,16 +34,40 @@ def _stage_a_labels(paths: Optional[Iterable[Path]]) -> Dict[tuple, str]:
             mission = item.get("mission")
             label = item.get("label")
             if gid and mission and label:
-                labels[(mission, gid)] = label
+                ticket_key = f"{gid}::{label}"
+                labels[(str(mission), ticket_key)] = str(label)
     return labels
 
 
-def _index_by_group(items: Iterable[dict], key: str = "group_id") -> Dict[str, List[dict]]:
+def _ticket_key_from_payload(payload: Mapping[str, object]) -> Optional[str]:
+    raw_key = payload.get("ticket_key")
+    if isinstance(raw_key, str) and raw_key.strip():
+        return raw_key.strip()
+
+    gid = payload.get("group_id")
+    if gid is None:
+        return None
+    gid_str = str(gid).strip()
+    if not gid_str:
+        return None
+
+    # Prefer explicit ground-truth label fields when present.
+    raw_label = payload.get("gt_label")
+    if raw_label is None:
+        raw_label = payload.get("label")
+    if isinstance(raw_label, str) and raw_label.strip():
+        return f"{gid_str}::{raw_label.strip().lower()}"
+
+    # Backward-compat: fall back to group_id only when label is missing.
+    return gid_str
+
+
+def _index_by_ticket_key(items: Iterable[dict]) -> Dict[str, List[dict]]:
     grouped: Dict[str, List[dict]] = defaultdict(list)
     for item in items:
-        gid = item.get(key)
-        if gid:
-            grouped[gid].append(item)
+        key = _ticket_key_from_payload(item)
+        if key:
+            grouped[key].append(item)
     return grouped
 
 
@@ -77,24 +101,38 @@ def _normalize_reason(reason: Optional[str]) -> Optional[str]:
     return normalized
 
 
-def build_group_report(run_dir: Path, stage_a_paths: Optional[Iterable[Path]] = None) -> Path:
-    """Create consolidated per-group report JSONL under run_dir."""
+def build_group_report(
+    run_dir: Path,
+    stage_a_paths: Optional[Iterable[Path]] = None,
+    *,
+    output_path: Optional[Path] = None,
+) -> Path:
+    """Create consolidated per-group report JSONL.
+
+    By default this writes `group_report.jsonl` under `run_dir`. Callers may
+    override `output_path` to write snapshots with distinct filenames.
+    """
 
     selections = _load_jsonl(run_dir / "selections.jsonl")
     trajectories = _load_jsonl(run_dir / "trajectories.jsonl")
-    manual = _index_by_group(_load_jsonl(run_dir / "manual_review_queue.jsonl"))
-    need_review = _index_by_group(_load_jsonl(run_dir / "need_review_queue.jsonl"))
+    manual = _index_by_ticket_key(_load_jsonl(run_dir / "manual_review_queue.jsonl"))
+    need_review = _index_by_ticket_key(_load_jsonl(run_dir / "need_review_queue.jsonl"))
     reflection = _reflection_ops(run_dir / "reflection.jsonl")
     labels = _stage_a_labels(stage_a_paths)
 
-    sel_map = {item["group_id"]: item for item in selections if item.get("group_id")}
+    sel_map: Dict[str, dict] = {}
+    for item in selections:
+        ticket_key = _ticket_key_from_payload(item)
+        if ticket_key:
+            sel_map[ticket_key] = item
     cand_map = defaultdict(list)
     for item in trajectories:
-        gid = item.get("group_id")
-        if gid:
+        ticket_key = _ticket_key_from_payload(item)
+        if ticket_key:
             reason = item.get("reason") or item.get("result", {}).get("reason")
-            cand_map[gid].append(
+            cand_map[ticket_key].append(
                 {
+                    "mission": item.get("mission"),
                     "candidate_index": item.get("candidate_index") or item.get("result", {}).get("candidate_index"),
                     "verdict": item.get("verdict") or item.get("result", {}).get("verdict"),
                     "reason": _normalize_reason(reason),
@@ -110,14 +148,19 @@ def build_group_report(run_dir: Path, stage_a_paths: Optional[Iterable[Path]] = 
         | set(cand_map.keys())
         | set(manual.keys())
         | set(need_review.keys())
-        | set(reflection.keys())
     )
 
-    out_path = run_dir / "group_report.jsonl"
+    out_path = output_path if output_path is not None else (run_dir / "group_report.jsonl")
     with out_path.open("w", encoding="utf-8") as f:
-        for gid in sorted(group_ids):
-            sel = sel_map.get(gid)
+        for ticket_key in sorted(group_ids):
+            base_gid = ticket_key.split("::", 1)[0]
+            sel = sel_map.get(ticket_key)
             mission = sel.get("mission") if sel else None
+            if mission is None:
+                for pool in (manual.get(ticket_key), need_review.get(ticket_key), cand_map.get(ticket_key)):
+                    if pool:
+                        mission = pool[0].get("mission")
+                        break
             selection_result = sel.get("result") if sel else None
             
             # Normalize reason in selection_result
@@ -127,7 +170,7 @@ def build_group_report(run_dir: Path, stage_a_paths: Optional[Iterable[Path]] = 
             
             # Normalize fields in need-review entries
             normalized_need_review = []
-            for review_entry in need_review.get(gid, []):
+            for review_entry in need_review.get(ticket_key, []):
                 normalized_entry = dict(review_entry)
                 if "reason" in normalized_entry:
                     normalized_entry["reason"] = _normalize_reason(normalized_entry.get("reason"))
@@ -135,19 +178,28 @@ def build_group_report(run_dir: Path, stage_a_paths: Optional[Iterable[Path]] = 
             
             # Normalize text in reflection entries
             normalized_reflection = []
-            for refl_entry in reflection.get(gid, []):
+            refl_entries = reflection.get(ticket_key, [])
+            if not refl_entries and base_gid != ticket_key:
+                # Backward-compat: older runs keyed reflection evidence by bare group_id.
+                refl_entries = reflection.get(base_gid, [])
+            for refl_entry in refl_entries:
                 normalized_entry = dict(refl_entry)
                 if "text" in normalized_entry:
                     normalized_entry["text"] = _normalize_reason(normalized_entry.get("text"))
                 normalized_reflection.append(normalized_entry)
 
             record = {
-                "group_id": gid,
+                "ticket_key": ticket_key,
+                "group_id": base_gid,
                 "mission": mission,
-                "label": labels.get((mission, gid)),
+                "label": (
+                    labels.get((str(mission), ticket_key))
+                    if mission
+                    else (ticket_key.split("::", 1)[1] if "::" in ticket_key else None)
+                ),
                 "selection": selection_result,
-                "candidates": cand_map.get(gid, []),
-                "manual_review": manual.get(gid, []),
+                "candidates": cand_map.get(ticket_key, []),
+                "manual_review": manual.get(ticket_key, []),
                 "need_review_queue": normalized_need_review,
                 "reflection": normalized_reflection,
             }

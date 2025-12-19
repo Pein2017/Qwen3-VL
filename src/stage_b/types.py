@@ -141,6 +141,17 @@ class GroupTicket:
     label: GroupLabel
     summaries: StageASummaries
     provenance: Optional[LabelProvenance] = None
+    uid: Optional[str] = None
+
+    @property
+    def key(self) -> str:
+        """Stable unique key for internal bookkeeping.
+
+        Some datasets may contain duplicate `group_id` with different labels.
+        Stage-B therefore treats `(group_id, label)` as the unique identity and
+        uses `ticket_key = "{group_id}::{label}"` in artifacts and reflection.
+        """
+        return self.uid or f"{self.group_id}::{self.label}"
 
 
 @dataclass(frozen=True)
@@ -282,6 +293,8 @@ class ExperienceRecord:
     candidates: Tuple[ExperienceCandidate, ...]
     winning_candidate: Optional[int]
     guidance_step: int
+    epoch_step: Optional[int] = None
+    global_step: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -304,6 +317,9 @@ class ReflectionProposal:
     operations: Tuple[ExperienceOperation, ...]
     evidence_group_ids: Tuple[str, ...]
     uncertainty_note: Optional[str] = None
+    # Ticket keys that the reflection model declares "no evidence / cannot explain"
+    # even after seeing the GT label. These are candidates for stop-gradient review.
+    no_evidence_group_ids: Tuple[str, ...] = field(default_factory=tuple)
     text: Optional[str] = None
 
 

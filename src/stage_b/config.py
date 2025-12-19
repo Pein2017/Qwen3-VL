@@ -28,8 +28,8 @@ class GuidanceConfig:
 
 @dataclass(frozen=True)
 class OutputConfig:
-    root: Path
-    run_name: str  # All outputs go under {root}/{run_name}/
+    root: Path  # Base output directory
+    run_name: str  # All outputs go under {root}/{mission_name}/{run_name}/
     trajectories_path: Path
     selections_jsonl: Path
     group_report: bool = True
@@ -40,6 +40,7 @@ class ModelConfig:
     model_name_or_path: str
     torch_dtype: str
     device_map: str
+    attn_implementation: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -56,7 +57,8 @@ class SignalsConfig:
 
 @dataclass(frozen=True)
 class ReflectionConfig:
-    prompt_path: Path
+    decision_prompt_path: Path
+    ops_prompt_path: Path
     batch_size: int
     max_operations: Optional[int] = None  # Per reflection cycle cap; None = unlimited
     allow_uncertain: bool = False
@@ -65,9 +67,12 @@ class ReflectionConfig:
     change_cap_per_epoch: Optional[int] = None
     temperature: float = 1.0
     top_p: float = 0.95
+    repetition_penalty: float = 1.0
     max_new_tokens: int = 1024
     max_reflection_length: int = 4096
     token_budget: int = 4096  # Token budget for reflection prompt packing
+    retry_budget_per_group_per_epoch: int = 2
+    max_calls_per_epoch: Optional[int] = None  # decision+ops calls per epoch; None = unlimited
 
 
 @dataclass(frozen=True)
@@ -99,7 +104,8 @@ class SelectionConfig:
 @dataclass(frozen=True)
 class RunnerConfig:
     epochs: int
-    rollout_batch_size: int = 1
+    per_rank_rollout_batch_size: int
+    logging_steps: int = 256
 
 
 @dataclass(frozen=True)
@@ -205,10 +211,10 @@ def _load_output(section: Mapping[str, Any]) -> OutputConfig:
     run_name = str(_require(section, "run_name", "output section"))
     group_report = bool(section.get("group_report", True))
 
-    # Base directory for this run: {root}/{run_name}
+    # Base directory for this run: {root}/{mission_name}/{run_name}
     # Mission-specific paths will be created dynamically in runner
-    # These are placeholders - actual paths will be {root}/{run_name}/{mission}/*
-    base_dir = root / run_name
+    # These are placeholders - actual paths will be {root}/{mission_name}/{run_name}/*
+    base_dir = root / "placeholder" / run_name  # Placeholder, actual path set in runner
     trajectories_path = (
         base_dir / "trajectories.jsonl"
     )  # Placeholder, will be mission-specific
@@ -231,23 +237,31 @@ def _load_model(section: Mapping[str, Any]) -> ModelConfig:
     dtype_value = str(dtype_raw)
     device_map_raw = _require(section, "device_map", "model section")
     device_map_value = str(device_map_raw)
+    attn_impl_raw = section.get("attn_implementation") or section.get("attn_impl")
+    attn_impl_value = str(attn_impl_raw) if attn_impl_raw is not None else None
     return ModelConfig(
         model_name_or_path=model_name,
         torch_dtype=dtype_value,
         device_map=device_map_value,
+        attn_implementation=attn_impl_value,
     )
 
 
 def _load_signals(section: Mapping[str, Any]) -> SignalsConfig:
     store_confidence = bool(section.get("store_confidence", False))
-    enable_consistency = bool(_require(section, "enable_consistency", "signals section"))
+    enable_consistency = bool(
+        _require(section, "enable_consistency", "signals section")
+    )
     return SignalsConfig(
         store_confidence=store_confidence, enable_consistency=enable_consistency
     )
 
 
 def _load_reflection(section: Mapping[str, Any]) -> ReflectionConfig:
-    prompt_path = Path(_require(section, "prompt_path", "reflection section"))
+    decision_prompt_path = Path(
+        _require(section, "decision_prompt_path", "reflection section")
+    )
+    ops_prompt_path = Path(_require(section, "ops_prompt_path", "reflection section"))
     batch_size = int(_require(section, "batch_size", "reflection section"))
     if batch_size <= 0:
         raise ValueError("reflection.batch_size must be > 0")
@@ -272,6 +286,7 @@ def _load_reflection(section: Mapping[str, Any]) -> ReflectionConfig:
         raise ValueError("reflection.change_cap_per_epoch must be > 0 if set")
     temperature = float(section.get("temperature", 1.0))
     top_p = float(section.get("top_p", 0.95))
+    repetition_penalty = float(section.get("repetition_penalty", 1.0))
     max_new_tokens = int(section.get("max_new_tokens", 1024))
     max_reflection_length = int(section.get("max_reflection_length", 4096))
     if max_reflection_length <= 0:
@@ -280,8 +295,19 @@ def _load_reflection(section: Mapping[str, Any]) -> ReflectionConfig:
     if token_budget <= 0:
         raise ValueError("reflection.token_budget must be > 0")
 
+    retry_budget_raw = section.get("retry_budget_per_group_per_epoch", 2)
+    retry_budget_per_group_per_epoch = int(retry_budget_raw)
+    if retry_budget_per_group_per_epoch < 0:
+        raise ValueError("reflection.retry_budget_per_group_per_epoch must be >= 0")
+
+    max_calls_raw = section.get("max_calls_per_epoch")
+    max_calls_per_epoch = int(max_calls_raw) if max_calls_raw is not None else None
+    if max_calls_per_epoch is not None and max_calls_per_epoch <= 0:
+        raise ValueError("reflection.max_calls_per_epoch must be > 0 if set")
+
     return ReflectionConfig(
-        prompt_path=prompt_path,
+        decision_prompt_path=decision_prompt_path,
+        ops_prompt_path=ops_prompt_path,
         batch_size=batch_size,
         max_operations=max_operations_val,
         allow_uncertain=allow_uncertain,
@@ -290,9 +316,12 @@ def _load_reflection(section: Mapping[str, Any]) -> ReflectionConfig:
         change_cap_per_epoch=change_cap_per_epoch,
         temperature=temperature,
         top_p=top_p,
+        repetition_penalty=repetition_penalty,
         max_new_tokens=max_new_tokens,
         max_reflection_length=max_reflection_length,
         token_budget=token_budget,
+        retry_budget_per_group_per_epoch=retry_budget_per_group_per_epoch,
+        max_calls_per_epoch=max_calls_per_epoch,
     )
 
 
@@ -335,15 +364,22 @@ def _load_runner(section: Mapping[str, Any]) -> RunnerConfig:
     epochs = int(_require(section, "epochs", "runner section"))
     if epochs <= 0:
         raise ValueError("runner.epochs must be > 0")
-    rollout_batch_size = int(section.get("rollout_batch_size", 1))
-    if rollout_batch_size <= 0:
-        raise ValueError("runner.rollout_batch_size must be > 0")
-    return RunnerConfig(epochs=epochs, rollout_batch_size=rollout_batch_size)
+    per_rank_rollout_batch_size = int(section.get("per_rank_rollout_batch_size", 1))
+    if per_rank_rollout_batch_size <= 0:
+        raise ValueError("runner.per_rank_rollout_batch_size must be > 0")
+    logging_steps = int(section.get("logging_steps", 256))
+    if logging_steps <= 0:
+        raise ValueError("runner.logging_steps must be > 0")
+    return RunnerConfig(
+        epochs=epochs,
+        per_rank_rollout_batch_size=per_rank_rollout_batch_size,
+        logging_steps=logging_steps,
+    )
 
 
 def _load_guidance_lifecycle(
     section: Optional[Mapping[str, Any]],
-    ) -> Optional[GuidanceLifecycleConfig]:
+) -> Optional[GuidanceLifecycleConfig]:
     """Load optional guidance lifecycle configuration."""
     if section is None:
         return None

@@ -136,7 +136,22 @@ def _extract_g0_keywords(g0: str) -> Tuple[str, ...]:
             continue
         seen.add(t)
         ordered.append(t)
-    return tuple(ordered)
+    # Expand common verb-prefix patterns (derived from G0 itself) to improve
+    # relevance matching without hard-coding a global noun glossary.
+    expanded: List[str] = []
+    for t in ordered:
+        expanded.append(t)
+        if t.startswith("安装") and len(t) > 2:
+            expanded.append(t[2:])
+    # De-dup again while keeping order.
+    seen2: set[str] = set()
+    out: List[str] = []
+    for t in expanded:
+        if t in seen2:
+            continue
+        seen2.add(t)
+        out.append(t)
+    return tuple(out)
 
 
 def _is_negated(text: str, *, hit_start: int) -> bool:
@@ -161,14 +176,27 @@ def _is_mission_relevant(
         return False
     g0_norm = _normalize_for_match(mission_g0)
     clause_norm = _normalize_for_match(clause)
+    keywords = _extract_g0_keywords(mission_g0)
+
+    matched = [kw for kw in keywords if kw and kw in clause_norm]
     if subject:
         subject_norm = _normalize_for_match(subject)
-        if subject_norm and subject_norm in g0_norm:
-            return True
-    for kw in _extract_g0_keywords(mission_g0):
-        if kw and kw in clause_norm:
-            return True
-    return False
+        if subject_norm and subject_norm in g0_norm and subject_norm not in matched:
+            matched.append(subject_norm)
+
+    if not matched:
+        return False
+
+    # If G0 contains both a broad "设备" anchor and more specific items,
+    # do not treat anchor-only matches as mission-relevant to avoid false
+    # relevance when Stage-A encodes other topics under the device clause.
+    anchors = [kw for kw in keywords if kw.endswith("设备")]
+    if anchors:
+        non_anchors = [kw for kw in keywords if kw not in anchors]
+        if non_anchors and all(m in anchors for m in matched):
+            return False
+
+    return True
 
 
 @dataclass(frozen=True)
@@ -212,10 +240,16 @@ def extract_mission_evidence(
         text = to_simplified(raw_text)
         text = normalize_spaces(text)
 
-        # Split into coarse clauses for relevance scoping.
-        clauses = [c.strip() for c in re.split(r"[;；\\n]+", text) if c.strip()]
-        if not clauses:
-            clauses = [text.strip()]
+        # Split Stage-A summaries into object-level entries:
+        # - Stage-A uses Chinese comma "，" between entries
+        # - English commas are used inside an entry for attributes and MUST NOT split.
+        coarse = [c.strip() for c in re.split(r"[;；\\n]+", text) if c.strip()]
+        if not coarse:
+            coarse = [text.strip()] if text.strip() else []
+        clauses: List[str] = []
+        for part in coarse:
+            sub = [seg.strip() for seg in part.split("，") if seg.strip()]
+            clauses.extend(sub if sub else [part])
 
         for clause in clauses:
             clause_norm = _normalize_for_match(clause)
@@ -228,6 +262,9 @@ def extract_mission_evidence(
             for phrase in PENDING_SIGNAL_PHRASES:
                 if phrase in clause_norm:
                     pending.append(f"{image_key}:{phrase}:{_strip_count_suffix(clause)}")
+            has_soft_uncertainty = any(
+                phrase in clause_norm for phrase in PENDING_SIGNAL_PHRASES
+            ) or (REMARK_SOFT_MARKER in clause_norm)
 
             # Pattern-first negative evidence.
             for match in _NONCOMPLIANCE_PATTERN_RE.finditer(clause_norm):
@@ -235,6 +272,10 @@ def extract_mission_evidence(
                 if _is_negated(clause_norm, hit_start=hit_start) or _is_uncertain_context(
                     clause_norm, hit_start=hit_start
                 ):
+                    continue
+                if has_soft_uncertainty:
+                    # Treat negatives inside "只显示部分/无法判断/需复核" entries as soft signals;
+                    # do not allow them to trigger deterministic fail-first overrides.
                     continue
                 snippet = _strip_count_suffix(match.group(0))
                 hit = FailFirstHit(
@@ -261,6 +302,8 @@ def extract_mission_evidence(
                     if _is_negated(clause_norm, hit_start=idx) or _is_uncertain_context(
                         clause_norm, hit_start=idx
                     ):
+                        continue
+                    if has_soft_uncertainty:
                         continue
                     hit = FailFirstHit(
                         image_key=image_key,

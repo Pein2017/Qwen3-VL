@@ -37,6 +37,38 @@ def test_shard_bounds_partitions_cover_range(total: int, world_size: int) -> Non
         assert max(sizes) - min(sizes) <= 1
 
 
+@pytest.mark.parametrize(
+    ("world_size", "per_rank", "total"),
+    [
+        # Final rollout batch smaller than global_batch_size = world_size * per_rank.
+        (8, 2, 3),
+        (8, 2, 15),
+        (8, 2, 16),
+        (8, 4, 1),
+        (8, 4, 31),
+        (8, 4, 32),
+        (2, 16, 1),
+        (2, 16, 31),
+        (2, 16, 32),
+    ],
+)
+def test_shard_bounds_never_exceeds_per_rank_when_total_leq_global(
+    world_size: int, per_rank: int, total: int
+) -> None:
+    global_batch_size = world_size * per_rank
+    assert total <= global_batch_size
+
+    shard_sizes: list[int] = []
+    all_indices: list[int] = []
+    for rank in range(world_size):
+        start, end = _shard_bounds(total, world_size=world_size, rank=rank)
+        shard_sizes.append(end - start)
+        all_indices.extend(range(start, end))
+
+    assert sorted(all_indices) == list(range(total))
+    assert all(size <= per_rank for size in shard_sizes)
+
+
 def test_shard_bounds_invalid_rank_raises() -> None:
     with pytest.raises(ValueError):
         _shard_bounds(10, world_size=2, rank=-1)
@@ -95,4 +127,3 @@ def test_gather_object_mocked_dist(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(stage_dist, "get_rank", lambda: 1)
     assert stage_dist.gather_object({"rank1": True}, dst=0) is None
     assert gathered_calls["dst"] == 0
-

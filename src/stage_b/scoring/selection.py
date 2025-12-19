@@ -49,6 +49,8 @@ def _rewrite_reason_for_fail_first(hits) -> str:
 
 
 def _temperature_value(candidate: TrajectoryWithSignals) -> float:
+    if candidate.parsed is None:
+        return 1.0
     temperature = candidate.parsed.base.decode.temperature
     return temperature if temperature is not None else 1.0
 
@@ -59,6 +61,8 @@ def _sort_candidates(
     """Sort candidates by lower temperature then candidate index for stability."""
 
     def _sort_key(candidate: TrajectoryWithSignals) -> Tuple:
+        if candidate.parsed is None:
+            return (0.0, 0)
         decode_temp = candidate.parsed.base.decode.temperature or 0.0
         candidate_index = candidate.parsed.base.candidate_index
         return (decode_temp, candidate_index)
@@ -70,7 +74,9 @@ def _vote_strength(candidates: Sequence[TrajectoryWithSignals], verdict: str) ->
     if not candidates:
         return 0.0
     total = len(candidates)
-    agree = sum(1 for c in candidates if c.parsed.verdict == verdict)
+    agree = sum(
+        1 for c in candidates if c.parsed is not None and c.parsed.verdict == verdict
+    )
     return agree / total if total > 0 else 0.0
 
 
@@ -85,7 +91,11 @@ def select_for_group(
     config: SelectionConfig,
     manual_review: ManualReviewConfig,
 ) -> SelectionResult:
-    pool = [candidate for candidate in candidates if candidate.parsed.format_ok]
+    pool = [
+        candidate
+        for candidate in candidates
+        if candidate.parsed is not None and candidate.parsed.format_ok
+    ]
     warnings: List[str] = []
     if not pool:
         raise ValueError("No format_ok candidates for selection")
@@ -95,25 +105,46 @@ def select_for_group(
     # Majority vote
     from collections import Counter
 
-    verdicts = [c.parsed.verdict for c in pool if c.parsed.verdict is not None]
+    verdicts = [
+        c.parsed.verdict
+        for c in pool
+        if c.parsed is not None and c.parsed.verdict is not None
+    ]
     if not verdicts:
         raise ValueError("No parsed verdicts available for selection")
     counts = Counter(verdicts)
     majority_verdict, majority_count = counts.most_common(1)[0]
     tied = [v for v, c in counts.items() if c == majority_count]
+    verdict_set = set(verdicts)
+    rollout_contradiction = "pass" in verdict_set and "fail" in verdict_set
     if len(tied) > 1:
         # Fail-first tie-break: prefer 'fail' when tied, else lowest temperature then candidate order
+        warnings.append("tied_vote")
         if "fail" in tied:
-            ordered_tied = [c for c in ordered if c.parsed.verdict == "fail"]
+            ordered_tied = [
+                c
+                for c in ordered
+                if c.parsed is not None and c.parsed.verdict == "fail"
+            ]
         else:
-            ordered_tied = [c for c in ordered if c.parsed.verdict in tied]
+            ordered_tied = [
+                c for c in ordered if c.parsed is not None and c.parsed.verdict in tied
+            ]
         chosen = ordered_tied[0]
     else:
-        chosen = next(c for c in ordered if c.parsed.verdict == majority_verdict)
+        chosen = next(
+            c
+            for c in ordered
+            if c.parsed is not None and c.parsed.verdict == majority_verdict
+        )
 
     parsed = chosen.parsed
-    chosen_label_match = chosen.signals.label_match if chosen.signals else False
+    if parsed is None:
+        raise ValueError("Selected candidate has no parsed trajectory")
+    chosen_label_match = chosen.signals.label_match if chosen.signals else None
     final_verdict = parsed.verdict
+    if final_verdict is None:
+        raise ValueError("Selected candidate has no verdict")
     vote_strength = _vote_strength(pool, final_verdict)
 
     conflict_flag = bool(chosen.signals.conflict_flag) if chosen.signals else False
@@ -122,28 +153,48 @@ def select_for_group(
         conflict_flag = True
         warnings.append("label_mismatch")
 
-    low_agreement_flag = vote_strength is not None and vote_strength < manual_review.min_verdict_agreement
+    low_agreement_flag = (
+        vote_strength is not None
+        and vote_strength < manual_review.min_verdict_agreement
+    )
 
     if low_agreement_flag:
         warnings.append("low_agreement")
+        needs_manual_review = True
+
+    # Rollout contradiction is an uncertainty signal even if selection matches GT.
+    if rollout_contradiction:
+        warnings.append("rollout_contradiction")
+        needs_manual_review = True
 
     # Deterministic mission-scoped fail-first guardrail: override to fail if
     # any mission-relevant Stage-A summary contains explicit negative evidence.
     evidence = extract_mission_evidence(
-        ticket.summaries.as_dict(), mission_g0=mission_g0
+        ticket.summaries.as_dict(),
+        mission_g0=mission_g0,
     )
     if evidence.irrelevant_negative_hits:
         warnings.append("fail_first_irrelevant_hit")
+        needs_manual_review = True
+    if evidence.pending_signal_hits:
+        warnings.append("pending_signal_hit")
+        needs_manual_review = True
     if evidence.relevant_negative_hits:
         if final_verdict != "fail":
             warnings.append("fail_first_override")
         final_verdict = "fail"
-        parsed_reason = parsed.reason or ""
+        parsed_reason = parsed.reason or "" if parsed.reason is not None else ""
         rewritten = _rewrite_reason_for_fail_first(evidence.relevant_negative_hits)
         # If we overrode a pass verdict, always prefer rewritten reason.
         final_reason = rewritten if final_verdict == "fail" else parsed_reason
     else:
-        final_reason = parsed.reason or ""
+        final_reason = parsed.reason or "" if parsed.reason is not None else ""
+
+    # Re-compute label alignment after deterministic overrides.
+    final_label_match = final_verdict == ticket.label
+    if final_label_match is False and "label_mismatch" not in warnings:
+        warnings.append("label_mismatch")
+    conflict_flag = not final_label_match
 
     # Ensure final reason is single-line simplified Chinese and does not contain third-state wording.
     final_reason = to_simplified(final_reason)
@@ -158,7 +209,7 @@ def select_for_group(
         verdict=final_verdict,
         reason=final_reason,
         vote_strength=vote_strength,
-        label_match=chosen_label_match,
+        label_match=final_label_match,
         selected_candidate=parsed.base.candidate_index,
         guidance_step=guidance_step,
         reflection_change=reflection_change,
