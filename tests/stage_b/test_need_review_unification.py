@@ -221,11 +221,11 @@ def test_unexplainable_need_review_items_uses_no_evidence_group_ids(
 def test_unexplainable_need_review_items_reflection_is_single_source_of_truth(
     tmp_path: Path,
 ) -> None:
-    """Need-review routing MUST be decided by reflection at group_id granularity.
+    """Need-review routing MUST be decided by reflection at ticket_key granularity.
 
     Even if a candidate pool contains a GT-aligned candidate (label_match=True),
     the ticket MUST still be routed to need-review when reflection explicitly
-    marks the group as "no evidence after GT".
+    marks the ticket as "no evidence after GT".
     """
     ticket = GroupTicket(
         group_id="QC-004",

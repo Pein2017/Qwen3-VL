@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 
 from src.stage_b.config import ReflectionConfig
@@ -16,6 +17,7 @@ from src.stage_b.types import (
     ExperienceCandidate,
     ExperienceRecord,
     GroupTicket,
+    MissionGuidance,
     StageASummaries,
 )
 
@@ -43,6 +45,21 @@ class _FakeTokenizer:
 class _FakeGuidanceRepo:
     def load(self):
         return {}
+
+
+class _GuidanceRepoWithRule:
+    def load(self):
+        return {
+            "m": MissionGuidance(
+                mission="m",
+                experiences={
+                    "G0": "初始检查清单",
+                    "G1": "若能确认关键点齐全则通过，否则不通过。",
+                },
+                step=1,
+                updated_at=datetime.now(timezone.utc),
+            )
+        }
 
 
 def _mk_bundle(*, mission: str, group_ids: tuple[str, ...]) -> ExperienceBundle:
@@ -138,8 +155,9 @@ def test_ops_pass_rejects_evidence_outside_learnable(tmp_path: Path) -> None:
         ]
     }
 
-    operations, evidence_group_ids, _analysis = engine.run_ops_pass(bundle)
+    operations, hypotheses, evidence_group_ids, _analysis = engine.run_ops_pass(bundle)
     assert operations == tuple()
+    assert hypotheses == tuple()
     assert evidence_group_ids == tuple()
 
 
@@ -183,9 +201,86 @@ def test_ops_pass_keeps_only_valid_evidence(tmp_path: Path) -> None:
         ]
     }
 
-    operations, evidence_group_ids, _analysis = engine.run_ops_pass(bundle)
+    operations, hypotheses, evidence_group_ids, _analysis = engine.run_ops_pass(bundle)
     assert len(operations) == 1
+    assert hypotheses == tuple()
     assert evidence_group_ids == ("g2::pass",)
+
+
+def test_ops_pass_filters_third_state_text(tmp_path: Path) -> None:
+    decision = tmp_path / "decision.txt"
+    ops = tmp_path / "ops.txt"
+    decision.write_text("noop", encoding="utf-8")
+    ops.write_text("noop", encoding="utf-8")
+    cfg = ReflectionConfig(
+        decision_prompt_path=decision,
+        ops_prompt_path=ops,
+        batch_size=1,
+        max_operations=5,
+        token_budget=4096,
+        max_reflection_length=4096,
+        max_new_tokens=16,
+    )
+    engine = ReflectionEngine(
+        model=_FakeModel(),  # type: ignore[arg-type]
+        tokenizer=_FakeTokenizer(),  # type: ignore[arg-type]
+        config=cfg,
+        guidance_repo=_FakeGuidanceRepo(),  # type: ignore[arg-type]
+    )
+
+    bundle = _mk_bundle(mission="m", group_ids=("g1",))
+
+    engine._generate_json_payload = lambda **kwargs: {  # type: ignore[assignment]
+        "operations": [
+            {
+                "op": "add",
+                "text": "需复核时通过。",
+                "rationale": "test",
+                "evidence": ["g1::pass"],
+            }
+        ]
+    }
+
+    operations, hypotheses, evidence_group_ids, _analysis = engine.run_ops_pass(bundle)
+    assert operations == tuple()
+    assert hypotheses == tuple()
+    assert evidence_group_ids == tuple()
+
+
+def test_ops_pass_prefers_update_for_similar_add(tmp_path: Path) -> None:
+    decision = tmp_path / "decision.txt"
+    ops = tmp_path / "ops.txt"
+    decision.write_text("noop", encoding="utf-8")
+    ops.write_text("noop", encoding="utf-8")
+    cfg = ReflectionConfig(
+        decision_prompt_path=decision,
+        ops_prompt_path=ops,
+        batch_size=1,
+        max_operations=5,
+        token_budget=4096,
+        max_reflection_length=4096,
+        max_new_tokens=16,
+    )
+    engine = ReflectionEngine(
+        model=_FakeModel(),  # type: ignore[arg-type]
+        tokenizer=_FakeTokenizer(),  # type: ignore[arg-type]
+        config=cfg,
+        guidance_repo=_GuidanceRepoWithRule(),  # type: ignore[arg-type]
+    )
+    bundle = _mk_bundle(mission="m", group_ids=("g1",))
+    engine._generate_json_payload = lambda **kwargs: {  # type: ignore[assignment]
+        "operations": [
+            {
+                "op": "add",
+                "text": "若能确认关键点齐全则通过，否则不通过。",
+                "rationale": "similar",
+                "evidence": ["g1::pass"],
+            }
+        ]
+    }
+    operations, _hypotheses, _evidence_group_ids, _analysis = engine.run_ops_pass(bundle)
+    assert len(operations) == 1
+    assert operations[0].key == "G1"
 
 
 def test_decision_pass_resolves_shorthand_ticket_ids(tmp_path: Path) -> None:

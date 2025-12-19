@@ -73,8 +73,8 @@ def test_build_user_prompt_with_experiences():
     # Verify headline uses G0 and guidance block starts at G1
     assert "重点: 若挡风板缺失则判定不通过" in prompt
     assert "[G1]. 摘要置信度低时请返回不通过并说明原因" in prompt
-    assert "补充提示：" in prompt
-    assert "[G0]. 若挡风板缺失则判定不通过" not in prompt
+    assert "可学习规则（G0+）" in prompt
+    assert "[G0]. 若挡风板缺失则判定不通过" in prompt
 
     # Verify Stage-A summaries are included
     assert "1. 摘要内容" in prompt
@@ -150,10 +150,11 @@ def test_build_messages_with_experiences():
     assert messages[0]["role"] == "system"
     assert messages[1]["role"] == "user"
 
-    # Verify G0 is used as headline and not duplicated in guidance block
+    # Verify G0 is used as headline and listed in mutable guidance block
     user_content = messages[1]["content"]
     assert "重点: 若挡风板缺失则判定不通过" in user_content
-    assert "补充提示：" not in user_content  # only G0 present, no extra rules
+    assert "可学习规则（G0+）" in user_content
+    assert "[G0]. 若挡风板缺失则判定不通过" in user_content
 
     # Verify system prompt includes G0 as mission focus
     system_content = messages[0]["content"]
@@ -186,4 +187,4 @@ def test_build_user_prompt_headline_and_list_start_at_g1():
     assert "重点: 若挡风板缺失则判定不通过" in prompt
     assert "[G1]. 当摘要无法确认挡风板是否存在时，判定不通过" in prompt
     assert "[G2]. 若安装方向错误则判定不通过" in prompt
-    assert "[G0]. 若挡风板缺失则判定不通过" not in prompt
+    assert "[G0]. 若挡风板缺失则判定不通过" in prompt
