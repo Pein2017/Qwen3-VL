@@ -34,22 +34,30 @@ def _load_conflicts(selections_path: Path) -> Dict[str, Dict[str, object]]:
             data = json.loads(line)
             result = data.get("result", {})
             group_id = data.get("group_id") or result.get("group_id")
+            gt_label = data.get("gt_label") or data.get("label")
+            ticket_key = (data.get("ticket_key") or "").strip() if isinstance(data.get("ticket_key"), str) else ""
+            if not ticket_key:
+                ticket_key = (
+                    f"{group_id}::{gt_label}" if group_id is not None and gt_label else str(group_id or "")
+                )
             conflict_flag = result.get("conflict_flag", False)
             if not conflict_flag or group_id is None:
                 continue
-            counts[group_id] += 1
+            counts[ticket_key] += 1
             # Keep the latest snapshot for reporting
-            conflicts[group_id] = {
+            conflicts[ticket_key] = {
+                "group_id": group_id,
+                "gt_label": gt_label,
                 "reason": result.get("reason"),
                 "warnings": result.get("warnings", []),
                 "uncertainty_notes": result.get("uncertainty_notes", []),
-                "epochs": conflicts.get(group_id, {}).get("epochs", set())
-                if group_id in conflicts
+                "epochs": conflicts.get(ticket_key, {}).get("epochs", set())
+                if ticket_key in conflicts
                 else set(),
             }
             epoch = data.get("epoch")
             if epoch is not None:
-                conflicts[group_id]["epochs"].add(epoch)
+                conflicts[ticket_key]["epochs"].add(epoch)
 
     # Flatten epochs sets for output
     for gid, meta in conflicts.items():
@@ -102,17 +110,17 @@ def audit_mission(mission_dir: Path) -> None:
     applied_groups, attempted_groups = _load_applied_groups(reflection)
 
     unresolved = []
-    for gid, meta in conflicts.items():
-        if gid in applied_groups:
+    for ticket_key, meta in conflicts.items():
+        if ticket_key in applied_groups:
             continue
         unresolved.append(
             (
-                gid,
+                ticket_key,
                 meta.get("count", 0),
                 meta.get("epochs", []),
                 meta.get("reason"),
                 meta.get("uncertainty_notes", []),
-                gid in attempted_groups,
+                ticket_key in attempted_groups,
             )
         )
 
@@ -123,14 +131,14 @@ def audit_mission(mission_dir: Path) -> None:
     print(
         f"[warn] {mission_dir.name}: unresolved conflict_flag groups (count, epochs, attempted_reflection?)"
     )
-    for gid, count, epochs, reason, notes, attempted in sorted(
+    for ticket_key, count, epochs, reason, notes, attempted in sorted(
         unresolved, key=lambda x: (-x[1], x[0])
     ):
         epoch_str = ",".join(map(str, epochs)) if epochs else "-"
         note_str = "|".join(notes) if notes else ""
         attempted_flag = "yes" if attempted else "no"
         print(
-            f"  {gid}: count={count} epochs={epoch_str} attempted_reflection={attempted_flag}"
+            f"  {ticket_key}: count={count} epochs={epoch_str} attempted_reflection={attempted_flag}"
         )
         if reason:
             print(f"    reason: {reason}")

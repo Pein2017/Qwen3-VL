@@ -9,6 +9,7 @@ import logging
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 from src.config.missions import SUPPORTED_MISSIONS, validate_mission
 
@@ -32,6 +33,11 @@ class StageAConfig:
     include_mission_focus: bool = True
     verify_inputs: bool = False
     log_level: str = "INFO"
+    pass_group_number: Optional[int] = None
+    fail_group_number: Optional[int] = None
+    sample_seed: int = 42
+    sharding_mode: str = "per_group"
+    keep_intermediate_outputs: bool = False
 
     @classmethod
     def from_namespace(cls, args: argparse.Namespace) -> "StageAConfig":
@@ -49,7 +55,12 @@ class StageAConfig:
             repetition_penalty=float(args.repetition_penalty),
             include_mission_focus=not args.no_mission_focus,
             verify_inputs=bool(args.verify_inputs),
+            pass_group_number=args.pass_group_number,
+            fail_group_number=args.fail_group_number,
+            sample_seed=args.sample_seed,
             log_level=args.log_level.upper(),
+            sharding_mode=str(args.sharding_mode),
+            keep_intermediate_outputs=bool(args.keep_intermediate_outputs),
         )
 
     def validate(self) -> None:
@@ -67,6 +78,15 @@ class StageAConfig:
             raise ValueError("repetition_penalty must be > 0")
         if self.log_level not in {"DEBUG", "INFO", "WARNING", "ERROR"}:
             raise ValueError("log_level must be one of DEBUG|INFO|WARNING|ERROR")
+
+        if self.pass_group_number is not None and self.pass_group_number < 0:
+            raise ValueError("pass_group_number must be >= 0 when provided")
+        if self.fail_group_number is not None and self.fail_group_number < 0:
+            raise ValueError("fail_group_number must be >= 0 when provided")
+        if self.sample_seed < 0:
+            raise ValueError("sample_seed must be >= 0")
+        if self.sharding_mode not in {"per_group", "per_image"}:
+            raise ValueError("sharding_mode must be one of: per_group|per_image")
 
         validate_mission(self.mission)
 
@@ -195,6 +215,36 @@ Examples:
         action="store_true",
         help="Verify that images are loaded and encoded (logs checksums/sizes and grid/token counts)",
     )
+    parser.add_argument(
+        "--pass_group_number",
+        type=int,
+        default=None,
+        help="Maximum number of pass groups to retain (randomly sampled if total larger).",
+    )
+    parser.add_argument(
+        "--fail_group_number",
+        type=int,
+        default=None,
+        help="Maximum number of fail groups to retain (randomly sampled if total larger).",
+    )
+    parser.add_argument(
+        "--sample_seed",
+        type=int,
+        default=42,
+        help="Random seed used when sampling groups (default: 42).",
+    )
+    parser.add_argument(
+        "--sharding_mode",
+        type=str,
+        default="per_group",
+        choices=["per_group", "per_image"],
+        help="Sharding strategy: per_group (default, a group processed on one rank) or per_image (distribute images across ranks; rank 0 merges).",
+    )
+    parser.add_argument(
+        "--keep_intermediate_outputs",
+        action="store_true",
+        help="Keep intermediate per-rank per-image outputs (per_image only). Default: delete after successful merge.",
+    )
 
     # Logging
     parser.add_argument(
@@ -210,6 +260,14 @@ Examples:
         help="Enable debug logging (HIGHEST PRIORITY, overrides --log_level)",
     )
 
+    # Reject removed legacy flags with a clearer error than argparse's "unrecognized arguments".
+    legacy_flag = "--batching_mode"
+    for raw_arg in sys.argv[1:]:
+        if raw_arg == legacy_flag or raw_arg.startswith(f"{legacy_flag}="):
+            parser.error(
+                "The flag --batching_mode was removed. Use --sharding_mode {per_group,per_image}."
+            )
+
     return parser.parse_args()
 
 
@@ -218,7 +276,9 @@ def main() -> None:
     args = parse_args()
 
     requested_level = getattr(logging, args.log_level.upper())
-    configure_logging(level=requested_level, debug=bool(args.debug), verbose=bool(args.debug))
+    configure_logging(
+        level=requested_level, debug=bool(args.debug), verbose=bool(args.debug)
+    )
 
     cfg = StageAConfig.from_namespace(args)
 
@@ -231,6 +291,20 @@ def main() -> None:
         sys.exit(1)
 
     logger = get_logger("stage_a.cli")
+
+    # Check if running in distributed mode
+    try:
+        from ..stage_b.distributed import get_world_size, is_main_process
+
+        world_size = get_world_size()
+        if world_size > 1 and is_main_process():
+            logger.info(
+                "Multi-GPU mode detected (WORLD_SIZE=%d). Groups will be sharded across ranks.",
+                world_size,
+            )
+    except (ImportError, Exception):
+        # Distributed helpers not available or not in distributed mode
+        pass
 
     input_path = Path(cfg.input_dir)
     checkpoint_path = Path(cfg.checkpoint)
@@ -257,6 +331,11 @@ def main() -> None:
             max_pixels=cfg.max_pixels,
             include_mission_focus=cfg.include_mission_focus,
             verify_inputs=cfg.verify_inputs,
+            pass_group_number=cfg.pass_group_number,
+            fail_group_number=cfg.fail_group_number,
+            sample_seed=cfg.sample_seed,
+            sharding_mode=cfg.sharding_mode,
+            keep_intermediate_outputs=cfg.keep_intermediate_outputs,
         )
     except Exception as e:
         logger.error(f"Inference failed: {e}", exc_info=True)

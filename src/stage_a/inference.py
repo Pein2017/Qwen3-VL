@@ -9,19 +9,83 @@ inference on images, and outputs grouped JSONL records with strict validation.
 from __future__ import annotations
 
 import json
+import random
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import torch
 from PIL import Image
-
-from data_conversion.utils.exif_utils import apply_exif_orientation
 from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
 
-from .prompts import SUMMARY_SYSTEM_PROMPT, build_user_prompt
+from data_conversion.utils.exif_utils import apply_exif_orientation
+
 from ..utils import get_logger
+from .prompts import SUMMARY_SYSTEM_PROMPT, build_system_prompt, build_user_prompt
+
+# Import distributed helpers from stage_b (reusable lightweight module)
+try:
+    from ..stage_b.distributed import (
+        barrier,
+        broadcast_object,
+        get_local_rank,
+        get_rank,
+        get_world_size,
+        init_distributed,
+        is_main_process,
+    )
+except ImportError:
+    # Fallback if stage_b is not available (shouldn't happen in normal usage)
+    def get_world_size() -> int:
+        import os
+
+        value = os.environ.get("WORLD_SIZE")
+        return int(value) if value is not None else 1
+
+    def get_rank() -> int:
+        import os
+
+        value = os.environ.get("RANK")
+        return int(value) if value is not None else 0
+
+    def get_local_rank() -> int:
+        import os
+
+        value = os.environ.get("LOCAL_RANK")
+        return int(value) if value is not None else 0
+
+    def is_main_process() -> bool:
+        return get_rank() == 0
+
+    def init_distributed(*, timeout_seconds: int = 1800) -> None:
+        import torch.distributed as dist
+
+        if not dist.is_available() or dist.is_initialized():
+            return
+        world_size = get_world_size()
+        if world_size <= 1:
+            return
+        from datetime import timedelta
+
+        backend = "nccl" if torch.cuda.is_available() else "gloo"
+        dist.init_process_group(
+            backend=backend,
+            init_method="env://",
+            timeout=timedelta(seconds=int(timeout_seconds)),
+        )
+        if torch.cuda.is_available():
+            torch.cuda.set_device(get_local_rank())
+
+    def barrier() -> None:
+        import torch.distributed as dist
+
+        if dist.is_available() and dist.is_initialized() and get_world_size() > 1:
+            dist.barrier()
+
+    def broadcast_object(obj: Optional[Any], *, src: int = 0) -> Any:
+        return obj
+
 
 logger = get_logger(__name__)
 
@@ -138,7 +202,7 @@ def _extract_group_id(path: Path) -> str:
     return path.parent.name
 
 
-def discover_groups(root: Path, mission: Optional[str] = None) -> Dict[str, GroupInfo]:
+def discover_groups(root: Path, mission: Optional[str] = None) -> List[GroupInfo]:
     """Discover and group images from mission-based directory structure.
 
     Expected structure:
@@ -149,7 +213,8 @@ def discover_groups(root: Path, mission: Optional[str] = None) -> Dict[str, Grou
         mission: Mission name to filter (processes only this mission)
 
     Returns:
-        Mapping from group_id to GroupInfo
+        List of GroupInfo objects (duplicates allowed when the same group_id
+        appears under different label directories)
 
     Raises:
         FileNotFoundError: If root or mission directory doesn't exist
@@ -167,26 +232,27 @@ def discover_groups(root: Path, mission: Optional[str] = None) -> Dict[str, Grou
         # Auto-discover all mission subdirectories
         mission_dirs = [d for d in root.iterdir() if d.is_dir()]
 
-    groups: Dict[str, GroupInfo] = {}
+    groups: List[GroupInfo] = []
 
-    for mission_dir in mission_dirs:
+    for mission_dir in sorted(mission_dirs, key=lambda p: p.name):
         mission_name = mission_dir.name
 
-        # Scan label directories (审核通过/审核不通过)
-        for label_dir in mission_dir.iterdir():
-            if not label_dir.is_dir():
+        # Scan label directories: process "审核不通过" first, then "审核通过"
+        # Order: fail labels first, then pass labels
+        label_order = ["审核不通过", "审核通过"]
+        for label_dir_name in label_order:
+            if label_dir_name not in LABEL_DIR_MAP:
                 continue
-
-            label_str = LABEL_DIR_MAP.get(label_dir.name)
-            if label_str is None:
-                logger.warning(f"Skipping unknown label directory: {label_dir.name}")
+            label_str = LABEL_DIR_MAP[label_dir_name]
+            label_dir = mission_dir / label_dir_name
+            if not label_dir.exists() or not label_dir.is_dir():
                 continue
 
             # Scan group directories
-            for group_dir in label_dir.iterdir():
-                if not group_dir.is_dir():
-                    continue
-
+            group_dirs: Sequence[Path] = sorted(
+                (d for d in label_dir.iterdir() if d.is_dir()), key=lambda p: p.name
+            )
+            for group_dir in group_dirs:
                 # Discover images in group
                 image_paths: List[Path] = []
                 for img_path in group_dir.iterdir():
@@ -203,20 +269,65 @@ def discover_groups(root: Path, mission: Optional[str] = None) -> Dict[str, Grou
                 # Extract group ID
                 group_id = _extract_group_id(image_paths[0])
 
-                # Store group info
-                if group_id in groups:
-                    logger.warning(
-                        f"Duplicate group_id {group_id}; using first occurrence"
-                    )
-                else:
-                    groups[group_id] = GroupInfo(
+                # Store group info (allow duplicates across label dirs)
+                groups.append(
+                    GroupInfo(
                         paths=image_paths,
                         label=label_str,
                         mission=mission_name,
                         group_id=group_id,
                     )
+                )
+        # Warn on unexpected subdirectories to avoid silent skips
+        for child in mission_dir.iterdir():
+            if child.is_dir() and child.name not in LABEL_DIR_MAP:
+                logger.warning(f"Skipping unknown label directory: {child.name}")
 
     return groups
+
+
+def _sample_subset(
+    items: List[Any], target: Optional[int], rng: random.Random
+) -> List[Any]:
+    """Return up to `target` random items from the list respecting deterministic RNG."""
+    if target is None or target >= len(items):
+        return list(items)
+    return rng.sample(items, target)
+
+
+def _sample_groups(
+    groups: List[GroupInfo],
+    pass_target: Optional[int],
+    fail_target: Optional[int],
+    seed: int,
+) -> Tuple[List[GroupInfo], Dict[str, int]]:
+    """Seeded sampling of pass/fail groups, preserving original order.
+
+    Note: When both targets are None, sampling is disabled and all groups are returned.
+    """
+    sampling_enabled = pass_target is not None or fail_target is not None
+
+    pass_indices = [i for i, g in enumerate(groups) if g.label == "pass"]
+    fail_indices = [i for i, g in enumerate(groups) if g.label == "fail"]
+    rng_pass = random.Random(seed)
+    rng_fail = random.Random(seed + 1)
+
+    sampled_pass_indices = _sample_subset(pass_indices, pass_target, rng_pass)
+    sampled_fail_indices = _sample_subset(fail_indices, fail_target, rng_fail)
+
+    selected_indices: set[int] = set(sampled_pass_indices + sampled_fail_indices)
+    if not sampling_enabled:
+        selected_indices = set(range(len(groups)))
+
+    sampled = [g for i, g in enumerate(groups) if i in selected_indices]
+
+    stats = {
+        "pass_total": len(pass_indices),
+        "pass_selected": len(sampled_pass_indices),
+        "fail_total": len(fail_indices),
+        "fail_selected": len(sampled_fail_indices),
+    }
+    return sampled, stats
 
 
 def load_model_processor(
@@ -242,10 +353,25 @@ def load_model_processor(
         else "eager",
         trust_remote_code=True,
     )
-    model.to(device)
+    model.to(device)  # type: ignore[arg-type]
     model.eval()
 
     processor = AutoProcessor.from_pretrained(checkpoint, trust_remote_code=True)
+    # IMPORTANT: For decoder-only generation with variable-length prompts (vision tokens vary by image),
+    # batched inference MUST use left-padding. Right-padding puts PAD tokens at the end of shorter prompts
+    # and can destabilize generation when mixed-size images are batched together (common in per_image mode).
+    try:
+        tok = getattr(processor, "tokenizer", None)
+        if tok is not None:
+            tok.padding_side = "left"
+            tok.truncation_side = "left"
+            logger.info(
+                "Tokenizer padding_side=%s truncation_side=%s",
+                getattr(tok, "padding_side", None),
+                getattr(tok, "truncation_side", None),
+            )
+    except Exception:
+        logger.warning("Failed to set tokenizer padding/truncation side", exc_info=False)
 
     # Configure max_pixels for compute efficiency
     # Lower values = faster inference but lower image quality
@@ -317,6 +443,7 @@ def infer_one_image(
     user_text: str,
     gen_config: Dict[str, Any],
     verify: bool = False,
+    system_prompt: Optional[str] = None,
 ) -> Tuple[str, str]:
     """Run inference on a single image.
 
@@ -326,6 +453,8 @@ def infer_one_image(
         image: PIL Image
         user_text: User prompt text
         gen_config: Generation config dict
+        verify: Whether to verify inputs
+        system_prompt: Optional system prompt (defaults to SUMMARY_SYSTEM_PROMPT)
 
     Returns:
         Tuple of (raw_text, clean_text)
@@ -333,9 +462,12 @@ def infer_one_image(
     Raises:
         ValueError: If clean_text is empty after stripping
     """
+    # Use provided system prompt or fallback to default
+    sys_prompt = system_prompt if system_prompt is not None else SUMMARY_SYSTEM_PROMPT
+
     # Build messages with typed content
     messages = [
-        {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
+        {"role": "system", "content": sys_prompt},
         {
             "role": "user",
             "content": [
@@ -346,7 +478,7 @@ def infer_one_image(
     ]
 
     # Apply chat template
-    text = processor.apply_chat_template(
+    text = processor.apply_chat_template(  # type: ignore[attr-defined]
         messages, add_generation_prompt=True, tokenize=False
     )
 
@@ -368,7 +500,7 @@ def infer_one_image(
                 _img_kwargs["max_pixels"] = int(max_pix)
     except Exception:
         pass
-    inputs = processor(
+    inputs = processor(  # type: ignore[operator]
         images=[image], text=[text], return_tensors="pt", images_kwargs=_img_kwargs
     )
     if verify:
@@ -387,7 +519,9 @@ def infer_one_image(
                 else -1
             )
             image_token_id = getattr(processor, "image_token_id", None) or getattr(
-                processor.tokenizer, "image_token_id", None
+                processor.tokenizer,  # type: ignore[attr-defined]
+                "image_token_id",
+                None,
             )
             text_token_count = (
                 int((inputs["input_ids"][0] == image_token_id).sum().item())
@@ -418,7 +552,7 @@ def infer_one_image(
             expected_tokens = int((grid[0].prod() // (merge * merge)).item())
             image_token_id = getattr(processor, "image_token_id", None)
             if image_token_id is None:
-                image_token_id = getattr(processor.tokenizer, "image_token_id", None)
+                image_token_id = getattr(processor.tokenizer, "image_token_id", None)  # type: ignore[attr-defined]
             text_token_count = -1
             try:
                 text_token_count = (
@@ -443,7 +577,7 @@ def infer_one_image(
             **inputs,
             **gen_config,
             use_cache=True,
-            pad_token_id=processor.tokenizer.pad_token_id,
+            pad_token_id=processor.tokenizer.pad_token_id,  # type: ignore[attr-defined]
         )
 
     # Decode
@@ -452,16 +586,16 @@ def infer_one_image(
     # Trim trailing EOS/PAD tokens only (preserve other content)
     gen_only = _trim_trailing_eos_pad(
         gen_only,
-        eos_id=getattr(processor.tokenizer, "eos_token_id", None),
-        pad_id=getattr(processor.tokenizer, "pad_token_id", None),
+        eos_id=getattr(processor.tokenizer, "eos_token_id", None),  # type: ignore[attr-defined]
+        pad_id=getattr(processor.tokenizer, "pad_token_id", None),  # type: ignore[attr-defined]
     )
 
     try:
-        raw_text = processor.batch_decode(
+        raw_text = processor.batch_decode(  # type: ignore[attr-defined]
             gen_only, skip_special_tokens=False, clean_up_tokenization_spaces=False
         )[0]
     except Exception:
-        raw_text = processor.tokenizer.batch_decode(
+        raw_text = processor.tokenizer.batch_decode(  # type: ignore[attr-defined]
             gen_only, skip_special_tokens=False, clean_up_tokenization_spaces=False
         )[0]
 
@@ -469,11 +603,11 @@ def infer_one_image(
     raw_text = raw_text.strip()
 
     try:
-        clean_text = processor.batch_decode(
+        clean_text = processor.batch_decode(  # type: ignore[attr-defined]
             gen_only, skip_special_tokens=False, clean_up_tokenization_spaces=False
         )[0]
     except Exception:
-        clean_text = processor.tokenizer.batch_decode(
+        clean_text = processor.tokenizer.batch_decode(  # type: ignore[attr-defined]
             gen_only, skip_special_tokens=False, clean_up_tokenization_spaces=False
         )[0]
 
@@ -497,6 +631,7 @@ def infer_batch(
     user_text: str,
     gen_config: Dict[str, Any],
     verify: bool = False,
+    system_prompt: Optional[str] = None,
 ) -> List[Tuple[str, str]]:
     """Run batched inference on multiple images.
 
@@ -513,10 +648,13 @@ def infer_batch(
     Raises:
         ValueError: If any clean_text is empty after stripping
     """
+    # Use provided system prompt or fallback to default
+    sys_prompt = system_prompt if system_prompt is not None else SUMMARY_SYSTEM_PROMPT
+
     # Build messages for each image
     messages_list = [
         [
-            {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
+            {"role": "system", "content": sys_prompt},
             {
                 "role": "user",
                 "content": [
@@ -530,7 +668,7 @@ def infer_batch(
 
     # Apply chat template to each
     texts = [
-        processor.apply_chat_template(msgs, add_generation_prompt=True, tokenize=False)
+        processor.apply_chat_template(msgs, add_generation_prompt=True, tokenize=False)  # type: ignore[attr-defined]
         for msgs in messages_list
     ]
 
@@ -551,7 +689,7 @@ def infer_batch(
                 _img_kwargs["max_pixels"] = int(max_pix)
     except Exception:
         pass
-    inputs = processor(
+    inputs = processor(  # type: ignore[operator]
         images=images,
         text=texts,
         return_tensors="pt",
@@ -572,7 +710,9 @@ def infer_batch(
                 else -1
             )
             image_token_id = getattr(processor, "image_token_id", None) or getattr(
-                processor.tokenizer, "image_token_id", None
+                processor.tokenizer,  # type: ignore[attr-defined]
+                "image_token_id",
+                None,
             )
             txt = (
                 int((inputs["input_ids"][0] == image_token_id).sum().item())
@@ -606,7 +746,9 @@ def infer_batch(
                 image_token_id = getattr(processor, "image_token_id", None)
                 if image_token_id is None:
                     image_token_id = getattr(
-                        processor.tokenizer, "image_token_id", None
+                        processor.tokenizer,  # type: ignore[attr-defined]
+                        "image_token_id",
+                        None,
                     )
                 text_token_count = -1
                 try:
@@ -632,7 +774,7 @@ def infer_batch(
             **inputs,
             **gen_config,
             use_cache=True,
-            pad_token_id=processor.tokenizer.pad_token_id,
+            pad_token_id=processor.tokenizer.pad_token_id,  # type: ignore[attr-defined]
         )
 
     # Decode each output
@@ -644,16 +786,16 @@ def infer_batch(
         # Trim trailing EOS/PAD tokens only (preserve other content)
         gen_only = _trim_trailing_eos_pad(
             gen_only,
-            eos_id=getattr(processor.tokenizer, "eos_token_id", None),
-            pad_id=getattr(processor.tokenizer, "pad_token_id", None),
+            eos_id=getattr(processor.tokenizer, "eos_token_id", None),  # type: ignore[attr-defined]
+            pad_id=getattr(processor.tokenizer, "pad_token_id", None),  # type: ignore[attr-defined]
         )
 
         try:
-            raw_text = processor.batch_decode(
+            raw_text = processor.batch_decode(  # type: ignore[attr-defined]
                 gen_only, skip_special_tokens=False, clean_up_tokenization_spaces=False
             )[0]
         except Exception:
-            raw_text = processor.tokenizer.batch_decode(
+            raw_text = processor.tokenizer.batch_decode(  # type: ignore[attr-defined]
                 gen_only, skip_special_tokens=False, clean_up_tokenization_spaces=False
             )[0]
 
@@ -661,11 +803,11 @@ def infer_batch(
         raw_text = raw_text.strip()
 
         try:
-            clean_text = processor.batch_decode(
+            clean_text = processor.batch_decode(  # type: ignore[attr-defined]
                 gen_only, skip_special_tokens=False, clean_up_tokenization_spaces=False
             )[0]
         except Exception:
-            clean_text = processor.tokenizer.batch_decode(
+            clean_text = processor.tokenizer.batch_decode(  # type: ignore[attr-defined]
                 gen_only, skip_special_tokens=True, clean_up_tokenization_spaces=False
             )[0]
 
@@ -713,8 +855,9 @@ def process_group(
     Raises:
         ValueError: If validation fails (empty summary or per-image index mismatch)
     """
-    # Build mission-dependent user prompt
+    # Build mission-dependent prompts
     user_text = build_user_prompt(mission if include_mission_focus else None)
+    system_text = build_system_prompt(mission if include_mission_focus else None)
 
     # Load images
     images: List[Image.Image] = []
@@ -736,14 +879,26 @@ def process_group(
         if batch_size == 1:
             # Sequential fallback
             raw, clean = infer_one_image(
-                model, processor, chunk[0], user_text, gen_config, verify=verify
+                model,
+                processor,
+                chunk[0],
+                user_text,
+                gen_config,
+                verify=verify,
+                system_prompt=system_text,
             )
             raw_texts.append(raw)
             clean_texts.append(clean)
         else:
             # Batched inference
             chunk_outputs = infer_batch(
-                model, processor, chunk, user_text, gen_config, verify=verify
+                model,
+                processor,
+                chunk,
+                user_text,
+                gen_config,
+                verify=verify,
+                system_prompt=system_text,
             )
             for raw, clean in chunk_outputs:
                 raw_texts.append(raw)
@@ -792,6 +947,11 @@ def run_stage_a_inference(
     max_pixels: int = 786432,
     include_mission_focus: bool = True,
     verify_inputs: bool = False,
+    pass_group_number: Optional[int] = None,
+    fail_group_number: Optional[int] = None,
+    sample_seed: int = 42,
+    sharding_mode: str = "per_group",
+    keep_intermediate_outputs: bool = False,
 ) -> None:
     """Run Stage-A inference on mission-based directory.
 
@@ -800,11 +960,33 @@ def run_stage_a_inference(
         input_dir: Root directory with mission/label/group structure
         output_dir: Output directory for JSONL files
         mission: Mission name to process
-        device: Device string (cuda:N or cpu)
+        device: Device string (cuda:N or cpu) - overridden by per-rank device in distributed mode
         gen_params: Generation parameters dict
         batch_size: Batch size for inference (default 8, set 1 for sequential)
         max_pixels: Maximum pixels for image resizing (default 786432 for efficiency)
+        pass_group_number: Optional cap on pass groups; random sampling applied if total exceeds this.
+        fail_group_number: Optional cap on fail groups; random sampling applied if total exceeds this.
+        sample_seed: Random seed used when performing pass/fail sampling.
+        sharding_mode: Execution strategy: per_group (group-level sharding) or per_image (image-level sharding + rank-0 merge).
+        keep_intermediate_outputs: Keep intermediate per-rank per-image outputs in per_image mode (default: delete after successful merge).
     """
+    # Initialize distributed mode if launched under torchrun
+    init_distributed()
+    world_size = get_world_size()
+    rank = get_rank()
+    distributed = world_size > 1
+
+    # Override device with per-rank device in distributed mode
+    if distributed and torch.cuda.is_available():
+        local_rank = get_local_rank()
+        device = f"cuda:{local_rank}"
+        if is_main_process():
+            logger.info(
+                "Distributed mode: using per-rank device assignment (LOCAL_RANK=%d, device=%s)",
+                local_rank,
+                device,
+            )
+
     # Default generation params
     if gen_params is None:
         gen_params = {
@@ -815,52 +997,269 @@ def run_stage_a_inference(
             "repetition_penalty": 1.05,
         }
 
-    # Print config summary
-    logger.info("=" * 70)
-    logger.info("Stage-A Inference Configuration")
-    logger.info("=" * 70)
-    logger.info(f"Checkpoint: {checkpoint}")
-    logger.info(f"Input directory: {input_dir}")
-    logger.info(f"Output directory: {output_dir}")
-    logger.info(f"Mission: {mission}")
-    logger.info(f"Device: {device}")
-    logger.info(f"Batch size: {batch_size}")
-    logger.info(f"Max pixels: {max_pixels}")
-    logger.info(f"Generation params: {gen_params}")
-    logger.info("=" * 70)
+    # Print config summary (only on main process to reduce log spam)
+    if is_main_process() or not distributed:
+        logger.info("=" * 70)
+        logger.info("Stage-A Inference Configuration")
+        logger.info("=" * 70)
+        logger.info(f"Checkpoint: {checkpoint}")
+        logger.info(f"Input directory: {input_dir}")
+        logger.info(f"Output directory: {output_dir}")
+        logger.info(f"Mission: {mission}")
+        logger.info(f"Device: {device}")
+        if distributed:
+            logger.info(f"Distributed mode: WORLD_SIZE={world_size}, RANK={rank}")
+        logger.info(f"Batch size: {batch_size}")
+        logger.info(f"Sharding mode: {sharding_mode}")
+        logger.info(f"Max pixels: {max_pixels}")
+        logger.info(f"Generation params: {gen_params}")
+        logger.info("=" * 70)
 
-    # Discover groups
-    logger.info("Discovering groups...")
+    # Discover groups (all ranks discover the same groups)
+    if is_main_process() or not distributed:
+        logger.info("Discovering groups...")
     groups = discover_groups(Path(input_dir), mission=mission)
-    logger.info(f"Found {len(groups)} groups for mission '{mission}'")
+    original_group_count = len(groups)
+    if is_main_process() or not distributed:
+        logger.info(f"Found {original_group_count} groups for mission '{mission}'")
+
+    sampled_groups: Optional[List[GroupInfo]] = None
+    sampling_stats: Optional[Dict[str, int]] = None
+    if distributed:
+        if is_main_process():
+            sampled_groups, sampling_stats = _sample_groups(
+                groups, pass_group_number, fail_group_number, sample_seed
+            )
+        sampled_groups = broadcast_object(sampled_groups)
+        groups = sampled_groups if sampled_groups is not None else []
+    else:
+        groups, sampling_stats = _sample_groups(
+            groups, pass_group_number, fail_group_number, sample_seed
+        )
+
+    if sampling_stats and (is_main_process() or not distributed):
+        logger.info(
+            "Sampling result: pass %d/%d, fail %d/%d, selected %d/%d groups (seed=%d)",
+            sampling_stats["pass_selected"],
+            sampling_stats["pass_total"],
+            sampling_stats["fail_selected"],
+            sampling_stats["fail_total"],
+            len(groups),
+            original_group_count,
+            sample_seed,
+        )
 
     if not groups:
-        logger.warning("No groups found; exiting")
+        if is_main_process() or not distributed:
+            logger.warning("No groups found; exiting")
         return
 
-    # Load model and processor
+    if sharding_mode not in {"per_group", "per_image"}:
+        raise ValueError(f"Unsupported sharding_mode: {sharding_mode!r}")
+
+    # Load model and processor (all ranks).
     model, processor = load_model_processor(checkpoint, device, max_pixels=max_pixels)
 
-    # Prepare output path
-    output_path = Path(output_dir) / f"{mission}_stage_a.jsonl"
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    if sharding_mode == "per_group":
+        # Shard groups by rank in distributed mode.
+        if distributed:
+            my_groups = groups[rank::world_size]
+            if is_main_process():
+                logger.info(
+                    "Distributed sharding (per_group): rank %d processing %d/%d groups",
+                    rank,
+                    len(my_groups),
+                    len(groups),
+                )
+        else:
+            my_groups = groups
 
-    # Optional progress bar
+        # In distributed mode, each rank writes to a temp file, then rank 0 merges.
+        if distributed:
+            output_path = Path(output_dir) / f"{mission}_stage_a.rank{rank}.jsonl"
+        else:
+            output_path = Path(output_dir) / f"{mission}_stage_a.jsonl"
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Optional progress bar (only on main process in distributed mode).
+        pbar = None
+        if is_main_process() or not distributed:
+            try:
+                from tqdm import tqdm
+
+                pbar = tqdm(
+                    total=len(my_groups), desc="Processing groups", unit="group"
+                )
+            except ImportError:
+                pass
+
+        processed, errors = _run_per_group(
+            groups=my_groups,
+            model=model,
+            processor=processor,
+            mission=mission,
+            gen_config=gen_params,
+            batch_size=batch_size,
+            include_mission_focus=include_mission_focus,
+            verify_inputs=verify_inputs,
+            output_path=output_path,
+            pbar=pbar,
+            distributed=distributed,
+        )
+
+        if pbar is not None:
+            pbar.close()
+
+        # In distributed mode, wait for all ranks to finish, then merge on rank 0.
+        if distributed:
+            barrier()  # Wait for all ranks to finish processing
+
+            if is_main_process():
+                final_output_path = Path(output_dir) / f"{mission}_stage_a.jsonl"
+                logger.info("Merging per-rank outputs into %s", final_output_path)
+
+                total_processed = 0
+                with final_output_path.open("w", encoding="utf-8") as f_out:
+                    for r in range(world_size):
+                        rank_file = (
+                            Path(output_dir) / f"{mission}_stage_a.rank{r}.jsonl"
+                        )
+                        if rank_file.exists():
+                            with rank_file.open("r", encoding="utf-8") as f_in:
+                                for line in f_in:
+                                    f_out.write(line)
+                                    total_processed += 1
+                            rank_file.unlink()
+                        else:
+                            logger.warning(
+                                "Rank %d output file not found: %s",
+                                r,
+                                rank_file,
+                            )
+
+                logger.info("=" * 70)
+                logger.info("Stage-A Inference Complete (Distributed, per_group)")
+                logger.info(f"Total processed: {total_processed} groups")
+                logger.info(f"Output: {final_output_path}")
+                logger.info("=" * 70)
+            else:
+                logger.info(
+                    "Rank %d complete (per_group): processed %d/%d groups, errors: %d",
+                    rank,
+                    processed,
+                    len(my_groups),
+                    errors,
+                )
+        else:
+            logger.info("=" * 70)
+            logger.info("Stage-A Inference Complete (per_group)")
+            logger.info(f"Processed: {processed}/{len(groups)} groups")
+            logger.info(f"Errors: {errors}")
+            logger.info(f"Output: {output_path}")
+            logger.info("Results written incrementally (can tail -f to monitor)")
+            logger.info("=" * 70)
+        return
+
+    # per_image mode: shard at the image level; merge on rank 0 at the end.
+    jobs = _build_image_jobs(groups)
+    if distributed:
+        my_jobs = jobs[rank::world_size]
+        if is_main_process():
+            logger.info(
+                "Distributed sharding (per_image): rank %d processing %d/%d images",
+                rank,
+                len(my_jobs),
+                len(jobs),
+            )
+    else:
+        my_jobs = jobs
+
+    per_image_path = Path(output_dir) / f"{mission}_stage_a.images.rank{rank}.jsonl"
+    per_image_path.parent.mkdir(parents=True, exist_ok=True)
+
     pbar = None
-    try:
-        from tqdm import tqdm
+    if is_main_process() or not distributed:
+        try:
+            from tqdm import tqdm
 
-        pbar = tqdm(total=len(groups), desc="Processing groups", unit="group")
-    except ImportError:
-        pass
+            pbar = tqdm(total=len(my_jobs), desc="Processing images", unit="image")
+        except ImportError:
+            pass
 
-    # Process groups and write immediately (streaming mode)
+    processed_images, errors_images = _run_per_image_jobs(
+        jobs=my_jobs,
+        groups=groups,
+        model=model,
+        processor=processor,
+        mission=mission,
+        gen_config=gen_params,
+        batch_size=batch_size,
+        include_mission_focus=include_mission_focus,
+        verify_inputs=verify_inputs,
+        output_path=per_image_path,
+        pbar=pbar,
+        distributed=distributed,
+    )
+
+    if pbar is not None:
+        pbar.close()
+
+    if distributed:
+        barrier()  # Ensure all per-rank intermediates exist before merge.
+
+    if is_main_process():
+        final_output_path = Path(output_dir) / f"{mission}_stage_a.jsonl"
+        logger.info("Merging per-image outputs into %s", final_output_path)
+        merged_groups, failed_groups = _merge_per_image_outputs(
+            groups=groups,
+            output_dir=Path(output_dir),
+            mission=mission,
+            world_size=world_size if distributed else 1,
+            keep_intermediate_outputs=keep_intermediate_outputs,
+        )
+
+        logger.info("=" * 70)
+        header = (
+            "Stage-A Inference Complete (Distributed, per_image)"
+            if distributed
+            else "Stage-A Inference Complete (per_image)"
+        )
+        logger.info(header)
+        logger.info(f"Total processed: {merged_groups} groups")
+        logger.info(f"Group failures: {failed_groups}")
+        logger.info(f"Output: {final_output_path}")
+        logger.info("=" * 70)
+    else:
+        logger.info(
+            "Rank %d complete (per_image): processed %d/%d images, errors: %d",
+            rank,
+            processed_images,
+            len(my_jobs),
+            errors_images,
+        )
+    return
+
+
+def _run_per_group(
+    *,
+    groups: List[GroupInfo],
+    model: Qwen3VLForConditionalGeneration,
+    processor: AutoProcessor,
+    mission: str,
+    gen_config: Dict[str, Any],
+    batch_size: int,
+    include_mission_focus: bool,
+    verify_inputs: bool,
+    output_path: Path,
+    pbar: Optional[object],
+    distributed: bool,
+) -> Tuple[int, int]:
     processed = 0
     errors = 0
 
-    # Open output file in append mode for immediate writing
     with output_path.open("w", encoding="utf-8") as f_out:
-        for group_id, group_info in groups.items():
+        for group_info in groups:
+            group_id = group_info.group_id
             try:
                 record = process_group(
                     group_id=group_id,
@@ -868,37 +1267,644 @@ def run_stage_a_inference(
                     model=model,
                     processor=processor,
                     mission=mission,
-                    gen_config=gen_params,
+                    gen_config=gen_config,
                     batch_size=batch_size,
                     include_mission_focus=include_mission_focus,
                     verify=verify_inputs,
                 )
 
-                # Write immediately after processing each group
                 f_out.write(json.dumps(record, ensure_ascii=False) + "\n")
-                f_out.flush()  # Force write to disk immediately
-
+                f_out.flush()
                 processed += 1
 
                 if pbar is not None:
-                    pbar.update(1)
+                    pbar.update(1)  # type: ignore[call-arg]
 
-                if processed % 10 == 0:
+                if (is_main_process() or not distributed) and processed % 10 == 0:
                     logger.info(f"Processed {processed}/{len(groups)} groups")
-
-            except Exception as e:
-                logger.error(f"Failed to process group {group_id}: {e}")
+            except Exception as exc:
+                logger.error(f"Failed to process group {group_id}: {exc}")
                 errors += 1
-                # Continue processing other groups
 
-    if pbar is not None:
-        pbar.close()
+    return processed, errors
 
-    # Final summary
-    logger.info("=" * 70)
-    logger.info("Stage-A Inference Complete")
-    logger.info(f"Processed: {processed}/{len(groups)} groups")
-    logger.info(f"Errors: {errors}")
-    logger.info(f"Output: {output_path}")
-    logger.info("Results written incrementally (can tail -f to monitor)")
-    logger.info("=" * 70)
+
+@dataclass
+class _GroupAccum:
+    seq: int
+    info: GroupInfo
+    expected_images: int
+    per_image: List[Optional[str]]
+    done: bool = False
+    failed: bool = False
+
+
+@dataclass(frozen=True)
+class _ImageJob:
+    group_seq: int
+    image_index: int  # 1-based index within the group
+    path: Path
+
+
+def _build_image_jobs(groups: List[GroupInfo]) -> List[_ImageJob]:
+    """Flatten groups into a deterministic list of per-image jobs."""
+    jobs: List[_ImageJob] = []
+    for group_seq, info in enumerate(groups):
+        for image_index, path in enumerate(info.paths, start=1):
+            jobs.append(
+                _ImageJob(group_seq=group_seq, image_index=image_index, path=path)
+            )
+    return jobs
+
+
+def _run_per_image_jobs(
+    *,
+    jobs: List[_ImageJob],
+    groups: List[GroupInfo],
+    model: Qwen3VLForConditionalGeneration,
+    processor: AutoProcessor,
+    mission: str,
+    gen_config: Dict[str, Any],
+    batch_size: int,
+    include_mission_focus: bool,
+    verify_inputs: bool,
+    output_path: Path,
+    pbar: Optional[object],
+    distributed: bool,
+) -> Tuple[int, int]:
+    """Run Stage-A in per-image mode and write per-image intermediate outputs.
+
+    Each job produces exactly one JSONL line:
+    - success: (group_seq, image_index) -> summary
+    - failure: (group_seq, image_index) -> error
+    """
+    if batch_size <= 0:
+        raise ValueError("batch_size must be a positive integer")
+
+    user_text = build_user_prompt(mission if include_mission_focus else None)
+    system_text = build_system_prompt(mission if include_mission_focus else None)
+
+    processed = 0
+    errors = 0
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w", encoding="utf-8") as f_out:
+        for start in range(0, len(jobs), batch_size):
+            chunk = jobs[start : start + batch_size]
+
+            loaded_jobs: List[_ImageJob] = []
+            images: List[Image.Image] = []
+
+            def _write_failure(job: _ImageJob, *, error: str) -> None:
+                nonlocal processed, errors
+                info = groups[job.group_seq]
+                payload: Dict[str, Any] = {
+                    "group_seq": job.group_seq,
+                    "group_id": info.group_id,
+                    "label": info.label,
+                    "image_index": job.image_index,
+                    "image_name": job.path.name,
+                    "ok": False,
+                    "error": error,
+                }
+                f_out.write(json.dumps(payload, ensure_ascii=False) + "\n")
+                f_out.flush()
+                processed += 1
+                errors += 1
+                if pbar is not None:
+                    pbar.update(1)  # type: ignore[call-arg]
+
+            def _write_success(job: _ImageJob, *, summary: str) -> None:
+                nonlocal processed
+                info = groups[job.group_seq]
+                payload: Dict[str, Any] = {
+                    "group_seq": job.group_seq,
+                    "group_id": info.group_id,
+                    "label": info.label,
+                    "image_index": job.image_index,
+                    "image_name": job.path.name,
+                    "ok": True,
+                    "summary": summary,
+                }
+                f_out.write(json.dumps(payload, ensure_ascii=False) + "\n")
+                f_out.flush()
+                processed += 1
+                if pbar is not None:
+                    pbar.update(1)  # type: ignore[call-arg]
+
+            # Decode images (bounded by batch_size).
+            for job in chunk:
+                try:
+                    img = apply_exif_orientation(Image.open(job.path))
+                except Exception as exc:
+                    logger.error(
+                        "Failed to open image %s (group_seq=%d, group_id=%s): %s",
+                        job.path,
+                        job.group_seq,
+                        groups[job.group_seq].group_id,
+                        exc,
+                    )
+                    _write_failure(job, error=str(exc))
+                    continue
+
+                loaded_jobs.append(job)
+                images.append(img)
+
+            if not loaded_jobs:
+                continue
+
+            # Infer for this batch. If batch inference fails, fall back to per-image.
+            outputs: List[Tuple[str, str]] = []
+            per_job_error: Dict[int, str] = {}
+
+            if len(images) == 1:
+                try:
+                    outputs = [
+                        infer_one_image(
+                            model,
+                            processor,
+                            images[0],
+                            user_text,
+                            gen_config,
+                            verify=verify_inputs,
+                            system_prompt=system_text,
+                        )
+                    ]
+                except Exception as exc:
+                    per_job_error[0] = str(exc)
+                    outputs = [("", "")]
+            else:
+                try:
+                    outputs = infer_batch(
+                        model,
+                        processor,
+                        images,
+                        user_text,
+                        gen_config,
+                        verify=verify_inputs,
+                        system_prompt=system_text,
+                    )
+                except Exception as exc:
+                    logger.error(
+                        "Batch inference failed (len=%d); falling back to per-image: %s",
+                        len(images),
+                        exc,
+                    )
+                    outputs = []
+                    for idx, (job, img) in enumerate(zip(loaded_jobs, images)):
+                        try:
+                            outputs.append(
+                                infer_one_image(
+                                    model,
+                                    processor,
+                                    img,
+                                    user_text,
+                                    gen_config,
+                                    verify=verify_inputs,
+                                    system_prompt=system_text,
+                                )
+                            )
+                        except Exception as per_exc:
+                            per_job_error[idx] = str(per_exc)
+                            outputs.append(("", ""))
+
+            # Drop images eagerly to keep memory bounded to the current batch.
+            for img in images:
+                try:
+                    img.close()
+                except Exception:
+                    pass
+            del images
+
+            if len(outputs) != len(loaded_jobs):
+                logger.error(
+                    "Infer returned mismatched response count: %d outputs vs %d jobs",
+                    len(outputs),
+                    len(loaded_jobs),
+                )
+                for job in loaded_jobs:
+                    _write_failure(job, error="mismatched infer output count")
+                continue
+
+            for idx, (job, (_raw, clean)) in enumerate(zip(loaded_jobs, outputs)):
+                if clean:
+                    _write_success(job, summary=clean)
+                    continue
+                err = per_job_error.get(idx, "empty summary")
+                _write_failure(job, error=err)
+
+    if (is_main_process() or not distributed) and processed:
+        logger.info(
+            "Per-image intermediates written: %s (%d images, %d errors)",
+            output_path,
+            processed,
+            errors,
+        )
+
+    return processed, errors
+
+
+def _merge_per_image_outputs(
+    *,
+    groups: List[GroupInfo],
+    output_dir: Path,
+    mission: str,
+    world_size: int,
+    keep_intermediate_outputs: bool,
+) -> Tuple[int, int]:
+    """Merge per-rank per-image outputs into group-level Stage-A JSONL.
+
+    Returns:
+        (merged_groups, failed_groups)
+    """
+    final_output_path = output_dir / f"{mission}_stage_a.jsonl"
+
+    # Prepare per-group buffers.
+    per_group: List[List[Optional[str]]] = [
+        [None for _ in range(len(info.paths))] for info in groups
+    ]
+    failed: List[bool] = [False for _ in groups]
+    seen: set[Tuple[int, int]] = set()
+
+    def _mark_failed(group_seq: int, *, reason: str) -> None:
+        if group_seq < 0 or group_seq >= len(groups):
+            logger.error("Invalid group_seq=%d (reason=%s)", group_seq, reason)
+            return
+        if not failed[group_seq]:
+            logger.error(
+                "Group failed at merge: group_seq=%d group_id=%s (%s)",
+                group_seq,
+                groups[group_seq].group_id,
+                reason,
+            )
+        failed[group_seq] = True
+
+    # Load all intermediates.
+    for r in range(world_size):
+        path = output_dir / f"{mission}_stage_a.images.rank{r}.jsonl"
+        if not path.exists():
+            logger.warning("Per-image output file not found for rank %d: %s", r, path)
+            continue
+        with path.open("r", encoding="utf-8") as f_in:
+            for line_number, line in enumerate(f_in, start=1):
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                try:
+                    payload = json.loads(stripped)
+                except json.JSONDecodeError as exc:
+                    logger.error(
+                        "Invalid JSON at %s:%d (%s)", path.name, line_number, exc
+                    )
+                    continue
+
+                try:
+                    group_seq = int(payload["group_seq"])
+                    image_index = int(payload["image_index"])
+                except Exception as exc:
+                    logger.error(
+                        "Invalid per-image keys at %s:%d (%s)",
+                        path.name,
+                        line_number,
+                        exc,
+                    )
+                    continue
+
+                key = (group_seq, image_index)
+                if key in seen:
+                    _mark_failed(group_seq, reason=f"duplicate result for {key}")
+                    continue
+                seen.add(key)
+
+                if group_seq < 0 or group_seq >= len(groups):
+                    logger.error(
+                        "Out-of-range group_seq=%d at %s:%d",
+                        group_seq,
+                        path.name,
+                        line_number,
+                    )
+                    continue
+
+                expected = len(groups[group_seq].paths)
+                if image_index < 1 or image_index > expected:
+                    _mark_failed(
+                        group_seq,
+                        reason=f"out-of-range image_index={image_index} expected=1..{expected}",
+                    )
+                    continue
+
+                ok = bool(payload.get("ok", False))
+                if not ok:
+                    _mark_failed(group_seq, reason=str(payload.get("error", "error")))
+                    continue
+
+                summary = str(payload.get("summary", "")).strip()
+                if not summary:
+                    _mark_failed(group_seq, reason="empty summary")
+                    continue
+
+                per_group[group_seq][image_index - 1] = summary
+
+    merged_groups = 0
+    failed_groups = 0
+
+    with final_output_path.open("w", encoding="utf-8") as f_out:
+        for group_seq, info in enumerate(groups):
+            missing = [idx for idx, v in enumerate(per_group[group_seq], start=1) if v is None]
+            if failed[group_seq] or missing:
+                if not failed[group_seq] and missing:
+                    _mark_failed(group_seq, reason=f"missing image indices: {missing}")
+                failed_groups += 1
+                continue
+
+            per_image_map: Dict[str, str] = {}
+            for idx, text in enumerate(per_group[group_seq], start=1):
+                if text is None:
+                    # Defensive: should have been caught above.
+                    _mark_failed(group_seq, reason="missing summary at write time")
+                    failed_groups += 1
+                    break
+                per_image_map[f"image_{idx}"] = text
+            else:
+                record = {
+                    "group_id": info.group_id,
+                    "mission": info.mission,
+                    "label": info.label,
+                    "images": [p.name for p in info.paths],
+                    "per_image": per_image_map,
+                }
+                f_out.write(json.dumps(record, ensure_ascii=False) + "\n")
+                merged_groups += 1
+
+    # Cleanup intermediates by default.
+    if not keep_intermediate_outputs:
+        for r in range(world_size):
+            path = output_dir / f"{mission}_stage_a.images.rank{r}.jsonl"
+            try:
+                if path.exists():
+                    path.unlink()
+            except Exception as exc:
+                logger.warning("Failed to delete intermediate file %s: %s", path, exc)
+
+    return merged_groups, failed_groups
+
+
+def _run_cross_group_batches(
+    *,
+    groups: List[GroupInfo],
+    model: Qwen3VLForConditionalGeneration,
+    processor: AutoProcessor,
+    mission: str,
+    gen_config: Dict[str, Any],
+    batch_size: int,
+    include_mission_focus: bool,
+    verify_inputs: bool,
+    output_path: Path,
+    pbar: Optional[object],
+    distributed: bool,
+) -> Tuple[int, int]:
+    """Run Stage-A using cross-group image batching while preserving per-group outputs.
+
+    Constraints:
+    - At most `batch_size` images are decoded/in-flight per batch.
+    - Groups are flushed in discovery order per rank; failures count as complete for ordering.
+    - Failures do not emit partial group records and do not stop other groups.
+    """
+    if batch_size <= 0:
+        raise ValueError("batch_size must be a positive integer")
+
+    user_text = build_user_prompt(mission if include_mission_focus else None)
+    system_text = build_system_prompt(mission if include_mission_focus else None)
+
+    accums: List[_GroupAccum] = []
+    for seq, info in enumerate(groups):
+        expected = len(info.paths)
+        accums.append(
+            _GroupAccum(
+                seq=seq,
+                info=info,
+                expected_images=expected,
+                per_image=[None for _ in range(expected)],
+            )
+        )
+
+    processed = 0
+    errors = 0
+
+    # Completed group outputs keyed by seq; value None means "failed, no record".
+    completed: Dict[int, Optional[Dict[str, Any]]] = {}
+    next_flush_seq = 0
+
+    # Sequential cursor over groups and per-group image index.
+    group_cursor = 0
+    image_cursor = 0
+
+    def _mark_group_failed(group_seq: int) -> None:
+        nonlocal errors
+        acc = accums[group_seq]
+        if acc.done:
+            return
+        acc.failed = True
+        acc.done = True
+        acc.per_image = [None for _ in range(acc.expected_images)]
+        completed[group_seq] = None
+        errors += 1
+        if pbar is not None:
+            pbar.update(1)  # type: ignore[call-arg]
+
+    def _maybe_finish_group(group_seq: int) -> None:
+        acc = accums[group_seq]
+        if acc.done:
+            return
+        if any(v is None for v in acc.per_image):
+            return
+
+        # Build record with strict coverage (fail-fast defensive checks).
+        per_image_map: Dict[str, str] = {}
+        for idx, text in enumerate(acc.per_image, start=1):
+            if text is None:
+                raise ValueError("Internal error: per_image missing after completion")
+            per_image_map[f"image_{idx}"] = text
+
+        record = {
+            "group_id": acc.info.group_id,
+            "mission": acc.info.mission,
+            "label": acc.info.label,
+            "images": [p.name for p in acc.info.paths],
+            "per_image": per_image_map,
+        }
+
+        acc.done = True
+        completed[group_seq] = record
+        if pbar is not None:
+            pbar.update(1)  # type: ignore[call-arg]
+
+    def _flush_ready(f_out) -> None:
+        nonlocal next_flush_seq, processed
+        while next_flush_seq in completed:
+            record = completed.pop(next_flush_seq)
+            if record is not None:
+                f_out.write(json.dumps(record, ensure_ascii=False) + "\n")
+                f_out.flush()
+                processed += 1
+                if (is_main_process() or not distributed) and processed % 10 == 0:
+                    logger.info(f"Processed {processed}/{len(groups)} groups")
+            next_flush_seq += 1
+
+    with output_path.open("w", encoding="utf-8") as f_out:
+        while group_cursor < len(groups):
+            # Skip already-done groups (can happen after marking failed).
+            if group_cursor < len(accums) and accums[group_cursor].done:
+                group_cursor += 1
+                image_cursor = 0
+                continue
+
+            # Assemble a batch of jobs from successive groups.
+            jobs: List[_ImageJob] = []
+            images: List[Image.Image] = []
+
+            local_group_cursor = group_cursor
+            local_image_cursor = image_cursor
+
+            while len(jobs) < batch_size and local_group_cursor < len(groups):
+                acc = accums[local_group_cursor]
+                if acc.done:
+                    local_group_cursor += 1
+                    local_image_cursor = 0
+                    continue
+
+                if local_image_cursor >= acc.expected_images:
+                    local_group_cursor += 1
+                    local_image_cursor = 0
+                    continue
+
+                path = acc.info.paths[local_image_cursor]
+                job = _ImageJob(
+                    group_seq=acc.seq,
+                    image_index=local_image_cursor + 1,
+                    path=path,
+                )
+
+                try:
+                    img = apply_exif_orientation(Image.open(path))
+                except Exception as exc:
+                    logger.error("Failed to open image %s (group=%s): %s", path, acc.info.group_id, exc)
+                    _mark_group_failed(acc.seq)
+                    local_group_cursor += 1
+                    local_image_cursor = 0
+                    continue
+
+                jobs.append(job)
+                images.append(img)
+                local_image_cursor += 1
+                if local_image_cursor >= acc.expected_images:
+                    local_group_cursor += 1
+                    local_image_cursor = 0
+
+            # If we couldn't enqueue anything (all remaining groups failed), stop.
+            if not jobs:
+                break
+
+            # Commit cursor advancement.
+            group_cursor = local_group_cursor
+            image_cursor = local_image_cursor
+
+            # Run inference for the batch. If batch inference fails, fallback to per-image.
+            outputs: List[Tuple[str, str]] = []
+            if batch_size == 1 and len(images) == 1:
+                try:
+                    outputs = [
+                        infer_one_image(
+                            model,
+                            processor,
+                            images[0],
+                            user_text,
+                            gen_config,
+                            verify=verify_inputs,
+                            system_prompt=system_text,
+                        )
+                    ]
+                except Exception as exc:
+                    logger.error("Inference failed for %s: %s", jobs[0].path, exc)
+                    _mark_group_failed(jobs[0].group_seq)
+                    outputs = []
+            else:
+                try:
+                    outputs = infer_batch(
+                        model,
+                        processor,
+                        images,
+                        user_text,
+                        gen_config,
+                        verify=verify_inputs,
+                        system_prompt=system_text,
+                    )
+                except Exception as exc:
+                    logger.error(
+                        "Batch inference failed (len=%d); falling back to per-image: %s",
+                        len(images),
+                        exc,
+                    )
+                    outputs = []
+                    for job, img in zip(jobs, images):
+                        if accums[job.group_seq].done:
+                            outputs.append(("", ""))
+                            continue
+                        try:
+                            outputs.append(
+                                infer_one_image(
+                                    model,
+                                    processor,
+                                    img,
+                                    user_text,
+                                    gen_config,
+                                    verify=verify_inputs,
+                                    system_prompt=system_text,
+                                )
+                            )
+                        except Exception as per_exc:
+                            logger.error("Inference failed for %s: %s", job.path, per_exc)
+                            _mark_group_failed(job.group_seq)
+                            outputs.append(("", ""))
+
+            # Drop images eagerly to keep memory bounded to the current batch.
+            for img in images:
+                try:
+                    img.close()
+                except Exception:
+                    pass
+            del images
+
+            # Re-aggregate outputs back into per-group buffers.
+            if outputs and len(outputs) != len(jobs):
+                # Defensive: if mismatch, fail all involved groups to avoid corrupt alignment.
+                logger.error(
+                    "Sampler returned mismatched response count: %d outputs vs %d jobs",
+                    len(outputs),
+                    len(jobs),
+                )
+                for job in jobs:
+                    _mark_group_failed(job.group_seq)
+                _flush_ready(f_out)
+                continue
+
+            for job, (_raw, clean) in zip(jobs, outputs):
+                acc = accums[job.group_seq]
+                if acc.done:
+                    continue
+                if not clean:
+                    _mark_group_failed(job.group_seq)
+                    continue
+                slot = job.image_index - 1
+                if slot < 0 or slot >= acc.expected_images:
+                    _mark_group_failed(job.group_seq)
+                    continue
+                acc.per_image[slot] = clean
+                _maybe_finish_group(job.group_seq)
+
+            _flush_ready(f_out)
+
+        # Flush any remaining completed groups (including trailing failures).
+        _flush_ready(f_out)
+
+    return processed, errors

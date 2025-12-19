@@ -48,7 +48,7 @@ sft.prepare_model(...)
 - `configs/1024/*.yaml` — High-res fusion variants that only swap in 1024px dataset paths on top of `configs/fused_data/sft_base.yaml`.
 - `configs/fusion/*.yaml` — Offline fusion builder configs for `scripts/fuse_datasets.py`
 - `configs/summary.yaml` — Summary-only training mode
-- `configs/stage_b/*.yaml` — Stage-B runtime configs (debug/run)
+- `configs/stage_b/*.yaml` — Stage-B runtime configs (bbu_*.yaml for entry configs)
 - Upstream data for these configs is normally produced by the annotation converter (`data_conversion/convert_dataset.sh`, see `docs/data/DATA_PREPROCESSING_PIPELINE.md`) or by public converters in `public_data/`. Ensure converted JSONL matches `docs/data/DATA_JSONL_CONTRACT.md` before training.
 
 ### Training Modes

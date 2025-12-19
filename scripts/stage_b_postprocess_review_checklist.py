@@ -2,10 +2,12 @@
 # -*- coding: utf-8 -*-
 """Postprocess Stage-B outputs into a human review checklist.
 
-This script reads Stage-B artifacts under {output.root}/{output.run_name}/{mission}/
-and generates a markdown checklist for all tickets in need-review queue.
+This script reads Stage-B artifacts under {root}/{mission_name}/{run_name}/
+and generates a markdown checklist for all tickets in need-review.
 
 It is intended to be called automatically at the end of scripts/stage_b.sh.
+
+It prefers `need_review.json` (run-end aggregate) and falls back to `need_review_queue.jsonl`.
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
 from src.stage_b.config import load_stage_b_config
+from src.stage_b.ingest import ingest_stage_a
 
 
 def _load_jsonl(path: Path) -> List[dict]:
@@ -32,18 +35,21 @@ def _load_jsonl(path: Path) -> List[dict]:
     return items
 
 
-def _index_stage_a(stage_a_paths: Iterable[Path]) -> Dict[Tuple[str, str], dict]:
-    """Map (mission, group_id) -> Stage-A record."""
-    stage_a: Dict[Tuple[str, str], dict] = {}
+def _index_stage_a(stage_a_paths: Iterable[Path]) -> Dict[Tuple[str, str, str], dict]:
+    """Map (mission, group_id, label) -> Stage-A record."""
+    stage_a: Dict[Tuple[str, str, str], dict] = {}
     for path in stage_a_paths:
         if not path.exists():
             continue
         for item in _load_jsonl(path):
             mission = item.get("mission")
             group_id = item.get("group_id")
+            label = item.get("label")
             if not mission or not group_id:
                 continue
-            stage_a[(str(mission), str(group_id))] = item
+            if not label:
+                continue
+            stage_a[(str(mission), str(group_id), str(label))] = item
     return stage_a
 
 
@@ -72,15 +78,22 @@ def _render_group_markdown(
     stage_a_record: Optional[Mapping[str, Any]],
 ) -> str:
     gt_label = latest.get("gt_label")
-    chosen_verdict = latest.get("chosen_verdict")
-    tag = latest.get("tag")
-    reason = latest.get("reason")
+    chosen_verdict = latest.get("pred_verdict") or latest.get("chosen_verdict")
+    tag = latest.get("reason_code") or latest.get("tag") or latest.get("reason")
+    reason = latest.get("pred_reason") or latest.get("reason")
     evidence_summary = latest.get("evidence_summary") or {}
+    uncertainty_note = latest.get("uncertainty_note")
 
     epoch_hist = []
     for item in sorted(history, key=lambda x: (int(x.get("epoch") or 0), int(x.get("reflection_cycle") or 0))):
+        item_tag = item.get("reason_code") or item.get("tag") or item.get("reason")
+        item_verdict = item.get("pred_verdict") or item.get("chosen_verdict")
         epoch_hist.append(
-            f"epoch={item.get('epoch')} cycle={item.get('reflection_cycle')} tag={item.get('tag')} verdict={item.get('chosen_verdict')}"
+            "epoch="
+            f"{item.get('epoch')} "
+            f"cycle={item.get('reflection_cycle')} "
+            f"tag={item_tag} "
+            f"verdict={item_verdict}"
         )
 
     images = []
@@ -98,6 +111,8 @@ def _render_group_markdown(
     parts.append(f"- gt_label(stage_b_input): {gt_label}")
     parts.append(f"- chosen_verdict: {chosen_verdict}")
     parts.append(f"- tag(latest): {tag}")
+    if uncertainty_note:
+        parts.append(f"- uncertainty_note(latest): {uncertainty_note}")
     parts.append("- need_review_history:")
     parts.append(_format_markdown_list(epoch_hist) if epoch_hist else "- (empty)")
     parts.append("- stage_b_reason(latest):")
@@ -141,42 +156,59 @@ def _render_group_markdown(
 def build_review_checklist_for_mission(
     mission_dir: Path,
     *,
-    stage_a_index: Mapping[Tuple[str, str], dict],
+    stage_a_index: Mapping[Tuple[str, str, str], dict],
 ) -> Optional[Path]:
+    need_review_json = mission_dir / "need_review.json"
     need_review_path = mission_dir / "need_review_queue.jsonl"
-    if not need_review_path.exists():
-        return None
 
-    items = _load_jsonl(need_review_path)
+    items: List[dict] = []
+    if need_review_json.exists():
+        payload = json.loads(need_review_json.read_text(encoding="utf-8"))
+        raw_items = payload.get("items")
+        if isinstance(raw_items, list):
+            items = [item for item in raw_items if isinstance(item, dict)]
+    elif need_review_path.exists():
+        items = _load_jsonl(need_review_path)
+
     if not items:
         return None
 
-    # Group by group_id, keep all history and pick a latest representative row.
+    # Group by ticket_key (= group_id + gt_label), keep all history and pick a latest representative row.
     grouped: Dict[str, List[dict]] = defaultdict(list)
     for item in items:
         gid = str(item.get("group_id") or "")
         mission = str(item.get("mission") or "")
+        gt_label = str(item.get("gt_label") or "")
         if not gid or not mission:
             continue
-        grouped[gid].append(item)
+        if not gt_label:
+            continue
+        ticket_key = str(item.get("ticket_key") or "").strip() or f"{gid}::{gt_label}"
+        grouped[ticket_key].append(item)
 
     now = datetime.now(timezone.utc).isoformat()
     out_md = mission_dir / "review_checklist.md"
     out_jsonl = mission_dir / "review_checklist.jsonl"
 
     tag_counter = Counter()
-    for gid, history in grouped.items():
+    for ticket_key, history in grouped.items():
         latest = _pick_latest_need_review(history)
-        tag_counter[str(latest.get("tag") or "unknown")] += 1
+        reason_code = latest.get("reason_code") or latest.get("tag") or latest.get("reason") or "unknown"
+        tag_counter[str(reason_code)] += 1
 
     # Write JSONL (one line per group, latest + history + stage-a snapshot).
     with out_jsonl.open("w", encoding="utf-8") as fh:
-        for gid in sorted(grouped.keys()):
-            history = grouped[gid]
+        for ticket_key in sorted(grouped.keys()):
+            history = grouped[ticket_key]
             latest = _pick_latest_need_review(history)
             mission = str(latest.get("mission") or "")
-            stage_a_record = stage_a_index.get((mission, gid))
+            gid = str(latest.get("group_id") or "")
+            gt_label = str(latest.get("gt_label") or "")
+            stage_a_record = (
+                stage_a_index.get((mission, gid, gt_label)) if gid and gt_label else None
+            )
             payload = {
+                "ticket_key": ticket_key,
                 "group_id": gid,
                 "mission": mission,
                 "latest": latest,
@@ -191,23 +223,27 @@ def build_review_checklist_for_mission(
     md_lines.append("")
     md_lines.append(f"- generated_at: {now}")
     md_lines.append(f"- mission_dir: {mission_dir}")
-    md_lines.append(f"- need_review_unique_groups: {len(grouped)}")
+    md_lines.append(f"- need_review_unique_tickets: {len(grouped)}")
     md_lines.append("- tags(latest):")
     for tag, cnt in sorted(tag_counter.items(), key=lambda kv: (-kv[1], kv[0])):
         md_lines.append(f"  - {tag}: {cnt}")
     md_lines.append("")
-    md_lines.append("## 目录（group_id）")
-    md_lines.extend([f"- {gid}" for gid in sorted(grouped.keys())])
+    md_lines.append("## 目录（ticket_key）")
+    md_lines.extend([f"- {ticket_key}" for ticket_key in sorted(grouped.keys())])
     md_lines.append("")
 
-    for gid in sorted(grouped.keys()):
-        history = grouped[gid]
+    for ticket_key in sorted(grouped.keys()):
+        history = grouped[ticket_key]
         latest = _pick_latest_need_review(history)
         mission = str(latest.get("mission") or "")
-        stage_a_record = stage_a_index.get((mission, gid))
+        gid = str(latest.get("group_id") or "")
+        gt_label = str(latest.get("gt_label") or "")
+        stage_a_record = (
+            stage_a_index.get((mission, gid, gt_label)) if gid and gt_label else None
+        )
         md_lines.append(
             _render_group_markdown(
-                group_id=gid,
+                group_id=ticket_key,
                 mission=mission,
                 latest=latest,
                 history=history,
@@ -219,42 +255,50 @@ def build_review_checklist_for_mission(
     return out_md
 
 
-def _discover_mission_dirs(run_dir: Path) -> List[Path]:
-    if not run_dir.exists():
-        return []
-    dirs = []
-    for child in run_dir.iterdir():
-        if child.is_dir():
-            dirs.append(child)
-    return sorted(dirs)
-
-
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True, help="Stage-B YAML config path")
     args = parser.parse_args()
 
     config = load_stage_b_config(Path(args.config))
-    run_dir = config.output.root / config.output.run_name
-    mission_dirs = _discover_mission_dirs(run_dir)
-    if not mission_dirs:
-        print(f"[postprocess] No mission directories found under {run_dir}")
+    
+    # Discover mission from Stage-A inputs (same logic as runner.py)
+    tickets = list(ingest_stage_a(config.stage_a_paths))
+    if not tickets:
+        print("[postprocess] No Stage-A records found; cannot determine mission")
+        return 0
+    
+    # Group tickets by mission to discover mission name
+    from collections import defaultdict
+    tickets_by_mission: Dict[str, List] = defaultdict(list)
+    for ticket in tickets:
+        tickets_by_mission[ticket.mission].append(ticket)
+    
+    if len(tickets_by_mission) != 1:
+        print(f"[postprocess] Expected exactly one mission, got {len(tickets_by_mission)}")
+        return 0
+    
+    # Get the single mission name for directory structure: {root}/{mission_name}/{run_name}/
+    mission_name = list(tickets_by_mission.keys())[0]
+    mission_dir = config.output.root / mission_name / config.output.run_name
+    
+    if not mission_dir.exists():
+        print(f"[postprocess] Mission directory not found: {mission_dir}")
         return 0
 
     stage_a_index = _index_stage_a(config.stage_a_paths)
-    wrote_any = False
-    for mission_dir in mission_dirs:
-        out_md = build_review_checklist_for_mission(
-            mission_dir, stage_a_index=stage_a_index
+    out_md = build_review_checklist_for_mission(
+        mission_dir, stage_a_index=stage_a_index
+    )
+    if out_md is None:
+        print(
+            "[postprocess] No need-review items found (need_review.json / need_review_queue.jsonl empty) under "
+            f"{mission_dir}"
         )
-        if out_md is None:
-            continue
-        wrote_any = True
-        print(f"[postprocess] Review checklist written: {out_md}")
-        print(f"[postprocess] JSONL snapshot written: {mission_dir / 'review_checklist.jsonl'}")
-
-    if not wrote_any:
-        print(f"[postprocess] No need_review_queue.jsonl found under {run_dir}")
+        return 0
+    
+    print(f"[postprocess] Review checklist written: {out_md}")
+    print(f"[postprocess] JSONL snapshot written: {mission_dir / 'review_checklist.jsonl'}")
     return 0
 
 

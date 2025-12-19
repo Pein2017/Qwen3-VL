@@ -104,7 +104,7 @@ Step 2: SELECTION (挑选最优候选)
   │  - 统计各verdict的count          │
   │  - 计算vote_strength            │
   │  - 当vote_strength < 阈值        │
-  │    → 标记为manual_review        │
+  │    → 标记为 low_agreement/needs_manual_review（警示） │
   │                                  │
   │ 输出：Selection结果              │
   │  - selected_candidate_index      │
@@ -116,15 +116,15 @@ Step 2: SELECTION (挑选最优候选)
 
 Step 3: REFLECTION (从错误中学习)
   ┌──────────────────────────────────┐
-  │ 证据判断 + 规则学习              │
+  │ 证据判断 + 规则学习（拿到GT）     │
   │                                  │
   │ 前置条件：收集batch_size个结果   │
   │                                  │
   │ LLM任务：                        │
   │  1. 分析候选的reason            │
-  │  2. 判断是否有证据支持标签       │
-  │  3. 如果有：提取可学习的规则     │
-  │  4. 如果无：标记为no_evidence   │
+  │  2. 对照gt-label提出“可学习假设/规则”（允许可能解释） │
+  │  3. 如果能提出：输出operations   │
+  │  4. 如果不能：has_evidence=false / operations=[]      │
   │                                  │
   │ 输出：Proposal                   │
   │  - action: refine / noop         │
@@ -133,8 +133,9 @@ Step 3: REFLECTION (从错误中学习)
   │  - confidence: 规则置信度        │
   │                                  │
   │ 后续处理：                       │
-  │  - 如果有证据 → 更新Guidance    │
-  │  - 如果无证据 → 标记manual_review│
+  │  - 若operations应用成功 → 更新Guidance │
+  │  - need-review（人工复核）由 reflection 作为唯一裁判：仅当 reflection 在看到 gt_label 后仍明确标记“无证据/想不明白错哪”（`uncertainty_note="no_evidence_for_label"` 或 `proposal.no_evidence_group_ids` 命中该 group）→ 写入 need-review │
+  │  - rollout/解析/selection硬故障 → failure_malformed（不进入人工复核） │
   └──────────────────────────────────┘
               ↓
           输出结果
@@ -209,12 +210,9 @@ hit_count=1, miss_count=0, confidence=1.0
 [每个Epoch]
   ├─ Reflection应用规则 → 记录last_applied_rule_keys
   │
-  ├─ Sample预测成功 → 该规则隐含命中（计数器增加）
-  │                   [当前未显式实现]
-  │
-  ├─ Sample预测失败 → 调用increment_miss_count()
-  │                   miss_count++
-  │                   confidence重新计算
+  ├─ Sample预测成功/失败 → 基于最终label_match对last_applied_rule_keys记 hit/miss
+  │                        hit: increment_hit_count() / miss: increment_miss_count()
+  │                        （近似归因：最近一次变更负责，不保证严格因果）
   │
   └─ Epoch结束 → cleanup_low_confidence()
                   移除低置信度规则
@@ -249,20 +247,19 @@ if outcome.applied:
     logger.debug(f"Reflection applied {len(applied_keys)} rule(s): {applied_keys}")
 ```
 
-#### 3.3.3 当预测失败时更新miss_count
+#### 3.3.3 更新 hit/miss 反馈
 
-**文件：** `src/stage_b/runner.py:569-576` （批处理） 和 `669-676` （epoch末）
+**文件：** `src/stage_b/runner.py`（每个 ticket selection 后）
 
 ```python
-# If winning candidate still mismatches label, enqueue manual review
-if win_cand and win_cand.signals and win_cand.signals.label_match is False:
-    _append_jsonl(manual_review_path, {...})
-    # Update miss_count for rules that led to this failed prediction
-    if last_applied_rule_keys:
-        mission_guidance_repo.increment_miss_count(
-            mission, last_applied_rule_keys
-        )
+if last_applied_rule_keys:
+    if selection.label_match:
+        mission_guidance_repo.increment_hit_count(mission, last_applied_rule_keys)
+    else:
+        mission_guidance_repo.increment_miss_count(mission, last_applied_rule_keys)
 ```
+
+> 注：这里的归因是“最近一次 reflection 变更负责”的近似；必要时可引入窗口限制减少长期误归因。
 
 #### 3.3.4 Epoch末自动清理
 
@@ -330,7 +327,7 @@ class GuidanceLifecycleConfig:
 **在YAML中启用：**
 
 ```yaml
-# configs/stage_b/debug.yaml
+# configs/stage_b/bbu_line.yaml
 guidance_lifecycle:
   confidence_drop_threshold: 0.35
   min_miss_before_drop: 3
@@ -340,6 +337,8 @@ guidance_lifecycle:
 ---
 
 ## 4. 当前问题诊断
+
+> 注（2025‑12）：人工复核入口已统一为 need‑review：`need_review_queue.jsonl` / `need_review.json`（由 reflection 在看到 `gt_label` 后按 group_id 粒度判定是否“仍无法解释/无证据”）。`manual_review_queue.jsonl` 不再作为人工复核入口；解析/无候选/selection 报错等硬故障仅写入 `failure_malformed.jsonl`。本文中历史“Manual Review”统计可视为“需要重点排查/被排除出 clean metrics”的集合，而不等价于 need-review。
 
 ### 4.1 实验设置
 
@@ -546,21 +545,15 @@ Reflection期望的循环：
 - [x] 追踪last_applied_rule_keys ✓
 - [x] 从Reflection提取applied rules ✓
 - [x] 调用increment_miss_count() ✓
-- [ ] **缺失：increment_hit_count()** ❌
+- [x] 调用increment_hit_count() ✓
 
-**问题：**
-- 只在预测失败时更新miss_count
-- 从未显式更新hit_count
-- 导致hit_count永远=1（规则创建时）
+**说明：**
+- 已在 runner 中按 `selection.label_match` 显式更新 hit/miss，并在 epoch 末执行 `cleanup_low_confidence`。
+- hit/miss 的归因是“最近一次 reflection 变更负责”的近似（可满足最小闭环；若需要更严格因果可在后续增强）。
 
-**改进建议：**
+**可选增强：**
 ```python
-# 当样本预测成功时，也应该更新hit_count
-if win_cand and win_cand.signals and win_cand.signals.label_match is True:
-    if last_applied_rule_keys:
-        mission_guidance_repo.increment_hit_count(
-            mission, last_applied_rule_keys
-        )
+# 可选：为last_applied_rule_keys引入“窗口”（例如仅在N个global_step内反馈），减少长期误归因。
 ```
 
 #### 区域3：Reflection的证据判断逻辑
@@ -568,12 +561,13 @@ if win_cand and win_cand.signals and win_cand.signals.label_match is True:
 **问题位置：** `src/stage_b/reflection/engine.py` （reflection prompt）
 
 **当前设计：**
-- Reflection判断"是否有证据支持标签"
-- 如果无证据，标记为no_evidence_for_label
+- Reflection拿到 `gt_label` 后优先尝试提出“可学习假设/规则”（允许可能解释），用于修正下一轮 rollout 的倾向
+- `has_evidence` 的含义从“是否有完美硬证据”调整为“是否能提出可泛化、可验证、可淘汰的假设规则”
+- need-review（人工复核）当前以“label-suspect only”为触发：**reflection 是唯一裁判**；只有当 reflection 在看到 `gt_label` 后仍明确标记“无证据/想不明白错哪”（`uncertainty_note="no_evidence_for_label"` 或 `proposal.no_evidence_group_ids` 命中该 group）时，才入 need-review（判定为 group_id 级，而不是 batch 一刀切）
 
 **问题：**
 - 当所有candidates都是pass，理由中没有fail的证据
-- Reflection虽然学到了规则，但产生矛盾（理由说pass，规则要fail）
+- 反思可能只能提出“关键证据缺失→fail”的保守假设，需要依赖 hit/miss 与自动清理快速淘汰“瞎猜规则”
 
 **改进建议：**
 - [ ] 调整Reflection的prompt，让它也考虑"理由与规则的一致性"
@@ -634,42 +628,34 @@ Image → Rollout直接分析 → Verdict
 - [ ] 为来自噪声源的规则降权
 - [ ] 增加规则的"版本"概念，允许规则被推翻和替换
 
-#### 3. Manual Review队列的处理
+#### 3. Need-Review 队列的处理（人工复核）
 
 **当前设计：**
-- 20个样本进入manual_review_queue
-- 需要人工决策
+- 20个样本进入 need_review_queue（label-suspect：reflection 标记“无证据/想不明白错哪”）
+- 硬故障（解析失败/无候选/selection 报错等）不进入复核队列，仅在 `failure_malformed.jsonl` 与日志中排查
 
 **问题：**
 - 69%的样本进入人工复核，这太高了
 - 这种情况应该触发**系统级别的诊断告警**
 
 **改进建议：**
-- [ ] 添加质量监控：manual_review比例 > 50% → 红色告警
+- [ ] 添加质量监控：need_review 比例 > 50% → 红色告警
+- [ ] 添加质量监控：failure_malformed 比例异常升高 → 红色告警（提示词/解析/环境问题）
 - [ ] 触发告警时，自动运行诊断（对比无Summary版本、检查Rollout偏倚等）
 - [ ] 考虑自动回滚到上一个良好状态
 
 ### 6.3 代码质量检查项
 
-#### 规则名称生成（Hash冲突风险）
+#### applied rule keys 归因（历史 Hash 冲突风险已移除）
 
-**位置：** `src/stage_b/runner.py:587`
-
-```python
-applied_keys.append(f"_text_{hash(op.text) % (10**8)}")
-```
+**位置：** `src/stage_b/runner.py`（reflection 后计算 `last_applied_rule_keys`）
 
 **风险：**
-- Hash冲突虽然概率小，但不是零
-- 不同的规则可能生成相同的key
+- 若无法稳定识别“本次 reflection 实际新增/修改的 rule keys”，hit/miss 反馈会失真，导致规则淘汰/保留不可靠
 
 **改进建议：**
-```python
-# 使用更稳定的标识符
-import hashlib
-text_hash = hashlib.md5(op.text.encode()).hexdigest()[:8]
-applied_keys.append(f"_text_{text_hash}")
-```
+- 当前实现已去掉基于 `hash(op.text)` 的临时 key：runner 会结合“显式 op.key”与“guidance 前后 key diff”确定 `last_applied_rule_keys`，避免 Hash 冲突与不稳定性。
+- 若未来引入更复杂的 batch 变更，可进一步把 `last_applied_rule_keys` 写入反思日志工件，便于离线审计与回放。
 
 #### increment_miss_count实现检查
 
@@ -733,20 +719,19 @@ ROLLOUT_SYSTEM_PROMPT += """
 """
 ```
 
-### 第三阶段：补全Hit/Miss机制（1天）
+### 第三阶段：校验/调参 Hit/Miss 机制（1天）
 
 ```python
-# 添加increment_hit_count()
-# 完善confidence计算
-# 测试cleanup流程
+# 已实现：increment_hit_count() + runner侧 hit/miss 反馈 + cleanup_low_confidence()
+# 建议：调参 confidence_drop_threshold / min_miss_before_drop，并做最小回归验证
 ```
 
 ### 第四阶段：质量监控与告警（1-2天）
 
 ```python
 # 添加Stage-B级别的质量检查
-if manual_review_ratio > 0.5:
-    logger.critical("High manual review ratio detected!")
+if need_review_ratio > 0.5:
+    logger.critical("High need-review ratio detected!")
     logger.critical("Potential data quality or model bias issue")
     # 触发诊断报告
 ```
@@ -769,8 +754,8 @@ if manual_review_ratio > 0.5:
 
 ### 短期改进（可并行进行）
 1. 修改Rollout prompt，加入反偏倚约束
-2. 补全Hit/Miss机制（添加increment_hit_count）
-3. 添加质量监控（manual_review告警）
+2. 校验 Hit/Miss 反馈与 cleanup（避免“瞎猜规则”长期污染）
+3. 添加质量监控（need_review / failure_malformed 告警）
 
 ### 中期改进
 1. 重新评估Summary的必要性
@@ -801,7 +786,7 @@ src/stage_b/
 
 configs/
 └── stage_b/
-    └── debug.yaml             ← 配置示例
+    └── bbu_line.yaml          ← 配置示例
 
 docs/
 ├── README.md                  ← 目录

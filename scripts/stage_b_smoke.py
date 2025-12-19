@@ -11,7 +11,7 @@ Goals:
 
 Usage:
   conda run -n ms python scripts/stage_b_smoke.py
-  conda run -n ms python scripts/stage_b_smoke.py --config configs/stage_b/debug.yaml
+  conda run -n ms python scripts/stage_b_smoke.py --config configs/stage_b/bbu_line.yaml
 """
 
 from __future__ import annotations
@@ -142,7 +142,8 @@ sampler:
       stop: ["assistant", "<|im_end|>", "<|endoftext|>", "</s>"]
 
 reflection:
-  prompt_path: configs/prompts/stage_b_reflection_prompt.txt
+  decision_prompt_path: configs/prompts/stage_b_reflection_decision_prompt.txt
+  ops_prompt_path: configs/prompts/stage_b_reflection_ops_prompt.txt
   batch_size: 1
   max_operations: 1
   temperature: 0.001

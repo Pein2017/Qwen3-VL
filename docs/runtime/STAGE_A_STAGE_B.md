@@ -47,6 +47,8 @@ The Stage-A/Stage-B stack addresses these by standardizing summaries, orchestrat
 | Process | Frozen vision-language model drafts neutral, per-image observations with explicit coverage for rare/long-tail objects. |
 | Output | JSONL feed of observation packets—each group has structured per-image descriptions, label provenance, timestamp, and completion flag. |
 
+Note: The same `group_id` may appear in both label folders for resubmitted batches. Stage-A emits one record per occurrence, preserving the provided label; Stage-B ingests them as distinct tickets keyed by `(group_id, label)`.
+
 **Why it matters**
 - Creates an explainable narrative for each image, so Stage-B and human auditors can reason about defects.
 - Normalizes vocabulary and enforces required metadata (mission, group id, label source).
@@ -55,6 +57,7 @@ The Stage-A/Stage-B stack addresses these by standardizing summaries, orchestrat
 **Operational guardrails**
 - Image catalog must stay synchronized with mission focus; onboarding checklists ensure a representative sample per verdict.
 - Data Ops spot-checks Stage-A JSONL outputs before releasing batches to Stage-B.
+  - Throughput note: Stage-A supports a `sharding_mode=per_image` runtime mode to improve load balancing and batch utilization across GPUs; see `./STAGE_A_RUNTIME.md` for details and determinism notes.
 
 ---
 
@@ -63,13 +66,13 @@ The Stage-A/Stage-B stack addresses these by standardizing summaries, orchestrat
 | What | Business Interpretation |
 | ---- | ---------------------- |
 | Input | Stage-A summaries + ground-truth labels + current mission guidance. |
-| Process | Prompt-only rollouts（提示=guidance+Stage-A 摘要，不含 GT）；推理输出必须严格两行二分类：`Verdict: 通过|不通过` + `Reason: ...`，且最终输出禁止任何第三状态词面。多数表决 selection + **mission-scoped fail-first** 确定性护栏：仅当负项与当前 mission 的 `G0` 相关时才触发整组不通过（含 pattern-first `不符合要求/<issue>`）；若护栏覆盖采样 verdict，则必须重写 `Reason` 以与最终 `Verdict` 一致。反思阶段复用同一模型（无 CriticEngine），批处理读取多组摘要+候选，生成严格 JSON 的规则增删改；label 与 Stage-A summary 明显矛盾的样本进入 `need_review_queue.jsonl`（不作为学习 pass/fail 规则的证据），malformed/无可用候选等进入 manual_review。重跑同一 run_name 时重建 trajectories/selections/manual_review/failure 与 reflection_cache，指导沿用上次快照（除非显式 reset）。 |
-| Output | Final binary verdicts (`pass` / `fail`) in JSONL, trajectories for audit, per-epoch metrics (`metrics_epoch.jsonl`), reflection log, `need_review_queue.jsonl`, manual-review queue, and updated mission-specific guidance repository. |
+| Process | Prompt-only rollouts（提示=guidance+Stage-A 摘要，不含 GT）；推理输出必须严格两行二分类：`Verdict: 通过|不通过` + `Reason: ...`，且最终输出禁止任何第三状态词面。多数表决 selection + **mission-scoped fail-first** 确定性护栏：仅当负项与当前 mission 的 `G0` 相关时才触发整组不通过（含 pattern-first `不符合要求/<issue>`）；若护栏覆盖采样 verdict，则必须重写 `Reason` 以与最终 `Verdict` 一致。Stage‑B 仅对**梯度候选**触发反思（错例、rollout 矛盾/低一致性、冲突/需复核信号）；反思为 two-pass：decision pass 在看到 `gt_label` 后判定 stop-gradient（`no_evidence_group_ids`），ops pass 仅基于 learnable groups 产出严格 JSON ops（含严格 evidence）。系统对未覆盖 learnable groups 做 bounded retry（默认 2 次）并设置成本上界；耗尽预算者进入 `need_review_queue.jsonl`（stop-gradient, `reason_code=budget_exhausted`）。两行协议解析失败/无可用候选/selection 报错等硬故障仅写入 `failure_malformed.jsonl`。重跑同一 run_name 时重建 per-run artifacts 与 reflection_cache，指导沿用上次快照（除非显式 reset）。 |
+| Output | Final binary verdicts (`pass` / `fail`) in JSONL, trajectories for audit, step-wise + epoch summary metrics (`metrics.jsonl`), optional step-wise group snapshot deltas (`group_report_delta.jsonl`), reflection log, `need_review_queue.jsonl` + `need_review.json`（人工复核）, `failure_malformed.jsonl`（硬故障调试）, and updated mission-specific guidance repository (full `group_report.jsonl` generated at run end). |
 
 **Experiences = living policy**
 - Guidance entries (`[G0]`, `[G1]`, …) are policy snippets the model reads before making a decision.
 - Reflection analyzes recent wins/losses and requests incremental edits (add, revise, retire rules).
-- Each applied change records rationale, evidence group ids, and reflection id for traceability; label/Stage-A contradictions are quarantined into `need_review_queue.jsonl` and excluded from learning pass/fail rules.
+- Each applied change records rationale, evidence group ids, and reflection id for traceability; `need_review_queue.jsonl` is reserved for **stop-gradient** tickets: after seeing `gt_label`, decision pass still cannot propose any auditable hypothesis for that group (`no_evidence_group_ids`), so the sample is excluded from learning and queued for human investigation. Hard failures stay in `failure_malformed.jsonl`.
 - Guidance updates are applied to mission-specific files; promotion to global guidance requires manual review and deployment.
 
 **Business value**
@@ -114,7 +117,7 @@ The Stage-A/Stage-B stack addresses these by standardizing summaries, orchestrat
 - **Verdict/Reason Drift**: Monitor verdict分布与 Reason 关键要素是否异常；持续偏移时检查 prompt 和数据。
 - **Supplier Impact**: Number of adverse decisions per supplier; feed into commercial scorecards.
 
-Each KPI is reported via `reflection.jsonl`, `selections.jsonl`, and per-epoch telemetry in `metrics_epoch.jsonl`（包含/排除人工复核两套 acc/fn/fp/n）. Analytics teams tie these into Tableau/Looker dashboards.
+Each KPI is reported via `reflection.jsonl`, `selections.jsonl`, and step-wise telemetry in `metrics.jsonl`（包含/排除人工复核两套 acc/fn/fp/n，同时包含 `logging_steps` 窗口与 epoch 汇总）. For “why did verdict/reason change”, use `group_report_delta.jsonl` (windowed deltas) + the end-of-run `group_report.jsonl`. Analytics teams tie these into Tableau/Looker dashboards.
 
 ---
 

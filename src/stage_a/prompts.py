@@ -19,11 +19,31 @@ from src.config.missions import (
     validate_mission as _validate_mission,
 )
 
-# Import runtime summary prompt (not the training-minimal default)
-from src.config.prompts import SYSTEM_PROMPT_SUMMARY_RUNTIME, USER_PROMPT_SUMMARY
+# Import runtime summary prompt builder (not the training-minimal default)
+from src.config.prompts import (
+    SYSTEM_PROMPT_SUMMARY_RUNTIME,
+    USER_PROMPT_SUMMARY,
+    build_summary_system_prompt,
+)
 
 # Stage-A runtime system prompt (richer than training-minimal)
+# Default: use runtime prompt without mission (backward compat)
 SUMMARY_SYSTEM_PROMPT = SYSTEM_PROMPT_SUMMARY_RUNTIME
+
+
+def build_system_prompt(mission: Optional[str] = None) -> str:
+    """Build mission-dependent system prompt.
+
+    Args:
+        mission: Mission name (one of SUPPORTED_MISSIONS) or None
+
+    Returns:
+        System prompt string with optional mission-specific prior rules
+    """
+    if mission:
+        return build_summary_system_prompt(dataset="bbu", mission=mission)
+    return SYSTEM_PROMPT_SUMMARY_RUNTIME
+
 
 # Base user prompt from training (summary-specific, no coordinates)
 SUMMARY_USER_PROMPT_BASE = USER_PROMPT_SUMMARY
@@ -65,3 +85,13 @@ def validate_mission(mission: str) -> None:
         ValueError: If mission is not in SUPPORTED_MISSIONS
     """
     _validate_mission(mission)
+
+
+# Export for use in inference and other modules
+__all__ = [
+    "build_user_prompt",
+    "build_system_prompt",
+    "validate_mission",
+    "SUMMARY_SYSTEM_PROMPT",
+    "MISSION_FOCUS",
+]
