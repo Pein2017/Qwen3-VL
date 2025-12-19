@@ -162,35 +162,13 @@ def build_user_prompt(ticket: GroupTicket, guidance: MissionGuidance) -> str:
     image_count = len(stage_a_summaries)
     stats_text = f"{stats_text}；图片数量: {image_count}"
 
-    # Check if this mission requires global/local image distinction.
-    # IMPORTANT: this must not depend on mutable guidance keys (e.g., G1 text).
-    scaffold_texts = list(scaffold_experiences.values())
-    needs_global_local = any(
-        "全局图" in t and "局部图" in t for t in scaffold_texts
-    )
-
-    # If needed, identify and annotate the global image
-    global_image_hint = ""
-    if needs_global_local and stage_a_summaries:
-        sorted_items = _sorted_summaries(stage_a_summaries)
-        obj_counts = [
-            (idx, _estimate_object_count(text))
-            for idx, (_, text) in enumerate(sorted_items, start=1)
-        ]
-        if obj_counts:
-            # Find the image with maximum obj count
-            max_idx, max_obj = max(obj_counts, key=lambda x: x[1])
-            global_image_hint = (
-                f"\n提示: Image{max_idx}(obj={max_obj}) 是全局图，其余图片都是局部图。"
-            )
-
     mission_label = guidance.experiences.get("G0") or ticket.mission
 
     return (
         f"任务: {ticket.mission}\n"
         f"重点: {mission_label}\n"
         f"{guidance_section}"
-        f"{stats_text}{global_image_hint}\n"
+        f"{stats_text}\n"
         "按两行协议输出；Reason 用 Image1/Image2... 逐图写证据，最后总结。\n\n"
         "图片摘要：\n"
         f"{summaries_text}"

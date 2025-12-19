@@ -5,7 +5,7 @@ stage_a_paths:
 seed: 17
 
 model:
-  model_name_or_path: model_cache/models/Qwen/Qwen3-32B
+  model_name_or_path: model_cache/models/Qwen/Qwen3-VL-8B-Instruct
   # model_name_or_path: output/12-9/summary_merged/res_1024-last_6_with_irrelevant_summary
   torch_dtype: bfloat16
   device_map: auto

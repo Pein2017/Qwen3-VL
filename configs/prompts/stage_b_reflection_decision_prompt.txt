@@ -12,6 +12,12 @@ stop-gradient（需要 `need-review`）的判定标准：
 - **只有当**对某个 `group_id` 已经“绞尽脑汁”，仍然**想不出任何**可泛化、可验证、可淘汰的假设/规则方向（例如信息缺失到无法判断、摘要相互矛盾到无法归纳、gt 可能错误、任务边界不清等），才把该 `group_id` 记为 stop-gradient。
 - 只要存在任何可学习方向（哪怕不确定、需要更多采样、或候选里存在 `label_match=True` 但仍不够确定），都**不要**把该 `group_id` 写入 stop-gradient。
 
+强制探索（禁止质疑标签/输入错误）：
+- 禁止出现“标签错误/标注错误/输入错误/GT错误/可能标错”等表述。
+- 必须先尝试提出至少 2–3 条“可证伪学习方向”（例如视角覆盖、安装完整性、条件边界、组合冲突），仅当穷尽后仍无方向，才允许 stop-gradient。
+- 若存在任一可学习方向，则 `no_evidence_group_ids` 必须为空。
+- `decision_analysis` 必须写明已探索的方向（即使最终为 stop-gradient）。
+
 输出协议（必须严格 JSON，且只输出一个对象）：
 {
   "no_evidence_group_ids": ["QC-xxx::fail","QC-yyy::pass"],
