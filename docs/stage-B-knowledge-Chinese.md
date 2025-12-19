@@ -8,8 +8,8 @@ Stage-B 现为“prompt-only”流程：推理输出**严格两行二分类**（
 
 异常与人工复核的边界：
 - rollout/解析/选择等“硬故障”（两行协议不满足、无法解析、无可用候选、selection 报错等）仅写入 `failure_malformed.jsonl` 与日志，用于提示词/解析器迭代；**不进入人工复核队列**。
-- 人工复核入口统一为 need-review：当给定 `gt_label` 后，rollout 候选池中 **没有任何一个候选支持 GT**（`label_match=True` 的候选数为 0）时，将该工单写入 `need_review_queue.jsonl`，并在 run 结束生成 `need_review.json` 汇总。
-- `manual_review_queue.jsonl` 仅为兼容占位（默认不写入）。
+- 人工复核入口统一为 need-review：decision pass 在看到 `gt_label` 后仍无法提出任何可学习、可审计的假设/规则时，将该工单写入 `need_review_queue.jsonl`，并在 run 结束生成 `need_review.json` 汇总。
+- `manual_review_queue.jsonl` 已停用（legacy 文件会被清理）。
 
 业务目标：
 - 最大化与历史人工审核一致性（主指标：Label Match）
@@ -107,26 +107,28 @@ Stage-B 现为“prompt-only”流程：推理输出**严格两行二分类**（
 - 输入：多图摘要 + 任务/条目 + 当前 guidance + 历史人工 label
 - 输出：组级“通过/不通过”与可读理由；并在反思环节提议对 guidance 的增量修改
 - 约束：误放行率（人工不通过且 AI 通过）< 5%；理由需与摘要要点对齐，便于审核
-- 审计：每次 guidance 变更需记录证据（group_id）、反思 ID、适用范围与变更理由
+- 审计：每次 guidance 变更需记录证据（ticket_key=`{group_id}::{gt_label}`）、反思 ID、适用范围与变更理由
 
 高层架构（运行时）：
 1) Ingest：读取 Stage-A JSONL，规范化成组级工单（GroupTicket）
 2) Rollout：按解码网格（温度、top_p、max_new_tokens 等）对每组生成一个或多个候选判定，每个候选都遵守两行输出协议（Verdict/Reason）。
 3) Signals：为候选附加确定性信号（如与历史标签的一致性 `label_match`、在候选集合中的自洽度 self_consistency 等），不再调用 CriticEngine。
 4) Selection：基于多数表决 + fail-first 策略选择最终判定；并叠加 **mission-scoped fail-first** 确定性护栏（仅当负项与当前 mission 的 `G0` 相关时触发整组不通过；支持 pattern-first `不符合要求/<issue>`）。若护栏覆盖采样 verdict，则必须重写最终 `Reason` 以与最终 `Verdict` 一致，且仍不得出现第三状态词面。
-5) Reflection：对近期包含标签冲突或部分正确的轨迹进行批处理，比较模型判定与 GT 差异，构造 JSON-only 的 guidance 变更提案（增加/更新/删除经验规则）。
+5) Reflection：对近期包含标签冲突或部分正确的轨迹进行批处理，比较模型判定与 GT 差异，构造 JSON-only 的 guidance 变更提案（增加/更新/删除经验规则），并先输出可证伪 hypothesis 进入候选池，跨批次证据累积后再晋升为 `G*` 规则。
 6) Guidance Repository：对提案进行应用/留存，并以快照形式记录每次变更，支持回滚与再训练使用。
-- LLM 输出协议：Rollout 使用两行判定格式（`Verdict:` / `Reason:`）；Reflection 输出一个合法 JSON 对象（包含 `has_evidence/evidence_analysis/operations`），其中 `operations` 是规则操作列表（add/update/delete/merge），`has_evidence=false` 时 `operations=[]`。
+- LLM 输出协议：Rollout 使用两行判定格式（`Verdict:` / `Reason:`）；Reflection 输出一个合法 JSON 对象（包含 `has_evidence/evidence_analysis/operations/hypotheses`），其中 `operations` 是规则操作列表（add/update/delete/merge），`hypotheses` 为可证伪二值规则候选；`has_evidence=false` 时 `operations=[]`，hypotheses 可为空。Evidence 必须使用 `ticket_key`。
 
 产物与目录结构（概览）：
 - selections.jsonl：最终选择的判定结果及其元数据（vote_strength、label_match、conflict_flag 等）
 - trajectories.jsonl：候选级别的完整生成与解析轨迹（含解码温度、候选索引、解析是否成功等）
 - metrics.jsonl：窗口（logging_steps）与 epoch 汇总指标（`acc/fn/fp/n`；`fp`=pred pass & gt fail；`fn`=pred fail & gt pass；`model_verdict=null` 按 gt 计入 fp/fn；`include/exclude manual review` 为内部过滤开关，与 need-review 人工复核队列不同）
 - guidance.json + snapshots/：当前生效 guidance 及每次变更的快照
-- reflection.jsonl：反思提案、是否应用、关联样本 ID 与指导变更记录
-- need_review_queue.jsonl：人工复核队列（**label-suspect only**：reflection 在看到 `gt_label` 后仍明确标记“无证据/想不明白错哪”，例如 `uncertainty_note="no_evidence_for_label"` 或 `proposal.no_evidence_group_ids` 命中该 group）
+- reflection.jsonl：反思提案、是否应用、关联样本 ticket_key 与指导变更记录（含 hypotheses）
+- hypotheses.json：候选规则池（signature、累计证据、状态）
+- hypothesis_events.jsonl：候选规则生命周期事件（proposed/promoted）
+- need_review_queue.jsonl：人工复核队列（**stop-gradient**：decision pass 在看到 `gt_label` 后仍明确标记“无证据/想不明白错哪”，例如 `proposal.no_evidence_group_ids` 命中该 ticket_key）
 - need_review.json：run 结束对 `need_review_queue.jsonl` 的确定性聚合汇总（便于直接查看/统计）
-- manual_review_queue.jsonl：兼容占位（默认不写入；不再作为人工复核入口）
+- manual_review_queue.jsonl：已停用（legacy 文件会被清理）
 - failure_malformed.jsonl：无法解析的原始输出与调试信息（用于提示词/解析器迭代）
 
 策略与信号（当前实现）：
@@ -159,7 +161,7 @@ Stage-B 现为“prompt-only”流程：推理输出**严格两行二分类**（
 
 ## 判定规则示例（对齐属性映射）
 
-> 说明：以下示例用于提示 LLM 聚焦的关键对象，不再作为硬编码规则执行。Stage-B 以 prompt + guidance 为主，历史标签只作为冲突标记与反思信号；推理阶段**只输出“通过/不通过”两类**，不输出任何第三状态。`需复核,备注:` 与“无法确认/模糊/只显示部分”等属于软信号：不得作为硬触发词直接否决，但若无法从摘要/备注/多图证据给出覆盖当前 mission `G0` 关键点的通过证据，则按安全约束判为“不通过”。当给定 `gt_label` 后，若 rollout 候选池中没有任何候选支持 GT，则写入 `need_review_queue.jsonl`；格式错误/无法解析等硬故障仅写入 `failure_malformed.jsonl`。
+> 说明：以下示例用于提示 LLM 聚焦的关键对象，不再作为硬编码规则执行。Stage-B 以 prompt + guidance 为主，历史标签只作为冲突标记与反思信号；推理阶段**只输出“通过/不通过”两类**，不输出任何第三状态。`需复核,备注:` 与“无法确认/模糊/只显示部分”等属于软信号：不得作为硬触发词直接否决，但若无法从摘要/备注/多图证据给出覆盖当前 mission `G0` 关键点的通过证据，则按安全约束判为“不通过”。decision pass 在看到 `gt_label` 后仍无法提出可学习方向时，才写入 `need_review_queue.jsonl`；格式错误/无法解析等硬故障仅写入 `failure_malformed.jsonl`。
 
 将“先验要求”具体化为可执行检查（基于 Stage-A 摘要）：
 - BBU安装（正装）：必须同时出现“BBU设备/显示完整”与“螺丝、光纤插头/BBU安装螺丝/显示完整/符合要求”；若摘要出现“不符合要求/未拧紧/露铜/复接/生锈”，则直接“不通过”
@@ -169,7 +171,7 @@ Stage-B 现为“prompt-only”流程：推理输出**严格两行二分类**（
 
 特殊情况处理：
 - Stage-A 摘要中出现 `需复核,备注:` 时，`需复核` 仅是提示需要重点阅读 `备注:` 的软信号；判定以备注与多图证据为准，仍需输出“通过/不通过”。
-- 遇到“无法判断/模糊/遮挡/只显示部分”等不确定表述时，不作为硬 fail-first 触发词；但若其影响到当前 mission `G0` 的关键要素，且其它图片/备注无法提供支持通过的证据，则判为“不通过”，并在 Reason 中明确说明缺失的关键证据。对“rollout 候选池无任何候选支持 `gt_label`”的样本，Stage‑B 会优先尝试通过 reflection 学会并修正 guidance；只有当 reflection 标记“无证据/想不明白错哪”时，才写入 `need_review_queue.jsonl`；格式错误/无可用候选等硬故障仅写入 `failure_malformed.jsonl`。
+- 遇到“无法判断/模糊/遮挡/只显示部分”等不确定表述时，不作为硬 fail-first 触发词；但若其影响到当前 mission `G0` 的关键要素，且其它图片/备注无法提供支持通过的证据，则判为“不通过”，并在 Reason 中明确说明缺失的关键证据。对 decision pass 判定“无证据/想不明白错哪”的样本，Stage‑B 会写入 `need_review_queue.jsonl`；格式错误/无可用候选等硬故障仅写入 `failure_malformed.jsonl`。
 
 ---
 
@@ -177,7 +179,7 @@ Stage-B 现为“prompt-only”流程：推理输出**严格两行二分类**（
 
 - 双重噪声：Stage-A 与人工标签均可能有偏；通过多候选 + 确定性信号 + 反思提案缓解
 - 误放行控制：通过 **mission-scoped fail-first**（负项需与当前 `G0` 相关才触发）+ 安全约束（无通过证据则不通过）+ 多候选多数表决，把“人工 fail 而 AI pass”的风险压到最低；冲突样本通过 `conflict_flag` 路由给反思与排查，而不是简单用标签覆盖模型判定
-- 冲突/不确定反馈：`conflict_flag` 表示与历史标签矛盾；反思阶段默认尝试从错例中学习可泛化规则；当 rollout 候选池无任何候选支持 GT 时，Stage‑B 先尝试通过 reflection 归因并修正 guidance；仅当 reflection 标记“无证据/想不明白错哪”时，才写入 `need_review_queue.jsonl` 供人工复核；格式错误/无可用候选等硬故障仅写入 `failure_malformed.jsonl`。
+- 冲突/不确定反馈：`conflict_flag` 表示与历史标签矛盾；反思阶段默认尝试从错例中学习可泛化规则；仅当 decision pass 标记“无证据/想不明白错哪”时，才写入 `need_review_queue.jsonl` 供人工复核；格式错误/无可用候选等硬故障仅写入 `failure_malformed.jsonl`。
 - 指标退化监控：持续追踪 Label Match、误放行率、verdict/Reason 分布，异常时冻结 guidance 变更并回滚到最近的稳定快照
 - 词表与格式漂移：严守 `DATA_AND_DATASETS.md` 摘要规范；新增检查点须同步更新属性映射与摘要生成
 
@@ -186,7 +188,7 @@ Stage-B 现为“prompt-only”流程：推理输出**严格两行二分类**（
 ## 术语对照
 
 - Mission：任务/条目（如挡风板安装检查）
-- Guidance（经验库）：供模型读取的编号规则片段（[G0]、[G1]…）
+- Guidance（经验库）：供模型读取的编号规则片段（[S1]… 为结构不变量只读；[G0] 为检查清单且必须存在；[G1+] 为可学习规则）
 - Reflection（反思）：基于近期表现自动提出的规则增量修改，运行时采用“三段式 JSON-only”（summary→critique→batch update），仅对冲突/部分正确批次生效，产物落盘可复用
 - Verdict（判定）：组级“通过/不通过”与理由
 - Stage-A 摘要：每图单行事实归纳，Stage-B 的事实基础

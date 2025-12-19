@@ -33,11 +33,11 @@ bash scripts/stage_b.sh smoke
 - `GuidanceRepository` copies the global guidance file into `{output.root}/{mission_name}/{output.run_name}/guidance.json` (mission-scoped) so edits stay isolated until you manually promote them back.
 - Shared Qwen3-VL model is reused by sampler and reflection; **no CriticEngine**。
 - 生产部署约束：Stage‑A 摘要和 Stage‑B 判决在同一 Qwen3‑VL checkpoint 上运行（同一套权重/LoRA），通过不同的 prompt 实现任务切换，因此任何针对摘要的 SFT/LoRA 调整都必须兼顾 Stage‑B 的 rollout 推理质量。
-- Reflection only ingests **gradient candidates** (group_id granularity): `label_match=False`, rollout contradictions (`pass`+`fail` mixed) / `low_agreement`, or `conflict_flag/needs_manual_review` signals. Stable-correct tickets are excluded from reflection context.
+- Reflection only ingests **gradient candidates** (ticket_key granularity): `label_match=False`, rollout contradictions (`pass`+`fail` mixed) / `low_agreement`, or `conflict_flag/needs_manual_review` signals. Stable-correct tickets are excluded from reflection context.
 - Two-pass reflection:
-  - **decision pass**: outputs `no_evidence_group_ids` = stop-gradient groups (given `gt_label` still unlearnable / cannot propose any auditable hypothesis).
-  - **ops pass**: runs only on learnable groups (`G \\ S`) and emits strict JSON operations with **strict evidence** (`operations[*].evidence` must be non-empty and only reference learnable group_ids).
-  - Stage-B enforces learnability closure (`L == E`) with bounded retries (default: `reflection.retry_budget_per_group_per_epoch=2`) and mission-level cost caps (`reflection.max_calls_per_epoch`). Uncovered learnable groups are retried in smaller deterministic batches; exhausted budgets route to `need_review_queue.jsonl` (`reason_code=budget_exhausted`).
+  - **decision pass**: outputs `no_evidence_group_ids` = stop-gradient ticket_keys (given `gt_label` still unlearnable / cannot propose any auditable hypothesis).
+  - **ops pass**: runs only on learnable groups and emits strict JSON operations + hypotheses with **strict evidence** (`operations[*].evidence` / `hypotheses[*].evidence` must be non-empty and only reference learnable `ticket_key`).
+  - Stage-B enforces learnability closure (`L == E ∪ H`) with bounded retries (default: `reflection.retry_budget_per_group_per_epoch=2`) and mission-level cost caps (`reflection.max_calls_per_epoch`). Uncovered learnable groups are retried in smaller deterministic batches; exhausted budgets route to `need_review_queue.jsonl` (`reason_code=budget_exhausted`).
 - `need_review_queue.jsonl` is the only **stop-gradient** human-review queue (not a low-agreement queue). Stop-gradient tickets MUST NOT drive guidance ops or rule hit/miss feedback.
 - `stage_a_paths` must point to Stage-A JSONL files containing `mission`, `group_id`, `label` (`pass|fail`), and `per_image`; keys are normalized to `image_{n}`.
 - Resubmissions are allowed: the same `group_id` may appear multiple times as long as `label` differs. Stage-B treats `(group_id, label)` as the unique ticket identity and emits `ticket_key = "{group_id}::{label}"` in outputs to avoid collisions.
@@ -47,8 +47,8 @@ bash scripts/stage_b.sh smoke
 - `model`: HF checkpoint path, dtype (`bfloat16` recommended), and device map.
 - `sampler`: decode grid (temperature/top_p/max_new_tokens/stop) 与 `samples_per_decode`。提示现要求“两行输出”：`Verdict: 通过|不通过` + `Reason: <单行理由>`，不再包含 `Evidence_Positive/Negative`。
 - `selection`: majority vote + temperature tie-break; uses vote strength, no confidence/self-consistency.
-- `manual_review`: 低一致性阈值（`min_verdict_agreement`）用于记录 `low_agreement` 警示；人工复核入口统一为 need-review（`need_review_queue.jsonl`）。
-- `reflection`: two-pass prompts (`decision_prompt_path`, `ops_prompt_path`), batch size, `max_operations`, retry budget + cost caps.
+- `manual_review`: 低一致性阈值（`min_verdict_agreement`，mission configs 默认 0.67）用于记录 `low_agreement` 警示；人工复核入口统一为 need-review（`need_review_queue.jsonl`）。
+- `reflection`: two-pass prompts (`decision_prompt_path`, `ops_prompt_path`), batch size, `max_operations`, hypothesis gating thresholds, retry budget + cost caps.
 - `runner`: epochs, `per_rank_rollout_batch_size` (per-rank batch size; global effective batch = per_rank × WORLD_SIZE in ticket-parallel mode), and `logging_steps` (emit step-wise telemetry every N groups).
 - `output`: Root/run_name plus mission subdirs for artifacts.
 - `guidance`: Global seed file and snapshot retention count.
@@ -62,9 +62,10 @@ Stage‑B currently expects **exactly one mission per run**. Artifacts are writt
 - `metrics.jsonl` — Step-wise `logging_steps` windows + per-epoch summary rows (both include/exclude manual review: `acc/fn/fp/n`).
 - `need_review_queue.jsonl` — Human review queue (**stop-gradient**): tickets that are unlearnable after seeing `gt_label`. Entries include `ticket_key`, `gt_label`, `pred_verdict`, `reason_code` (e.g., `reflection_no_evidence_after_gt`, `budget_exhausted`), `reflection_id`, `reflection_cycle`, and optional `uncertainty_note`.
 - `need_review.json` — Run-end deterministic aggregate of `need_review_queue.jsonl` for quick inspection.
-- `manual_review_queue.jsonl` — Uncertainty queue (**signal-only, not stop-gradient**): tickets where selection emits `needs_manual_review=true` (e.g., low-agreement/rollout contradiction/pending signals). This file is for monitoring and optional human spot-checks; tickets may still be learnable and can enter reflection.
 - `failure_malformed.jsonl` — Parser/format/selection failures for prompt debugging (e.g., `format_error` / `no_candidates` / `no_valid_candidates` / `selection_error`).
-- `reflection.jsonl` — Applied/attempted guidance updates with evidence group ids; `reflection.proposal` includes `uncertainty_note` and `no_evidence_group_ids` (per-case “still cannot explain after GT”) for need-review routing.
+- `reflection.jsonl` — Applied/attempted guidance updates with evidence ticket_keys; `reflection.proposal` includes `hypotheses`, `uncertainty_note`, and `no_evidence_group_ids` for need-review routing.
+- `hypotheses.json` — Mission-scoped hypothesis pool (signature, support cycles, evidence union, status).
+- `hypothesis_events.jsonl` — Append-only hypothesis lifecycle events (proposed/promoted).
 - `group_report_delta.jsonl` — Optional step-wise “delta snapshots” for the most recent `logging_steps` window (per ticket: selection + candidate summaries + flags), for monitoring drift during a run.
 - `group_report.jsonl` — Optional full consolidated report generated at run end (can be rebuilt offline via `python scripts/stage_b_group_report.py --run-dir ...`).
 
@@ -80,7 +81,7 @@ Stage‑B currently expects **exactly one mission per run**. Artifacts are writt
 
 - 没有 CriticEngine；只有主模型生成严格两行输出（`Verdict/Reason`）。
 - 两行协议解析失败/无可用候选/selection 报错等“硬故障”仅写入 `failure_malformed.jsonl` 与日志（不进入 need-review）。
-- need-review（人工复核）由 runner 在反思 flush 边界执行路由：以 **decision pass** 输出的 `no_evidence_group_ids` 作为 stop-gradient 判定来源（严格 group_id 粒度）。未覆盖 learnable groups 会进入 bounded retry；耗尽 retry budget / cost cap 后以 `reason_code=budget_exhausted` 路由到 need-review。
+- need-review（人工复核）由 runner 在反思 flush 边界执行路由：以 **decision pass** 输出的 `no_evidence_group_ids` 作为 stop-gradient 判定来源（严格 ticket_key 粒度）。未覆盖 learnable groups 会进入 bounded retry；耗尽 retry budget / cost cap 后以 `reason_code=budget_exhausted` 路由到 need-review。
 
 ##### Guardrails & Label Alignment
 
