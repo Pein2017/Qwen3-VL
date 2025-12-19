@@ -65,6 +65,8 @@ class ReflectionConfig:
     eligibility_policy: str = "selected_mismatch_or_all_wrong"
     all_wrong_strategy: str = "learn"
     change_cap_per_epoch: Optional[int] = None
+    hypothesis_min_support_cycles: int = 2
+    hypothesis_min_unique_ticket_keys: int = 6
     temperature: float = 1.0
     top_p: float = 0.95
     repetition_penalty: float = 1.0
@@ -284,6 +286,16 @@ def _load_reflection(section: Mapping[str, Any]) -> ReflectionConfig:
     change_cap_per_epoch = int(change_cap_raw) if change_cap_raw is not None else None
     if change_cap_per_epoch is not None and change_cap_per_epoch <= 0:
         raise ValueError("reflection.change_cap_per_epoch must be > 0 if set")
+    hypothesis_min_support_cycles = int(
+        section.get("hypothesis_min_support_cycles", 2)
+    )
+    if hypothesis_min_support_cycles <= 0:
+        raise ValueError("reflection.hypothesis_min_support_cycles must be > 0")
+    hypothesis_min_unique_ticket_keys = int(
+        section.get("hypothesis_min_unique_ticket_keys", 6)
+    )
+    if hypothesis_min_unique_ticket_keys <= 0:
+        raise ValueError("reflection.hypothesis_min_unique_ticket_keys must be > 0")
     temperature = float(section.get("temperature", 1.0))
     top_p = float(section.get("top_p", 0.95))
     repetition_penalty = float(section.get("repetition_penalty", 1.0))
@@ -314,6 +326,8 @@ def _load_reflection(section: Mapping[str, Any]) -> ReflectionConfig:
         eligibility_policy=eligibility_policy,
         all_wrong_strategy=all_wrong_strategy,
         change_cap_per_epoch=change_cap_per_epoch,
+        hypothesis_min_support_cycles=hypothesis_min_support_cycles,
+        hypothesis_min_unique_ticket_keys=hypothesis_min_unique_ticket_keys,
         temperature=temperature,
         top_p=top_p,
         repetition_penalty=repetition_penalty,

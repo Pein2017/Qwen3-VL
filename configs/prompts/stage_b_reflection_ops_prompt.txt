@@ -12,8 +12,8 @@
 - 不要把 `G0` 当作唯一标准：即使未命中当前 `G0`，也应尝试归纳该 mission 真正在意的点。
 
 强制闭环（重要）：
-- 系统会检查 learnability closure：每个 learnable `ticket_key` 必须至少被某条 `operation.evidence` 引用，否则这些未覆盖的 case 会在后续周期被复判/重试。
-- 因此：请尽量保证 CASES 中每个 `ticket_key` 都出现在至少一条 `operations[*].evidence` 里（哪怕多个 group 共用同一条规则也可以）。
+- 系统会检查 learnability closure：每个 learnable `ticket_key` 必须至少被某条 `operations[*].evidence` 或 `hypotheses[*].evidence` 引用，否则这些未覆盖的 case 会在后续周期被复判/重试。
+- 因此：请尽量保证 CASES 中每个 `ticket_key` 都出现在至少一条 `operations[*].evidence` 或 `hypotheses[*].evidence` 里（哪怕多个 group 共用同一条规则也可以）。
 
 探索维度（为了“学出潜在规律”而不是硬编码）：
 - 全局/局部视角取舍：哪些判断以全局图为主，哪些可由局部明确描述支持/否定。
@@ -38,21 +38,28 @@
     {"op":"delete","key":"G2","rationale":"<=60字","evidence":["QC-xxx::fail"]},
     {"op":"merge","key":"G3","merged_from":["G4","G5"],"text":"<=160字","rationale":"<=60字","evidence":["QC-xxx::fail"]}
   ],
+  "hypotheses": [
+    {"text":"<=160字","falsifier":"<=80字","evidence":["QC-xxx::fail","QC-yyy::pass"]}
+  ],
   "coverage": {
-    "learnable_group_ids": ["QC-xxx::fail","QC-yyy::pass"],
-    "covered_group_ids": ["QC-xxx::fail"],
-    "uncovered_group_ids": ["QC-yyy::pass"]
+    "learnable_ticket_keys": ["QC-xxx::fail","QC-yyy::pass"],
+    "covered_ticket_keys": ["QC-xxx::fail"],
+    "uncovered_ticket_keys": ["QC-yyy::pass"]
   }
 }
 
 约束：
 - `operations` 最多 5 条（系统侧也会截断），**必须优先使用 update/merge，尽量少用 add**
+- 新增前必须先对照现有 `G*`：若已有规则可以覆盖或只需微调，必须用 update/merge；**本批次新增最多 1 条**，且 `rationale` 必须说明与现有规则的差异点
+- `hypotheses` 可选；若提供，每条必须包含 `text`/`falsifier`/`evidence`
+- `hypotheses.text` 与 `hypotheses.falsifier` 只能使用**肯定/否定二值结论**（必须明确写“通过”或“不通过”），避免“双重否定/绕行表达”（如“**不应判定为不通过**”“不建议判不通过”“不应直接判通过”等）
 - key 只能 `G+数字`；允许 update/merge `G0`；禁止 delete `G0`
 - delete 操作：只能删除 EXPERIENCES 中**已存在**的 key（`G1` 及以上）；如果 key 不存在，请勿在 operations 中包含该 delete 操作
 - delete 操作：必须提供 `evidence`（引用触发删除判断的 learnable ticket_key）
 - merge 操作：merged_from 中的 key 必须与目标 key 不同，且必须都在 EXPERIENCES 中存在；禁止将 key 合并到自己
-- 禁止第三状态词面（需复核/need-review/证据不足/待定等）出现在 text/rationale 中
+- 禁止第三状态词面（需复核/need-review/证据不足/待定等）出现在 text/rationale/falsifier 中
 - 禁止写站点名/型号/路径/group_id/时间戳/图片编号等具体细节
 - 禁止在 text 中出现 `image_`、`×`、`备注:`、`标签/`；避免使用“/”对象链（出现 2 个及以上“/”通常视为摘要粘贴）
 - evidence 必须填 `ticket_key`（如 "QC-xxx::fail"），不要填图片编号
+- `hypotheses` 文本必须是二值结论（包含“通过/不通过”之一），且不得与 `S*` 冲突；`dimension` 若出现，禁止使用 brand/品牌
 - `coverage` 为可选字段；若填写，需尽量与 `operations[*].evidence` 一致（不一致也会被系统侧计算纠正）

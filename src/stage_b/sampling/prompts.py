@@ -20,7 +20,7 @@ Reason: ...
 【任务要点（S* 为结构不变量；G0 为检查清单；补充提示必须遵守）】
 - “结构性不变量/优先级/视角主次”等以 S* 为准（优先级最高，必须遵守）。
 - “检查什么”以 G0 为准；只围绕 G0 的检查要点给结论。
-- “如何判/证据覆盖/例外边界”以补充提示（S* 与 G1+）为准，必须遵守；若与通用软信号规则冲突，以补充提示为准。
+- “如何判/证据覆盖/例外边界”以补充提示（S* 与 G0+）为准，必须遵守；若与通用软信号规则冲突，以补充提示为准。
 - 同一组工单/图片可能被不同 mission 审核；不同 mission 允许不同结论。与本 mission 的 G0 无关的内容不得影响本次判定。
 """
 
@@ -140,12 +140,21 @@ def build_user_prompt(ticket: GroupTicket, guidance: MissionGuidance) -> str:
 
     if not guidance.experiences:
         raise ValueError("Experiences dict must be non-empty (no empty fallback)")
-    # Do not repeat G0 (mission headline) inside the guidance block
-    filtered_experiences = {k: v for k, v in guidance.experiences.items() if k != "G0"}
+
+    scaffold_experiences = {
+        k: v for k, v in guidance.experiences.items() if k.startswith("S")
+    }
+    mutable_experiences = {
+        k: v for k, v in guidance.experiences.items() if k.startswith("G")
+    }
+
     guidance_section = ""
-    if filtered_experiences:
-        guidance_block = _render_guidance_snippets(filtered_experiences)
-        guidance_section = f"补充提示：\n{guidance_block}\n\n"
+    if scaffold_experiences:
+        scaffold_block = _render_guidance_snippets(scaffold_experiences)
+        guidance_section += f"结构不变量（S*）：\n{scaffold_block}\n\n"
+    if mutable_experiences:
+        mutable_block = _render_guidance_snippets(mutable_experiences)
+        guidance_section += f"可学习规则（G0+）：\n{mutable_block}\n\n"
 
     stage_a_summaries = ticket.summaries.as_dict()
     summaries_text = _render_summaries(stage_a_summaries)
@@ -155,14 +164,9 @@ def build_user_prompt(ticket: GroupTicket, guidance: MissionGuidance) -> str:
 
     # Check if this mission requires global/local image distinction.
     # IMPORTANT: this must not depend on mutable guidance keys (e.g., G1 text).
-    scaffold_texts = [
-        v for k, v in guidance.experiences.items() if k.startswith("S") and k != "G0"
-    ]
-    other_texts = [
-        v for k, v in guidance.experiences.items() if not k.startswith("S") and k != "G0"
-    ]
-    needs_global_local = any("全局图" in t and "局部图" in t for t in scaffold_texts) or any(
-        "全局图" in t and "局部图" in t for t in other_texts
+    scaffold_texts = list(scaffold_experiences.values())
+    needs_global_local = any(
+        "全局图" in t and "局部图" in t for t in scaffold_texts
     )
 
     # If needed, identify and annotate the global image

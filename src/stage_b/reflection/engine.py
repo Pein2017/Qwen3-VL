@@ -15,6 +15,7 @@ The Stage-B runner is responsible for:
 
 from __future__ import annotations
 
+import difflib
 import json
 import logging
 import re
@@ -36,6 +37,7 @@ from ..types import (
     ExperienceOperation,
     ExperienceRecord,
     GroupTicket,
+    HypothesisCandidate,
     ReflectionOutcome,
 )
 from ..utils.chinese import normalize_spaces, to_simplified
@@ -44,6 +46,35 @@ from ..utils.perf import maybe_empty_cache
 logger = logging.getLogger(__name__)
 
 _SCAFFOLD_KEY_RE = re.compile(r"S\d+")
+_GUIDANCE_SIMILARITY_THRESHOLD = 0.9
+
+_FORBIDDEN_THIRD_STATE_PHRASES = (
+    "复核",
+    "需复核",
+    "需要复核",
+    "需人工复核",
+    "人工复核",
+    "need-review",
+    "needreview",
+    "need review",
+    "need_review",
+    "needs review",
+    "needs_review",
+    "证据不足",
+    "待定",
+    "不应直接",
+    "不建议直接",
+    "不得直接",
+    "佐证",
+    "需进一步",
+    "需要进一步",
+    "进一步确认",
+    "不写不通过",
+    "通过但需复核",
+    "通过但需人工复核",
+)
+
+_BRAND_DIMENSION_TOKENS = ("brand", "品牌")
 
 
 def _is_scaffold_experience_key(key: object) -> bool:
@@ -285,6 +316,129 @@ class ReflectionEngine:
         value = str(identifier).strip()
         return self._group_id_mapping.get(value, value)
 
+    @staticmethod
+    def _normalize_forbidden_check(text: str) -> str:
+        simplified = to_simplified(text or "")
+        simplified = normalize_spaces(simplified).lower()
+        simplified = simplified.replace("_", " ").replace("-", " ")
+        simplified = normalize_spaces(simplified)
+        return simplified
+
+    @classmethod
+    def _contains_forbidden_phrase(cls, text: str) -> bool:
+        normalized = cls._normalize_forbidden_check(text)
+        return any(term in normalized for term in _FORBIDDEN_THIRD_STATE_PHRASES)
+
+    @staticmethod
+    def _normalize_guidance_signature(text: str) -> str:
+        simplified = to_simplified(text or "")
+        simplified = normalize_spaces(simplified).lower()
+        simplified = re.sub(
+            r"[，,。.!！？;；:：\-—_()（）\[\]{}<>《》“”\"'·~]",
+            " ",
+            simplified,
+        )
+        simplified = normalize_spaces(simplified)
+        return simplified.strip()
+
+    @classmethod
+    def _find_similar_guidance_key(
+        cls, text: str, experiences: Mapping[str, str]
+    ) -> Optional[str]:
+        if not text or not experiences:
+            return None
+        target = cls._normalize_guidance_signature(text)
+        if not target:
+            return None
+        best_key = None
+        best_ratio = 0.0
+        for key, value in experiences.items():
+            if _is_scaffold_experience_key(key):
+                continue
+            candidate = cls._normalize_guidance_signature(value)
+            if not candidate:
+                continue
+            if candidate == target:
+                return key
+            ratio = difflib.SequenceMatcher(None, target, candidate).ratio()
+            if ratio > best_ratio:
+                best_ratio = ratio
+                best_key = key
+            if (
+                target in candidate or candidate in target
+            ) and min(len(target), len(candidate)) / max(len(target), len(candidate)) >= 0.85:
+                return key
+        if best_ratio >= _GUIDANCE_SIMILARITY_THRESHOLD:
+            return best_key
+        return None
+
+    @staticmethod
+    def _is_brand_dimension(value: Optional[str]) -> bool:
+        if not value:
+            return False
+        lowered = normalize_spaces(to_simplified(value)).lower()
+        return any(token in lowered for token in _BRAND_DIMENSION_TOKENS)
+
+    @staticmethod
+    def _has_fail_verdict(text: str) -> bool:
+        lowered = normalize_spaces(to_simplified(text)).lower()
+        return any(term in lowered for term in ("不通过", "判不通过", "不能通过"))
+
+    @staticmethod
+    def _has_pass_verdict(text: str) -> bool:
+        lowered = normalize_spaces(to_simplified(text)).lower()
+        for term in ("不通过", "判不通过", "不能通过"):
+            lowered = lowered.replace(term, "")
+        return "通过" in lowered
+
+    @staticmethod
+    def _extract_conflict_anchors(text: str) -> set[str]:
+        anchors = set()
+        for token in (
+            "全局图",
+            "局部图",
+            "证据",
+            "覆盖",
+            "缺失",
+            "必须",
+            "不得",
+            "禁止",
+            "无法确认",
+            "只显示部分",
+            "显示完整",
+            "关键点",
+        ):
+            if token in text:
+                anchors.add(token)
+        return anchors
+
+    def _hypothesis_conflicts_scaffold(
+        self, text: str, scaffold_texts: Sequence[str]
+    ) -> bool:
+        if not scaffold_texts:
+            return False
+        hypo_text = normalize_spaces(to_simplified(text))
+        hypo_anchors = self._extract_conflict_anchors(hypo_text)
+        hypo_fail = self._has_fail_verdict(hypo_text)
+        hypo_pass = self._has_pass_verdict(hypo_text)
+        for scaffold in scaffold_texts:
+            scaffold_norm = normalize_spaces(to_simplified(scaffold))
+            scaffold_anchors = self._extract_conflict_anchors(scaffold_norm)
+            if not (hypo_anchors & scaffold_anchors):
+                continue
+            scaffold_fail = self._has_fail_verdict(scaffold_norm)
+            scaffold_pass = self._has_pass_verdict(scaffold_norm)
+            if scaffold_fail and hypo_pass and not hypo_fail:
+                return True
+            if scaffold_pass and hypo_fail and not hypo_pass:
+                return True
+        return False
+
+    @classmethod
+    def _is_binary_hypothesis(cls, text: str) -> bool:
+        normalized = cls._normalize_forbidden_check(text)
+        return ("通过" in normalized) or ("不通过" in normalized)
+
     def run_decision_pass(self, bundle: ExperienceBundle) -> Tuple[Tuple[str, ...], str]:
         """Run decision pass and return (no_evidence_ticket_keys, decision_analysis)."""
 
@@ -314,8 +468,13 @@ class ReflectionEngine:
     def run_ops_pass(
         self,
         bundle: ExperienceBundle,
-    ) -> Tuple[Tuple[ExperienceOperation, ...], Tuple[str, ...], str]:
-        """Run ops pass and return (operations, evidence_ticket_keys_union, evidence_analysis)."""
+    ) -> Tuple[
+        Tuple[ExperienceOperation, ...],
+        Tuple[HypothesisCandidate, ...],
+        Tuple[str, ...],
+        str,
+    ]:
+        """Run ops pass and return (operations, hypotheses, evidence_ticket_keys_union, evidence_analysis)."""
 
         user_prompt = self._build_reflection_prompt(
             bundle,
@@ -339,19 +498,14 @@ class ReflectionEngine:
         max_ops = int(max_ops) if max_ops is not None else None
 
         operations: List[ExperienceOperation] = []
+        hypotheses: List[HypothesisCandidate] = []
         evidence_union: List[str] = []
         seen_op_norms: set[str] = set()
 
-        forbidden_phrases = (
-            "需复核",
-            "需人工复核",
-            "need-review",
-            "needreview",
-            "证据不足",
-            "待定",
-            "不写不通过",
-            "通过但需复核",
-            "通过但需人工复核",
+        guidance_map = self.guidance_repo.load()
+        current_guidance = guidance_map.get(bundle.mission)
+        existing_experiences: Mapping[str, str] = (
+            current_guidance.experiences if current_guidance else {}
         )
 
         def _norm_text(txt: str) -> str:
@@ -433,15 +587,21 @@ class ReflectionEngine:
             text = str(text_raw).strip() if text_raw is not None else None
             if not text or self._reject_experience_text(text):
                 continue
-            lowered = text.lower()
-            if any(p.lower() in lowered for p in forbidden_phrases):
+            if self._contains_forbidden_phrase(text):
                 continue
             if rationale:
-                lower_r = rationale.lower()
-                if any(p.lower() in lower_r for p in forbidden_phrases):
+                if self._contains_forbidden_phrase(rationale):
                     continue
             if len(text) > 160:
                 text = text[:160]
+
+            if op_raw == "add":
+                similar_key = self._find_similar_guidance_key(
+                    text, existing_experiences
+                )
+                if similar_key:
+                    op_raw = "update"
+                    key = similar_key
 
             norm = _norm_text(text)
             norm_key = f"{op_raw}::{key or ''}::{norm}::{evidence}"
@@ -491,8 +651,87 @@ class ReflectionEngine:
 
             evidence_union.extend(list(evidence))
 
+        hypotheses_raw = payload.get("hypotheses")
+        if hypotheses_raw is None:
+            hypotheses_raw = []
+        if not isinstance(hypotheses_raw, Sequence) or isinstance(
+            hypotheses_raw, (str, bytes)
+        ):
+            raise ValueError("hypotheses must be a list when provided")
+
+        scaffold_texts: List[str] = []
+        if current_guidance:
+            scaffold_texts = [
+                text
+                for key, text in current_guidance.experiences.items()
+                if _is_scaffold_experience_key(key)
+            ]
+
+        for entry in hypotheses_raw:
+            if not isinstance(entry, Mapping):
+                raise ValueError("hypotheses entries must be JSON objects")
+            text_raw = entry.get("text")
+            text = str(text_raw).strip() if text_raw is not None else ""
+            if not text:
+                raise ValueError("hypotheses.text must be non-empty")
+            if self._reject_experience_text(text):
+                raise ValueError("hypotheses.text appears to copy summary chains")
+            if self._contains_forbidden_phrase(text):
+                raise ValueError("hypotheses.text contains forbidden third-state wording")
+            if not self._is_binary_hypothesis(text):
+                raise ValueError("hypotheses.text must contain a binary verdict")
+            if self._hypothesis_conflicts_scaffold(text, scaffold_texts):
+                raise ValueError("hypotheses.text conflicts with scaffold rules")
+
+            falsifier_raw = entry.get("falsifier")
+            falsifier = (
+                str(falsifier_raw).strip() if falsifier_raw is not None else ""
+            )
+            if not falsifier:
+                raise ValueError("hypotheses.falsifier must be non-empty")
+            if self._contains_forbidden_phrase(falsifier):
+                raise ValueError("hypotheses.falsifier contains forbidden wording")
+
+            dimension_raw = entry.get("dimension")
+            dimension = (
+                str(dimension_raw).strip()
+                if dimension_raw is not None
+                else None
+            )
+            if dimension is not None and not dimension:
+                dimension = None
+            if self._is_brand_dimension(dimension):
+                raise ValueError("hypotheses.dimension must not be brand")
+
+            evidence_raw = entry.get("evidence")
+            if not (
+                isinstance(evidence_raw, Sequence)
+                and not isinstance(evidence_raw, (str, bytes))
+            ):
+                raise ValueError("hypotheses.evidence must be a non-empty list")
+            evidence_items = [
+                self._resolve_group_identifier(x)
+                for x in evidence_raw
+                if str(x).strip()
+            ]
+            evidence = tuple(dict.fromkeys(evidence_items))
+            if not evidence:
+                raise ValueError("hypotheses.evidence must be non-empty")
+            if any(tk not in learnable_ticket_keys for tk in evidence):
+                raise ValueError("hypotheses.evidence must be learnable ticket_keys")
+
+            hypotheses.append(
+                HypothesisCandidate(
+                    text=text,
+                    evidence=evidence,
+                    falsifier=falsifier,
+                    dimension=dimension,
+                )
+            )
+            evidence_union.extend(list(evidence))
+
         evidence_ticket_keys = tuple(dict.fromkeys(evidence_union))
-        return tuple(operations), evidence_ticket_keys, evidence_analysis
+        return tuple(operations), tuple(hypotheses), evidence_ticket_keys, evidence_analysis
 
     def build_record(
         self,
@@ -577,6 +816,7 @@ class ReflectionEngine:
     @staticmethod
     def _reject_experience_text(text: str) -> bool:
         """Heuristic to block Stage-A style summaries leaking into guidance."""
+        lowered = (text or "").lower()
         slash_count = text.count("/")
         has_summary_markers = any(
             marker in text
@@ -599,7 +839,7 @@ class ReflectionEngine:
             )
         )
 
-        if "标签/" in text or "image_" in text:
+        if "标签/" in text or "image_" in lowered or re.search(r"image\\d", lowered):
             return True
         if slash_count >= 2 and has_object_chain_vocab:
             return True
@@ -622,11 +862,22 @@ class ReflectionEngine:
 
         experiences_text = ""
         if current_guidance and current_guidance.experiences:
-            experiences_lines = [
+            scaffold_lines = [
                 f"[{key}]. {value}"
                 for key, value in sorted(current_guidance.experiences.items())
+                if _is_scaffold_experience_key(key)
             ]
-            experiences_text = "\n".join(experiences_lines)
+            guidance_lines = [
+                f"[{key}]. {value}"
+                for key, value in sorted(current_guidance.experiences.items())
+                if not _is_scaffold_experience_key(key)
+            ]
+            formatted: List[str] = []
+            if scaffold_lines:
+                formatted.extend(["SCAFFOLD (S*):", *scaffold_lines, ""])
+            if guidance_lines:
+                formatted.extend(["GUIDANCE (G0+):", *guidance_lines])
+            experiences_text = "\n".join(formatted).strip()
 
         task_focus = None
         if current_guidance:
@@ -842,6 +1093,15 @@ class ReflectionEngine:
             }
             for op in outcome.operations
         ]
+        hypotheses_payload = [
+            {
+                "text": hyp.text,
+                "falsifier": hyp.falsifier,
+                "dimension": hyp.dimension,
+                "evidence": list(hyp.evidence),
+            }
+            for hyp in outcome.proposal.hypotheses
+        ]
         payload = {
             "epoch": epoch,
             "reflection": {
@@ -853,6 +1113,7 @@ class ReflectionEngine:
                     "critique": outcome.proposal.critique,
                     "text": outcome.proposal.text,
                     "operations": operations_payload,
+                    "hypotheses": hypotheses_payload,
                     "evidence_group_ids": list(outcome.proposal.evidence_group_ids),
                     "uncertainty_note": outcome.proposal.uncertainty_note,
                     "no_evidence_group_ids": list(outcome.proposal.no_evidence_group_ids),

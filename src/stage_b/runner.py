@@ -14,7 +14,7 @@ import uuid
 from collections import defaultdict
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import DefaultDict, Dict, List, Optional, Tuple
+from typing import DefaultDict, Dict, Iterable, List, Optional, Tuple
 
 import torch
 from transformers import (
@@ -42,6 +42,7 @@ from .ingest import ingest_stage_a
 from .io.export import serialize_selection, serialize_trajectory
 from .io.group_report import build_group_report
 from .io.guidance import GuidanceRepository
+from .io.hypotheses import HypothesisPool
 from .reflection import ReflectionEngine
 from .rollout import RolloutSampler
 from .sampling.prompts import build_messages
@@ -49,6 +50,7 @@ from .types import (
     DeterministicSignals,
     ExperienceBundle,
     ExperienceRecord,
+    ExperienceOperation,
     GroupTicket,
     ReflectionOutcome,
     ReflectionProposal,
@@ -94,6 +96,16 @@ def _is_gradient_candidate(
         or conflict_flag
         or needs_manual_review
     )
+
+
+def _compute_learnability_coverage(
+    learnable_ids: Iterable[str],
+    evidence_ops: Iterable[str],
+    evidence_hypotheses: Iterable[str],
+) -> Tuple[set[str], set[str]]:
+    contributors = set(evidence_ops) | set(evidence_hypotheses)
+    uncovered = set(learnable_ids) - contributors
+    return contributors, uncovered
 
 
 def _drain_buffered_feedback(
@@ -237,6 +249,7 @@ def _reset_mission_artifacts(mission_dir: Path) -> None:
         "prompt_wishlist.jsonl",
         "failure_malformed.jsonl",
         "reflection.jsonl",
+        "hypothesis_events.jsonl",
         "metrics.jsonl",
         "group_report_delta.jsonl",
     ):
@@ -244,6 +257,11 @@ def _reset_mission_artifacts(mission_dir: Path) -> None:
         if path.exists():
             path.unlink()
         path.write_text("", encoding="utf-8")
+
+    hypotheses_path = mission_dir / "hypotheses.json"
+    if hypotheses_path.exists():
+        hypotheses_path.unlink()
+    hypotheses_path.write_text("{}", encoding="utf-8")
 
     # Backward-compat cleanup: remove old telemetry filename but do NOT recreate it.
     legacy_metrics_path = mission_dir / "metrics_epoch.jsonl"
@@ -624,6 +642,7 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
 
         mission_guidance_repo: Optional[GuidanceRepository] = None
         reflection_engine: Optional[ReflectionEngine] = None
+        hypothesis_pool: Optional[HypothesisPool] = None
         trajectories_path = mission_dir / "trajectories.jsonl"
         selections_path = mission_dir / "selections.jsonl"
         metrics_path = mission_dir / "metrics.jsonl"
@@ -656,6 +675,12 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                 config=config.reflection,
                 guidance_repo=mission_guidance_repo,
                 reflection_log=reflection_log_path,
+            )
+            hypothesis_pool = HypothesisPool(
+                pool_path=mission_dir / "hypotheses.json",
+                events_path=mission_dir / "hypothesis_events.jsonl",
+                min_support_cycles=config.reflection.hypothesis_min_support_cycles,
+                min_unique_ticket_keys=config.reflection.hypothesis_min_unique_ticket_keys,
             )
 
         mission_selection_count = 0
@@ -926,7 +951,8 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                     last_applied_rule_keys, \
                     guidance_updated_epoch, \
                     reflection_calls_epoch, \
-                    applied_changes_epoch
+                    applied_changes_epoch, \
+                    hypothesis_pool
                 assert is_main_process()
                 assert reflection_engine is not None
                 assert mission_guidance_repo is not None
@@ -1038,7 +1064,8 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                     ]
                     learnable_ids = {rec.ticket.key for rec in learnable_records}
 
-                    operations = tuple()
+                    operations: Tuple[ExperienceOperation, ...] = tuple()
+                    hypotheses = tuple()
                     evidence_group_ids: Tuple[str, ...] = tuple()
                     evidence_analysis = ""
 
@@ -1068,28 +1095,89 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                                 guidance_step=guidance_step_before,
                             )
                             try:
-                                operations, evidence_group_ids, evidence_analysis = (
-                                    reflection_engine.run_ops_pass(learnable_bundle)
-                                )
+                                (
+                                    operations,
+                                    hypotheses,
+                                    evidence_group_ids,
+                                    evidence_analysis,
+                                ) = reflection_engine.run_ops_pass(learnable_bundle)
                             except Exception as exc:  # noqa: BLE001
                                 ineligible_reason = f"ops_error: {exc}"
                                 warnings.append("ops_error")
                                 operations = tuple()
+                                hypotheses = tuple()
                                 evidence_group_ids = tuple()
 
-                    contributors = set(evidence_group_ids)
-                    uncovered = learnable_ids - contributors
+                    evidence_ops = tuple(
+                        dict.fromkeys(
+                            eid for op in operations for eid in (op.evidence or ())
+                        )
+                    )
+                    evidence_hypotheses = tuple(
+                        dict.fromkeys(
+                            eid for hyp in hypotheses for eid in (hyp.evidence or ())
+                        )
+                    )
+                    contributors, uncovered = _compute_learnability_coverage(
+                        learnable_ids,
+                        evidence_ops,
+                        evidence_hypotheses,
+                    )
                     if uncovered:
                         warnings.append(f"uncovered={len(uncovered)}")
                     record_by_gid = {rec.ticket.key: rec for rec in learnable_records}
 
                     # Apply ops (if any) with epoch-level change cap.
+                    promotion_ops: List[ExperienceOperation] = []
+                    promoted_signatures: List[str] = []
+                    current_evidence_map: Dict[str, Tuple[str, ...]] = {}
+                    if hypotheses and hypothesis_pool is not None:
+                        current_evidence_map = hypothesis_pool.build_current_evidence_map(
+                            hypotheses
+                        )
+                        cap = config.reflection.change_cap_per_epoch
+                        allow_promote = not (
+                            cap is not None and applied_changes_epoch >= cap
+                        )
+                        eligible = hypothesis_pool.record_proposals(
+                            hypotheses,
+                            reflection_cycle=reflection_cycle,
+                            epoch=current_epoch,
+                            allow_promote=allow_promote,
+                        )
+                        if eligible:
+                            for rec in eligible:
+                                evidence = current_evidence_map.get(rec.signature)
+                                if not evidence:
+                                    evidence = tuple(
+                                        tk
+                                        for tk in rec.support_ticket_keys
+                                        if tk in learnable_ids
+                                    )
+                                evidence = tuple(dict.fromkeys(evidence))
+                                if not evidence:
+                                    warnings.append("promotion_no_current_evidence")
+                                    continue
+                                promotion_ops.append(
+                                    ExperienceOperation(
+                                        op="upsert",
+                                        key=None,
+                                        text=rec.text,
+                                        rationale="hypothesis_promotion",
+                                        evidence=evidence,
+                                    )
+                                )
+                                promoted_signatures.append(rec.signature)
+                    if promotion_ops:
+                        operations = tuple(list(operations) + promotion_ops)
+
                     action = "refine" if operations else "noop"
                     proposal = ReflectionProposal(
                         action=ReflectionAction(action),  # type: ignore[arg-type]
                         summary=decision_analysis or None,
                         critique=evidence_analysis or None,
                         operations=tuple(operations),
+                        hypotheses=tuple(hypotheses),
                         evidence_group_ids=tuple(evidence_group_ids),
                         uncertainty_note=None,
                         no_evidence_group_ids=tuple(sorted(stop_ids)),
@@ -1114,6 +1202,12 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                                 applied = True
                                 applied_changes_epoch += 1
                                 guidance_updated_epoch = True
+                                if promoted_signatures and hypothesis_pool is not None:
+                                    hypothesis_pool.mark_promoted(
+                                        promoted_signatures,
+                                        reflection_cycle=reflection_cycle,
+                                        epoch=current_epoch,
+                                    )
                             except Exception as exc:  # noqa: BLE001
                                 ineligible_reason = str(exc)
                                 warnings.append("apply_failed")

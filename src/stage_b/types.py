@@ -103,6 +103,16 @@ class ExperienceOperation:
     merged_from: Optional[Tuple[str, ...]] = None
 
 
+@dataclass(frozen=True)
+class HypothesisCandidate:
+    """Candidate hypothesis proposed by the reflection ops pass."""
+
+    text: str
+    evidence: Tuple[str, ...] = field(default_factory=tuple)
+    falsifier: Optional[str] = None
+    dimension: Optional[str] = None
+
+
 GroupLabel = Literal["pass", "fail"]
 ChineseVerdict = Literal["通过", "不通过"]
 
@@ -316,6 +326,7 @@ class ReflectionProposal:
     critique: Optional[str]
     operations: Tuple[ExperienceOperation, ...]
     evidence_group_ids: Tuple[str, ...]
+    hypotheses: Tuple[HypothesisCandidate, ...] = field(default_factory=tuple)
     uncertainty_note: Optional[str] = None
     # Ticket keys that the reflection model declares "no evidence / cannot explain"
     # even after seeing the GT label. These are candidates for stop-gradient review.
@@ -347,6 +358,7 @@ __all__ = [
     "ExperienceMetadata",
     "ExperienceOperation",
     "ExperienceOperationKind",
+    "HypothesisCandidate",
     "ExperienceBundle",
     "ExperienceCandidate",
     "ExperienceRecord",

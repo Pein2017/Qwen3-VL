@@ -140,6 +140,11 @@ def _parse_mission_section(
             experiences = dict(experiences)
             experiences["G0"] = focus_text
 
+    if "G0" not in experiences:
+        raise MissionGuidanceError(
+            f"Mission {mission} experiences must include non-empty G0"
+        )
+
     metadata = _parse_metadata_dict(mission, payload)
 
     return MissionGuidance(
@@ -356,8 +361,9 @@ class GuidanceRepository:
                 else:
                     key = str(key)
                 target_key = key
-                experiences[target_key] = text
-                normalized_lookup[norm_text] = target_key
+
+            experiences[target_key] = text
+            normalized_lookup[norm_text] = target_key
 
             # Build combined sources (proposal evidence + fallback group ids)
             combined_sources = []
