@@ -1,4 +1,4 @@
-- [ ] Create simplified Stage-B config (e.g., `configs/stage_b/debug.yaml`) with rollout grid, batch size=4 default, no critic/confidence knobs.
+- [ ] Create simplified Stage-B config (e.g., `configs/stage_b/bbu_line.yaml`) with rollout grid, batch size=4 default, no critic/confidence knobs.
 - [ ] Implement prompt-output parser enforcing JSON-array evidence fields; route malformed outputs to `failure` log and manual-review queue.
 - [ ] Simplify selection to majority vote with tie-breakers (temperature/ordering); drop deterministic signals and confidence usage.
 - [ ] Update reflection to only consume explainable mismatches, emit ≤3 micro-guidance ops, and append to mission guidance in run dir.

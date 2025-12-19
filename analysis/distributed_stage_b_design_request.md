@@ -12,7 +12,7 @@ I need to accelerate Stage-B training by leveraging 8 GPUs with data-parallelism
   - `ReflectionEngine` runs sequentially and updates `GuidanceRepository` (shared state)
   - Guidance updates affect subsequent rollouts (shared state dependency)
 - **Model**: Full model fits on single GPU; 8 GPUs available with free memory
-- **Config**: `configs/stage_b/debug.yaml` (or `run.yaml`); `runner.rollout_batch_size` controls batch size
+- **Config**: `configs/stage_b/bbu_*.yaml` (e.g., `bbu_line.yaml`); `runner.rollout_batch_size` controls batch size
 
 **Constraints:**
 1. Reflection MUST be sequential (updates shared `guidance.json` state)

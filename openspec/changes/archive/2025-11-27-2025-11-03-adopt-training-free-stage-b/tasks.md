@@ -74,7 +74,7 @@
 - [x] **Update existing test fixtures** (`tests/stage_b/test_selection_summarizer.py`, `tests/stage_b/test_reflection_integration.py`): Removed `semantic_advantage` field from `DeterministicSignals` construction in all test fixtures.
 
 ### Configuration & Documentation
-- [x] **Update config examples** (`configs/stage_b/debug.yaml`, `configs/stage_b/run.yaml`): Added `critic` section with required fields and reflection defaults; consolidated examples into these two files. Removed `configs/stage_b/critic_example.yaml` per config cleanup.
+- [x] **Update config examples** (`configs/stage_b/bbu_*.yaml`): Added `critic` section with required fields and reflection defaults; consolidated examples into `bbu_*.yaml` files. Removed `configs/stage_b/critic_example.yaml` per config cleanup.
 
 ## Phase 2 Tasks (Merged from 2025-11-10)
 

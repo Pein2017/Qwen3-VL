@@ -17,7 +17,7 @@
 
 1. 复用现有 Stage‑B runner 与 artifacts 结构，引入一个 **Teacher 模式**：
   - 使用本地更强的 **Qwen3‑32B** 文本模型作为 Stage‑B Teacher；
-  - 在基本沿用 `configs/stage_b/debug.yaml` 的前提下，仅调整 `model.model_name_or_path` 指向 Teacher，并增加少量 `stage_b_distillation` 配置，用于输出 `distill_chatml.jsonl`；
+  - 在基本沿用 `configs/stage_b/bbu_line.yaml` 的前提下，仅调整 `model.model_name_or_path` 指向 Teacher，并增加少量 `stage_b_distillation` 配置，用于输出 `distill_chatml.jsonl`；
    - 读取固定的 Stage‑A 摘要 + guidance + 标签，在 **已收敛的 prompt-space（guidance 不再变化）** 下离线生成高质量 Verdict/Reason（以及可选反思）。
 2. 将上述 Teacher 轨迹落盘为 **chatml 对话格式** 的 JSONL 语料（基于收敛后的 guidance 快照）：
    - 输入端完整记录 system + user（含 mission、guidance、Stage‑A 摘要）；

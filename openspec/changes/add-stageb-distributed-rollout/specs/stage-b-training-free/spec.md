@@ -21,12 +21,13 @@ Distributed rollout is data-parallel over tickets; Stage-B MUST avoid accidental
 - **THEN** Stage-B SHALL force per-rank single-GPU model placement on the local rank device
 - **AND** each rank SHALL load the full model weights on its local GPU (no cross-rank sharding)
 
-### Requirement: Stage-B distributed mode SHALL treat `runner.rollout_batch_size` as a global (effective) batch size.
-In distributed mode, `runner.rollout_batch_size` SHALL represent the number of tickets processed per rollout step across all ranks combined.
-#### Scenario: Global rollout batch is fixed while GPU count changes
-- **WHEN** `runner.rollout_batch_size=B` and the run uses `WORLD_SIZE=W`
-- **THEN** each global batch SHALL be deterministically sharded so each rank receives either `⌊B/W⌋` or `⌈B/W⌉` tickets
-- **AND** the union of all rank shards SHALL contain exactly `B` tickets (or fewer only for the final batch at end-of-epoch when remaining tickets < B)
+### Requirement: Stage-B distributed mode SHALL treat `runner.per_rank_rollout_batch_size` as a per-rank (per-device) batch size.
+In distributed mode, `runner.per_rank_rollout_batch_size` SHALL represent the number of tickets processed per rollout step on each rank, and the global effective batch size SHALL be `per_rank_rollout_batch_size × WORLD_SIZE`.
+#### Scenario: Per-rank batch size with varying GPU count
+- **WHEN** `runner.per_rank_rollout_batch_size=P` and the run uses `WORLD_SIZE=W`
+- **THEN** the global effective batch size SHALL be `P × W` tickets per rollout step
+- **AND** each global batch SHALL be deterministically sharded so each rank receives up to `P` tickets (or fewer for the final batch at end-of-epoch when remaining tickets < P × W)
+- **AND** the union of all rank shards SHALL contain exactly `P × W` tickets (or fewer only for the final batch at end-of-epoch when remaining tickets < P × W)
 
 ### Requirement: Stage-B distributed mode SHALL enforce a single guidance snapshot per global rollout batch.
 Guidance updates from reflection SHALL affect only subsequent global rollout batches; no batch may see multiple guidance steps.

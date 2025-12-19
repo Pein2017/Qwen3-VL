@@ -1,0 +1,18 @@
+- [ ] Add `--batching_mode` to `src.stage_a.cli` (default `per_group`).
+- [ ] Implement cross-group batching in `src/stage_a/inference.py`:
+  - [ ] Build an image-job queue across groups (per rank) and fill batches up to `batch_size`.
+  - [ ] Re-aggregate model outputs back into per-group `per_image` summaries with strict coverage checks.
+  - [ ] Preserve write-once-per-group semantics and isolate failures (no partial group emission; failed groups do not block flush ordering).
+  - [ ] Preserve per-rank group output ordering by buffering completed groups until all prior groups are complete (failures count as complete for ordering).
+  - [ ] Keep max in-flight images bounded to `batch_size` (drop PIL images and tensors after each batch decode; no unbounded caching).
+- [ ] Ensure distributed semantics remain correct (no cross-rank batching; rank-local only); add CPU-only tests to simulate rank shards.
+- [ ] Add unit tests covering:
+  - [ ] cross-group batching re-aggregation correctness (coverage + per-image order)
+  - [ ] output-order stability for a mix of group sizes (CPU-only; no model required)
+  - [ ] failure-path behavior (one group fails; later groups still flush; no stuck buffers)
+  - [ ] distributed shard invariants (simulate 2 ranks: each rank only batches its own shard; no cross-rank mixing)
+- [ ] Update runtime docs and launcher help:
+  - [ ] `docs/runtime/STAGE_A_RUNTIME.md` (batching modes + default; determinism note; examples)
+  - [ ] `docs/runtime/STAGE_A_STAGE_B.md` (brief mention; link to runtime guide)
+  - [ ] `scripts/stage_a.sh` comments / README snippet if needed
+- [ ] Validate with `openspec validate add-stagea-cross-group-batching --strict`.

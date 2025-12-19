@@ -10,7 +10,7 @@ Rollout is the dominant cost and we have 8 GPUs available. Reflection MUST remai
 - Support **single-GPU** and **multi-GPU** execution from the same entry points (`scripts/stage_b.sh` → `python -m src.stage_b.runner`).
 - Implement **ticket-parallel** rollout across GPUs (data-parallel over group tickets) to maximize GPU utilization.
 - Preserve **global** semantics for:
-  - `runner.rollout_batch_size` (effective batch size per rollout step)
+  - `runner.per_rank_rollout_batch_size` (per-rank batch size; global effective batch = per_rank × WORLD_SIZE)
   - `reflection.batch_size` (reflection trigger threshold)
 - Ensure all ranks use **the same guidance snapshot per global rollout batch** (no intra-batch guidance drift).
 - Ensure only **rank 0** writes artifacts to disk.
@@ -27,8 +27,8 @@ Rollout is the dominant cost and we have 8 GPUs available. Reflection MUST remai
   - single-process mode when `gpus` contains one device (status quo)
   - `torchrun --nproc_per_node=<N>` when `gpus` contains multiple devices
 - In multi-GPU mode:
-  - `runner.rollout_batch_size` is interpreted as **global batch size**.
-  - Each rollout batch is sharded across ranks; each rank runs rollout for its shard.
+  - `runner.per_rank_rollout_batch_size` is interpreted as **per-rank (per-device) batch size**; global effective batch = `per_rank_rollout_batch_size × WORLD_SIZE`.
+  - Each rollout batch is sharded across ranks; each rank runs rollout for up to `per_rank_rollout_batch_size` tickets per step.
   - Rank 0 gathers candidates from all ranks, runs selection and reflection sequentially, updates guidance, and writes artifacts.
   - Guidance is broadcast once per global rollout batch so every shard uses the same guidance step.
 

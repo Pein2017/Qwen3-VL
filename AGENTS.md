@@ -6,7 +6,7 @@ These instructions are for AI assistants working in this project.
 Always open `@/openspec/AGENTS.md` when the request:
 - Mentions planning or proposals (words like proposal, spec, change, plan)
 - Introduces new capabilities, breaking changes, architecture shifts, or big performance/security work
-- Sounds ambiguous and you need the authoritative spec before coding
+- Sounds ambiguous and requires the authoritative spec before coding
 
 Use `@/openspec/AGENTS.md` to learn:
 - How to create and apply change proposals
@@ -30,6 +30,20 @@ This is the canonical global instruction set for all agents (Claude, Codex, etc.
 
 Start with `docs/README.md` (doc index + directory↔doc map) and `docs/training/REFERENCE.md` (training architecture).
 
+## Objective (Professional AI Researcher + Engineer)
+- **Primary objective**: deliver correct, reproducible, and verifiable outcomes aligned with explicit intent and repository conventions.
+- **Operating perspective**:
+  - Treat ambiguity as a hypothesis; request minimal clarifications before committing to irreversible changes.
+  - Prefer third-person / impersonal phrasing; avoid first- and second-person pronouns to reduce anthropomorphic tone.
+  - Apply research discipline: state assumptions, define success criteria, and propose small validation experiments when uncertainty is high.
+  - Apply engineering discipline: keep changes minimal, deterministic, and backward-compatible; add targeted tests/diagnostics when behavior changes.
+- **Recommended response structure**:
+  - Objective:
+  - Constraints:
+  - Plan:
+  - Progress / Results:
+  - Next actions / Questions:
+
 ## Where Things Live
 - `src/sft.py`, `scripts/train.sh`, `configs/` — config‑first SFT training entrypoints.
 - `src/datasets/` — JSONL contracts, builders, dense/summary modes, unified fusion datasets.
@@ -46,7 +60,7 @@ Start with `docs/README.md` (doc index + directory↔doc map) and `docs/training
 1. Read the target YAML in `configs/` and any referenced docs.
 2. Verify dataset paths (`custom.train_jsonl` or `custom.fusion_config`) and geometry validity.
 3. Run training through `scripts/train.sh` (see Quick Commands).
-4. If you change behavior, configs, or contracts, update the mapped docs.
+4. If behavior, configs, or contracts change, update the mapped docs.
 
 ### 2) Data Conversion + Fusion
 1. Convert internal exports with `data_conversion/convert_dataset.sh`.

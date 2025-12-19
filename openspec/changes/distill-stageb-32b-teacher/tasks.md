@@ -5,7 +5,7 @@
    - [ ] Finalize this OpenSpec change and validate via `openspec validate distill-stageb-32b-teacher --strict`.
 
 2. **Stage‑B Distillation Mode**
-   - [x] Add a `stage_b_distillation` config block to Stage‑B YAML（e.g., `configs/stage_b/debug.yaml`），默认 **enabled**，支持输出路径配置。
+   - [x] Add a `stage_b_distillation` config block to Stage‑B YAML（e.g., `configs/stage_b/bbu_line.yaml`），默认 **enabled**，支持输出路径配置。
    - [x] Extend `src/stage_b/runner.py` / sampling pipeline so that, when distill mode is enabled, it assembles chatml‑style `messages`（system/user/assistant）基于当前 mission/guidance/Stage‑A 摘要与 **选中 Verdict/Reason**。
    - [x] Persist **仅收敛 epoch（guidance 当轮无更新）中每个 group 的选中对话** 到 `{output.root}/{run_name}/{mission}/distill_chatml.jsonl`，仅含 `group_id`, `mission`, `label`, `messages`，并在重跑时覆盖旧文件。
    - [x] Ensure distill logging 不改变现有 `trajectories.jsonl` / `selections.jsonl` / `guidance.json` 行为；distill 日志不包含 reflection 文本。

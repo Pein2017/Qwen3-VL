@@ -4,7 +4,7 @@
 Add an optional multi-process distributed mode (single-node `torchrun`) that shards **tickets** across ranks for rollout, while keeping **selection + reflection** on rank 0.
 
 Key invariants:
-- `runner.rollout_batch_size` is **global** (effective) per rollout step.
+- `runner.per_rank_rollout_batch_size` is **per-rank (per-device)** batch size; global effective batch = `per_rank_rollout_batch_size × WORLD_SIZE`.
 - `reflection.batch_size` is **global** and evaluated only on rank 0 after gathering candidates.
 - Guidance is **consistent within a global rollout batch** (broadcast once per batch).
 - Only rank 0 writes artifacts; non-zero ranks are rollout workers.
@@ -31,12 +31,13 @@ Key invariants:
 Rank 0 computes `ordered_indices` (shuffle by `seed+epoch`) and broadcasts it so all ranks iterate the same ticket order.
 
 ### Per Global Rollout Batch
-For each global batch of size `B = runner.rollout_batch_size`:
+For each global batch of size `B = runner.per_rank_rollout_batch_size × WORLD_SIZE`:
 1. Rank 0 loads the current guidance snapshot (post-reflection) and broadcasts it.
 2. Every rank computes its shard deterministically:
    - `counts[r] = B//W + (r < (B % W))`
    - `offsets = cumsum(counts)`
    - shard = `batch[offsets[rank] : offsets[rank] + counts[rank]]`
+   - Each rank receives up to `per_rank_rollout_batch_size` tickets (or fewer for the final batch).
 3. Each rank runs rollout for its shard using `RolloutSampler.generate_for_batch(local_tickets, guidance_map)`.
 4. Rank 0 gathers all shard outputs (`group_id -> ParsedTrajectory[]`) and merges them.
 5. Rank 0 executes the existing per-ticket selection + reflection logic, appending trajectories/selections and updating guidance when reflection applies.
@@ -71,7 +72,7 @@ For users needing reproducibility, configs SHOULD provide explicit per-decode se
 
 ## Artifact Writing
 - Rank 0 is the only writer for:
-  - `trajectories.jsonl`, `selections.jsonl`, `reflection.jsonl`, `metrics_epoch.jsonl`
+  - `trajectories.jsonl`, `selections.jsonl`, `reflection.jsonl`, `metrics.jsonl` (legacy: `metrics_epoch.jsonl`)
   - mission guidance snapshots and `guidance.json`
   - manual review / failure queues
 - Non-zero ranks MUST NOT write into `{output.root}/{run_name}`.

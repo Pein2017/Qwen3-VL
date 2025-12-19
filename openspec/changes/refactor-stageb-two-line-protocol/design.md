@@ -22,5 +22,5 @@
 - No backward compatibility; old four-line outputs considered invalid.
 
 ## Validation
-- One debug run (`configs/stage_b/debug.yaml`) must complete with zero parse warnings.
+- One debug run (`configs/stage_b/bbu_line.yaml`) must complete with zero parse warnings.
 - Spot-check artifacts: selections.jsonl, reflection.jsonl, guidance.json unchanged format-wise, but without evidence keys.

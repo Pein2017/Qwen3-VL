@@ -14,7 +14,7 @@
 
 ### 1. Distillation Run 模式（Stage‑B Runner）
 
-在现有 `src/stage_b/runner.py` 结构上增加一个可选分支，尽量复用当前的 debug 配置（如 `configs/stage_b/debug.yaml`）：
+在现有 `src/stage_b/runner.py` 结构上增加一个可选分支，尽量复用当前的配置（如 `configs/stage_b/bbu_line.yaml`）：
 
 - 配置开关（示意）：
   - `stage_b_distillation.enabled: bool`（默认 false）

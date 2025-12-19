@@ -1,5 +1,5 @@
-- [ ] Align spec: add requirement for deterministic cross-rank metric key sync and single reduction
-- [ ] Implement `_sync_group_metrics` refactor (key-union only, ordered)
-- [ ] Add regression test for distributed key sync (no all-reduce) in grouped metrics (padding-only path)
-- [ ] Update supporting doc (final_verdiction) to match new behavior
-- [ ] Validate tests/lint (targeted)
+- [x] Align spec: add requirement for deterministic cross-rank metric key sync and single reduction
+- [x] Implement `_sync_group_metrics` refactor (key-union only, ordered)
+- [x] Add regression test for distributed key sync (no all-reduce) in grouped metrics (padding-only path)
+- [x] Update supporting doc (final_verdiction) to match new behavior
+- [x] Validate tests/lint (targeted)
