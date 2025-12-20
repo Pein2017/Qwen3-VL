@@ -10,10 +10,6 @@ from swift.llm.argument import RLHFArguments, TrainArguments
 from swift.utils import get_dist_setting
 
 from .prompts import USER_PROMPT_JSON, USER_PROMPT_SUMMARY, build_dense_system_prompt
-from ..prompts.summary_profiles import (
-    DEFAULT_SUMMARY_PROFILE_TRAIN,
-    build_summary_system_prompt,
-)
 from .schema import PromptOverrides, SaveDelayConfig, TrainingConfig
 
 logger = logging.getLogger(__name__)
@@ -136,6 +132,12 @@ class ConfigLoader:
 
     @staticmethod
     def resolve_prompts(config: Dict[str, Any]) -> PromptOverrides:
+        # Lazy import to avoid circular dependency
+        from ..prompts.summary_profiles import (
+            DEFAULT_SUMMARY_PROFILE_TRAIN,
+            build_summary_system_prompt,
+        )
+
         prompts_config = config.get("prompts", {}) or {}
         if not isinstance(prompts_config, dict):
             raise TypeError("prompts section must be a mapping if provided")

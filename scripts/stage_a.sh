@@ -18,16 +18,16 @@ OUTPUT_DIR="output_post/stage_a_bbu_rru_summary"
 # 挡风板安装检查
 # BBU安装方式检查（正装）
 
-
-MISSION="${mission:-挡风板安装检查}"
+ n                                                                          ,,,,
+MISSION="${mission:-BBU线缆布放要求}"
 DATASET="${dataset:-bbu}"
 PROMPT_PROFILE="${prompt_profile:-summary_runtime}"
 CUDA_VISIBLE_DEVICES="${gpus:-0}"
 no_mission_flag="${no_mission:-true}"
 verify_flag="${verify_inputs:-true}"
 DEBUG_FLAG="${debug:-false}"
-PASS_GROUP_NUMBER="${pass_group_number:-1200}"
-FAIL_GROUP_NUMBER="${fail_group_number:-1000}"
+PASS_GROUP_NUMBER="${pass_group_number:-}"
+FAIL_GROUP_NUMBER="${fail_group_number:-}"
 SAMPLE_SEED="${sample_seed:-42}"
 
 # Derive number of GPUs (ignore empty/whitespace tokens)

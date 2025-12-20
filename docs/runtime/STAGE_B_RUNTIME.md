@@ -27,7 +27,10 @@ config=bbu_line gpus=0 log_level=logging \
 bash scripts/stage_b.sh smoke
 ```
 
-- When `gpus` contains multiple devices, `scripts/stage_b.sh` auto-launches single-node `torchrun`; Stage-B runs **ticket-parallel rollout** across ranks while keeping **selection + reflection sequential on rank 0**.
+- Stage‑B supports two modes via YAML `mode`:
+  - `legacy_reflection` (default): rollout → selection → two-pass reflection ops + stop-gradient need-review routing.
+  - `rule_search`: rollout-heavy tree-growth loop: baseline rollout → proposer outputs 2–3 rules → A/B validate on a large set → accept only via metric gate.
+- When `gpus` contains multiple devices, `scripts/stage_b.sh` auto-launches single-node `torchrun`; Stage-B runs **ticket-parallel rollout** across ranks while keeping **(legacy) selection + reflection** sequential on rank 0 (and keeping rule-search proposing/gating on rank 0).
 - In multi-GPU mode, the model is replicated per rank (data-parallel); `model.device_map` is overridden to force single-GPU placement per rank (avoid accidental model-parallel sharding).
 - Only rank 0 writes `{output.root}/{mission_name}/{output.run_name}/...` artifacts; other ranks are rollout workers.
 - `GuidanceRepository` copies the global guidance file into `{output.root}/{mission_name}/{output.run_name}/guidance.json` (mission-scoped) so edits stay isolated until you manually promote them back.
@@ -44,11 +47,13 @@ bash scripts/stage_b.sh smoke
 
 ##### Config Breakdown (`src/stage_b/config.py`)
 
+- `mode`: `legacy_reflection` | `rule_search`.
 - `model`: HF checkpoint path, dtype (`bfloat16` recommended), and device map.
 - `sampler`: decode grid (temperature/top_p/max_new_tokens/stop) 与 `samples_per_decode`。提示现要求“两行输出”：`Verdict: 通过|不通过` + `Reason: <单行理由>`，不再包含 `Evidence_Positive/Negative`。
 - `selection`: majority vote + temperature tie-break; uses vote strength, no confidence/self-consistency.
 - `manual_review`: 低一致性阈值（`min_verdict_agreement`，mission configs 默认 0.67）用于记录 `low_agreement` 警示；人工复核入口统一为 need-review（`need_review_queue.jsonl`）。
-- `reflection`: two-pass prompts (`decision_prompt_path`, `ops_prompt_path`), batch size, `max_operations`, hypothesis gating thresholds, retry budget + cost caps.
+- `reflection`: two-pass prompts (`decision_prompt_path`, `ops_prompt_path`), batch size, `max_operations`, hypothesis gating thresholds, retry budget + cost caps。ops pass prompt 会优先鼓励提出“关键物体数量/比例/配对关系”的可验证规则，以降低 `gt=不通过` 但 `pred=通过` 的误判。
+- `rule_search` (only when `mode=rule_search`): proposer prompt + validation sampling + metric gate (relative error reduction + bootstrap + changed_fraction) + optional `eval_sampler`.
 - `runner`: epochs, `per_rank_rollout_batch_size` (per-rank batch size; global effective batch = per_rank × WORLD_SIZE in ticket-parallel mode), and `logging_steps` (emit step-wise telemetry every N groups).
 - `output`: Root/run_name plus mission subdirs for artifacts.
 - `guidance`: Global seed file and snapshot retention count.
@@ -58,19 +63,23 @@ bash scripts/stage_b.sh smoke
 
 Stage‑B currently expects **exactly one mission per run**. Artifacts are written under `{output.root}/{mission_name}/{output.run_name}/`:
 - `guidance.json` + `snapshots/`
+- `rule_candidates.jsonl` — (rule_search) each proposed rule with A/B validation metrics + gate decision.
+- `benchmarks.jsonl` — (rule_search) accepted-rule history (baseline/after metrics + guidance step).
+- `rule_search_hard_cases.jsonl` — (rule_search) per-iteration hardest mismatches (high-confidence wrong / ambiguous) for manual tracing.
+- `rule_search_candidate_regressions.jsonl` — (rule_search) per-candidate regressions (base-correct → candidate-wrong) to audit harmful rules.
 - `trajectories.jsonl` — One entry per candidate with decode params, parsed verdict/reason, format flag and warnings (includes `ticket_key`, `gt_label`).
 - `selections.jsonl` — Final verdict per ticket with `vote_strength`, guidance/reflection metadata, warnings (includes `ticket_key`, `gt_label`, `epoch`, `epoch_step`, `global_step`).
-- `metrics.jsonl` — Step-wise `logging_steps` windows + per-epoch summary rows (both include/exclude manual review: `acc/fn/fp/n`).
+- `metrics.jsonl` — Step-wise `logging_steps` windows + per-epoch summary rows (both include/exclude manual review: `acc/fn/fp/fn_rate/fp_rate/n`).
 - `need_review_queue.jsonl` — Human review queue (**stop-gradient**): tickets that are unlearnable after seeing `gt_label`. Entries include `ticket_key`, `gt_label`, `pred_verdict`, `reason_code` (e.g., `reflection_no_evidence_after_gt`, `budget_exhausted`), `reflection_id`, `reflection_cycle`, and optional `uncertainty_note`.
 - `need_review.json` — Run-end deterministic aggregate of `need_review_queue.jsonl` for quick inspection.
 - `failure_malformed.jsonl` — Parser/format/selection failures for prompt debugging (e.g., `format_error` / `no_candidates` / `no_valid_candidates` / `selection_error`).
-- `reflection.jsonl` — Applied/attempted guidance updates with evidence ticket_keys; `reflection.proposal` includes `hypotheses`, `uncertainty_note`, and `no_evidence_group_ids` for need-review routing.
+- `reflection.jsonl` — Applied/attempted guidance updates with evidence ticket_keys; `reflection.proposal` includes `hypotheses`, `uncertainty_note`, and `no_evidence_group_ids` for need-review routing. `reflection.trace` 记录本次 reflection batch 的 rollout 摘要与思考（stop-gradient、coverage、rollout 统计）。
 - `hypotheses.json` — Mission-scoped hypothesis pool (signature, support cycles, evidence union, status).
 - `hypothesis_events.jsonl` — Append-only hypothesis lifecycle events (proposed/promoted).
 - `group_report_delta.jsonl` — Optional step-wise “delta snapshots” for the most recent `logging_steps` window (per ticket: selection + candidate summaries + flags), for monitoring drift during a run.
 - `group_report.jsonl` — Optional full consolidated report generated at run end (can be rebuilt offline via `python scripts/stage_b_group_report.py --run-dir ...`).
 
-> Metrics note: `_compute_metrics` treats `pass` as positive class (`fp` = pred `pass` & gt `fail`; `fn` = pred `fail` & gt `pass`; `model_verdict=null` is counted based on gt). `include_manual_review` / `exclude_manual_review` is driven by the internal `in_manual_review` flag (selection warnings + hard failures), and is independent from the human review queue (`need_review_*`).
+> Metrics note: `_compute_metrics` treats `pass` as positive class (`fp` = pred `pass` & gt `fail`; `fn` = pred `fail` & gt `pass`; `model_verdict=null` is counted based on gt). `fn_rate/fp_rate` are normalized by `n`. `include_manual_review` / `exclude_manual_review` is driven by the internal `in_manual_review` flag (selection warnings + hard failures), and is independent from the human review queue (`need_review_*`).
 
 > Tip: raise `sampler.samples_per_decode` when you need multiple attempts per group under the same decode hyperparameters; drop it to `1` for deterministic sweeps.
 > Configure multi-epoch sweeps via `runner.epochs`. The runner shuffles tickets using `(seed + epoch)` so repeated runs with the same seed stay reproducible.

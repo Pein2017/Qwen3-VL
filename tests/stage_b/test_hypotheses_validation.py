@@ -119,6 +119,18 @@ def _engine(tmp_path: Path) -> ReflectionEngine:
             "forbidden",
         ),
         (
+            {
+                "hypotheses": [
+                    {
+                        "text": "若能确认则通过，否则不通过。",
+                        "falsifier": "若关键证据充分，则不应判定为不通过。",
+                        "evidence": ["g1::pass"],
+                    }
+                ]
+            },
+            "affirmative",
+        ),
+        (
             {"hypotheses": [{"text": "若能确认则通过。", "falsifier": "x", "evidence": []}]},
             "evidence",
         ),

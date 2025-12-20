@@ -11,10 +11,10 @@ import random
 import shutil
 import time
 import uuid
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import DefaultDict, Dict, Iterable, List, Optional, Tuple
+from typing import DefaultDict, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 import torch
 from transformers import (
@@ -45,18 +45,28 @@ from .io.guidance import GuidanceRepository
 from .io.hypotheses import HypothesisPool
 from .reflection import ReflectionEngine
 from .rollout import RolloutSampler
+from .rule_search import (
+    EvalMetrics,
+    build_gate_stats,
+    build_ticket_stats,
+    compute_metrics as compute_rule_search_metrics,
+    normalize_rule_signature,
+    pick_reflection_ticket_keys,
+)
 from .sampling.prompts import build_messages
 from .types import (
     DeterministicSignals,
     ExperienceBundle,
-    ExperienceRecord,
     ExperienceOperation,
+    ExperienceRecord,
     GroupTicket,
+    MissionGuidance,
+    ReflectionAction,
     ReflectionOutcome,
     ReflectionProposal,
-    ReflectionAction,
     TrajectoryWithSignals,
 )
+from .utils.chinese import normalize_spaces, to_simplified
 from .utils.perf import enable_tf32, maybe_empty_cache
 from .utils.seed import seed_everything
 
@@ -157,6 +167,19 @@ def _detect_model_variant(model_path: str) -> str:
     return "lm"
 
 
+def _safe_model_max_length(tokenizer) -> int | None:
+    value = getattr(tokenizer, "model_max_length", None)
+    if value is None:
+        return None
+    try:
+        length = int(value)
+    except Exception:  # noqa: BLE001
+        return None
+    if length <= 0 or length > 1_000_000:
+        return None
+    return length
+
+
 def _load_model(config: StageBConfig):
     variant = _detect_model_variant(config.model.model_name_or_path)
     logger.info(
@@ -246,10 +269,11 @@ def _reset_mission_artifacts(mission_dir: Path) -> None:
         "trajectories.jsonl",
         "selections.jsonl",
         "need_review_queue.jsonl",
-        "prompt_wishlist.jsonl",
         "failure_malformed.jsonl",
         "reflection.jsonl",
         "hypothesis_events.jsonl",
+        "rule_candidates.jsonl",
+        "benchmarks.jsonl",
         "metrics.jsonl",
         "group_report_delta.jsonl",
     ):
@@ -262,15 +286,6 @@ def _reset_mission_artifacts(mission_dir: Path) -> None:
     if hypotheses_path.exists():
         hypotheses_path.unlink()
     hypotheses_path.write_text("{}", encoding="utf-8")
-
-    # Backward-compat cleanup: remove old telemetry filename but do NOT recreate it.
-    legacy_metrics_path = mission_dir / "metrics_epoch.jsonl"
-    if legacy_metrics_path.exists():
-        legacy_metrics_path.unlink()
-
-    legacy_manual_review_path = mission_dir / "manual_review_queue.jsonl"
-    if legacy_manual_review_path.exists():
-        legacy_manual_review_path.unlink()
 
     need_review_summary_path = mission_dir / "need_review.json"
     if need_review_summary_path.exists():
@@ -287,6 +302,912 @@ def _shuffle_indices(count: int, *, epoch: int, base_seed: int) -> List[int]:
     seed_value = base_seed + epoch
     random.Random(seed_value).shuffle(indices)
     return indices
+
+
+def _holdout_fraction_for_mission(config: StageBConfig, mission: str) -> float:
+    if config.rule_search is None:
+        return 0.0
+    holdout_cfg = config.rule_search.holdout
+    if mission in holdout_cfg.per_mission:
+        return float(holdout_cfg.per_mission[mission])
+    return float(holdout_cfg.default_fraction)
+
+
+def _split_train_holdout(
+    tickets: Sequence[GroupTicket],
+    *,
+    fraction: float,
+    seed: int,
+    stratify_by_label: bool,
+) -> Tuple[List[GroupTicket], List[GroupTicket]]:
+    if not tickets:
+        return [], []
+    if fraction <= 0.0:
+        return list(tickets), []
+    if fraction >= 1.0:
+        return [], list(tickets)
+
+    rng = random.Random(int(seed))
+
+    if stratify_by_label:
+        by_label: Dict[str, List[GroupTicket]] = defaultdict(list)
+        for ticket in tickets:
+            by_label[str(ticket.label)].append(ticket)
+
+        train: List[GroupTicket] = []
+        holdout: List[GroupTicket] = []
+        for label in sorted(by_label.keys()):
+            bucket = sorted(by_label[label], key=lambda t: t.key)
+            indices = list(range(len(bucket)))
+            rng.shuffle(indices)
+            cutoff = int(round(len(bucket) * float(fraction)))
+            holdout.extend([bucket[i] for i in indices[:cutoff]])
+            train.extend([bucket[i] for i in indices[cutoff:]])
+        return train, holdout
+
+    ordered = sorted(tickets, key=lambda t: t.key)
+    indices = list(range(len(ordered)))
+    rng.shuffle(indices)
+    cutoff = int(round(len(ordered) * float(fraction)))
+    holdout = [ordered[i] for i in indices[:cutoff]]
+    train = [ordered[i] for i in indices[cutoff:]]
+    return train, holdout
+
+
+def _sample_validation_tickets(
+    tickets: Sequence[GroupTicket],
+    *,
+    validate_size: Optional[int],
+    validate_fraction: Optional[float],
+    with_replacement: bool,
+    seed: int,
+) -> List[GroupTicket]:
+    if not tickets:
+        return []
+
+    total = len(tickets)
+    rng = random.Random(int(seed))
+    if validate_fraction is not None:
+        target = int(round(total * float(validate_fraction)))
+    elif validate_size is not None:
+        target = int(validate_size)
+    else:
+        target = total
+
+    if with_replacement:
+        return [rng.choice(tickets) for _ in range(max(1, target))]
+
+    target = min(max(1, target), total)
+    indices = list(range(total))
+    rng.shuffle(indices)
+    return [tickets[i] for i in indices[:target]]
+
+
+def _extract_verdict_samples(
+    trajectories: Sequence,
+) -> List[Optional[str]]:
+    verdicts: List[Optional[str]] = []
+    for cand in trajectories:
+        verdict_val = getattr(cand, "verdict", None)
+        format_ok = bool(getattr(cand, "format_ok", False))
+        if not format_ok:
+            verdicts.append(None)
+        else:
+            verdicts.append(str(verdict_val) if verdict_val is not None else None)
+    return verdicts
+
+
+def _extract_reason_samples(
+    trajectories: Sequence,
+) -> List[Optional[str]]:
+    reasons: List[Optional[str]] = []
+    for cand in trajectories:
+        format_ok = bool(getattr(cand, "format_ok", False))
+        reason = getattr(cand, "reason", None)
+        if format_ok and reason:
+            reasons.append(str(reason))
+        else:
+            reasons.append(None)
+    return reasons
+
+
+def _distributed_rollout_payloads(
+    *,
+    tickets: Sequence[GroupTicket],
+    sampler: RolloutSampler,
+    guidance: MissionGuidance,
+    mission: str,
+    domain: str,
+    per_rank_batch_size: int,
+) -> Dict[str, List[object]]:
+    """Run distributed rollout for a single mission and return per-ticket trajectories.
+
+    Returns a mapping only on rank 0; other ranks return an empty dict.
+    """
+
+    world_size = get_world_size()
+    rank = get_rank()
+    global_batch_size = max(1, int(per_rank_batch_size)) * max(1, int(world_size))
+
+    guidance_map = {mission: guidance}
+    domain_map = {mission: domain}
+
+    merged: Dict[str, List[object]] = {}
+    for batch in _chunked(list(tickets), global_batch_size):
+        start, end = _shard_bounds(len(batch), world_size=world_size, rank=rank)
+        shard = batch[start:end]
+        local = sampler.generate_for_batch(shard, guidance_map, domain_map)
+        gathered = gather_object(local, dst=0)
+        if not is_main_process():
+            continue
+        assert gathered is not None
+        for part in gathered:
+            for ticket_key, trajectories in part.items():
+                merged.setdefault(ticket_key, []).extend(trajectories)
+
+    return merged if is_main_process() else {}
+
+
+def _distributed_rollout_verdicts(
+    *,
+    tickets: Sequence[GroupTicket],
+    sampler: RolloutSampler,
+    guidance: MissionGuidance,
+    mission: str,
+    domain: str,
+    per_rank_batch_size: int,
+) -> Dict[str, List[Optional[str]]]:
+    """Run distributed rollout for a single mission and return per-ticket verdict samples.
+
+    Returns a mapping only on rank 0; other ranks return an empty dict.
+    """
+
+    world_size = get_world_size()
+    rank = get_rank()
+    global_batch_size = max(1, int(per_rank_batch_size)) * max(1, int(world_size))
+
+    guidance_map = {mission: guidance}
+    domain_map = {mission: domain}
+
+    merged: Dict[str, List[Optional[str]]] = {}
+    for batch in _chunked(list(tickets), global_batch_size):
+        start, end = _shard_bounds(len(batch), world_size=world_size, rank=rank)
+        shard = batch[start:end]
+        local = sampler.generate_for_batch(shard, guidance_map, domain_map)
+        gathered = gather_object(local, dst=0)
+        if not is_main_process():
+            continue
+        assert gathered is not None
+        for part in gathered:
+            for ticket_key, trajectories in part.items():
+                merged.setdefault(ticket_key, []).extend(
+                    _extract_verdict_samples(trajectories)
+                )
+
+    return merged if is_main_process() else {}
+
+
+def _build_rule_proposer_user_prompt(
+    *,
+    mission: str,
+    guidance: MissionGuidance,
+    examples: Sequence[GroupTicket],
+    stats_by_ticket: Mapping[str, object],
+) -> str:
+    g0 = guidance.experiences.get("G0") or ""
+    scaffold_lines = [
+        f"[{key}]. {value}"
+        for key, value in sorted(guidance.experiences.items())
+        if key.startswith("S")
+    ]
+
+    lines: List[str] = [
+        f"任务: {mission}",
+        f"G0: {g0}",
+    ]
+    if scaffold_lines:
+        lines.extend(["", "SCAFFOLD (S*):", *scaffold_lines])
+    lines.append("")
+    lines.append("以下为用于提出候选规则的错例样本（仅供提案，不用于最终评估）：")
+    lines.append("")
+
+    for idx, ticket in enumerate(examples, start=1):
+        stats = stats_by_ticket.get(ticket.key)
+        majority_pred = getattr(stats, "majority_pred", None)
+        agreement = getattr(stats, "agreement", 0.0)
+        difficulty = getattr(stats, "difficulty", 0.0)
+        lines.append(
+            f"样本{idx}: ticket_key={ticket.key}; gt_label={ticket.label}; "
+            f"baseline_majority={majority_pred}; agreement={agreement:.3f}; difficulty={difficulty:.3f}"
+        )
+        summaries = ticket.summaries.as_dict()
+        lines.append("stage_a_summaries:")
+        for key in sorted(summaries.keys()):
+            lines.append(f"  - {key}: {summaries[key]}")
+        lines.append("")
+
+    lines.append("请基于上述错例样本提出候选规则。只输出 JSON。")
+    return "\n".join(lines).strip()
+
+
+def _propose_rules(
+    *,
+    model: torch.nn.Module,
+    tokenizer,
+    config: StageBConfig,
+    mission: str,
+    guidance: MissionGuidance,
+    examples: Sequence[GroupTicket],
+    stats_by_ticket: Mapping[str, object],
+    reflection_engine: ReflectionEngine,
+    iteration: int,
+    log_dir: Optional[Path] = None,
+) -> List[Dict[str, str]]:
+    """Run proposer LLM once and return candidate rules (validated + de-duplicated)."""
+
+    assert config.rule_search is not None
+    system_prompt = Path(config.rule_search.proposer_prompt_path).read_text(
+        encoding="utf-8"
+    )
+    max_prompt_tokens = int(config.rule_search.proposer_max_prompt_tokens)
+    example_list = list(examples)
+    prompt_tokens: Optional[int] = None
+
+    while True:
+        user_prompt = _build_rule_proposer_user_prompt(
+            mission=mission,
+            guidance=guidance,
+            examples=example_list,
+            stats_by_ticket=stats_by_ticket,
+        )
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+
+        try:
+            chat_prompt = tokenizer.apply_chat_template(
+                messages,
+                add_generation_prompt=True,
+                tokenize=False,
+                enable_thinking=False,
+            )
+        except TypeError:
+            chat_prompt = tokenizer.apply_chat_template(  # type: ignore[call-arg]
+                messages,
+                add_generation_prompt=True,
+                tokenize=False,
+            )
+        assert isinstance(chat_prompt, str)
+
+        try:
+            encoded_probe = tokenizer(
+                chat_prompt,
+                return_tensors="pt",
+                padding=False,
+                truncation=False,
+            )
+            prompt_tokens = int(encoded_probe["input_ids"].size(1))
+        except Exception:  # noqa: BLE001
+            prompt_tokens = None
+
+        if prompt_tokens is None or prompt_tokens <= max_prompt_tokens:
+            break
+        if len(example_list) <= 1:
+            break
+        example_list.pop()
+
+    if prompt_tokens is not None and prompt_tokens > max_prompt_tokens:
+        logger.warning(
+            "rule_search proposer prompt exceeds token budget after trimming: tokens=%d budget=%d examples=%d",
+            prompt_tokens,
+            max_prompt_tokens,
+            len(example_list),
+        )
+
+    model_max_length = _safe_model_max_length(tokenizer)
+    if prompt_tokens is not None and model_max_length is not None:
+        total_requested = prompt_tokens + int(config.rule_search.proposer_max_new_tokens)
+        if prompt_tokens > model_max_length:
+            logger.error(
+                "rule_search proposer prompt exceeds model_max_length: prompt=%d model_max_length=%d",
+                prompt_tokens,
+                model_max_length,
+            )
+        elif total_requested > model_max_length:
+            logger.warning(
+                "rule_search proposer prompt+generation exceeds model_max_length: prompt=%d new=%d total=%d model_max_length=%d",
+                prompt_tokens,
+                int(config.rule_search.proposer_max_new_tokens),
+                total_requested,
+                model_max_length,
+            )
+
+    encoded = tokenizer(
+        chat_prompt,
+        return_tensors="pt",
+        padding=True,
+        truncation=False,
+    )
+    inputs = {k: v.to(model.device) for k, v in encoded.items()}
+
+    torch.manual_seed(int(config.seed))
+    with torch.inference_mode():
+        output = model.generate(  # type: ignore[call-overload]
+            **inputs,
+            max_new_tokens=config.rule_search.proposer_max_new_tokens,
+            temperature=config.rule_search.proposer_temperature,
+            top_p=config.rule_search.proposer_top_p,
+            repetition_penalty=config.rule_search.proposer_repetition_penalty,
+            do_sample=True,
+            pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id,
+            eos_token_id=tokenizer.eos_token_id,
+            use_cache=True,
+        )
+
+    prompt_length = inputs["input_ids"].size(1)
+    generated_tokens = output[0, prompt_length:]
+    raw_response = tokenizer.decode(generated_tokens, skip_special_tokens=True)
+    response = normalize_spaces(to_simplified(raw_response))
+
+    try:
+        payload = ReflectionEngine._loads_first_json(response)
+    except Exception as exc:  # noqa: BLE001
+        if log_dir is not None:
+            log_dir.mkdir(parents=True, exist_ok=True)
+            _append_jsonl(
+                log_dir / "rule_search_proposer_failures.jsonl",
+                {
+                    "timestamp": time.time(),
+                    "iteration": iteration,
+                    "mission": mission,
+                    "examples": len(example_list),
+                    "prompt_tokens": prompt_tokens,
+                    "error": str(exc),
+                    "raw_response_prefix": raw_response[:400],
+                    "raw_response_suffix": raw_response[-400:],
+                },
+            )
+        raise ValueError(
+            f"No valid JSON found in rule_search proposer response (examples={len(example_list)}, prompt_tokens={prompt_tokens})"
+        ) from exc
+    if not isinstance(payload, Mapping):
+        raise ValueError("Rule proposer must return a JSON object")
+
+    rules_raw = payload.get("rules")
+    if not isinstance(rules_raw, Sequence) or isinstance(rules_raw, (str, bytes)):
+        raise ValueError("rules must be a list")
+
+    scaffold_texts = [
+        text for key, text in guidance.experiences.items() if key.startswith("S")
+    ]
+    existing_norms = {
+        normalize_rule_signature(v) for v in guidance.experiences.values()
+    }
+
+    candidates: List[Dict[str, str]] = []
+    seen_signatures: set[str] = set()
+    for entry in rules_raw:
+        if not isinstance(entry, Mapping):
+            continue
+        text_raw = entry.get("text")
+        text = str(text_raw).strip() if text_raw is not None else ""
+        if not text:
+            continue
+        if reflection_engine._reject_experience_text(text):
+            continue
+        if reflection_engine._contains_forbidden_phrase(text):
+            continue
+        if reflection_engine._contains_ambiguous_negation(text):
+            continue
+        if not reflection_engine._is_binary_hypothesis(text):
+            continue
+        if reflection_engine._hypothesis_conflicts_scaffold(text, scaffold_texts):
+            continue
+
+        dim_raw = entry.get("dimension")
+        dim = str(dim_raw).strip() if dim_raw is not None else ""
+        if dim and reflection_engine._is_brand_dimension(dim):
+            continue
+
+        signature = normalize_rule_signature(text)
+        if not signature:
+            continue
+        if signature in existing_norms:
+            continue
+        if signature in seen_signatures:
+            continue
+        seen_signatures.add(signature)
+
+        rationale_raw = entry.get("rationale")
+        rationale = str(rationale_raw).strip() if rationale_raw is not None else ""
+        candidates.append({"text": text, "rationale": rationale})
+        if len(candidates) >= int(config.rule_search.num_candidate_rules):
+            break
+
+    return candidates
+
+
+def _load_rejected_rule_signatures(rule_candidates_path: Path) -> set[str]:
+    rejected: set[str] = set()
+    for row in _load_jsonl(rule_candidates_path):
+        decision = str(row.get("decision") or "").strip().lower()
+        signature = str(row.get("signature") or "").strip()
+        if signature and decision == "rejected":
+            rejected.add(signature)
+    return rejected
+
+
+def _run_rule_search_mission(
+    *,
+    config: StageBConfig,
+    model,
+    tokenizer,
+    mission: str,
+    mission_tickets: Sequence[GroupTicket],
+    mission_dir: Path,
+    domain: str,
+) -> None:
+    assert config.rule_search is not None
+
+    rule_candidates_path = mission_dir / "rule_candidates.jsonl"
+    benchmarks_path = mission_dir / "benchmarks.jsonl"
+    hard_cases_path = mission_dir / "rule_search_hard_cases.jsonl"
+    regressions_path = mission_dir / "rule_search_candidate_regressions.jsonl"
+
+    mission_guidance_repo: Optional[GuidanceRepository] = None
+    reflection_engine: Optional[ReflectionEngine] = None
+    if is_main_process():
+        mission_guidance_repo = _setup_mission_guidance(
+            startup_path=config.guidance.path,
+            mission_dir=mission_dir,
+            mission=mission,
+            retention=config.guidance.retention,
+            reset=config.guidance.reset_on_rerun,
+        )
+        reflection_engine = ReflectionEngine(
+            model=model,
+            tokenizer=tokenizer,
+            config=config.reflection,
+            guidance_repo=mission_guidance_repo,
+            reflection_log=None,
+        )
+
+    rejected_signatures = (
+        _load_rejected_rule_signatures(rule_candidates_path)
+        if is_main_process()
+        else set()
+    )
+    rejected_signatures = broadcast_object(
+        rejected_signatures if is_main_process() else None, src=0
+    )
+
+    # Deterministic mission ticket lookup.
+    ticket_by_key = {ticket.key: ticket for ticket in mission_tickets}
+
+    holdout_fraction = _holdout_fraction_for_mission(config, mission)
+    train_tickets, holdout_tickets = _split_train_holdout(
+        list(mission_tickets),
+        fraction=holdout_fraction,
+        seed=config.rule_search.holdout.seed,
+        stratify_by_label=config.rule_search.holdout.stratify_by_label,
+    )
+    logger.info(
+        "rule_search split: mission=%s train=%d holdout=%d holdout_fraction=%.3f",
+        mission,
+        len(train_tickets),
+        len(holdout_tickets),
+        holdout_fraction,
+    )
+
+    if config.rule_search.eval_sampler is None:
+        raise ValueError("rule_search.eval_sampler is required in rule_search mode")
+    eval_sampler_cfg = config.rule_search.eval_sampler
+    # mining_sampler is optional; if not provided, use eval_sampler
+    mining_sampler_cfg = config.rule_search.mining_sampler or config.rule_search.eval_sampler
+    eval_sampler = RolloutSampler(
+        model=model, tokenizer=tokenizer, config=eval_sampler_cfg
+    )
+    mining_sampler = RolloutSampler(
+        model=model, tokenizer=tokenizer, config=mining_sampler_cfg
+    )
+
+    patience = int(config.rule_search.early_stop.patience)
+    no_gain_rounds = 0
+    hard_case_limit = max(100, int(config.rule_search.reflect_size) * 4)
+
+    # Use runner.epochs as the iteration budget for rule-search.
+    for iteration in range(1, config.runner.epochs + 1):
+        current_guidance = None
+        if is_main_process():
+            assert mission_guidance_repo is not None
+            current_guidance = mission_guidance_repo.get(mission)
+        current_guidance = broadcast_object(current_guidance, src=0)
+
+        # Sample validation tickets from train set.
+        validate_seed = int(config.seed) + iteration
+        validate_tickets = _sample_validation_tickets(
+            train_tickets,
+            validate_size=config.rule_search.validate_size,
+            validate_fraction=config.rule_search.validate_fraction,
+            with_replacement=config.rule_search.validate_with_replacement,
+            seed=validate_seed,
+        )
+
+        # Baseline rollout for gate evaluation (paired with candidate eval sampler).
+        base_payloads_eval = _distributed_rollout_payloads(
+            tickets=validate_tickets,
+            sampler=eval_sampler,
+            guidance=current_guidance,
+            mission=mission,
+            domain=domain,
+            per_rank_batch_size=config.runner.per_rank_rollout_batch_size,
+        )
+        base_samples_eval: Dict[str, List[Optional[str]]] = {}
+        base_reasons_eval: Dict[str, List[Optional[str]]] = {}
+        if is_main_process():
+            for ticket_key, trajectories in base_payloads_eval.items():
+                base_samples_eval[ticket_key] = _extract_verdict_samples(trajectories)
+                base_reasons_eval[ticket_key] = _extract_reason_samples(trajectories)
+        base_stats_by_ticket: Dict[str, object] = {}
+        stats_for_proposer: Dict[str, object] = {}
+        base_metrics = None
+        reflect_keys: List[str] = []
+        candidates: List[Dict[str, str]] = []
+
+        if is_main_process():
+            for ticket in validate_tickets:
+                verdicts = base_samples_eval.get(ticket.key, [])
+                base_stats_by_ticket[ticket.key] = build_ticket_stats(
+                    ticket_key=ticket.key,
+                    gt_label=ticket.label,
+                    verdicts=verdicts,
+                )
+            base_metrics = compute_rule_search_metrics(
+                base_stats_by_ticket.values()  # type: ignore[arg-type]
+            )
+            stats_for_proposer = dict(base_stats_by_ticket)
+            for row in _hard_case_rows(
+                base_stats_by_ticket,
+                mission=mission,
+                iteration=iteration,
+                sampler="eval",
+                limit=hard_case_limit,
+                reason_samples_by_ticket=base_reasons_eval,
+            ):
+                _append_jsonl(hard_cases_path, row)
+
+            # Optional mining sampler for selecting harder mismatches (does not affect gate metrics).
+            if config.rule_search.mining_sampler is not None:
+                base_samples_mining = _distributed_rollout_verdicts(
+                    tickets=validate_tickets,
+                    sampler=mining_sampler,
+                    guidance=current_guidance,
+                    mission=mission,
+                    domain=domain,
+                    per_rank_batch_size=config.runner.per_rank_rollout_batch_size,
+                )
+                mining_stats: Dict[str, object] = {}
+                for ticket in validate_tickets:
+                    verdicts = base_samples_mining.get(ticket.key, [])
+                    mining_stats[ticket.key] = build_ticket_stats(
+                        ticket_key=ticket.key,
+                        gt_label=ticket.label,
+                        verdicts=verdicts,
+                    )
+                stats_for_proposer = mining_stats
+                for row in _hard_case_rows(
+                    mining_stats,
+                    mission=mission,
+                    iteration=iteration,
+                    sampler="mining",
+                    limit=hard_case_limit,
+                ):
+                    _append_jsonl(hard_cases_path, row)
+
+            reflect_keys = pick_reflection_ticket_keys(
+                stats_for_proposer,  # type: ignore[arg-type]
+                reflect_size=config.rule_search.reflect_size,
+            )
+
+            examples = [
+                ticket_by_key[key] for key in reflect_keys if key in ticket_by_key
+            ]
+
+            if examples:
+                assert reflection_engine is not None
+                try:
+                        candidates = _propose_rules(
+                            model=model,
+                            tokenizer=tokenizer,
+                            config=config,
+                            mission=mission,
+                            guidance=current_guidance,
+                            examples=examples,
+                            stats_by_ticket=stats_for_proposer,
+                            reflection_engine=reflection_engine,
+                            iteration=iteration,
+                            log_dir=mission_dir / "reflection_cache",
+                        )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("rule_search proposer failed: %s", exc)
+                    candidates = []
+
+            # Filter already-rejected signatures.
+            filtered: List[Dict[str, str]] = []
+            for cand in candidates:
+                sig = normalize_rule_signature(cand.get("text", ""))
+                if not sig:
+                    continue
+                if sig in rejected_signatures:
+                    continue
+                filtered.append(cand)
+            candidates = filtered
+
+        # Broadcast proposer results.
+        candidates = broadcast_object(candidates if is_main_process() else None, src=0)
+        reflect_keys = broadcast_object(
+            reflect_keys if is_main_process() else None, src=0
+        )
+        base_metrics = broadcast_object(
+            base_metrics if is_main_process() else None, src=0
+        )
+
+        if not candidates:
+            if is_main_process():
+                logger.info(
+                    "rule_search iteration %d: no candidates proposed (reflect=%d, validate=%d); treating as no-gain",
+                    iteration,
+                    len(reflect_keys),
+                    len(validate_tickets),
+                )
+            no_gain_rounds = broadcast_int(
+                no_gain_rounds + 1 if is_main_process() else 0, src=0
+            )
+            should_stop = no_gain_rounds >= patience
+            should_stop = bool(
+                broadcast_int(1 if should_stop and is_main_process() else 0, src=0)
+            )
+            if should_stop:
+                break
+            continue
+
+        # Candidate evaluation (A/B on the same validation set, paired seeds by sampler config).
+        best_candidate: Optional[Dict[str, object]] = None
+        for cand_idx, cand in enumerate(candidates, start=1):
+            cand_text = str(cand.get("text") or "").strip()
+            cand_sig = normalize_rule_signature(cand_text)
+
+            candidate_guidance = None
+            candidate_operation = None
+            if is_main_process():
+                assert mission_guidance_repo is not None
+                reflection_id = f"rule_search_preview_{iteration}_{cand_idx}"
+                candidate_operation = ExperienceOperation(
+                    op="upsert",
+                    key=None,
+                    text=cand_text,
+                    rationale="rule_search_candidate",
+                    evidence=tuple(reflect_keys),
+                    merged_from=None,
+                )
+                proposal = ReflectionProposal(
+                    action=ReflectionAction("refine"),
+                    summary=None,
+                    critique=None,
+                    operations=(candidate_operation,),
+                    hypotheses=tuple(),
+                    evidence_group_ids=tuple(reflect_keys),
+                    uncertainty_note=None,
+                    no_evidence_group_ids=tuple(),
+                    text=None,
+                )
+                candidate_guidance = mission_guidance_repo.preview_reflection(
+                    mission,
+                    proposal=proposal,
+                    reflection_id=reflection_id,
+                    source_group_ids=list(reflect_keys),
+                    operations=(candidate_operation,),
+                )
+
+            candidate_guidance = broadcast_object(
+                candidate_guidance if is_main_process() else None, src=0
+            )
+
+            cand_samples = _distributed_rollout_verdicts(
+                tickets=validate_tickets,
+                sampler=eval_sampler,
+                guidance=candidate_guidance,
+                mission=mission,
+                domain=domain,
+                per_rank_batch_size=config.runner.per_rank_rollout_batch_size,
+            )
+
+            if not is_main_process():
+                continue
+
+            # Build candidate stats and gate decision (rank 0 only).
+            cand_stats_by_ticket: Dict[str, object] = {}
+            for ticket in validate_tickets:
+                verdicts = cand_samples.get(ticket.key, [])
+                cand_stats_by_ticket[ticket.key] = build_ticket_stats(
+                    ticket_key=ticket.key,
+                    gt_label=ticket.label,
+                    verdicts=verdicts,
+                )
+
+            gate_stats, passed = build_gate_stats(
+                base_stats=base_stats_by_ticket,  # type: ignore[arg-type]
+                new_stats=cand_stats_by_ticket,  # type: ignore[arg-type]
+                rer_threshold=config.rule_search.gate.min_relative_error_reduction,
+                bootstrap_iterations=config.rule_search.gate.bootstrap.iterations,
+                bootstrap_min_prob=config.rule_search.gate.bootstrap.min_prob,
+                bootstrap_seed=config.rule_search.gate.bootstrap.seed + iteration,
+                min_changed_fraction=config.rule_search.gate.min_changed_fraction,
+            )
+            cand_metrics = compute_rule_search_metrics(
+                cand_stats_by_ticket.values()  # type: ignore[arg-type]
+            )
+
+            decision = "accepted" if passed else "rejected"
+            regressions = _candidate_regressions(
+                base_stats_by_ticket,  # type: ignore[arg-type]
+                cand_stats_by_ticket,  # type: ignore[arg-type]
+                limit=50,
+            )
+            if regressions:
+                _append_jsonl(
+                    regressions_path,
+                    {
+                        "timestamp": time.time(),
+                        "iteration": iteration,
+                        "candidate_index": cand_idx,
+                        "mission": mission,
+                        "signature": cand_sig,
+                        "decision": decision,
+                        "regression_count": len(regressions),
+                        "regressions": regressions,
+                    },
+                )
+            _append_jsonl(
+                rule_candidates_path,
+                {
+                    "timestamp": time.time(),
+                    "iteration": iteration,
+                    "candidate_index": cand_idx,
+                    "mission": mission,
+                    "signature": cand_sig,
+                    "text": cand_text,
+                    "rationale": str(cand.get("rationale") or "").strip() or None,
+                    "validate_n": len(validate_tickets),
+                    "base_acc": base_metrics.acc if base_metrics else None,
+                    "base_fn_rate": base_metrics.fn_rate if base_metrics else None,
+                    "base_fp_rate": base_metrics.fp_rate if base_metrics else None,
+                    "base_fn_over_tp": base_metrics.fn_over_tp if base_metrics else None,
+                    "base_fp_over_tp": base_metrics.fp_over_tp if base_metrics else None,
+                    "cand_acc": cand_metrics.acc,
+                    "cand_fn_rate": cand_metrics.fn_rate,
+                    "cand_fp_rate": cand_metrics.fp_rate,
+                    "cand_fn_over_tp": cand_metrics.fn_over_tp,
+                    "cand_fp_over_tp": cand_metrics.fp_over_tp,
+                    "relative_error_reduction": gate_stats.relative_error_reduction,
+                    "changed_fraction": gate_stats.changed_fraction,
+                    "bootstrap_prob": gate_stats.bootstrap_prob,
+                    "decision": decision,
+                },
+            )
+
+            if passed:
+                if (
+                    best_candidate is None
+                    or gate_stats.relative_error_reduction
+                    > float(
+                        best_candidate.get("relative_error_reduction", -1.0)  # type: ignore[union-attr]
+                    )
+                ):
+                    best_candidate = {
+                        "candidate_index": cand_idx,
+                        "signature": cand_sig,
+                        "text": cand_text,
+                        "rationale": str(cand.get("rationale") or "").strip() or None,
+                        "gate": gate_stats,
+                        "cand_metrics": cand_metrics,
+                        "operation": candidate_operation,
+                    }
+
+        # Apply best candidate if any.
+        should_stop = False
+        if is_main_process():
+            if best_candidate is None:
+                no_gain_rounds += 1
+                logger.info(
+                    "rule_search iteration %d: no candidate passed gate (no_gain_rounds=%d/%d)",
+                    iteration,
+                    no_gain_rounds,
+                    patience,
+                )
+            else:
+                assert mission_guidance_repo is not None
+                op = best_candidate["operation"]
+                assert isinstance(op, ExperienceOperation)
+                reflection_id = uuid.uuid4().hex[:12]
+                proposal = ReflectionProposal(
+                    action=ReflectionAction("refine"),
+                    summary=None,
+                    critique=None,
+                    operations=(op,),
+                    hypotheses=tuple(),
+                    evidence_group_ids=tuple(reflect_keys),
+                    uncertainty_note=None,
+                    no_evidence_group_ids=tuple(),
+                    text=None,
+                )
+                before = mission_guidance_repo.get(mission)
+                updated = mission_guidance_repo.apply_reflection(
+                    mission=mission,
+                    proposal=proposal,
+                    reflection_id=reflection_id,
+                    source_group_ids=list(reflect_keys),
+                    operations=(op,),
+                    applied_epoch=iteration,
+                )
+                new_keys = sorted(
+                    set(updated.experiences.keys()) - set(before.experiences.keys())
+                )
+                accepted_key = new_keys[0] if new_keys else None
+                gate: object = best_candidate["gate"]
+                cand_metrics = best_candidate["cand_metrics"]
+                assert isinstance(cand_metrics, EvalMetrics), "cand_metrics must be EvalMetrics"
+                _append_jsonl(
+                    benchmarks_path,
+                    {
+                        "timestamp": time.time(),
+                        "iteration": iteration,
+                        "mission": mission,
+                        "accepted_key": accepted_key,
+                        "signature": best_candidate["signature"],
+                        "text": best_candidate["text"],
+                        "rationale": best_candidate["rationale"],
+                        "validate_n": len(validate_tickets),
+                        "base_acc": base_metrics.acc if base_metrics else None,
+                        "base_fn_rate": base_metrics.fn_rate if base_metrics else None,
+                        "base_fp_rate": base_metrics.fp_rate if base_metrics else None,
+                        "base_fn_over_tp": base_metrics.fn_over_tp if base_metrics else None,
+                        "base_fp_over_tp": base_metrics.fp_over_tp if base_metrics else None,
+                        "after_acc": cand_metrics.acc,
+                        "after_fn_rate": cand_metrics.fn_rate,
+                        "after_fp_rate": cand_metrics.fp_rate,
+                        "after_fn_over_tp": cand_metrics.fn_over_tp,
+                        "after_fp_over_tp": cand_metrics.fp_over_tp,
+                        "relative_error_reduction": getattr(
+                            gate, "relative_error_reduction", None
+                        ),
+                        "changed_fraction": getattr(gate, "changed_fraction", None),
+                        "bootstrap_prob": getattr(gate, "bootstrap_prob", None),
+                        "guidance_step_before": before.step,
+                        "guidance_step_after": updated.step,
+                        "reflect_ticket_keys": list(reflect_keys),
+                    },
+                )
+                no_gain_rounds = 0
+                logger.info(
+                    "rule_search iteration %d: accepted %s (key=%s, RER=%.3f)",
+                    iteration,
+                    best_candidate["signature"],
+                    accepted_key,
+                    getattr(gate, "relative_error_reduction", 0.0),
+                )
+
+            should_stop = no_gain_rounds >= patience
+
+        should_stop = bool(
+            broadcast_int(1 if should_stop and is_main_process() else 0, src=0)
+        )
+        no_gain_rounds = broadcast_int(
+            no_gain_rounds if is_main_process() else 0, src=0
+        )
+        if should_stop:
+            break
 
 
 def _append_jsonl(path: Path, payload: dict) -> None:
@@ -456,7 +1377,200 @@ def _compute_metrics(records: List[Dict[str, object]]) -> Dict[str, float]:
 
     acc = correct / total if total else 0.0
 
-    return {"acc": acc, "fn": fn, "fp": fp, "n": total}
+    fn_rate = fn / total if total else 0.0
+    fp_rate = fp / total if total else 0.0
+
+    return {"acc": acc, "fn": fn, "fp": fp, "fn_rate": fn_rate, "fp_rate": fp_rate, "n": total}
+
+
+def _summarize_reflection_records(
+    records: Sequence[ExperienceRecord],
+) -> List[Dict[str, object]]:
+    summaries: List[Dict[str, object]] = []
+    for rec in records:
+        verdicts: List[Optional[str]] = []
+        candidate_details: List[Dict[str, object]] = []
+        pass_count = 0
+        fail_count = 0
+        invalid = 0
+        for cand in rec.candidates:
+            verdicts.append(cand.verdict)
+            if cand.verdict == "pass":
+                pass_count += 1
+            elif cand.verdict == "fail":
+                fail_count += 1
+            else:
+                invalid += 1
+            signals = getattr(cand, "signals", None)
+            candidate_details.append(
+                {
+                    "candidate_index": cand.candidate_index,
+                    "verdict": cand.verdict,
+                    "reason": cand.reason,
+                    "confidence": cand.confidence,
+                    "signals": {
+                        "label_match": getattr(signals, "label_match", None),
+                        "low_agreement": getattr(signals, "low_agreement", None),
+                        "conflict_flag": getattr(signals, "conflict_flag", None),
+                        "needs_manual_review": getattr(
+                            signals, "needs_manual_review", None
+                        ),
+                        "vote_strength": getattr(signals, "vote_strength", None),
+                        "confidence": getattr(signals, "confidence", None),
+                    },
+                    "raw_text": cand.raw_text,
+                }
+            )
+
+        winning = None
+        if rec.winning_candidate is not None:
+            for cand in rec.candidates:
+                if cand.candidate_index == rec.winning_candidate:
+                    winning = cand
+                    break
+
+        summaries.append(
+            {
+                "ticket_key": rec.ticket.key,
+                "group_id": rec.ticket.group_id,
+                "gt_label": rec.ticket.label,
+                "winning_candidate": rec.winning_candidate,
+                "winning_verdict": getattr(winning, "verdict", None),
+                "winning_reason": getattr(winning, "reason", None),
+                "winning_confidence": getattr(winning, "confidence", None),
+                "winning_label_match": (
+                    getattr(getattr(winning, "signals", None), "label_match", None)
+                ),
+                "verdict_counts": {
+                    "pass": pass_count,
+                    "fail": fail_count,
+                    "invalid": invalid,
+                },
+                "candidate_verdicts": verdicts,
+                "candidates": candidate_details,
+                "stage_a_summaries": rec.ticket.summaries.as_dict(),
+                "guidance_step": rec.guidance_step,
+                "epoch_step": rec.epoch_step,
+                "global_step": rec.global_step,
+            }
+        )
+
+    return summaries
+
+
+def _hard_case_rows(
+    stats_by_ticket: Mapping[str, object],
+    *,
+    mission: str,
+    iteration: int,
+    sampler: str,
+    limit: int,
+    reason_samples_by_ticket: Optional[Mapping[str, Sequence[Optional[str]]]] = None,
+) -> List[Dict[str, object]]:
+    rows: List[Dict[str, object]] = []
+    for entry in stats_by_ticket.values():
+        majority = getattr(entry, "majority_pred", None)
+        gt_label = getattr(entry, "gt_label", None)
+        if majority is None or majority == gt_label:
+            continue
+        ticket_key = getattr(entry, "ticket_key", None)
+        verdict_samples = list(getattr(entry, "verdict_samples", ()))
+        reason_samples: List[Optional[str]] = []
+        majority_reason = None
+        reason_counts: List[Dict[str, object]] = []
+        if reason_samples_by_ticket is not None and ticket_key is not None:
+            raw_reasons = list(reason_samples_by_ticket.get(ticket_key, ()))
+            if raw_reasons:
+                reason_samples = raw_reasons
+                if majority is not None:
+                    counts = Counter()
+                    for verdict, reason in zip(verdict_samples, raw_reasons):
+                        if verdict == majority and reason:
+                            counts[reason] += 1
+                    if counts:
+                        majority_reason = counts.most_common(1)[0][0]
+                        reason_counts = [
+                            {"reason": reason, "count": count}
+                            for reason, count in counts.most_common(5)
+                        ]
+
+        rows.append(
+            {
+                "timestamp": time.time(),
+                "iteration": iteration,
+                "mission": mission,
+                "sampler": sampler,
+                "ticket_key": ticket_key,
+                "gt_label": gt_label,
+                "majority_pred": majority,
+                "majority_reason": majority_reason,
+                "pass_count": getattr(entry, "pass_count", None),
+                "fail_count": getattr(entry, "fail_count", None),
+                "invalid_count": getattr(entry, "invalid_count", None),
+                "total_samples": getattr(entry, "total_samples", None),
+                "agreement": getattr(entry, "agreement", None),
+                "difficulty": getattr(entry, "difficulty", None),
+                "hard_wrong": getattr(entry, "hard_wrong", None),
+                "verdict_samples": verdict_samples,
+                "reason_samples": reason_samples,
+                "reason_counts": reason_counts,
+            }
+        )
+
+    rows.sort(
+        key=lambda row: (
+            float(row.get("hard_wrong") or 0.0),  # type: ignore[arg-type]
+            float(row.get("difficulty") or 0.0),  # type: ignore[arg-type]
+        ),
+        reverse=True,
+    )
+    if limit > 0:
+        rows = rows[:limit]
+    for rank, row in enumerate(rows, start=1):
+        row["rank"] = rank
+    return rows
+
+
+def _candidate_regressions(
+    base_stats: Mapping[str, object],
+    new_stats: Mapping[str, object],
+    *,
+    limit: int,
+) -> List[Dict[str, object]]:
+    rows: List[Dict[str, object]] = []
+    keys = sorted(set(base_stats.keys()) & set(new_stats.keys()))
+    for key in keys:
+        base = base_stats[key]
+        new = new_stats[key]
+        base_correct = bool(getattr(base, "majority_correct", False))
+        new_correct = bool(getattr(new, "majority_correct", False))
+        if not base_correct or new_correct:
+            continue
+        rows.append(
+            {
+                "ticket_key": getattr(base, "ticket_key", key),
+                "gt_label": getattr(base, "gt_label", None),
+                "base_pred": getattr(base, "majority_pred", None),
+                "cand_pred": getattr(new, "majority_pred", None),
+                "base_agreement": getattr(base, "agreement", None),
+                "cand_agreement": getattr(new, "agreement", None),
+                "base_pass_count": getattr(base, "pass_count", None),
+                "base_fail_count": getattr(base, "fail_count", None),
+                "cand_pass_count": getattr(new, "pass_count", None),
+                "cand_fail_count": getattr(new, "fail_count", None),
+            }
+        )
+
+    rows.sort(
+        key=lambda row: (
+            float(row.get("cand_agreement") or 0.0),  # type: ignore[arg-type]
+            float(row.get("base_agreement") or 0.0),  # type: ignore[arg-type]
+        ),
+        reverse=True,
+    )
+    if limit > 0:
+        rows = rows[:limit]
+    return rows
 
 
 def _setup_mission_guidance(
@@ -550,7 +1664,7 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
     )
 
     logger.info(
-        "Stage-B starting with reflection-first pipeline (single mission, no critic)"
+        "Stage-B starting (mode=%s)", getattr(config, "mode", "legacy_reflection")
     )
 
     init_distributed()
@@ -609,11 +1723,28 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
 
     training_by_mission = tickets_by_mission
 
-    # Log holdout status (deferred for future implementation)
-    logger.info("Holdout evaluation: disabled (deferred for future implementation)")
-
     logger.info(f"Loading model {config.model.model_name_or_path}")
     model, tokenizer, processor = _load_model(config)
+
+    if getattr(config, "mode", "legacy_reflection") == "rule_search":
+        # rule_search mode runs a metric-gated loop; legacy reflection/need-review are disabled.
+        mission = mission_name
+        domain = resolve_domain_for_mission(config, mission)
+        _run_rule_search_mission(
+            config=config,
+            model=model,
+            tokenizer=tokenizer,
+            mission=mission,
+            mission_tickets=training_by_mission[mission],
+            mission_dir=run_dir,
+            domain=domain,
+        )
+        logger.info("Completed Stage-B rule_search run for mission %s", mission)
+        return
+
+    # Legacy reflection-first pipeline (default)
+    if config.sampler is None:
+        raise ValueError("sampler is required for legacy_reflection mode")
     sampler = RolloutSampler(model=model, tokenizer=tokenizer, config=config.sampler)
 
     # Process each mission separately
@@ -799,7 +1930,7 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                 eta_hours_run = eta_seconds_run / 3600.0
 
                 logger.info(
-                    "Step %d/%d | epoch %d/%d | step %d/%d | %s (%d groups, %.2f groups/s, %.1fs elapsed, eta=%.2fh epoch, %.2fh run) | exc: acc=%.4f fn=%d fp=%d n=%d | inc: acc=%.4f fn=%d fp=%d n=%d",
+                    "Step %d/%d | epoch %d/%d | step %d/%d | %s (%d groups, %.2f groups/s, %.1fs elapsed, eta=%.2fh epoch, %.2fh run) | exc: acc=%.4f fn=%d fp=%d fn_rate=%.4f fp_rate=%.4f n=%d | inc: acc=%.4f fn=%d fp=%d fn_rate=%.4f fp_rate=%.4f n=%d",
                     global_step,
                     total_steps_run,
                     epoch,
@@ -815,10 +1946,14 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                     metrics_exclude_mr["acc"],
                     metrics_exclude_mr["fn"],
                     metrics_exclude_mr["fp"],
+                    metrics_exclude_mr["fn_rate"],
+                    metrics_exclude_mr["fp_rate"],
                     metrics_exclude_mr["n"],
                     metrics_include_mr["acc"],
                     metrics_include_mr["fn"],
                     metrics_include_mr["fp"],
+                    metrics_include_mr["fn_rate"],
+                    metrics_include_mr["fp_rate"],
                     metrics_include_mr["n"],
                 )
 
@@ -871,16 +2006,19 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
             ) -> None:
                 if not feedback.experience_keys:
                     return
-                if feedback.label_match:
-                    mission_guidance_repo.increment_hit_count(
-                        mission, list(feedback.experience_keys)
-                    )
-                else:
-                    mission_guidance_repo.increment_miss_count(
-                        mission, list(feedback.experience_keys)
-                    )
+                if mission_guidance_repo is not None:
+                    if feedback.label_match:
+                        mission_guidance_repo.increment_hit_count(
+                            mission, list(feedback.experience_keys)
+                        )
+                    else:
+                        mission_guidance_repo.increment_miss_count(
+                            mission, list(feedback.experience_keys)
+                        )
 
-            def _extract_pred(rec: ExperienceRecord) -> Tuple[Optional[str], Optional[str]]:
+            def _extract_pred(
+                rec: ExperienceRecord,
+            ) -> Tuple[Optional[str], Optional[str]]:
                 pred_verdict: Optional[str] = None
                 pred_reason: Optional[str] = None
                 if rec.winning_candidate is not None:
@@ -962,31 +2100,45 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                 retry_budget = config.reflection.retry_budget_per_group_per_epoch
                 max_calls = config.reflection.max_calls_per_epoch
 
-                def _pop_batch(queue: List[ExperienceRecord], *, size: int) -> List[ExperienceRecord]:
+                def _pop_batch(
+                    queue: List[ExperienceRecord], *, size: int
+                ) -> List[ExperienceRecord]:
                     batch = queue[:size]
                     del queue[:size]
                     return batch
 
-                def _pop_next_batch(*, flush_partial: bool) -> Tuple[int, List[ExperienceRecord]]:
+                def _pop_next_batch(
+                    *, flush_partial: bool
+                ) -> Tuple[int, List[ExperienceRecord]]:
                     # attempt=0 first (insertion order), then retry buckets (stable by group_id).
                     if pending_records:
-                        size = _batch_size_for_retry(config.reflection.batch_size, attempt=0)
+                        size = _batch_size_for_retry(
+                            config.reflection.batch_size, attempt=0
+                        )
                         if len(pending_records) >= size or flush_partial:
-                            take = min(len(pending_records), size) if flush_partial else size
+                            take = (
+                                min(len(pending_records), size)
+                                if flush_partial
+                                else size
+                            )
                             return 0, _pop_batch(pending_records, size=take)
                     for attempt in sorted(retry_queues.keys()):
                         queue = retry_queues[attempt]
                         if not queue:
                             continue
                         queue.sort(key=lambda r: r.ticket.key)
-                        size = _batch_size_for_retry(config.reflection.batch_size, attempt=attempt)
+                        size = _batch_size_for_retry(
+                            config.reflection.batch_size, attempt=attempt
+                        )
                         if len(queue) >= size or flush_partial:
                             take = min(len(queue), size) if flush_partial else size
                             return attempt, _pop_batch(queue, size=take)
                     return -1, []
 
                 while True:
-                    attempt, batch_records = _pop_next_batch(flush_partial=flush_partial)
+                    attempt, batch_records = _pop_next_batch(
+                        flush_partial=flush_partial
+                    )
                     if attempt < 0 or not batch_records:
                         break
 
@@ -1033,8 +2185,8 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                     # ----------------------
                     reflection_calls_epoch += 1
                     try:
-                        stop_ids_tuple, decision_analysis = reflection_engine.run_decision_pass(
-                            bundle
+                        stop_ids_tuple, decision_analysis = (
+                            reflection_engine.run_decision_pass(bundle)
                         )
                     except Exception as exc:  # noqa: BLE001
                         stop_ids_tuple = tuple()
@@ -1060,9 +2212,7 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                             )
 
                     learnable_records = [
-                        rec
-                        for rec in batch_records
-                        if rec.ticket.key not in stop_ids
+                        rec for rec in batch_records if rec.ticket.key not in stop_ids
                     ]
                     learnable_ids = {rec.ticket.key for rec in learnable_records}
 
@@ -1075,7 +2225,10 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                     # Pass-2: ops on learnable-only
                     # ----------------------
                     if ineligible_reason is None and learnable_records:
-                        if max_calls is not None and reflection_calls_epoch >= max_calls:
+                        if (
+                            max_calls is not None
+                            and reflection_calls_epoch >= max_calls
+                        ):
                             warnings.append("budget_exhausted_before_ops")
                             for rec in learnable_records:
                                 pending_feedback.pop(rec.ticket.key, None)
@@ -1134,8 +2287,8 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                     promoted_signatures: List[str] = []
                     current_evidence_map: Dict[str, Tuple[str, ...]] = {}
                     if hypotheses and hypothesis_pool is not None:
-                        current_evidence_map = hypothesis_pool.build_current_evidence_map(
-                            hypotheses
+                        current_evidence_map = (
+                            hypothesis_pool.build_current_evidence_map(hypotheses)
                         )
                         cap = config.reflection.change_cap_per_epoch
                         allow_promote = not (
@@ -1173,6 +2326,28 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                     if promotion_ops:
                         operations = tuple(list(operations) + promotion_ops)
 
+                    rollout_trace = _summarize_reflection_records(batch_records)
+                    coverage_ratio = (
+                        1.0 - (len(uncovered) / len(learnable_ids))
+                        if learnable_ids
+                        else 0.0
+                    )
+                    trace_payload = {
+                        "batch_size": len(batch_records),
+                        "learnable_size": len(learnable_records),
+                        "stop_gradient": sorted(stop_ids),
+                        "learnable_ticket_keys": sorted(learnable_ids),
+                        "contributors": sorted(contributors),
+                        "uncovered": sorted(uncovered),
+                        "coverage_ratio": coverage_ratio,
+                        "operations_count": len(operations),
+                        "hypotheses_count": len(hypotheses),
+                        "promotion_signatures": promoted_signatures,
+                        "decision_analysis": decision_analysis or None,
+                        "evidence_analysis": evidence_analysis or None,
+                        "rollout_records": rollout_trace,
+                    }
+
                     action = "refine" if operations else "noop"
                     proposal = ReflectionProposal(
                         action=ReflectionAction(action),  # type: ignore[arg-type]
@@ -1192,13 +2367,15 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                             warnings.append("epoch_change_cap_reached")
                         else:
                             try:
-                                updated_guidance = mission_guidance_repo.apply_reflection(
-                                    mission=mission,
-                                    proposal=proposal,
-                                    reflection_id=reflection_id,
-                                    source_group_ids=list(evidence_group_ids),
-                                    applied_epoch=current_epoch,
-                                    operations=operations,
+                                updated_guidance = (
+                                    mission_guidance_repo.apply_reflection(
+                                        mission=mission,
+                                        proposal=proposal,
+                                        reflection_id=reflection_id,
+                                        source_group_ids=list(evidence_group_ids),
+                                        applied_epoch=current_epoch,
+                                        operations=operations,
+                                    )
                                 )
                                 guidance_step_after = updated_guidance.step
                                 applied = True
@@ -1227,7 +2404,11 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                         ineligible_reason=ineligible_reason,
                         warnings=tuple(warnings),
                     )
-                    reflection_engine._append_log(outcome, epoch=current_epoch)
+                    reflection_engine._append_log(
+                        outcome,
+                        epoch=current_epoch,
+                        trace=trace_payload,
+                    )
 
                     if applied:
                         applied_keys: set[str] = set()
@@ -1262,10 +2443,12 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
 
                     final_contributors = contributors - retry_targets
                     if final_contributors:
-                        committed_feedback, _dropped_feedback = _drain_buffered_feedback(
-                            pending_feedback,
-                            stop_gradient_ticket_keys=set(),
-                            contributor_ticket_keys=final_contributors,
+                        committed_feedback, _dropped_feedback = (
+                            _drain_buffered_feedback(
+                                pending_feedback,
+                                stop_gradient_ticket_keys=set(),
+                                contributor_ticket_keys=final_contributors,
+                            )
                         )
                         for feedback in committed_feedback:
                             _commit_pending_feedback(feedback)
@@ -1560,6 +2743,8 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                     for candidate in wrapped_candidates:
                         parsed = candidate.parsed
                         sig = candidate.signals
+                        if parsed is None:
+                            continue
                         decode = parsed.base.decode
                         candidates_payload.append(
                             {
@@ -1666,15 +2851,19 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                 metrics_include_mr = _compute_metrics(records_this_epoch)
 
                 logger.info(
-                    "Epoch %d summary | exc: acc=%.4f fn=%d fp=%d n=%d | inc: acc=%.4f fn=%d fp=%d n=%d",
+                    "Epoch %d summary | exc: acc=%.4f fn=%d fp=%d fn_rate=%.4f fp_rate=%.4f n=%d | inc: acc=%.4f fn=%d fp=%d fn_rate=%.4f fp_rate=%.4f n=%d",
                     epoch,
                     metrics_exclude_mr["acc"],
                     metrics_exclude_mr["fn"],
                     metrics_exclude_mr["fp"],
+                    metrics_exclude_mr["fn_rate"],
+                    metrics_exclude_mr["fp_rate"],
                     metrics_exclude_mr["n"],
                     metrics_include_mr["acc"],
                     metrics_include_mr["fn"],
                     metrics_include_mr["fp"],
+                    metrics_include_mr["fn_rate"],
+                    metrics_include_mr["fp_rate"],
                     metrics_include_mr["n"],
                 )
 
@@ -1735,7 +2924,9 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
                 )
                 logger.info("Wrote need-review summary to %s", need_review_summary_path)
             except Exception as exc:  # noqa: BLE001
-                logger.warning("Failed to build need_review.json for %s: %s", mission, exc)
+                logger.warning(
+                    "Failed to build need_review.json for %s: %s", mission, exc
+                )
 
             if config.output.group_report:
                 try:

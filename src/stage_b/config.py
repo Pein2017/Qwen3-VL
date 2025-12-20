@@ -68,7 +68,7 @@ class ReflectionConfig:
     all_wrong_strategy: str = "learn"
     change_cap_per_epoch: Optional[int] = None
     hypothesis_min_support_cycles: int = 2
-    hypothesis_min_unique_ticket_keys: int = 6
+    hypothesis_min_unique_ticket_keys: int = 12
     temperature: float = 1.0
     top_p: float = 0.95
     repetition_penalty: float = 1.0
@@ -77,6 +77,61 @@ class ReflectionConfig:
     token_budget: int = 4096  # Token budget for reflection prompt packing
     retry_budget_per_group_per_epoch: int = 2
     max_calls_per_epoch: Optional[int] = None  # decision+ops calls per epoch; None = unlimited
+
+
+@dataclass(frozen=True)
+class RuleSearchHoldoutConfig:
+    """Train/holdout split configuration for rule-search mode."""
+
+    default_fraction: float = 0.2
+    per_mission: Mapping[str, float] = field(default_factory=dict)
+    seed: int = 0
+    stratify_by_label: bool = True
+
+
+@dataclass(frozen=True)
+class RuleSearchBootstrapConfig:
+    iterations: int = 200
+    min_prob: float = 0.8
+    seed: int = 0
+
+
+@dataclass(frozen=True)
+class RuleSearchGateConfig:
+    """Rule admission gate for rule-search mode."""
+
+    # Relative error reduction threshold, e.g. 0.1 = 10% relative error reduction.
+    min_relative_error_reduction: float = 0.1
+    # Fraction of tickets whose majority prediction changes (sanity / coverage).
+    min_changed_fraction: float = 0.01
+    bootstrap: RuleSearchBootstrapConfig = field(default_factory=RuleSearchBootstrapConfig)
+
+
+@dataclass(frozen=True)
+class RuleSearchEarlyStopConfig:
+    patience: int = 3
+
+
+@dataclass(frozen=True)
+class RuleSearchConfig:
+    """Rule-search (tree-growth) configuration."""
+
+    proposer_prompt_path: Path
+    proposer_temperature: float = 0.4
+    proposer_top_p: float = 0.9
+    proposer_repetition_penalty: float = 1.05
+    proposer_max_new_tokens: int = 2048
+    proposer_max_prompt_tokens: int = 4096
+    reflect_size: int = 16
+    num_candidate_rules: int = 3
+    validate_size: Optional[int] = None
+    validate_fraction: Optional[float] = None
+    validate_with_replacement: bool = False
+    holdout: RuleSearchHoldoutConfig = field(default_factory=RuleSearchHoldoutConfig)
+    gate: RuleSearchGateConfig = field(default_factory=RuleSearchGateConfig)
+    early_stop: RuleSearchEarlyStopConfig = field(default_factory=RuleSearchEarlyStopConfig)
+    eval_sampler: Optional[SamplerConfig] = None
+    mining_sampler: Optional[SamplerConfig] = None
 
 
 @dataclass(frozen=True)
@@ -126,7 +181,7 @@ class StageBConfig:
     stage_a_paths: Tuple[Path, ...]
     guidance: GuidanceConfig
     output: OutputConfig
-    sampler: SamplerConfig
+    sampler: Optional[SamplerConfig]  # Optional in rule_search mode
     reflection: ReflectionConfig
     selection: SelectionConfig
     model: ModelConfig
@@ -136,6 +191,8 @@ class StageBConfig:
     stage_b_distillation: Optional[StageBDistillationConfig] = None
     domain_map: Mapping[str, str] = field(default_factory=dict)
     default_domain: Optional[str] = None
+    mode: str = "legacy_reflection"
+    rule_search: Optional[RuleSearchConfig] = None
 
 
 def _load_domain_map(raw: Any) -> Mapping[str, str]:
@@ -326,7 +383,7 @@ def _load_reflection(section: Mapping[str, Any]) -> ReflectionConfig:
     if hypothesis_min_support_cycles <= 0:
         raise ValueError("reflection.hypothesis_min_support_cycles must be > 0")
     hypothesis_min_unique_ticket_keys = int(
-        section.get("hypothesis_min_unique_ticket_keys", 6)
+        section.get("hypothesis_min_unique_ticket_keys", 12)
     )
     if hypothesis_min_unique_ticket_keys <= 0:
         raise ValueError("reflection.hypothesis_min_unique_ticket_keys must be > 0")
@@ -459,24 +516,180 @@ def load_stage_b_config(path: str | Path) -> StageBConfig:
     if not isinstance(raw_config, MutableMapping):
         raise TypeError("Stage-B config must be a mapping")
 
+    seed_value = _load_seed(raw_config)
+
+    mode_raw = str(raw_config.get("mode", "legacy_reflection")).strip().lower()
+    if mode_raw not in {"legacy_reflection", "rule_search"}:
+        raise ValueError(
+            "Stage-B config 'mode' must be one of: legacy_reflection, rule_search"
+        )
+
     stage_a_paths = _load_stage_a_paths(
         _require(raw_config, "stage_a_paths", "Stage-B config")
     )
     guidance = _load_guidance(_require(raw_config, "guidance", "Stage-B config"))
     output = _load_output(_require(raw_config, "output", "Stage-B config"))
-    sampler = _load_sampler(_require(raw_config, "sampler", "Stage-B config"))
+    # sampler is required for legacy_reflection mode, optional for rule_search mode
+    sampler = None
+    if "sampler" in raw_config:
+        sampler = _load_sampler(raw_config["sampler"])
+    elif mode_raw == "legacy_reflection":
+        raise ValueError("sampler is required for legacy_reflection mode")
     reflection = _load_reflection(_require(raw_config, "reflection", "Stage-B config"))
     selection = _load_selection(_require(raw_config, "selection", "Stage-B config"))
     manual_review = _load_manual_review(raw_config.get("manual_review"))
     model = _load_model(_require(raw_config, "model", "Stage-B config"))
     runner = _load_runner(_require(raw_config, "runner", "Stage-B config"))
-    seed_value = _load_seed(raw_config)
     guidance_lifecycle = _load_guidance_lifecycle(raw_config.get("guidance_lifecycle"))
     stage_b_distillation = _load_distillation(raw_config.get("stage_b_distillation"))
     domain_map = _load_domain_map(raw_config.get("domain_map"))
     default_domain = _load_default_domain(raw_config.get("default_domain"))
 
+    rule_search_section = raw_config.get("rule_search")
+    rule_search: Optional[RuleSearchConfig] = None
+    if rule_search_section is not None:
+        if not isinstance(rule_search_section, Mapping):
+            raise TypeError("rule_search must be a mapping when provided")
+
+        proposer_prompt_path = Path(
+            _require(rule_search_section, "proposer_prompt_path", "rule_search section")
+        )
+        proposer_temperature = float(rule_search_section.get("proposer_temperature", 0.4))
+        proposer_top_p = float(rule_search_section.get("proposer_top_p", 0.9))
+        proposer_repetition_penalty = float(
+            rule_search_section.get("proposer_repetition_penalty", 1.05)
+        )
+        proposer_max_new_tokens = int(
+            rule_search_section.get("proposer_max_new_tokens", 2048)
+        )
+        if proposer_max_new_tokens <= 0:
+            raise ValueError("rule_search.proposer_max_new_tokens must be > 0")
+        proposer_max_prompt_tokens = int(
+            rule_search_section.get("proposer_max_prompt_tokens", 4096)
+        )
+        if proposer_max_prompt_tokens <= 0:
+            raise ValueError("rule_search.proposer_max_prompt_tokens must be > 0")
+        reflect_size = int(rule_search_section.get("reflect_size", 16))
+        if reflect_size <= 0:
+            raise ValueError("rule_search.reflect_size must be > 0")
+        num_candidate_rules = int(rule_search_section.get("num_candidate_rules", 3))
+        if num_candidate_rules <= 0:
+            raise ValueError("rule_search.num_candidate_rules must be > 0")
+
+        validate_size_raw = rule_search_section.get("validate_size")
+        validate_size = int(validate_size_raw) if validate_size_raw is not None else None
+        if validate_size is not None and validate_size <= 0:
+            raise ValueError("rule_search.validate_size must be > 0 if set")
+
+        validate_fraction_raw = rule_search_section.get("validate_fraction")
+        validate_fraction = (
+            float(validate_fraction_raw) if validate_fraction_raw is not None else None
+        )
+        if validate_fraction is not None and not (0.0 < validate_fraction <= 1.0):
+            raise ValueError("rule_search.validate_fraction must be in (0, 1]")
+
+        validate_with_replacement = bool(
+            rule_search_section.get("validate_with_replacement", False)
+        )
+
+        holdout_section = rule_search_section.get("holdout") or {}
+        if not isinstance(holdout_section, Mapping):
+            raise TypeError("rule_search.holdout must be a mapping when provided")
+        default_fraction = float(holdout_section.get("default_fraction", 0.2))
+        if not (0.0 <= default_fraction < 1.0):
+            raise ValueError("rule_search.holdout.default_fraction must be in [0, 1)")
+        per_mission_raw = holdout_section.get("per_mission") or {}
+        if not isinstance(per_mission_raw, Mapping):
+            raise TypeError("rule_search.holdout.per_mission must be a mapping")
+        per_mission = {str(k): float(v) for k, v in per_mission_raw.items()}
+        for mission, frac in per_mission.items():
+            if not (0.0 <= frac < 1.0):
+                raise ValueError(
+                    f"rule_search.holdout.per_mission[{mission!r}] must be in [0, 1)"
+                )
+        holdout_seed = int(holdout_section.get("seed", seed_value))
+        stratify_by_label = bool(holdout_section.get("stratify_by_label", True))
+        holdout = RuleSearchHoldoutConfig(
+            default_fraction=default_fraction,
+            per_mission=per_mission,
+            seed=holdout_seed,
+            stratify_by_label=stratify_by_label,
+        )
+
+        gate_section = rule_search_section.get("gate") or {}
+        if not isinstance(gate_section, Mapping):
+            raise TypeError("rule_search.gate must be a mapping when provided")
+        min_rer = float(gate_section.get("min_relative_error_reduction", 0.1))
+        if min_rer < 0.0:
+            raise ValueError("rule_search.gate.min_relative_error_reduction must be >= 0")
+        min_changed_fraction = float(gate_section.get("min_changed_fraction", 0.01))
+        if not (0.0 <= min_changed_fraction <= 1.0):
+            raise ValueError("rule_search.gate.min_changed_fraction must be in [0, 1]")
+
+        bootstrap_section = gate_section.get("bootstrap") or {}
+        if not isinstance(bootstrap_section, Mapping):
+            raise TypeError("rule_search.gate.bootstrap must be a mapping when provided")
+        bootstrap_iterations = int(bootstrap_section.get("iterations", 200))
+        if bootstrap_iterations <= 0:
+            raise ValueError("rule_search.gate.bootstrap.iterations must be > 0")
+        bootstrap_min_prob = float(bootstrap_section.get("min_prob", 0.8))
+        if not (0.0 <= bootstrap_min_prob <= 1.0):
+            raise ValueError("rule_search.gate.bootstrap.min_prob must be in [0, 1]")
+        bootstrap_seed = int(bootstrap_section.get("seed", seed_value))
+        bootstrap = RuleSearchBootstrapConfig(
+            iterations=bootstrap_iterations,
+            min_prob=bootstrap_min_prob,
+            seed=bootstrap_seed,
+        )
+        gate = RuleSearchGateConfig(
+            min_relative_error_reduction=min_rer,
+            min_changed_fraction=min_changed_fraction,
+            bootstrap=bootstrap,
+        )
+
+        early_stop_section = rule_search_section.get("early_stop") or {}
+        if not isinstance(early_stop_section, Mapping):
+            raise TypeError("rule_search.early_stop must be a mapping when provided")
+        patience = int(early_stop_section.get("patience", 3))
+        if patience <= 0:
+            raise ValueError("rule_search.early_stop.patience must be > 0")
+        early_stop = RuleSearchEarlyStopConfig(patience=patience)
+
+        eval_sampler = None
+        mining_sampler = None
+        if "eval_sampler" in rule_search_section and rule_search_section["eval_sampler"] is not None:
+            eval_sampler = _load_sampler(
+                _require(rule_search_section, "eval_sampler", "rule_search section")
+            )
+        if "mining_sampler" in rule_search_section and rule_search_section["mining_sampler"] is not None:
+            mining_sampler = _load_sampler(
+                _require(rule_search_section, "mining_sampler", "rule_search section")
+            )
+
+        rule_search = RuleSearchConfig(
+            proposer_prompt_path=proposer_prompt_path,
+            proposer_temperature=proposer_temperature,
+            proposer_top_p=proposer_top_p,
+            proposer_repetition_penalty=proposer_repetition_penalty,
+            proposer_max_new_tokens=proposer_max_new_tokens,
+            proposer_max_prompt_tokens=proposer_max_prompt_tokens,
+            reflect_size=reflect_size,
+            num_candidate_rules=num_candidate_rules,
+            validate_size=validate_size,
+            validate_fraction=validate_fraction,
+            validate_with_replacement=validate_with_replacement,
+            holdout=holdout,
+            gate=gate,
+            early_stop=early_stop,
+            eval_sampler=eval_sampler,
+            mining_sampler=mining_sampler,
+        )
+
+    if mode_raw == "rule_search" and rule_search is None:
+        raise ValueError("mode=rule_search requires a rule_search section")
+
     return StageBConfig(
+        mode=mode_raw,
         seed=seed_value,
         stage_a_paths=stage_a_paths,
         guidance=guidance,
@@ -491,6 +704,7 @@ def load_stage_b_config(path: str | Path) -> StageBConfig:
         stage_b_distillation=stage_b_distillation,
         domain_map=domain_map,
         default_domain=default_domain,
+        rule_search=rule_search,
     )
 
 
@@ -505,6 +719,10 @@ __all__ = [
     "ManualReviewConfig",
     "SamplerConfig",
     "SelectionConfig",
+    "RuleSearchConfig",
+    "RuleSearchHoldoutConfig",
+    "RuleSearchGateConfig",
+    "RuleSearchBootstrapConfig",
     "StageBConfig",
     "load_stage_b_config",
     "resolve_domain_for_mission",

@@ -4,8 +4,6 @@ Updated to grouped-JSON format（类型/属性/[条件属性]/[备注]）并支�
 schema 提示与先验规则（BBU、RRU），在保持统一结构的同时插拔业务知识。
 """
 
-from src.prompts.domain_packs import get_domain_pack
-
 # ============================================================================
 # Dataset-level schema hints & prior rules
 # ============================================================================
@@ -242,11 +240,45 @@ def build_summary_system_prompt_minimal() -> str:
 # - TRAIN: minimal format-only prompt (avoid injecting business priors into the model).
 # - RUNTIME: minimal base prompt + concise domain pack for inference (default, no mission).
 SYSTEM_PROMPT_SUMMARY_TRAIN = build_summary_system_prompt_minimal()
-SYSTEM_PROMPT_SUMMARY_RUNTIME = (
-    build_summary_system_prompt_minimal().strip()
-    + "\n\n"
-    + get_domain_pack("bbu").block
-)
+
+
+class _LazySummaryRuntimePrompt:
+    """Lazy property for SYSTEM_PROMPT_SUMMARY_RUNTIME to avoid circular import."""
+    _value: str | None = None
+
+    def _get_value(self) -> str:
+        if self._value is None:
+            from src.prompts.domain_packs import get_domain_pack
+            self._value = (
+                build_summary_system_prompt_minimal().strip()
+                + "\n\n"
+                + get_domain_pack("bbu").block
+            )
+        return self._value
+
+    def __str__(self) -> str:
+        return self._get_value()
+
+    def __repr__(self) -> str:
+        return f"<SYSTEM_PROMPT_SUMMARY_RUNTIME: {self._get_value()[:50]}...>"
+
+    def __len__(self) -> int:
+        return len(self._get_value())
+
+    def __eq__(self, other) -> bool:
+        if isinstance(other, str):
+            return self._get_value() == other
+        return self is other
+
+    def __add__(self, other):
+        return self._get_value() + other
+
+    def __radd__(self, other):
+        return other + self._get_value()
+
+
+# Lazy property: initialized on first access to avoid circular import
+SYSTEM_PROMPT_SUMMARY_RUNTIME = _LazySummaryRuntimePrompt()
 # Backward-compat default for training pipelines.
 SYSTEM_PROMPT_SUMMARY = SYSTEM_PROMPT_SUMMARY_TRAIN
 

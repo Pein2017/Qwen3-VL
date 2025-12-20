@@ -126,7 +126,7 @@ def _render_image_stats(stage_a_summaries: Dict[str, str]) -> str:
     return "统计: " + ", ".join(parts)
 
 
-def build_system_prompt(guidance: MissionGuidance, *, domain: str) -> str:
+def build_system_prompt(guidance: MissionGuidance, *, domain: str = "bbu") -> str:
     clauses: List[str] = [_INTRO_SYSTEM_PROMPT]
     g0 = guidance.experiences.get("G0")
     if g0:
@@ -180,7 +180,7 @@ def build_user_prompt(ticket: GroupTicket, guidance: MissionGuidance) -> str:
 
 
 def build_messages(
-    ticket: GroupTicket, guidance: MissionGuidance, *, domain: str
+    ticket: GroupTicket, guidance: MissionGuidance, *, domain: str = "bbu"
 ) -> List[Dict[str, str]]:
     system_prompt = build_system_prompt(guidance, domain=domain)
     user_prompt = build_user_prompt(ticket, guidance)

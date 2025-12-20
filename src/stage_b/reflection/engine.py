@@ -74,6 +74,19 @@ _FORBIDDEN_THIRD_STATE_PHRASES = (
     "通过但需人工复核",
 )
 
+_FORBIDDEN_AMBIGUOUS_NEGATION_PHRASES = (
+    "不应判定为",
+    "不应判断为",
+    "不应判为",
+    "不建议判定为",
+    "不建议判断为",
+    "不建议判为",
+    "不要判定为",
+    "不要判断为",
+    "不得判定为",
+    "不得判断为",
+)
+
 _BRAND_DIMENSION_TOKENS = ("brand", "品牌")
 
 
@@ -264,6 +277,36 @@ class ReflectionEngine:
         )
         input_ids_full = encoded_full["input_ids"]  # type: ignore[assignment]
         full_token_length = int(input_ids_full.size(1))  # type: ignore[attr-defined]
+        model_max_length_raw = getattr(self.tokenizer, "model_max_length", None)
+        model_max_length: Optional[int]
+        try:
+            model_max_length = int(model_max_length_raw) if model_max_length_raw else None
+        except Exception:  # noqa: BLE001
+            model_max_length = None
+        if model_max_length is not None and (model_max_length <= 0 or model_max_length > 1_000_000):
+            model_max_length = None
+        if model_max_length is not None:
+            total_requested = min(full_token_length, self.config.max_reflection_length) + self.config.max_new_tokens
+            if self.config.max_reflection_length > model_max_length:
+                logger.warning(
+                    "reflection max_reflection_length exceeds model_max_length: max_reflection_length=%d model_max_length=%d",
+                    self.config.max_reflection_length,
+                    model_max_length,
+                )
+            if full_token_length > model_max_length:
+                logger.error(
+                    "reflection prompt exceeds model_max_length: prompt=%d model_max_length=%d",
+                    full_token_length,
+                    model_max_length,
+                )
+            elif total_requested > model_max_length:
+                logger.warning(
+                    "reflection prompt+generation exceeds model_max_length: prompt=%d new=%d total=%d model_max_length=%d",
+                    min(full_token_length, self.config.max_reflection_length),
+                    self.config.max_new_tokens,
+                    total_requested,
+                    model_max_length,
+                )
         if full_token_length > self.config.max_reflection_length:
             logger.warning(
                 "Reflection prompt will be truncated: %d tokens > %d (max_reflection_length).",
@@ -328,6 +371,11 @@ class ReflectionEngine:
     def _contains_forbidden_phrase(cls, text: str) -> bool:
         normalized = cls._normalize_forbidden_check(text)
         return any(term in normalized for term in _FORBIDDEN_THIRD_STATE_PHRASES)
+
+    @classmethod
+    def _contains_ambiguous_negation(cls, text: str) -> bool:
+        normalized = cls._normalize_forbidden_check(text)
+        return any(term in normalized for term in _FORBIDDEN_AMBIGUOUS_NEGATION_PHRASES)
 
     @staticmethod
     def _normalize_guidance_signature(text: str) -> str:
@@ -589,8 +637,12 @@ class ReflectionEngine:
                 continue
             if self._contains_forbidden_phrase(text):
                 continue
+            if self._contains_ambiguous_negation(text):
+                continue
             if rationale:
                 if self._contains_forbidden_phrase(rationale):
+                    continue
+                if self._contains_ambiguous_negation(rationale):
                     continue
             if len(text) > 160:
                 text = text[:160]
@@ -678,6 +730,8 @@ class ReflectionEngine:
                 raise ValueError("hypotheses.text appears to copy summary chains")
             if self._contains_forbidden_phrase(text):
                 raise ValueError("hypotheses.text contains forbidden third-state wording")
+            if self._contains_ambiguous_negation(text):
+                raise ValueError("hypotheses.text must use affirmative verdict phrasing")
             if not self._is_binary_hypothesis(text):
                 raise ValueError("hypotheses.text must contain a binary verdict")
             if self._hypothesis_conflicts_scaffold(text, scaffold_texts):
@@ -691,6 +745,8 @@ class ReflectionEngine:
                 raise ValueError("hypotheses.falsifier must be non-empty")
             if self._contains_forbidden_phrase(falsifier):
                 raise ValueError("hypotheses.falsifier contains forbidden wording")
+            if self._contains_ambiguous_negation(falsifier):
+                raise ValueError("hypotheses.falsifier must use affirmative verdict phrasing")
 
             dimension_raw = entry.get("dimension")
             dimension = (
@@ -1078,7 +1134,13 @@ class ReflectionEngine:
 
         return bundle_summary
 
-    def _append_log(self, outcome: ReflectionOutcome, *, epoch: int) -> None:
+    def _append_log(
+        self,
+        outcome: ReflectionOutcome,
+        *,
+        epoch: int,
+        trace: Optional[Mapping[str, object]] = None,
+    ) -> None:
         if self.reflection_log is None:
             return
         self.reflection_log.parent.mkdir(parents=True, exist_ok=True)
@@ -1129,6 +1191,8 @@ class ReflectionEngine:
         if self._last_debug_info is not None:
             payload["reflection"]["debug_info"] = self._last_debug_info
             self._last_debug_info = None
+        if trace:
+            payload["reflection"]["trace"] = trace
         with self.reflection_log.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(payload, ensure_ascii=False))
             fh.write("\n")
