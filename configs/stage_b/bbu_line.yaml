@@ -1,9 +1,7 @@
-mode: rule_search
-
 stage_a_paths:
-  # - output_post/stage_a/挡风板安装检查_stage_a.jsonl
-  - output_post/stage_a_bbu_rru_summary/BBU线缆布放要求_stage_a.jsonl
-  # - output_post/stage_a/BBU安装方式检查（正装）_stage_a.jsonl
+  - output_post/stage_a_bbu_rru_summary/BBU接地线检查_stage_a.jsonl
+  # - output_post/stage_a/BBU接地线检查_stage_a_merged.jsonl
+
 seed: 17
 default_domain: bbu
 
@@ -22,39 +20,30 @@ guidance:
 
 output:
   root: output_post/stage_b
-  run_name: 12-19-bbu-line-rule-search-validate_size-256
-  group_report: true
+  run_name: 12-19-bbu-line-rule-search-train-eval
 
 rule_search:
   proposer_prompt_path: configs/prompts/stage_b_rule_search_proposer_prompt.txt
   reflect_size: 16
   num_candidate_rules: 3
 
-  # Holdout is currently split only (no explicit holdout eval yet).
-  holdout:
-    default_fraction: 0.1
-    per_mission:
-      BBU接地线检查: 0.1
-    seed: 17
-    stratify_by_label: true
-
-  # Larger validation set for a 2.2k-ticket mission.
-  validate_size: 256
-  validate_with_replacement: false
+  train_pool_size: 512
+  eval_pool_fraction: 0.2
 
   gate:
-    min_relative_error_reduction: 0.1
-    min_changed_fraction: 0.01
+    min_relative_error_reduction: 0.02
+    max_changed_fraction: 0.05
+    max_fp_rate_increase: 0.01
     bootstrap:
-      iterations: 200
-      min_prob: 0.8
+      iterations: 400
+      min_prob: 0.4
       seed: 17
 
   early_stop:
     patience: 5
 
-  # Gate evaluation with fewer samples per ticket to speed up.
-  eval_sampler:
+  # Train pool uses decode-grid for rollout + gate.
+  train_sampler:
     samples_per_decode: 1
     grid:
       - temperature: 0.3
@@ -68,6 +57,15 @@ rule_search:
         seed: 43
         repetition_penalty: 1.05
       - temperature: 0.7
+        top_p: 0.9
+        max_new_tokens: 1024
+        seed: 43
+        repetition_penalty: 1.05
+  # Eval pool uses low-temp single decode.
+  eval_sampler:
+    samples_per_decode: 1
+    grid:
+      - temperature: 0.1
         top_p: 0.9
         max_new_tokens: 1024
         seed: 43
@@ -86,10 +84,6 @@ reflection:
   max_reflection_length: 24000
   token_budget: 24000
 
-selection:
-  policy: top_label
-  tie_break: temperature
-
 runner:
   # rule_search iterations; early_stop will end earlier if no-gain.
   epochs: 20
@@ -98,3 +92,4 @@ runner:
 
 stage_b_distillation:
   enabled: true
+  distill_size: 2000
