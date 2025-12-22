@@ -270,7 +270,7 @@ def build_gate_stats(
     bootstrap_iterations: int,
     bootstrap_min_prob: float,
     bootstrap_seed: int,
-    min_changed_fraction: float,
+    max_changed_fraction: float,
 ) -> Tuple[GateStats, bool]:
     """Compute gate stats and return (stats, passed)."""
 
@@ -298,7 +298,7 @@ def build_gate_stats(
     )
     passed = bool(
         rer >= rer_threshold
-        and changed >= min_changed_fraction
+        and changed <= max_changed_fraction
         and bootstrap_prob >= bootstrap_min_prob
     )
     return stats, passed

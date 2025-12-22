@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Stage-B ingestion utilities for reflection-centric pipeline."""
+"""Stage-B ingestion utilities for rule-search pipeline."""
 
 from __future__ import annotations
 

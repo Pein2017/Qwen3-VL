@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Mission guidance management for the reflection-centric Stage-B pipeline."""
+"""Mission guidance management for the Stage-B rule-search pipeline."""
 
 from __future__ import annotations
 
@@ -302,7 +302,7 @@ class GuidanceRepository:
 
         for op in operations:
             normalized_op = op.op
-            if normalized_op not in {"upsert", "remove", "merge"}:
+            if normalized_op not in {"upsert", "update", "remove", "merge"}:
                 raise MissionGuidanceError(
                     f"Unsupported experience operation '{normalized_op}'"
                 )
@@ -338,6 +338,21 @@ class GuidanceRepository:
                         f"(key may have been removed in a previous operation or model used stale information)"
                     )
                 continue
+
+            if normalized_op == "update":
+                if key is None:
+                    logger.warning(
+                        "Skipping update operation with missing key for mission %s",
+                        current.mission,
+                    )
+                    continue
+                if key not in experiences:
+                    logger.warning(
+                        "Skipping update operation for missing key '%s' in mission %s",
+                        key,
+                        current.mission,
+                    )
+                    continue
 
             text = (op.text or "").strip()
             if not text:

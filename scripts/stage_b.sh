@@ -127,9 +127,3 @@ STATUS=$?
 if [[ ${STATUS} -ne 0 ]]; then
   exit ${STATUS}
 fi
-
-echo ""
-echo "=================================="
-echo "Stage-B Postprocess: Review Checklist"
-echo "=================================="
-conda run -n "${CONDA_ENV}" --no-capture-output python -u scripts/stage_b_postprocess_review_checklist.py --config "${CONFIG_PATH}"

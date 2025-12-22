@@ -1,11 +1,6 @@
-"""Scoring utilities for Stage-B (selection only).
+"""Scoring utilities for Stage-B.
 
-Legacy modules (judge, signals) were removed; attach_signals lives at stage_b.signals.
+Legacy selection scoring has been removed; rule-search runs without selection helpers.
 """
 
-from .selection import select_for_group
-
-__all__ = [
-    "select_for_group",
-]
-
+__all__: list[str] = []

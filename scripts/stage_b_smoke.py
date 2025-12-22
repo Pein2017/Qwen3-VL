@@ -7,7 +7,7 @@ Goals:
 - Validate Stage-A ingest contract (JSONL -> GroupTicket).
 - Validate mission guidance load (guidance.json -> MissionGuidance).
 - Validate prompt building (system+user message construction).
-- Validate strict 2-line output parsing and export serialization.
+- Validate strict 2-line output parsing.
 
 Usage:
   conda run -n ms python scripts/stage_b_smoke.py
@@ -25,21 +25,10 @@ from typing import Any, Dict, Tuple
 
 from src.stage_b.config import load_stage_b_config
 from src.stage_b.ingest.stage_a import ingest_stage_a
-from src.stage_b.io.export import export_selections, export_trajectories
 from src.stage_b.io.guidance import GuidanceRepository
 from src.stage_b.rollout import _parse_two_line_response
 from src.stage_b.sampling.prompts import build_messages
-from src.stage_b.types import (
-    DecodeConfig,
-    DeterministicSignals,
-    GroupTicket,
-    MissionGuidance,
-    ParsedTrajectory,
-    SelectionResult,
-    StageASummaries,
-    Trajectory,
-    TrajectoryWithSignals,
-)
+from src.stage_b.types import GroupTicket, MissionGuidance, StageASummaries
 
 
 def _now() -> datetime:
@@ -115,6 +104,7 @@ def _make_temp_config(tmpdir: Path) -> Path:
 stage_a_paths:
   - {stage_a_path.as_posix()}
 seed: 17
+default_domain: bbu
 
 model:
   model_name_or_path: dummy
@@ -129,17 +119,45 @@ guidance:
 output:
   root: {out_root.as_posix()}
   run_name: smoke
-  group_report: false
 
-sampler:
-  samples_per_decode: 1
-  grid:
-    - temperature: 0.2
-      top_p: 0.9
-      max_new_tokens: 64
-      seed: 42
-      repetition_penalty: 1.05
-      stop: ["assistant", "<|im_end|>", "<|endoftext|>", "</s>"]
+rule_search:
+  proposer_prompt_path: configs/prompts/stage_b_rule_search_proposer_prompt.txt
+  reflect_size: 1
+  num_candidate_rules: 1
+
+  train_pool_size: 4
+  eval_pool_fraction: 0.5
+
+  gate:
+    min_relative_error_reduction: 0.0
+    max_changed_fraction: 1.0
+    max_fp_rate_increase: 1.0
+    bootstrap:
+      iterations: 10
+      min_prob: 0.0
+      seed: 17
+
+  early_stop:
+    patience: 1
+
+  train_sampler:
+    samples_per_decode: 1
+    grid:
+      - temperature: 0.2
+        top_p: 0.9
+        max_new_tokens: 64
+        seed: 42
+        repetition_penalty: 1.05
+        stop: ["assistant", "<|im_end|>", "<|endoftext|>", "</s>"]
+  eval_sampler:
+    samples_per_decode: 1
+    grid:
+      - temperature: 0.2
+        top_p: 0.9
+        max_new_tokens: 64
+        seed: 42
+        repetition_penalty: 1.05
+        stop: ["assistant", "<|im_end|>", "<|endoftext|>", "</s>"]
 
 reflection:
   decision_prompt_path: configs/prompts/stage_b_reflection_decision_prompt.txt
@@ -151,13 +169,6 @@ reflection:
   max_new_tokens: 512
   max_reflection_length: 2048
   token_budget: 2048
-
-selection:
-  policy: top_label
-  tie_break: temperature
-
-manual_review:
-  min_verdict_agreement: 0.8
 
 runner:
   epochs: 1
@@ -215,71 +226,6 @@ def _audit_output_parser() -> Tuple[str, str]:
     return verdict, reason
 
 
-def _audit_export_helpers(
-    *,
-    decode: DecodeConfig,
-    verdict: str,
-    reason: str,
-    mission: str,
-    out_dir: Path,
-) -> None:
-    created_at = _now()
-    base = Trajectory(
-        group_id="group_1",
-        mission=mission,
-        candidate_index=0,
-        decode=decode,
-        response_text=f"Verdict: {'通过' if verdict == 'pass' else '不通过'}\nReason: {reason}",
-        created_at=created_at,
-    )
-    parsed = ParsedTrajectory(
-        base=base,
-        verdict=verdict,  # type: ignore[arg-type]
-        reason=reason,
-        format_ok=True,
-        confidence=None,
-    )
-    trajectory = TrajectoryWithSignals(
-        parsed=parsed,
-        signals=DeterministicSignals(
-            label_match=True,
-            self_consistency=None,
-            conflict_flag=False,
-            needs_manual_review=False,
-            vote_strength=1.0,
-            low_agreement=False,
-            confidence=None,
-        ),
-        warnings=(),
-    )
-    selection = SelectionResult(
-        group_id="group_1",
-        mission=mission,
-        verdict=verdict,  # type: ignore[arg-type]
-        reason=reason,
-        vote_strength=1.0,
-        label_match=True,
-        selected_candidate=0,
-        guidance_step=0,
-        reflection_change=None,
-        reflection_cycle=0,
-        manual_review_recommended=False,
-        eligible=True,
-        ineligible_reason=None,
-        warnings=(),
-        conflict_flag=False,
-        needs_manual_review=False,
-    )
-
-    export_trajectories(
-        [trajectory],
-        path=out_dir / "trajectories.jsonl",
-        reflection_cycle=0,
-        guidance_step=0,
-    )
-    export_selections([selection], jsonl_path=out_dir / "selections.jsonl")
-
-
 def main() -> None:
     args = _build_args()
 
@@ -297,19 +243,8 @@ def main() -> None:
             raise RuntimeError(f"Guidance missing for mission: {ticket0.mission}")
         messages = build_messages(ticket0, guidance0)
         _ensure_messages(messages)
-        verdict, reason = _audit_output_parser()
-        _audit_export_helpers(
-            decode=config.sampler.grid[0],
-            verdict=verdict,
-            reason=reason,
-            mission=ticket0.mission,
-            out_dir=Path(
-                tempfile.mkdtemp(
-                    prefix="stage_b_smoke_export_", dir=str(_workspace_tmp_root())
-                )
-            ),
-        )
-        print("[OK] Stage-B config+ingest+guidance+prompt+parse+export smoke passed.")
+        _audit_output_parser()
+        print("[OK] Stage-B config+ingest+guidance+prompt+parse smoke passed.")
         return
 
     with tempfile.TemporaryDirectory(
@@ -335,14 +270,7 @@ def main() -> None:
         _ensure_messages(messages)
 
         # Output parsing + export helpers
-        verdict, reason = _audit_output_parser()
-        _audit_export_helpers(
-            decode=config.sampler.grid[0],
-            verdict=verdict,
-            reason=reason,
-            mission=ticket0.mission,
-            out_dir=tmpdir / "out_export",
-        )
+        _audit_output_parser()
 
         # Also verify prompt building works without file IO.
         _ensure_messages(build_messages(_build_minimal_ticket(ticket0.mission), _build_minimal_guidance(ticket0.mission)))

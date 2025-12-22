@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Rollout sampler for the reflection-centric Stage-B pipeline."""
+"""Rollout sampler for the Stage-B rule-search pipeline."""
 
 from __future__ import annotations
 

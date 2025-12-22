@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Configuration schema for the Stage-B reflection pipeline."""
+"""Configuration schema for the Stage-B rule-search pipeline."""
 
 from __future__ import annotations
 
@@ -32,9 +32,6 @@ class GuidanceConfig:
 class OutputConfig:
     root: Path  # Base output directory
     run_name: str  # All outputs go under {root}/{mission_name}/{run_name}/
-    trajectories_path: Path
-    selections_jsonl: Path
-    group_report: bool = True
 
 
 @dataclass(frozen=True)
@@ -49,12 +46,6 @@ class ModelConfig:
 class SamplerConfig:
     grid: Tuple[DecodeConfig, ...]
     samples_per_decode: int
-
-
-@dataclass(frozen=True)
-class SignalsConfig:
-    store_confidence: bool = False
-    enable_consistency: bool = False
 
 
 @dataclass(frozen=True)
@@ -80,16 +71,6 @@ class ReflectionConfig:
 
 
 @dataclass(frozen=True)
-class RuleSearchHoldoutConfig:
-    """Train/holdout split configuration for rule-search mode."""
-
-    default_fraction: float = 0.2
-    per_mission: Mapping[str, float] = field(default_factory=dict)
-    seed: int = 0
-    stratify_by_label: bool = True
-
-
-@dataclass(frozen=True)
 class RuleSearchBootstrapConfig:
     iterations: int = 200
     min_prob: float = 0.8
@@ -102,8 +83,10 @@ class RuleSearchGateConfig:
 
     # Relative error reduction threshold, e.g. 0.1 = 10% relative error reduction.
     min_relative_error_reduction: float = 0.1
-    # Fraction of tickets whose majority prediction changes (sanity / coverage).
-    min_changed_fraction: float = 0.01
+    # Maximum fraction of tickets whose majority prediction changes (churn cap).
+    max_changed_fraction: float = 0.05
+    # Allowable fp_rate increase for lifecycle operations.
+    max_fp_rate_increase: float = 0.01
     bootstrap: RuleSearchBootstrapConfig = field(default_factory=RuleSearchBootstrapConfig)
 
 
@@ -124,40 +107,15 @@ class RuleSearchConfig:
     proposer_max_prompt_tokens: int = 4096
     reflect_size: int = 16
     num_candidate_rules: int = 3
-    validate_size: Optional[int] = None
-    validate_fraction: Optional[float] = None
-    validate_with_replacement: bool = False
-    holdout: RuleSearchHoldoutConfig = field(default_factory=RuleSearchHoldoutConfig)
+    train_pool_size: int = 512
+    train_pool_fraction: Optional[float] = None
+    train_with_replacement: bool = False
+    eval_pool_fraction: float = 0.2
     gate: RuleSearchGateConfig = field(default_factory=RuleSearchGateConfig)
     early_stop: RuleSearchEarlyStopConfig = field(default_factory=RuleSearchEarlyStopConfig)
+    train_sampler: Optional[SamplerConfig] = None
     eval_sampler: Optional[SamplerConfig] = None
     mining_sampler: Optional[SamplerConfig] = None
-
-
-@dataclass(frozen=True)
-class GuidanceLifecycleConfig:
-    """Guidance lifecycle management configuration.
-
-    Controls automatic cleanup of low-confidence experiences.
-    """
-
-    confidence_drop_threshold: float = 0.35
-    min_miss_before_drop: int = 3
-    enable_auto_cleanup: bool = True  # Auto-cleanup at each epoch end
-
-
-@dataclass(frozen=True)
-class ManualReviewConfig:
-    """Low-agreement threshold for flagging tickets."""
-
-    # Minimum fraction of candidates sharing the majority verdict (0.0–1.0).
-    min_verdict_agreement: float = 0.8
-
-
-@dataclass(frozen=True)
-class SelectionConfig:
-    policy: str
-    tie_break: str
 
 
 @dataclass(frozen=True)
@@ -173,6 +131,9 @@ class StageBDistillationConfig:
 
     enabled: bool = True
     log_chatml_path: Optional[Path] = None
+    distill_size: Optional[int] = None
+    distill_seed: Optional[int] = None
+    distill_temperature: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -181,17 +142,12 @@ class StageBConfig:
     stage_a_paths: Tuple[Path, ...]
     guidance: GuidanceConfig
     output: OutputConfig
-    sampler: Optional[SamplerConfig]  # Optional in rule_search mode
     reflection: ReflectionConfig
-    selection: SelectionConfig
     model: ModelConfig
     runner: RunnerConfig
-    manual_review: ManualReviewConfig
-    guidance_lifecycle: Optional[GuidanceLifecycleConfig] = None
     stage_b_distillation: Optional[StageBDistillationConfig] = None
     domain_map: Mapping[str, str] = field(default_factory=dict)
     default_domain: Optional[str] = None
-    mode: str = "legacy_reflection"
     rule_search: Optional[RuleSearchConfig] = None
 
 
@@ -302,25 +258,9 @@ def _load_guidance(section: Mapping[str, Any]) -> GuidanceConfig:
 def _load_output(section: Mapping[str, Any]) -> OutputConfig:
     root = Path(_require(section, "root", "output section"))
     run_name = str(_require(section, "run_name", "output section"))
-    group_report = bool(section.get("group_report", True))
-
-    # Base directory for this run: {root}/{mission_name}/{run_name}
-    # Mission-specific paths will be created dynamically in runner
-    # These are placeholders - actual paths will be {root}/{mission_name}/{run_name}/*
-    base_dir = root / "placeholder" / run_name  # Placeholder, actual path set in runner
-    trajectories_path = (
-        base_dir / "trajectories.jsonl"
-    )  # Placeholder, will be mission-specific
-    selections_jsonl = (
-        base_dir / "selections.jsonl"
-    )  # Placeholder, will be mission-specific
-
     return OutputConfig(
         root=root,
         run_name=run_name,
-        trajectories_path=trajectories_path,
-        selections_jsonl=selections_jsonl,
-        group_report=group_report,
     )
 
 
@@ -337,16 +277,6 @@ def _load_model(section: Mapping[str, Any]) -> ModelConfig:
         torch_dtype=dtype_value,
         device_map=device_map_value,
         attn_implementation=attn_impl_value,
-    )
-
-
-def _load_signals(section: Mapping[str, Any]) -> SignalsConfig:
-    store_confidence = bool(section.get("store_confidence", False))
-    enable_consistency = bool(
-        _require(section, "enable_consistency", "signals section")
-    )
-    return SignalsConfig(
-        store_confidence=store_confidence, enable_consistency=enable_consistency
     )
 
 
@@ -430,34 +360,6 @@ def _load_reflection(section: Mapping[str, Any]) -> ReflectionConfig:
     )
 
 
-def _load_manual_review(
-    section: Optional[Mapping[str, Any]],
-) -> ManualReviewConfig:
-    """Load ManualReviewConfig controlling low-agreement gating."""
-
-    if section is None:
-        return ManualReviewConfig()
-
-    min_verdict_agreement = float(section.get("min_verdict_agreement", 0.8))
-
-    if not (0.0 <= min_verdict_agreement <= 1.0):
-        raise ValueError("manual_review.min_verdict_agreement must be in [0.0, 1.0]")
-
-    return ManualReviewConfig(min_verdict_agreement=min_verdict_agreement)
-
-
-def _load_selection(section: Mapping[str, Any]) -> SelectionConfig:
-    policy = str(_require(section, "policy", "selection section"))
-    if policy not in {"top_label", "top_semantic"}:
-        raise ValueError("selection.policy must be 'top_label' or 'top_semantic'")
-
-    tie_break = str(_require(section, "tie_break", "selection section"))
-    if tie_break not in {"temperature"}:
-        raise ValueError("selection.tie_break must be 'temperature'")
-
-    return SelectionConfig(policy=policy, tie_break=tie_break)
-
-
 def _load_seed(raw_config: Mapping[str, Any]) -> int:
     seed_value = raw_config.get("seed")
     if seed_value is None:
@@ -482,22 +384,6 @@ def _load_runner(section: Mapping[str, Any]) -> RunnerConfig:
     )
 
 
-def _load_guidance_lifecycle(
-    section: Optional[Mapping[str, Any]],
-) -> Optional[GuidanceLifecycleConfig]:
-    """Load optional guidance lifecycle configuration."""
-    if section is None:
-        return None
-    confidence_drop = float(section.get("confidence_drop_threshold", 0.35))
-    min_miss = int(section.get("min_miss_before_drop", 3))
-    enable_cleanup = bool(section.get("enable_auto_cleanup", True))
-    return GuidanceLifecycleConfig(
-        confidence_drop_threshold=confidence_drop,
-        min_miss_before_drop=min_miss,
-        enable_auto_cleanup=enable_cleanup,
-    )
-
-
 def _load_distillation(
     section: Optional[Mapping[str, Any]],
 ) -> Optional[StageBDistillationConfig]:
@@ -506,7 +392,24 @@ def _load_distillation(
     enabled = bool(section.get("enabled", True))
     raw_path = section.get("log_chatml_path")
     log_chatml_path = Path(raw_path) if raw_path else None
-    return StageBDistillationConfig(enabled=enabled, log_chatml_path=log_chatml_path)
+    distill_size = section.get("distill_size")
+    if distill_size is not None:
+        distill_size = int(distill_size)
+        if distill_size <= 0:
+            raise ValueError("stage_b_distillation.distill_size must be > 0")
+    distill_seed = section.get("distill_seed")
+    if distill_seed is not None:
+        distill_seed = int(distill_seed)
+    distill_temperature = section.get("distill_temperature")
+    if distill_temperature is not None:
+        distill_temperature = float(distill_temperature)
+    return StageBDistillationConfig(
+        enabled=enabled,
+        log_chatml_path=log_chatml_path,
+        distill_size=distill_size,
+        distill_seed=distill_seed,
+        distill_temperature=distill_temperature,
+    )
 
 
 def load_stage_b_config(path: str | Path) -> StageBConfig:
@@ -518,38 +421,25 @@ def load_stage_b_config(path: str | Path) -> StageBConfig:
 
     seed_value = _load_seed(raw_config)
 
-    mode_raw = str(raw_config.get("mode", "legacy_reflection")).strip().lower()
-    if mode_raw not in {"legacy_reflection", "rule_search"}:
-        raise ValueError(
-            "Stage-B config 'mode' must be one of: legacy_reflection, rule_search"
-        )
-
     stage_a_paths = _load_stage_a_paths(
         _require(raw_config, "stage_a_paths", "Stage-B config")
     )
     guidance = _load_guidance(_require(raw_config, "guidance", "Stage-B config"))
     output = _load_output(_require(raw_config, "output", "Stage-B config"))
-    # sampler is required for legacy_reflection mode, optional for rule_search mode
-    sampler = None
-    if "sampler" in raw_config:
-        sampler = _load_sampler(raw_config["sampler"])
-    elif mode_raw == "legacy_reflection":
-        raise ValueError("sampler is required for legacy_reflection mode")
     reflection = _load_reflection(_require(raw_config, "reflection", "Stage-B config"))
-    selection = _load_selection(_require(raw_config, "selection", "Stage-B config"))
-    manual_review = _load_manual_review(raw_config.get("manual_review"))
     model = _load_model(_require(raw_config, "model", "Stage-B config"))
     runner = _load_runner(_require(raw_config, "runner", "Stage-B config"))
-    guidance_lifecycle = _load_guidance_lifecycle(raw_config.get("guidance_lifecycle"))
     stage_b_distillation = _load_distillation(raw_config.get("stage_b_distillation"))
     domain_map = _load_domain_map(raw_config.get("domain_map"))
     default_domain = _load_default_domain(raw_config.get("default_domain"))
 
     rule_search_section = raw_config.get("rule_search")
+    if rule_search_section is None:
+        raise ValueError("Stage-B requires rule_search configuration")
     rule_search: Optional[RuleSearchConfig] = None
     if rule_search_section is not None:
         if not isinstance(rule_search_section, Mapping):
-            raise TypeError("rule_search must be a mapping when provided")
+            raise TypeError("rule_search must be a mapping")
 
         proposer_prompt_path = Path(
             _require(rule_search_section, "proposer_prompt_path", "rule_search section")
@@ -576,45 +466,39 @@ def load_stage_b_config(path: str | Path) -> StageBConfig:
         if num_candidate_rules <= 0:
             raise ValueError("rule_search.num_candidate_rules must be > 0")
 
-        validate_size_raw = rule_search_section.get("validate_size")
-        validate_size = int(validate_size_raw) if validate_size_raw is not None else None
-        if validate_size is not None and validate_size <= 0:
-            raise ValueError("rule_search.validate_size must be > 0 if set")
+        legacy_keys = {
+            "validate_size",
+            "validate_fraction",
+            "validate_with_replacement",
+            "holdout",
+        }
+        legacy_present = legacy_keys & set(rule_search_section.keys())
+        if legacy_present:
+            raise ValueError(
+                "rule_search legacy keys are no longer supported: "
+                f"{', '.join(sorted(legacy_present))}. "
+                "Use train_pool_* and eval_pool_fraction instead."
+            )
 
-        validate_fraction_raw = rule_search_section.get("validate_fraction")
-        validate_fraction = (
-            float(validate_fraction_raw) if validate_fraction_raw is not None else None
+        train_pool_size = int(rule_search_section.get("train_pool_size", 512))
+        if train_pool_size <= 0:
+            raise ValueError("rule_search.train_pool_size must be > 0")
+        train_pool_fraction_raw = rule_search_section.get("train_pool_fraction")
+        train_pool_fraction = (
+            float(train_pool_fraction_raw)
+            if train_pool_fraction_raw is not None
+            else None
         )
-        if validate_fraction is not None and not (0.0 < validate_fraction <= 1.0):
-            raise ValueError("rule_search.validate_fraction must be in (0, 1]")
+        if train_pool_fraction is not None and not (0.0 < train_pool_fraction <= 1.0):
+            raise ValueError("rule_search.train_pool_fraction must be in (0, 1]")
 
-        validate_with_replacement = bool(
-            rule_search_section.get("validate_with_replacement", False)
+        train_with_replacement = bool(
+            rule_search_section.get("train_with_replacement", False)
         )
 
-        holdout_section = rule_search_section.get("holdout") or {}
-        if not isinstance(holdout_section, Mapping):
-            raise TypeError("rule_search.holdout must be a mapping when provided")
-        default_fraction = float(holdout_section.get("default_fraction", 0.2))
-        if not (0.0 <= default_fraction < 1.0):
-            raise ValueError("rule_search.holdout.default_fraction must be in [0, 1)")
-        per_mission_raw = holdout_section.get("per_mission") or {}
-        if not isinstance(per_mission_raw, Mapping):
-            raise TypeError("rule_search.holdout.per_mission must be a mapping")
-        per_mission = {str(k): float(v) for k, v in per_mission_raw.items()}
-        for mission, frac in per_mission.items():
-            if not (0.0 <= frac < 1.0):
-                raise ValueError(
-                    f"rule_search.holdout.per_mission[{mission!r}] must be in [0, 1)"
-                )
-        holdout_seed = int(holdout_section.get("seed", seed_value))
-        stratify_by_label = bool(holdout_section.get("stratify_by_label", True))
-        holdout = RuleSearchHoldoutConfig(
-            default_fraction=default_fraction,
-            per_mission=per_mission,
-            seed=holdout_seed,
-            stratify_by_label=stratify_by_label,
-        )
+        eval_pool_fraction = float(rule_search_section.get("eval_pool_fraction", 0.2))
+        if not (0.0 <= eval_pool_fraction < 1.0):
+            raise ValueError("rule_search.eval_pool_fraction must be in [0, 1)")
 
         gate_section = rule_search_section.get("gate") or {}
         if not isinstance(gate_section, Mapping):
@@ -622,9 +506,15 @@ def load_stage_b_config(path: str | Path) -> StageBConfig:
         min_rer = float(gate_section.get("min_relative_error_reduction", 0.1))
         if min_rer < 0.0:
             raise ValueError("rule_search.gate.min_relative_error_reduction must be >= 0")
-        min_changed_fraction = float(gate_section.get("min_changed_fraction", 0.01))
-        if not (0.0 <= min_changed_fraction <= 1.0):
-            raise ValueError("rule_search.gate.min_changed_fraction must be in [0, 1]")
+        max_changed_fraction = gate_section.get("max_changed_fraction")
+        if max_changed_fraction is None and "min_changed_fraction" in gate_section:
+            max_changed_fraction = gate_section.get("min_changed_fraction")
+        max_changed_fraction = float(max_changed_fraction or 0.05)
+        if not (0.0 <= max_changed_fraction <= 1.0):
+            raise ValueError("rule_search.gate.max_changed_fraction must be in [0, 1]")
+        max_fp_rate_increase = float(gate_section.get("max_fp_rate_increase", 0.01))
+        if max_fp_rate_increase < 0.0:
+            raise ValueError("rule_search.gate.max_fp_rate_increase must be >= 0")
 
         bootstrap_section = gate_section.get("bootstrap") or {}
         if not isinstance(bootstrap_section, Mapping):
@@ -643,7 +533,8 @@ def load_stage_b_config(path: str | Path) -> StageBConfig:
         )
         gate = RuleSearchGateConfig(
             min_relative_error_reduction=min_rer,
-            min_changed_fraction=min_changed_fraction,
+            max_changed_fraction=max_changed_fraction,
+            max_fp_rate_increase=max_fp_rate_increase,
             bootstrap=bootstrap,
         )
 
@@ -655,12 +546,13 @@ def load_stage_b_config(path: str | Path) -> StageBConfig:
             raise ValueError("rule_search.early_stop.patience must be > 0")
         early_stop = RuleSearchEarlyStopConfig(patience=patience)
 
-        eval_sampler = None
+        train_sampler = _load_sampler(
+            _require(rule_search_section, "train_sampler", "rule_search section")
+        )
+        eval_sampler = _load_sampler(
+            _require(rule_search_section, "eval_sampler", "rule_search section")
+        )
         mining_sampler = None
-        if "eval_sampler" in rule_search_section and rule_search_section["eval_sampler"] is not None:
-            eval_sampler = _load_sampler(
-                _require(rule_search_section, "eval_sampler", "rule_search section")
-            )
         if "mining_sampler" in rule_search_section and rule_search_section["mining_sampler"] is not None:
             mining_sampler = _load_sampler(
                 _require(rule_search_section, "mining_sampler", "rule_search section")
@@ -675,32 +567,25 @@ def load_stage_b_config(path: str | Path) -> StageBConfig:
             proposer_max_prompt_tokens=proposer_max_prompt_tokens,
             reflect_size=reflect_size,
             num_candidate_rules=num_candidate_rules,
-            validate_size=validate_size,
-            validate_fraction=validate_fraction,
-            validate_with_replacement=validate_with_replacement,
-            holdout=holdout,
+            train_pool_size=train_pool_size,
+            train_pool_fraction=train_pool_fraction,
+            train_with_replacement=train_with_replacement,
+            eval_pool_fraction=eval_pool_fraction,
             gate=gate,
             early_stop=early_stop,
+            train_sampler=train_sampler,
             eval_sampler=eval_sampler,
             mining_sampler=mining_sampler,
         )
 
-    if mode_raw == "rule_search" and rule_search is None:
-        raise ValueError("mode=rule_search requires a rule_search section")
-
     return StageBConfig(
-        mode=mode_raw,
         seed=seed_value,
         stage_a_paths=stage_a_paths,
         guidance=guidance,
         output=output,
-        sampler=sampler,
         reflection=reflection,
-        selection=selection,
         model=model,
         runner=runner,
-        manual_review=manual_review,
-        guidance_lifecycle=guidance_lifecycle,
         stage_b_distillation=stage_b_distillation,
         domain_map=domain_map,
         default_domain=default_domain,
@@ -710,17 +595,13 @@ def load_stage_b_config(path: str | Path) -> StageBConfig:
 
 __all__ = [
     "GuidanceConfig",
-    "GuidanceLifecycleConfig",
     "RunnerConfig",
     "StageBDistillationConfig",
     "ModelConfig",
     "OutputConfig",
     "ReflectionConfig",
-    "ManualReviewConfig",
     "SamplerConfig",
-    "SelectionConfig",
     "RuleSearchConfig",
-    "RuleSearchHoldoutConfig",
     "RuleSearchGateConfig",
     "RuleSearchBootstrapConfig",
     "StageBConfig",

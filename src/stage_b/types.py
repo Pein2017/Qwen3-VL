@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Typed value objects supporting the Stage-B reflection pipeline."""
+"""Typed value objects supporting the Stage-B rule-search pipeline."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, Literal, Mapping, Optional, Sequence, Tuple
 
-ExperienceOperationKind = Literal["upsert", "remove", "merge"]
+ExperienceOperationKind = Literal["upsert", "update", "remove", "merge"]
 
 
 @dataclass(frozen=True)
@@ -237,50 +237,6 @@ class DeterministicSignals:
 
 
 @dataclass(frozen=True)
-class TrajectoryWithSignals:
-    """Parsed trajectory bundled with deterministic signals.
-
-    Supports two initialization styles:
-    1) parsed-style: provide 'parsed=ParsedTrajectory(...)' and 'signals=...'
-    2) flat-style: provide 'candidate_index', 'verdict', 'reason', and 'signals'
-       (used in some tests/utilities that don't need the full base trajectory)
-    """
-
-    # Parsed style
-    parsed: Optional[ParsedTrajectory] = None
-    # Common signals
-    signals: Optional[DeterministicSignals] = None
-    warnings: Tuple[str, ...] = field(default_factory=tuple)
-    # Flat style (lightweight view used in some tests)
-    candidate_index: Optional[int] = None
-    verdict: Optional[str] = None
-    reason: Optional[str] = None
-
-
-@dataclass(frozen=True)
-class SelectionResult:
-    """Final verdict exported for a group ticket."""
-
-    group_id: str
-    mission: str
-    verdict: GroupLabel
-    reason: str
-    vote_strength: Optional[float]
-    label_match: Optional[bool]
-    selected_candidate: int
-    guidance_step: int
-    reflection_change: Optional[str]
-    reflection_cycle: int
-    # Extended export fields
-    manual_review_recommended: bool = False
-    eligible: Optional[bool] = None
-    ineligible_reason: Optional[str] = None
-    warnings: Tuple[str, ...] = field(default_factory=tuple)
-    conflict_flag: bool = False
-    needs_manual_review: bool = False
-
-
-@dataclass(frozen=True)
 class ExperienceCandidate:
     """Candidate summary included in an experience bundle."""
 
@@ -370,8 +326,6 @@ __all__ = [
     "ReflectionAction",
     "ReflectionOutcome",
     "ReflectionProposal",
-    "SelectionResult",
     "StageASummaries",
     "Trajectory",
-    "TrajectoryWithSignals",
 ]
