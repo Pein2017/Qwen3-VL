@@ -16,8 +16,18 @@ class SummaryPromptProfile:
     include_domain_pack: bool
     include_mission_rules: bool
 
-    def build(self, *, domain: Optional[str] = None, mission: Optional[str] = None) -> str:
-        parts = [build_summary_system_prompt_minimal().strip()]
+    def build(
+        self,
+        *,
+        domain: Optional[str] = None,
+        mission: Optional[str] = None,
+        summary_label_grouping: Optional[bool] = None,
+    ) -> str:
+        parts = [
+            build_summary_system_prompt_minimal(
+                summary_label_grouping=summary_label_grouping
+            ).strip()
+        ]
 
         if self.include_domain_pack:
             pack = get_domain_pack(domain)
@@ -70,10 +80,15 @@ def build_summary_system_prompt(
     *,
     domain: Optional[str] = None,
     mission: Optional[str] = None,
+    summary_label_grouping: Optional[bool] = None,
 ) -> str:
     """Compose the summary system prompt based on profile and domain."""
     profile = get_summary_profile(profile_name)
-    return profile.build(domain=domain, mission=mission)
+    return profile.build(
+        domain=domain,
+        mission=mission,
+        summary_label_grouping=summary_label_grouping,
+    )
 
 
 __all__ = [

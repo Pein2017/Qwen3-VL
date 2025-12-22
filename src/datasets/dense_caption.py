@@ -292,6 +292,8 @@ class BaseCaptionDataset(Dataset):
                         pass
             break
 
+        self._validate_mm_length(encoded, record, base_idx)
+
         # Track last-sample debug info for OOM/root-cause tracing
         objects = record.get("objects") or []
         max_poly = 0
@@ -331,6 +333,58 @@ class BaseCaptionDataset(Dataset):
                 encoded[key] = copy.deepcopy(merged[key])
 
         return encoded
+
+    def _validate_mm_length(
+        self, encoded: Dict[str, Any], record: Dict[str, Any], base_idx: int
+    ) -> None:
+        input_ids = encoded.get("input_ids")
+        image_grid_thw = encoded.get("image_grid_thw")
+        if input_ids is None or image_grid_thw is None:
+            return
+
+        image_token_id = getattr(self.template, "image_token_id", None)
+        if image_token_id is None:
+            return
+
+        processor = getattr(self.template, "processor", None)
+        image_processor = getattr(processor, "image_processor", None)
+        merge_size = getattr(image_processor, "merge_size", None)
+        if merge_size is None:
+            return
+
+        if hasattr(input_ids, "tolist"):
+            input_ids = input_ids.tolist()
+        image_token_count = sum(1 for t in input_ids if t == image_token_id)
+
+        if hasattr(image_grid_thw, "tolist"):
+            image_grid_thw = image_grid_thw.tolist()
+
+        try:
+            expected = 0
+            for grid in image_grid_thw:
+                if not isinstance(grid, (list, tuple)) or len(grid) < 3:
+                    continue
+                t, h, w = grid[:3]
+                expected += int(t) * int(h) * int(w) // int(merge_size) ** 2
+        except Exception:
+            return
+
+        if expected != image_token_count:
+            meta = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+            src = meta.get("_fusion_source") or meta.get("dataset") or self.dataset_name
+            img0 = None
+            images = record.get("images") or []
+            if images:
+                img0 = images[0]
+            raise ValueError(
+                "Qwen3-VL image token count mismatch: "
+                f"dataset={src} base_idx={base_idx} "
+                f"input_len={len(input_ids)} image_tokens={image_token_count} "
+                f"expected={expected} merge_size={merge_size} "
+                f"image_grid_thw={image_grid_thw} "
+                f"image={img0} width={record.get('width')} height={record.get('height')}. "
+                "This usually means truncation; increase global_max_length or reduce max_pixels/aug scale."
+            )
 
 
 # Backward compatibility alias

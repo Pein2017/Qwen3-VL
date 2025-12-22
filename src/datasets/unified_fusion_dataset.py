@@ -45,6 +45,7 @@ class _DatasetPolicy:
     augmentation_enabled: bool
     curriculum_enabled: bool
     max_objects_per_image: Optional[int]
+    summary_label_grouping: bool
     seed: Optional[int]
     sample_without_replacement: bool
 
@@ -69,6 +70,7 @@ class FusionCaptionDataset(BaseCaptionDataset):
         use_summary: bool,
         system_prompt_dense: Optional[str],
         system_prompt_summary: Optional[str],
+        summary_label_grouping_default: bool = False,
         seed: int = 42,
         shuffle: bool = True,
         sample_limit: Optional[int] = None,
@@ -127,6 +129,16 @@ class FusionCaptionDataset(BaseCaptionDataset):
             raise ValueError(
                 "Summary mode requested but no summary system prompt was provided."
             )
+
+        def _resolve_summary_label_grouping(
+            spec: DatasetSpec, *, mode: Literal["dense", "summary"]
+        ) -> bool:
+            if mode != "summary":
+                return False
+            override = getattr(spec, "summary_label_grouping", None)
+            if override is None:
+                return bool(summary_label_grouping_default)
+            return bool(override)
         # Load pools for the selected split
         if split == "eval" and target_eval_jsonl is not None:
             override_target_path = Path(target_eval_jsonl)
@@ -168,6 +180,9 @@ class FusionCaptionDataset(BaseCaptionDataset):
                 augmentation_enabled=target.supports_augmentation,
                 curriculum_enabled=target.supports_curriculum,
                 max_objects_per_image=None,  # targets stay uncapped
+                summary_label_grouping=_resolve_summary_label_grouping(
+                    target, mode=mode
+                ),
                 seed=target.seed,
                 sample_without_replacement=False,
             )
@@ -189,6 +204,9 @@ class FusionCaptionDataset(BaseCaptionDataset):
                 augmentation_enabled=False,  # sources remain clean
                 curriculum_enabled=False,
                 max_objects_per_image=source.max_objects_per_image,
+                summary_label_grouping=_resolve_summary_label_grouping(
+                    source, mode=mode
+                ),
                 seed=source.seed,
                 sample_without_replacement=bool(
                     getattr(source, "sample_without_replacement", False)
@@ -218,6 +236,15 @@ class FusionCaptionDataset(BaseCaptionDataset):
             self._record_pools[source.name] = [
                 self._annotate_record(rec, source, mode) for rec in source_records
             ]
+
+        if (
+            any(policy.summary_label_grouping for policy in self._policies.values())
+            and preprocessor is None
+        ):
+            raise ValueError(
+                "Summary label grouping is enabled for at least one dataset but no "
+                "summary label preprocessor was provided."
+            )
 
         # Initialize parent BaseCaptionDataset with a single template instance.
         all_records = [rec for pool in self._record_pools.values() for rec in pool]
@@ -625,7 +652,11 @@ class FusionCaptionDataset(BaseCaptionDataset):
         else:
             objects_after = len(record.get("objects") or [])
 
-        if policy.mode == "summary" and self.preprocessor is not None:
+        if (
+            policy.mode == "summary"
+            and policy.summary_label_grouping
+            and self.preprocessor is not None
+        ):
             if hasattr(self.preprocessor, "rng"):
                 self.preprocessor.rng = rng_local
             processed_summary = self.preprocessor(record)

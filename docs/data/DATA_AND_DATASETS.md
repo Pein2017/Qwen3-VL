@@ -94,6 +94,7 @@ Format requirements (aligned with training/inference prompts):
 - Single sentence per image: no newlines, no trailing '。', no extra spaces
 - No geometry or coordinate arrays in summary strings
 - Optional training toggle: set `custom.summary_label_grouping: true` to collapse all 标签/* entries that are not `标签/无法识别` into `标签/可以识别×N` while preserving the `无法识别` count separately.
+- Fusion per-dataset override: set `summary_label_grouping: true|false` on a fusion dataset entry to override the global `custom.summary_label_grouping` default for that dataset (summary mode only).
 - Conversion is fail-fast: if a sample has no objects or all `desc` are空/缺失，`build_summary_from_objects` raises `ValueError` and the sample is rejected.
 
 #### RRU Summary Guidance

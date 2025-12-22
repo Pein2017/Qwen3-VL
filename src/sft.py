@@ -348,7 +348,7 @@ def main():
     # Extract mode control parameters
     use_summary = bool(custom_config.use_summary)
     default_mode = "summary" if use_summary else "dense"
-    summary_label_grouping = bool(
+    summary_label_grouping_default = bool(
         getattr(custom_config, "summary_label_grouping", False)
     )
 
@@ -411,25 +411,59 @@ def main():
             "Default dense mode (custom.use_summary=false); set per-dataset mode in fusion config to enable summary samples."
         )
 
+    summary_prompt_label_grouping = summary_label_grouping_default
     summary_preprocessor = None
-    if summary_label_grouping:
-        if not needs_summary_mode:
+    summary_label_overrides = []
+    if fusion_config_obj is not None:
+        summary_label_overrides = [
+            getattr(spec, "summary_label_grouping", None)
+            for spec in (*fusion_config_obj.targets, *fusion_config_obj.sources)
+        ]
+        has_override_true = any(override is True for override in summary_label_overrides)
+        has_override_false = any(
+            override is False for override in summary_label_overrides
+        )
+        if has_override_false and not has_override_true:
+            summary_prompt_label_grouping = False
+        elif has_override_true and not has_override_false:
+            summary_prompt_label_grouping = True
+        elif has_override_true and has_override_false:
             logger.warning(
-                "custom.summary_label_grouping is true but no summary dataset is active; label grouping will be ignored."
+                "Mixed summary_label_grouping overrides detected; summary prompt uses default=%s.",
+                summary_label_grouping_default,
             )
-        else:
-            try:
-                from .datasets.preprocessors import SummaryLabelNormalizer
+    needs_summary_label_grouping = needs_summary_mode and (
+        summary_label_grouping_default
+        or any(override is True for override in summary_label_overrides)
+    )
+    if summary_label_grouping_default and not needs_summary_mode:
+        logger.warning(
+            "custom.summary_label_grouping is true but no summary dataset is active; label grouping will be ignored."
+        )
+    elif needs_summary_label_grouping:
+        try:
+            from .datasets.preprocessors import SummaryLabelNormalizer
 
-                summary_preprocessor = SummaryLabelNormalizer()
-                logger.info(
-                    "Summary label grouping enabled: 标签/* (except 无法识别) → 标签/可以识别 with count aggregation."
-                )
-            except Exception as exc:
-                raise ValueError(
-                    "Failed to initialize SummaryLabelNormalizer "
-                    "(custom.summary_label_grouping=true)."
-                ) from exc
+            summary_preprocessor = SummaryLabelNormalizer()
+            logger.info(
+                "Summary label grouping enabled (default=%s).",
+                summary_label_grouping_default,
+            )
+        except Exception as exc:
+            raise ValueError(
+                "Failed to initialize SummaryLabelNormalizer "
+                "(summary label grouping requested)."
+            ) from exc
+
+    if needs_summary_mode and summary_prompt_label_grouping is False:
+        try:
+            from .config.prompts import SUMMARY_LABEL_GROUPING_DISABLED_RULE
+
+            rule = SUMMARY_LABEL_GROUPING_DISABLED_RULE.strip()
+            if system_prompt_summary and rule not in system_prompt_summary:
+                system_prompt_summary = system_prompt_summary.rstrip() + "\n" + rule + "\n"
+        except Exception:
+            pass
 
     dataset_seed = 42
     dataset: Any
@@ -449,6 +483,7 @@ def main():
             use_summary=use_summary,
             system_prompt_dense=system_prompt_dense,
             system_prompt_summary=system_prompt_summary,
+            summary_label_grouping_default=summary_label_grouping_default,
             preprocessor=summary_preprocessor,
             seed=dataset_seed,
             sample_limit=train_sample_limit,
@@ -702,6 +737,7 @@ def main():
             use_summary=use_summary,
             system_prompt_dense=system_prompt_dense,
             system_prompt_summary=system_prompt_summary,
+            summary_label_grouping_default=summary_label_grouping_default,
             preprocessor=summary_preprocessor,
             seed=dataset_seed,
             shuffle=False,

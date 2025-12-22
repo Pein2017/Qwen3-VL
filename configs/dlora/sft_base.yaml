@@ -1,6 +1,6 @@
 extends: ../base.yaml
 
-global_max_length: 4096
+global_max_length: 8192
 
 # Common Stage 1.5 recipe: DoRA on all LLM layers (q_proj & v_proj only),
 # DoRA on last-6 Vision blocks (21-26, qkv only), DoRA on all aligner MLP layers.

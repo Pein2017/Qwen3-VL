@@ -145,6 +145,7 @@ class ConfigLoader:
         use_summary = False
         custom_section = config.get("custom")
         json_format_hint: Optional[str] = None
+        summary_label_grouping: Optional[bool] = None
         if custom_section is not None:
             if not isinstance(custom_section, dict):
                 raise TypeError(
@@ -157,6 +158,11 @@ class ConfigLoader:
             if "use_summary" in custom_section:
                 use_summary = ConfigLoader._coerce_bool(
                     custom_section["use_summary"], "custom.use_summary"
+                )
+            if "summary_label_grouping" in custom_section:
+                summary_label_grouping = ConfigLoader._coerce_bool(
+                    custom_section["summary_label_grouping"],
+                    "custom.summary_label_grouping",
                 )
             json_format_hint_raw = custom_section.get("json_format")
             if json_format_hint_raw is not None:
@@ -171,7 +177,9 @@ class ConfigLoader:
                 default_system = prompts_config.get("system")
             else:
                 default_system = build_summary_system_prompt(
-                    profile_name, domain=domain_name
+                    profile_name,
+                    domain=domain_name,
+                    summary_label_grouping=summary_label_grouping,
                 )
         else:
             output_variant = "dense"

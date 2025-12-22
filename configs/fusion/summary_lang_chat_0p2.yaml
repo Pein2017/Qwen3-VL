@@ -5,6 +5,7 @@ targets:
     val_jsonl: data/bbu_full_1024_poly-need_review/val.jsonl
     template: summary
     mode: summary
+    summary_label_grouping: false
     ratio: 1.0
   - name: rru_summary
     dataset: rru
@@ -12,6 +13,7 @@ targets:
     val_jsonl: data/rru_full_1024_poly/val.jsonl
     template: summary
     mode: summary
+    summary_label_grouping: false
     ratio: 1.0
   - name: irrelevant_summary
     dataset: bbu
@@ -20,7 +22,7 @@ targets:
     template: summary
     mode: summary
     ratio: 1.0
-    augmentation_enabled: false
+    augmentation_enabled: true
     curriculum_enabled: false
 
 # Text-only chat mix to preserve general reasoning/language capacity.
@@ -29,27 +31,27 @@ sources:
   - name: bbu_dense
     dataset: bbu
     train_jsonl: data/bbu_full_1024_poly-need_review/train.jsonl
-    ratio: 0.05
+    ratio: 0.15
     template: target_dense
     mode: dense
     sample_without_replacement: true
-    augmentation_enabled: false
+    augmentation_enabled: true
     curriculum_enabled: false
 
   - name: rru
     dataset: rru
     train_jsonl: data/rru_full_768_poly/train.jsonl
-    ratio: 0.05
+    ratio: 0.15
     template: target_dense
     mode: dense
     sample_without_replacement: true
-    augmentation_enabled: false
+    augmentation_enabled: true
     curriculum_enabled: false
 
   - name: lvis
     dataset: lvis
     train_jsonl: public_data/lvis/rescale_32_768_poly_max_12/train.jsonl
-    ratio: 0.05
+    ratio: 0.1
     template: source_dense
     mode: dense
     sample_without_replacement: true
@@ -60,7 +62,7 @@ sources:
   - name: lang_chat
     dataset: chat
     train_jsonl: public_data/coig_cqia/coig_cqia_merged.jsonl
-    ratio: 0.1
+    ratio: 0.2
     template: chatml
     mode: dense
     sample_without_replacement: true

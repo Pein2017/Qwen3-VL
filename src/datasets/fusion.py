@@ -112,6 +112,8 @@ class FusionConfig:
                 params["poly_fallback"] = entry.get("poly_fallback")
             if "poly_max_points" in entry:
                 params["poly_max_points"] = entry.get("poly_max_points")
+            if "summary_label_grouping" in entry:
+                params["summary_label_grouping"] = entry.get("summary_label_grouping")
             if "augmentation_enabled" in entry:
                 params["augmentation_enabled"] = entry.get("augmentation_enabled")
             if "curriculum_enabled" in entry:
@@ -155,6 +157,7 @@ class FusionConfig:
             template=spec.template,
             domain=spec.domain,
             mode=spec.mode,
+            summary_label_grouping=spec.summary_label_grouping,
             supports_augmentation=spec.supports_augmentation,
             supports_curriculum=spec.supports_curriculum,
             poly_fallback=spec.poly_fallback,
@@ -177,6 +180,7 @@ class FusionConfig:
             template=spec.template,
             domain=spec.domain,
             mode=spec.mode,
+            summary_label_grouping=spec.summary_label_grouping,
             supports_augmentation=spec.supports_augmentation,
             supports_curriculum=spec.supports_curriculum,
             poly_fallback=spec.poly_fallback,

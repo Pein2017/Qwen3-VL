@@ -8,9 +8,9 @@ set -euo pipefail
 
 # Fixed configuration
 # CHECKPOINT="output/11-30/summary_merged/epoch_10-lr_2e-4-bs_32-res_1024"
-CHECKPOINT="output/12-18/summary_merged/epoch_4-bbu_rru_summary"
+CHECKPOINT="output/12-21/summary_merged/epoch_4-bbu_rru-more_irrelevant-ocr"
 INPUT_DIR="group_data/bbu_scene_2.0_order"
-OUTPUT_DIR="output_post/stage_a_bbu_rru_summary"
+OUTPUT_DIR="output_post/stage_a_bbu_rru_summary_12-22"
 
 # Environment variable overrides (lowercase)
 # BBU接地线检查
@@ -18,7 +18,6 @@ OUTPUT_DIR="output_post/stage_a_bbu_rru_summary"
 # 挡风板安装检查
 # BBU安装方式检查（正装）
 
- n                                                                          ,,,,
 MISSION="${mission:-BBU线缆布放要求}"
 DATASET="${dataset:-bbu}"
 PROMPT_PROFILE="${prompt_profile:-summary_runtime}"
@@ -26,8 +25,8 @@ CUDA_VISIBLE_DEVICES="${gpus:-0}"
 no_mission_flag="${no_mission:-true}"
 verify_flag="${verify_inputs:-true}"
 DEBUG_FLAG="${debug:-false}"
-PASS_GROUP_NUMBER="${pass_group_number:-}"
-FAIL_GROUP_NUMBER="${fail_group_number:-}"
+PASS_GROUP_NUMBER="${pass_group_number:-8000}"
+FAIL_GROUP_NUMBER="${fail_group_number:-3000}"
 SAMPLE_SEED="${sample_seed:-42}"
 
 # Derive number of GPUs (ignore empty/whitespace tokens)
@@ -58,9 +57,9 @@ fi
 BATCH_SIZE_PER_RANK="32"
 MAX_PIXELS="1048576"
 MAX_NEW_TOKENS="1024"
-TEMPERATURE="0.001"
+TEMPERATURE="0.0001"
 TOP_P="1.0"
-REP_PENALTY="1.1"
+REP_PENALTY="1.05"
 LOG_LEVEL="INFO"
 SHARDING_MODE="${sharding_mode:-per_group}"  # per_group | per_image
 KEEP_INTERMEDIATE_OUTPUTS="${keep_intermediate_outputs:-false}"

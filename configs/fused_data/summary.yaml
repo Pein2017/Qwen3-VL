@@ -1,7 +1,10 @@
 extends: ./sft_base.yaml
 
+global_max_length: 12000
+
 model:
   model: output/12-9/res_1024_fusion_merged/epoch50-updated_aug-checkpoint-4650
+  # model: output/12-18/summary_merged/epoch_4-bbu_rru_summary
 
 tuner:
   # Freeze vision/aligner; LoRA only on last-2 LLM blocks (lm_head fixed)
@@ -15,13 +18,13 @@ tuner:
   lora_alpha: 32
 
 training:
-  per_device_train_batch_size: 4
-  per_device_eval_batch_size: 8
+  per_device_train_batch_size: 2
+  per_device_eval_batch_size: 2
   effective_batch_size: 32
   num_train_epochs: 4
-  output_dir: ./output/12-18/summary
-  logging_dir: ./tb/12-18/summary
-  run_name: epoch_4-res_1024-bbu_rru_fused-lrs_1e-4_mlp_1e-6_with_irrelevant_summary-aug_off-with_rru_summary
+  output_dir: ./output/12-21/summary
+  logging_dir: ./tb/12-21/summary
+  run_name: epoch_4-bbu_rru-more_irrelevant-ocr
   learning_rate: 1.0e-4
   vit_lr: 1.0e-7
   aligner_lr: 1.0e-6
@@ -35,9 +38,31 @@ custom:
   # Default to summary; individual fusion datasets can override with mode
   use_summary: true
   # Collapse identifiable 标签/* entries into 标签/可以识别 while keeping 无法识别 separate
-  summary_label_grouping: true
+  summary_label_grouping: false
   dump_conversation_text: false
-  # Disable augmentation completely (images are pre-processed offline)
-  # Images are pre-processed with smart_resize + pad_to_multiple in build_irrelevant_summary_jsonl.py
-  augmentation: null
+  # Geometry-safe global augmentation (count/group stable; no crop/patch ops)
+  augmentation:
+    enabled: true
+    bypass_prob: 0.1
+    ops:
+      - name: hflip
+        params: { prob: 0.5 }
+      - name: vflip
+        params: { prob: 0.1 }
+      - name: rotate
+        params: { max_deg: 15.0, prob: 0.4 }
+      - name: scale
+        params: { lo: 0.9, hi: 1.1, prob: 0.3 }
+      - name: color_jitter
+        params: { brightness: [0.8, 1.2], contrast: [0.8, 1.2], saturation: [0.8, 1.2], prob: 0.5 }
+      - name: gamma
+        params: { gamma: [0.8, 1.2], prob: 0.3 }
+      - name: hsv
+        params: { hue_delta_deg: [-10, 10], sat: [0.9, 1.1], val: [0.9, 1.1], prob: 0.3 }
+      - name: auto_contrast
+        params: { cutoff: 0, prob: 0.2 }
+      - name: sharpness
+        params: { factor: [0.8, 1.3], prob: 0.2 }
+      - name: expand_to_fit_affine
+        params: { multiple: 32, max_pixels: 921600 }
   augmentation_curriculum: null

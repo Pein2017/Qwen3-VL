@@ -130,7 +130,10 @@ SYSTEM_PROMPT_JSON = build_dense_system_prompt(_DEFAULT_JSON_FORMAT, dataset="bb
 
 
 def build_summary_system_prompt(
-    *, dataset: str | None = None, mission: str | None = None
+    *,
+    dataset: str | None = None,
+    mission: str | None = None,
+    summary_label_grouping: bool | None = None,
 ) -> str:
     ds = _get_dataset(dataset)
     schema_raw = DATASET_SCHEMA_HINT.get(ds, "")
@@ -165,7 +168,7 @@ def build_summary_system_prompt(
             "BBU任务仅关注：BBU设备、挡风板、螺丝、光纤插头、光纤、电线、标签等对象，不得包含上述禁止项。\n"
         )
 
-    return (
+    prompt = (
         """你是图像摘要助手。请始终使用简体中文作答。只返回一行中文摘要文本，不要任何解释或额外符号。
 
         无关图片输出协议（强规则）：
@@ -209,9 +212,26 @@ def build_summary_system_prompt(
 
 """
     )
+    label_example = (
+        '例如"标签/无法识别×1"'
+        if summary_label_grouping is not False
+        else '例如"标签/原文文本×1"'
+    )
+    if label_example in prompt:
+        prompt = prompt.replace('例如"标签/无法识别×1"', label_example)
+    if summary_label_grouping is False:
+        prompt += "\n" + SUMMARY_LABEL_GROUPING_DISABLED_RULE + "\n"
+    return prompt
 
 
-def build_summary_system_prompt_minimal() -> str:
+SUMMARY_LABEL_GROUPING_DISABLED_RULE = (
+    "- 标签类 desc 必须保留原始 OCR 文本，不使用“标签/可以识别”或“标签/无法识别”归并。\n"
+)
+
+
+def build_summary_system_prompt_minimal(
+    *, summary_label_grouping: bool | None = None
+) -> str:
     """Minimal summary-mode system prompt for training.
 
     This prompt intentionally avoids business/domain priors. It only specifies:
@@ -220,6 +240,9 @@ def build_summary_system_prompt_minimal() -> str:
     - the exact '无关图片' output contract for irrelevant images.
     """
 
+    content_rules = ""
+    if summary_label_grouping is False:
+        content_rules = SUMMARY_LABEL_GROUPING_DISABLED_RULE
     return (
         "你是图像摘要助手。请始终使用简体中文作答。只返回一行中文摘要文本，不要任何解释或额外符号。\n\n"
         "【输出格式】\n"
@@ -233,6 +256,7 @@ def build_summary_system_prompt_minimal() -> str:
         "- 证据优先：只输出你能在图像中直接观察到的对象信息；禁止依据背景环境、常识、文字线索或“像某类场景”来推断并输出对象。\n"
         "- 不确定时要保守：若能确认类型但属性/状态不清晰，优先输出“类型/需复核”类 desc；若连类型都无法确认或整图缺乏目标证据，输出 无关图片。\n"
         "- 禁止输出 JSON、坐标数字、几何字段名（bbox_2d/poly/line）、方括号数字列表或尖括号标记。\n"
+        + content_rules
     )
 
 
