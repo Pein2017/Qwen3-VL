@@ -24,9 +24,11 @@ The system reviews **missions** (inspection programs) for telecom equipment inst
 - **Stage‑B verdicts**: group-level binary decisions; the underlying *model output* is enforced to follow a strict two-line protocol:
   - `Verdict: 通过 / 不通过`
   - `Reason: ...` (single-line Chinese; no third-state wording)
-  - Stage‑B exports the normalized verdict as `pass|fail` in JSONL artifacts (e.g., `selections.jsonl`).
+  - Stage‑B records rule-search artifacts (`rule_candidates.jsonl`, `benchmarks.jsonl`, `rule_search_*`) and optional `distill_chatml.jsonl` after convergence.
 
-Stage‑B is **training-free**: instead of fine-tuning per mission, it iteratively refines **mission guidance** (a structured “experience” file) via prompt-only rollouts and an in-process reflection loop (`src/stage_b/`).
+Stage‑B is **training-free**: instead of fine-tuning per mission, it iteratively refines **mission guidance** via prompt-only rollouts and a rule-search gating loop (`src/stage_b/`).
+
+> Update (2025‑12): Stage‑B runs rule_search only. Legacy selection/need-review artifacts and selection/signals modules are removed; any remaining legacy references below are historical.
 
 Canonical mission names and focus definitions (used across Stage‑A and Stage‑B) live in `src/config/missions.py`:
 - `BBU安装方式检查（正装）`
@@ -44,10 +46,9 @@ flowchart LR
   D --> E[Qwen3‑VL checkpoint (+ optional LoRA)]
   E --> F[Stage‑A per-image summarization (src/stage_a/)]
   F --> G[Stage‑A evidence JSONL]
-  G --> H[Stage‑B verdict loop + reflection (src/stage_b/)]
-  H --> I[selections.jsonl (final verdicts)]
+  G --> H[Stage‑B rule-search loop (src/stage_b/)]
+  H --> I[rule_candidates.jsonl / benchmarks.jsonl]
   H --> J[guidance.json + snapshots (auditable)]
-  H --> K[manual_review_queue / need_review_queue]
 ```
 
 Key entrypoints (orchestration wrappers):
@@ -400,9 +401,9 @@ Stage‑A supports optional verification logging to debug token/grid alignment a
 
 ---
 
-## 5. Stage‑B Inference (Group Verdicts + Training-Free Reflection)
+## 5. Stage‑B Inference (Rule-Search, Training-Free)
 
-Stage‑B consumes Stage‑A evidence summaries and generates mission-scoped group verdicts. It is “training-free”: learning happens by refining a **guidance file** rather than updating weights.
+Stage‑B consumes Stage‑A evidence summaries and generates mission-scoped group verdicts. It is “training-free”: learning happens by **updating mission guidance** through a rule-search loop instead of weight updates.
 
 References:
 - Orchestrator: `src/stage_b/runner.py`
@@ -410,8 +411,7 @@ References:
 - Ingestion: `src/stage_b/ingest/stage_a.py`
 - Prompt construction: `src/stage_b/sampling/prompts.py`
 - Rollout sampler + parser: `src/stage_b/rollout.py`
-- Selection policy + deterministic guardrails: `src/stage_b/scoring/selection.py`, `src/stage_b/signals.py`
-- Reflection engine: `src/stage_b/reflection/engine.py`
+- Rule-search metrics + gates: `src/stage_b/rule_search.py`
 - Guidance repository + snapshots: `src/stage_b/io/guidance.py`
 - Runtime doc: `docs/runtime/STAGE_B_RUNTIME.md`
 
@@ -426,7 +426,6 @@ Stage‑B loads Stage‑A JSONL files and normalizes per-image keys (`image_1`, 
 Stage‑B prompts are assembled as a system+user message pair:
 - `src/stage_b/sampling/prompts.py::build_system_prompt(...)`
   - embeds the mission’s `G0` focus (the *only* “task points” the model should use)
-  - states “fail-first” and soft-signal policies
   - enforces the strict two-line output protocol
 - `src/stage_b/sampling/prompts.py::build_user_prompt(...)`
   - includes per-image summaries and a derived `ImageN(obj=...)` statistic (computed from `×N` counts or fallback heuristics)
@@ -444,104 +443,33 @@ Stage‑B generates multiple candidate responses per ticket:
   - must be exactly two non-empty lines: `Verdict: ...` and `Reason: ...`
   - verdict must be binary (`通过`/`不通过` → `pass|fail`)
   - reason must be non-empty and **must not** contain third-state phrases (e.g., `需复核`, `证据不足`, `待定`, etc.)
-  - parsing failures are recorded as `format_ok = false` and will be excluded from selection
+  - parsing failures are recorded as `format_ok = false` and are excluded from rule-search scoring
 
-### 5.4 Selection: majority vote + mission-scoped fail-first guardrail
+### 5.4 Rule-search loop: propose → gate → apply
 
-Selection chooses a final verdict for each ticket:
-- Majority vote across `format_ok` candidates (`src/stage_b/scoring/selection.py::select_for_group(...)`)
-- Tie-break prefers `fail` when tied (risk-control bias)
+Rule-search grows guidance using metric-gated candidates:
+- Baseline rollouts on the **train pool** establish ticket-level majority stats and metrics.
+- A proposer emits 1–N rule candidates (prompted by hard cases and coverage gaps).
+- Each candidate is gated with deterministic metrics and bootstrap probability (relative error reduction, changed-fraction, etc.; see `src/stage_b/rule_search.py`).
+- Optional eval-pool auditing verifies the gated candidate before application.
+- Accepted candidates are merged into mission guidance and checkpointed via snapshots.
 
-Then a deterministic guardrail is applied:
-- Mission evidence extraction: `src/stage_b/signals.py::extract_mission_evidence(...)`
-  - splits Stage‑A summaries into object-level clauses (by Chinese commas)
-  - identifies explicit negative triggers and pattern-first negatives like `不符合要求/<issue>`
-  - checks mission relevance using keywords derived from the mission’s `G0` (no global noun glossary)
-  - ignores negatives in uncertain contexts (e.g., `是否缺失`) and inside “soft signal” entries (`无法判断/只显示部分/需复核`)
-- If any **mission-relevant** explicit negative evidence exists, Stage‑B **overrides** the final verdict to `fail` and rewrites the reason to cite the evidence (`select_for_group`).
-
-This implements “mission-scoped fail-first”: only negatives relevant to the current mission’s `G0` can deterministically force a fail.
-
-### 5.5 Reflection: guidance refinement (training-free “learning”)
-
-Reflection is an optional but central loop that proposes and applies small guidance edits:
-- Engine: `src/stage_b/reflection/engine.py::ReflectionEngine`
-- Persistence: `src/stage_b/io/guidance.py::GuidanceRepository`
-
-High-level workflow (runner-managed, see `src/stage_b/runner.py`):
-1. Collect “interesting” tickets into a reflection batch (mismatches, mixed outcomes, low agreement, etc.).
-2. Build a bundle that includes:
-   - current guidance snapshot
-   - Stage‑A summaries
-   - selected candidates and signals
-3. Run a reflection prompt that outputs structured JSON operations (upsert/remove/merge), with caps on operations and optional per-epoch change caps for governance.
-4. Apply operations to the mission guidance file and write an auditable log.
-
-Human review routing (need-review):
-- Stage‑B no longer quarantines “label vs Stage‑A evidence contradictions” inside the reflection engine.
-- Instead, **human review is unified as need‑review = unexplainable-after-reflection**:
-  - after the runner provides `gt_label` to reflection, if reflection produces **no learnable operations** (`operations=[]`, `applied=false`)
-  - and the rollout candidates contain **no candidate that supports GT** (no `label_match=True`)
-  - then the runner appends the ticket to `need_review_queue.jsonl`.
-- This is implemented in `src/stage_b/runner.py` (post-reflection routing), and reflection must not write `need_review_queue.jsonl` (`src/stage_b/reflection/engine.py` keeps `_need_review_path=None`).
-
-Guidance repository behavior:
-- Guidance is stored as JSON with per-mission sections containing:
-  - `step` (monotonic version counter)
-  - `experiences` (`G0`, `G1`, …)
-  - `metadata` (per-experience provenance, hit/miss counts, confidence)
-- The runner copies a startup guidance file into the run directory so experiments remain isolated until manually promoted (`GuidanceRepository` usage in `src/stage_b/runner.py` and `docs/runtime/STAGE_B_RUNTIME.md`).
-- Snapshots are retained for rollback audits (`guidance.retention` in `src/stage_b/config.py`).
-
-### 5.6 Artifacts emitted by Stage‑B
+### 5.5 Artifacts emitted by Stage‑B (rule-search)
 
 Per mission, Stage‑B writes a run directory layout (see `docs/runtime/STAGE_B_RUNTIME.md` and `src/stage_b/runner.py`):
-- `trajectories.jsonl`: all rollout candidates with decode params and parse flags (`src/stage_b/io/export.py::serialize_trajectory`)
-- `selections.jsonl`: final verdict per ticket with metadata (`src/stage_b/io/export.py::serialize_selection`)
-- `need_review_queue.jsonl`: human review queue (only for *unexplainable-after-reflection*)
-- `need_review.json`: run-end deterministic aggregate of `need_review_queue.jsonl`
-- `manual_review_queue.jsonl`: legacy placeholder for backward compatibility (kept empty by design; do not use as review entrance)
-- `failure_malformed.jsonl`: raw malformed outputs / no-candidate / selection errors for prompt debugging
-- `reflection.jsonl`: reflection outcomes and applied operations
+- `rule_candidates.jsonl`: candidate rules with gating metrics and decisions
+- `benchmarks.jsonl`: per-epoch train/eval metrics and summaries
+- `rule_search_hard_cases.jsonl`: hard tickets mined during rule-search
+- `rule_search_candidate_regressions.jsonl`: regressions discovered during candidate evaluation
 - `guidance.json` + `snapshots/`: evolving, auditable mission guidance state
+- `distill_chatml.jsonl` (optional): low‑temperature ChatML distillation samples emitted after early stop
 
-Example selection record (from `output_post/stage_b/new_stage_a/挡风板安装检查/selections.jsonl`):
-
-```json
-{
-  "group_id": "QC-20241204-0034880",
-  "mission": "挡风板安装检查",
-  "result": {
-    "verdict": "pass",
-    "reason": "Image1: BBU设备显示完整且机柜空间充足需要安装挡风板，挡风板显示完整且安装方向正确；总结: 符合挡风板安装要求。",
-    "vote_strength": 1.0,
-    "label_match": true,
-    "selected_candidate": 0,
-    "guidance_step": 1,
-    "reflection_change": null,
-    "reflection_cycle": 0,
-    "manual_review_recommended": false,
-    "eligible": true,
-    "ineligible_reason": null,
-    "warnings": [],
-    "conflict_flag": false,
-    "needs_manual_review": false,
-    "low_agreement": false
-  },
-  "epoch": 1,
-  "ticket_key": "QC-20241204-0034880::pass",
-  "gt_label": "pass"
-}
-```
-
-### 5.7 Distributed execution model (single node)
+### 5.6 Distributed execution model (single node)
 
 Stage‑B supports “ticket-parallel rollout” using distributed execution (see `docs/runtime/STAGE_B_RUNTIME.md` and `src/stage_b/runner.py`):
 - Each rank runs rollouts on a shard of tickets; the model is replicated per rank.
-- Selection and reflection are centralized on rank 0; only rank 0 writes the final artifacts.
+- Rule-search aggregation is centralized on rank 0; only rank 0 writes the final artifacts.
 - In distributed mode, device placement is forced to per-rank single-GPU to avoid accidental model-parallel sharding (`_load_model` in `src/stage_b/runner.py`).
-
----
 
 ## 6. End-to-End Workflow (Raw Data → Final Verdict)
 
@@ -566,12 +494,12 @@ This section ties the stages together as an operational workflow.
    - For each ticket:
      - rollout N candidates under guidance
      - parse strict two-line outputs
-     - select via majority vote + fail-first override
-   - Periodically run reflection to update guidance for recurring mismatches while quarantining noisy contradictions.
+     - score and gate rule candidates via rule-search metrics
+   - Apply accepted candidates to guidance and snapshot changes per epoch.
 
-5. **Human-in-the-loop review and governance**
-   - Review `failure_malformed.jsonl` for format failures / missing candidates / selection errors.
-   - Review `need_review_queue.jsonl` (or `need_review.json`) for tickets that remain unexplainable-after-reflection.
+5. **Review rule-search outputs and governance**
+   - Review `rule_search_hard_cases.jsonl` and `rule_search_candidate_regressions.jsonl` for problematic tickets.
+   - Audit `benchmarks.jsonl` for train/eval trend drift and gated candidate stats.
    - Promote guidance changes from run-local `guidance.json` back to the shared guidance seed only after approval (auditable via snapshots).
 
 ### 6.2 Artifact handoffs (what feeds what)
@@ -591,9 +519,9 @@ flowchart TD
     B3 --> C1[Stage‑A: src/stage_a]
     C1 --> C2[Stage‑A evidence JSONL]
     C2 --> D1[Stage‑B: src/stage_b]
-    D1 --> D2[selections.jsonl (verdicts)]
+    D1 --> D2[rule_candidates.jsonl + benchmarks.jsonl]
     D1 --> D3[guidance.json + snapshots]
-    D1 --> D4[manual_review / need_review queues]
+    D1 --> D4[rule_search_hard_cases.jsonl + candidate_regressions]
   end
 ```
 
@@ -615,7 +543,7 @@ flowchart TD
 ### 7.3 Fail-fast validation and safe fallbacks
 - Data conversion validates structure, bounds, and required fields and emits explicit invalid-object/sample reports (`data_conversion/pipeline/validation_manager.py`).
 - Training fails fast on unsupported runtime features (e.g., packing) and on schema violations (missing summary in summary mode, missing geometry in dense mode).
-- Stage‑B enforces strict output formatting; malformed candidates are excluded and written to failure queues (`src/stage_b/rollout.py`, `docs/runtime/STAGE_B_RUNTIME.md`).
+- Stage‑B enforces strict output formatting; malformed candidates are excluded from rule-search metrics (`src/stage_b/rollout.py`, `docs/runtime/STAGE_B_RUNTIME.md`).
 
 ### 7.4 Geometry-preserving augmentation (no silent geometry loss)
 - Augmentation is designed to transform geometry and pixels together (`src/datasets/geometry.py`, `src/datasets/augmentation/ops.py`).
@@ -624,8 +552,8 @@ flowchart TD
 
 ### 7.5 Training-free Stage‑B refinement with governance hooks
 - Stage‑B’s “learning” happens by updating a guidance file (experiences), not weights (`src/stage_b/io/guidance.py`).
-- Changes are auditable via step counters and snapshot retention.
-- Human review is unified as `need_review_queue.jsonl` / `need_review.json` (runner-routed, post-reflection); hard failures are logged to `failure_malformed.jsonl`. Reflection must not quarantine samples into need-review (`src/stage_b/reflection/engine.py`).
+- Rule-search candidates are gated by deterministic metrics and bootstrap probability before application (`src/stage_b/rule_search.py`).
+- Changes are auditable via step counters and snapshot retention; hard cases and regressions are recorded for review (`rule_search_hard_cases.jsonl`, `rule_search_candidate_regressions.jsonl`).
 
 ### 7.6 Rank-aware logging (distributed-safe)
 - All core pipelines use `src/utils/logger.py` (`get_logger(...)`) to keep logs readable in distributed runs and to avoid global logging side effects.

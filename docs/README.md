@@ -27,7 +27,7 @@ Status: Active — Internal Engineering
 |-----------|----------------|-------|
 | `src/` | `training/REFERENCE.md`, `training/TRAINING_PLAYBOOK.md` | Core training/inference implementation (`src/sft.py`, datasets, trainers). |
 | `src/stage_a/` | `runtime/STAGE_A_RUNTIME.md`, `runtime/STAGE_A_STAGE_B.md` | Stage‑1 per-image object recognition and summary emission. |
-| `src/stage_b/` | `runtime/STAGE_B_RUNTIME.md`, `runtime/STAGE_A_STAGE_B.md` | Stage‑2 verdict loop（rollout、selection、reflection）。 |
+| `src/stage_b/` | `runtime/STAGE_B_RUNTIME.md`, `runtime/STAGE_A_STAGE_B.md` | Stage‑2 verdict loop（rule_search）。 |
 | `data_conversion/` | `data/DATA_PREPROCESSING_PIPELINE.md`, `data/DATA_AND_DATASETS.md` (Conversion section) | Optional offline preprocessing from annotation exports; taxonomy, resize, validation. |
 | `public_data/` | `data/PUBLIC_DATA.md` | LVIS and auxiliary datasets (download, convert, sample, validate, visualize). |
 | `scripts/` | `scripts/README.md`, `training/TRAINING_PLAYBOOK.md`, `runtime/STAGE_B_RUNTIME.md` | Canonical entrypoints: training, inference, Stage‑A/B launchers, dataset fusion. |
@@ -44,7 +44,7 @@ Whenever you add or modify code in the directories above, update the associated 
 | `fuse_datasets.py` | `scripts/` | Offline builder for `src/datasets/fusion.py` configs; pre-mixes BBU + auxiliary JSONL with deterministic ratios. |
 | `download.py` | `scripts/` | Download helper for internal/raw corpora (mirrors instructions in `docs/data/DATA_AND_DATASETS.md`). |
 | `stage_a.sh` | `scripts/` | Mission-aware wrapper around `src.stage_a.cli` with guardrails for checkpoint/input directories. |
-| `stage_b.sh` | `scripts/` | Stage-B reflection loop launcher; wires configs to `src.stage_b.runner` (supports `smoke` no-model audit). |
+| `stage_b.sh` | `scripts/` | Stage-B rule-search launcher; wires configs to `src.stage_b.runner` (supports `smoke` no-model audit). |
 | `stage_b_smoke.py` | `scripts/` | No-model Stage-B smoke/audit (config+ingest+guidance+prompt+parse+export). |
 | `validate_sft_config.py` | `scripts/` | Fast YAML validation for SFT configs (no model weights). |
 | `validate_dense_jsonl_contract.py` | `scripts/` | Fast JSONL contract validation for dense-caption records. |
