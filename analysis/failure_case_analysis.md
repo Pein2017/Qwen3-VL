@@ -1,7 +1,7 @@
 # Failure Case Analysis: 挡风板安装检查
 
 ## Overview
-- **Total failure cases**: 34 entries in need_review_queue.jsonl
+- **Total failure cases**: 34 entries in rule_search_hard_cases.jsonl
 - **Guidance rules learned**: 
   - G1: "任一图显示挡风板安装方向错误，则判定不通过。"
   - G6: "若存在BBU设备无法判断是否具备足够空间安装挡风板，则判定不通过。"
