@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import os
 from datetime import timedelta
-from typing import Any, List, Optional, Sequence, TypeVar
+from typing import List, Optional, Sequence, TypeVar
 
 import torch
 import torch.distributed as dist

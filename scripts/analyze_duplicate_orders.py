@@ -3,11 +3,9 @@
 分析同时出现在"审核通过"和"审核不通过"中的工单，并统计图片数量。
 找出疑似有问题的工单（审核通过图片很少，但审核不通过图片很多）。
 """
-import os
 import json
 from pathlib import Path
-from collections import defaultdict
-from typing import Dict, List, Tuple
+from typing import Dict
 
 # 支持的图片扩展名
 IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.bmp', '.gif', '.webp', '.tiff', '.tif'}
@@ -118,7 +116,7 @@ def main():
         total_duplicate += result['total_duplicate_orders']
         total_suspicious += len(result['suspicious_orders'])
     
-    print(f"\n总计:")
+    print("\n总计:")
     print(f"  总重复工单数: {total_duplicate}")
     print(f"  总可疑工单数: {total_suspicious}")
     

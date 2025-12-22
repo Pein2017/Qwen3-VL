@@ -243,12 +243,17 @@ def pick_reflection_ticket_keys(
     stats_by_ticket: Mapping[str, TicketRolloutStats],
     *,
     reflect_size: int,
+    reflect_order: str = "hard_first",
 ) -> List[str]:
     """Pick high-value mismatches for the proposer.
 
-    Priority:
+    Priority (reflect_order=hard_first):
     1) high-confidence wrong (hard_wrong high, majority_pred != gt)
     2) then most ambiguous wrong (difficulty high)
+
+    Priority (reflect_order=easy_first):
+    1) lower difficulty (agreement high)
+    2) then higher hard_wrong (more confident mistakes)
     """
 
     mismatches: List[TicketRolloutStats] = []
@@ -258,7 +263,10 @@ def pick_reflection_ticket_keys(
         if entry.majority_pred != entry.gt_label:
             mismatches.append(entry)
 
-    mismatches.sort(key=lambda x: (x.hard_wrong, x.difficulty), reverse=True)
+    if reflect_order == "easy_first":
+        mismatches.sort(key=lambda x: (x.difficulty, -x.hard_wrong))
+    else:
+        mismatches.sort(key=lambda x: (x.hard_wrong, x.difficulty), reverse=True)
     return [m.ticket_key for m in mismatches[: max(0, int(reflect_size))]]
 
 

@@ -14,7 +14,6 @@ import os
 import random
 import sys
 from collections import Counter, defaultdict
-from pathlib import Path
 from typing import Dict, List, Any
 
 
@@ -211,7 +210,7 @@ def print_stats(samples: List[Dict[str, Any]], title: str = "Dataset") -> None:
     # Category frequency distribution
     counts = list(analysis['category_counts'].values())
     if counts:
-        print(f"\n  Category frequency distribution:")
+        print("\n  Category frequency distribution:")
         print(f"    Min: {min(counts)}")
         print(f"    Max: {max(counts)}")
         print(f"    Mean: {sum(counts) / len(counts):.1f}")

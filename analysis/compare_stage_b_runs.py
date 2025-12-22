@@ -186,7 +186,7 @@ def _summarize_run(run_dir: Path, mission: str) -> RunSummary:
 
 def _render_summary(a: RunSummary, b: RunSummary) -> str:
     lines: List[str] = []
-    lines.append(f"# Stage-B rule-search run comparison")
+    lines.append("# Stage-B rule-search run comparison")
     lines.append("")
     lines.append(f"Generated: {_dt.datetime.now().isoformat(timespec='seconds')}")
     lines.append("")

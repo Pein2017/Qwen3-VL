@@ -15,7 +15,6 @@ import json
 import os
 import random
 import sys
-from pathlib import Path
 
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
@@ -297,7 +296,7 @@ Examples:
     # Check if images are extracted
     if not os.path.exists(image_root):
         print(f"✗ Error: Image directory not found: {image_root}")
-        print(f"\nPlease extract images first:")
+        print("\nPlease extract images first:")
         print(f"  cd {os.path.dirname(image_root)}")
         print(f"  unzip {args.split}2017.zip")
         sys.exit(1)
@@ -314,12 +313,12 @@ Examples:
     images, categories, annotations_by_image = load_lvis_annotations(annotation_path)
     
     # Find available images
-    print(f"\nChecking for available images...")
+    print("\nChecking for available images...")
     available_ids = find_available_images(image_root, images, max_check=200)
     
     if not available_ids:
         print(f"✗ No images found in {image_root}")
-        print(f"\nMake sure images are extracted.")
+        print("\nMake sure images are extracted.")
         sys.exit(1)
     
     print(f"  Found {len(available_ids)} available images")
@@ -331,7 +330,7 @@ Examples:
     ]
     
     if not available_with_anns:
-        print(f"✗ No available images have annotations")
+        print("✗ No available images have annotations")
         sys.exit(1)
     
     print(f"  {len(available_with_anns)} have annotations")
@@ -385,7 +384,7 @@ Examples:
                         seg_info = f" [{num_coords} coords]"
                 print(f"    [{i}] {cat_name}{seg_info}")
         else:
-            print(f"    (showing first 10)")
+            print("    (showing first 10)")
             for i, ann in enumerate(anns[:10]):
                 cat_name = categories[ann['category_id']]['name']
                 has_seg = 'segmentation' in ann and ann['segmentation']
@@ -427,7 +426,7 @@ Examples:
     if args.save:
         print(f"\nImages saved to: {args.output_dir}")
     else:
-        print(f"\nNote: Use --save to save images instead of displaying")
+        print("\nNote: Use --save to save images instead of displaying")
 
 
 if __name__ == "__main__":

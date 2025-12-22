@@ -1,5 +1,5 @@
 stage_a_paths:
-  - output_post/stage_a_bbu_rru_summary/BBU安装方式检查（正装）_stage_a.jsonl
+  - output_post/stage_a_bbu_rru_summary_12-22/BBU安装方式检查（正装）_stage_a.jsonl
   # - output_post/stage_a/BBU接地线检查_stage_a_merged.jsonl
 
 seed: 17
@@ -26,6 +26,8 @@ rule_search:
   proposer_prompt_path: configs/prompts/stage_b_rule_search_proposer_prompt.txt
   reflect_size: 16
   num_candidate_rules: 3
+
+  reflect_order: easy_first
 
   train_pool_size: 512
   eval_pool_fraction: 0.2
@@ -75,19 +77,19 @@ rule_search:
 reflection:
   decision_prompt_path: configs/prompts/stage_b_reflection_decision_prompt.txt
   ops_prompt_path: configs/prompts/stage_b_reflection_ops_prompt.txt
-  batch_size: 32
+  batch_size: 16
   max_operations: 2
   temperature: 0.3
   top_p: 0.9
   repetition_penalty: 1.05
   max_new_tokens: 12000
-  max_reflection_length: 24000
-  token_budget: 24000
+  max_reflection_length: 12000
+  token_budget: 12000
 
 runner:
   # rule_search iterations; early_stop will end earlier if no-gain.
   epochs: 20
-  per_rank_rollout_batch_size: 64
+  per_rank_rollout_batch_size: 48
   logging_steps: 64
 
 stage_b_distillation:

@@ -8,7 +8,7 @@ import os
 import re
 from dataclasses import asdict
 from multiprocessing import Manager
-from typing import Any, Callable, Mapping, Optional
+from typing import Any, Optional
 
 import torch
 from swift.llm.train.rlhf import SwiftRLHF

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import sys, json, io, os
+import sys
+import json
+import io
 from collections import OrderedDict, defaultdict
 
 

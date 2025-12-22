@@ -1,6 +1,6 @@
 stage_a_paths:
   # - output_post/stage_a/挡风板安装检查_stage_a.jsonl
-  - output_post/stage_a/BBU线缆布放要求_stage_a.jsonl
+  - output_post/stage_a_bbu_rru_summary_12-22/BBU线缆布放要求_stage_a.jsonl
   # - output_post/stage_a/BBU安装方式检查（正装）_stage_a.jsonl
 seed: 17
 default_domain: bbu

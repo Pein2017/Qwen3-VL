@@ -1,4 +1,3 @@
-import torch
 from transformers import AutoTokenizer
 
 from src.data_collators.token_types import compute_token_types, TokenType

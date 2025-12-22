@@ -106,6 +106,7 @@ class RuleSearchConfig:
     proposer_max_new_tokens: int = 2048
     proposer_max_prompt_tokens: int = 4096
     reflect_size: int = 16
+    reflect_order: str = "hard_first"
     num_candidate_rules: int = 3
     train_pool_size: int = 512
     train_pool_fraction: Optional[float] = None
@@ -462,6 +463,11 @@ def load_stage_b_config(path: str | Path) -> StageBConfig:
         reflect_size = int(rule_search_section.get("reflect_size", 16))
         if reflect_size <= 0:
             raise ValueError("rule_search.reflect_size must be > 0")
+        reflect_order = str(rule_search_section.get("reflect_order", "hard_first"))
+        if reflect_order not in {"hard_first", "easy_first"}:
+            raise ValueError(
+                "rule_search.reflect_order must be one of: hard_first, easy_first"
+            )
         num_candidate_rules = int(rule_search_section.get("num_candidate_rules", 3))
         if num_candidate_rules <= 0:
             raise ValueError("rule_search.num_candidate_rules must be > 0")
@@ -566,6 +572,7 @@ def load_stage_b_config(path: str | Path) -> StageBConfig:
             proposer_max_new_tokens=proposer_max_new_tokens,
             proposer_max_prompt_tokens=proposer_max_prompt_tokens,
             reflect_size=reflect_size,
+            reflect_order=reflect_order,
             num_candidate_rules=num_candidate_rules,
             train_pool_size=train_pool_size,
             train_pool_fraction=train_pool_fraction,

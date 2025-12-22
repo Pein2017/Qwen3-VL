@@ -21,15 +21,19 @@ def test_annotation_loading():
     print("Test 1: LVIS Annotation Loading")
     print("=" * 60)
 
-    annotation_path = "./lvis/raw/annotations/lvis_v1_train.json"
+    # Get the project root directory (two levels up from public_data/tests)
+    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    annotation_path = os.path.join(base_dir, "lvis/raw/annotations/lvis_v1_train.json")
+    image_root = os.path.join(base_dir, "lvis/raw/images")
 
     # Create minimal config (images don't need to exist for this test)
     with tempfile.TemporaryDirectory() as tmpdir:
+        tmpdir_abs = os.path.abspath(tmpdir)
         config = ConversionConfig(
             input_path=annotation_path,
-            output_path=os.path.join(tmpdir, "test.jsonl"),
-            image_root=tmpdir,  # Mock directory
-            max_samples=5,
+            output_path=os.path.join(tmpdir_abs, "test_load.jsonl"),
+            image_root=tmpdir_abs,
+            max_samples=10,
         )
 
         converter = LVISConverter(config, use_polygon=False)
@@ -49,8 +53,6 @@ def test_annotation_loading():
         for freq, count in sorted(freq_dist.items()):
             print(f"    {freq}: {count} categories")
 
-        return True
-
 
 def test_bbox_conversion():
     """Test bbox-only conversion (without image files)."""
@@ -58,15 +60,18 @@ def test_bbox_conversion():
     print("Test 2: BBox Conversion (Mock Images)")
     print("=" * 60)
 
-    annotation_path = "./lvis/raw/annotations/lvis_v1_train.json"
+    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    annotation_path = os.path.join(base_dir, "lvis/raw/annotations/lvis_v1_train.json")
+    image_root = os.path.join(base_dir, "lvis/raw/images")
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        output_path = os.path.join(tmpdir, "test_bbox.jsonl")
+        tmpdir_abs = os.path.abspath(tmpdir)
+        output_path = os.path.join(tmpdir_abs, "test_bbox.jsonl")
 
         config = ConversionConfig(
             input_path=annotation_path,
             output_path=output_path,
-            image_root=tmpdir,  # Mock, images won't be checked in this phase
+            image_root=image_root,
             max_samples=10,
             clip_boxes=True,
             skip_crowd=True,
@@ -76,7 +81,7 @@ def test_bbox_conversion():
         converter = LVISConverter(config, use_polygon=False)
 
         # Load annotations
-        data = converter.load_annotations()
+        converter.load_annotations()
 
         # Test a few samples manually
         print("\n  Testing first 3 image annotations:")
@@ -102,7 +107,6 @@ def test_bbox_conversion():
                     sample_count += 1
 
         print(f"\n  ✓ Successfully converted {sample_count}/3 samples")
-        return True
 
 
 def test_polygon_conversion():
@@ -111,20 +115,22 @@ def test_polygon_conversion():
     print("Test 3: Polygon Conversion (N-point → poly)")
     print("=" * 60)
 
-    annotation_path = "./lvis/raw/annotations/lvis_v1_train.json"
+    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    annotation_path = os.path.join(base_dir, "lvis/raw/annotations/lvis_v1_train.json")
 
     with tempfile.TemporaryDirectory() as tmpdir:
+        tmpdir_abs = os.path.abspath(tmpdir)
         config = ConversionConfig(
             input_path=annotation_path,
-            output_path=os.path.join(tmpdir, "test_poly.jsonl"),
-            image_root=tmpdir,
+            output_path=os.path.join(tmpdir_abs, "test_poly.jsonl"),
+            image_root=tmpdir_abs,
             max_samples=20,  # More samples to find polygons
             clip_boxes=True,
             skip_crowd=True,
         )
 
         converter = LVISConverter(config, use_polygon=True)
-        data = converter.load_annotations()
+        converter.load_annotations()
 
         # Find samples with segmentation
         print("\n  Analyzing segmentation polygons:")
@@ -167,8 +173,6 @@ def test_polygon_conversion():
         ):
             count = polygon_stats["point_distribution"][key]
             print(f"      {key}: {count}")
-
-        return True
 
 
 def test_qwen3vl_format_compliance():
@@ -274,15 +278,12 @@ def test_qwen3vl_format_compliance():
             print(f"  ✗ {name} validation failed:")
             for err in errors:
                 print(f"      • {err}")
-            return False
+            raise AssertionError(f"{name} validation failed with {len(errors)} errors")
         else:
             print(f"  ✓ {name}: VALID")
-            return True
 
-    bbox_valid = validate_sample(sample_bbox, "bbox-only sample")
-    poly_valid = validate_sample(sample_polygon, "polygon sample")
-
-    return bbox_valid and poly_valid
+    validate_sample(sample_bbox, "bbox-only sample")
+    validate_sample(sample_polygon, "polygon sample")
 
 
 def main():

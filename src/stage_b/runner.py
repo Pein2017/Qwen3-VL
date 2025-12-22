@@ -724,6 +724,20 @@ def _load_rejected_candidate_ids(rule_candidates_path: Path) -> set[str]:
     return rejected
 
 
+def _false_release_rate(metrics: Optional[EvalMetrics]) -> Optional[float]:
+    if metrics is None:
+        return None
+    denom = metrics.tp + metrics.fp
+    return metrics.fp / denom if denom else 0.0
+
+
+def _false_block_rate(metrics: Optional[EvalMetrics]) -> Optional[float]:
+    if metrics is None:
+        return None
+    denom = metrics.tp + metrics.fn
+    return metrics.fn / denom if denom else 0.0
+
+
 def _build_ablation_candidates(
     *,
     guidance: MissionGuidance,
@@ -972,6 +986,7 @@ def _run_rule_search_mission(
             reflect_keys = pick_reflection_ticket_keys(
                 stats_for_proposer,  # type: ignore[arg-type]
                 reflect_size=config.rule_search.reflect_size,
+                reflect_order=config.rule_search.reflect_order,
             )
 
             examples = [
@@ -1315,29 +1330,20 @@ def _run_rule_search_mission(
                     "source": cand.get("source"),
                     "train_n": len(train_pool_tickets),
                     "base_acc": base_metrics.acc if base_metrics else None,
-                    "base_fn_rate": base_metrics.fn_rate if base_metrics else None,
-                    "base_fp_rate": base_metrics.fp_rate if base_metrics else None,
-                    "base_fn_over_tp": base_metrics.fn_over_tp if base_metrics else None,
-                    "base_fp_over_tp": base_metrics.fp_over_tp if base_metrics else None,
+                    "base_false_release_rate": _false_release_rate(base_metrics),
+                    "base_false_block_rate": _false_block_rate(base_metrics),
                     "cand_acc": cand_metrics.acc,
-                    "cand_fn_rate": cand_metrics.fn_rate,
-                    "cand_fp_rate": cand_metrics.fp_rate,
-                    "cand_fn_over_tp": cand_metrics.fn_over_tp,
-                    "cand_fp_over_tp": cand_metrics.fp_over_tp,
-                    "fp_delta": fp_delta,
-                    "acc_delta": acc_delta,
-                    "fp_improved": fp_improved,
-                    "acc_improved": acc_improved,
-                    "fp_increase_ok": fp_increase_ok,
-                    "relative_error_reduction": gate_stats.relative_error_reduction,
-                    "changed_fraction": gate_stats.changed_fraction,
-                    "bootstrap_prob": gate_stats.bootstrap_prob,
+                    "cand_false_release_rate": _false_release_rate(cand_metrics),
+                    "cand_false_block_rate": _false_block_rate(cand_metrics),
                     "eval_n": len(eval_tickets),
                     "eval_base_acc": (
                         base_eval_metrics.acc if base_eval_metrics else None
                     ),
+                    "eval_base_false_release_rate": _false_release_rate(base_eval_metrics),
+                    "eval_base_false_block_rate": _false_block_rate(base_eval_metrics),
                     "eval_cand_acc": eval_metrics.acc if eval_metrics else None,
-                    "eval_acc_drop": eval_acc_drop,
+                    "eval_cand_false_release_rate": _false_release_rate(eval_metrics),
+                    "eval_cand_false_block_rate": _false_block_rate(eval_metrics),
                     "decision": decision,
                 },
             )

@@ -13,40 +13,55 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Dict, Iterable, List, Tuple
+from typing import Any, cast
 
 
-def parse_args() -> argparse.Namespace:
+class Args(argparse.Namespace):
+    stage_a: str = ""
+    group_root: str = ""
+    pass_dir: str = ""
+    fail_dir: str = ""
+    irrelevant_token: str = ""
+    min_useful: int = 0
+    allow_no_irrelevant: bool = False
+    apply: bool = False
+    in_place: bool = False
+    backup: bool = False
+    output: str | None = None
+
+
+def parse_args() -> Args:
     parser = argparse.ArgumentParser(
         description="Flip stage_a pass->fail for orders with too few useful images.")
-    parser.add_argument(
+    _ = parser.add_argument(
         "--stage-a",
         required=True,
         help="Path to *_stage_a.jsonl",
     )
-    parser.add_argument(
+    _ = parser.add_argument(
         "--group-root",
         default="group_data/bbu_scene_2.0_order",
         help="Root directory that contains mission folders.")
-    parser.add_argument(
+    _ = parser.add_argument(
         "--pass-dir",
         default="审核通过",
         help="Pass directory name under each mission folder.")
-    parser.add_argument(
+    _ = parser.add_argument(
         "--fail-dir",
         default="审核不通过",
         help="Fail directory name under each mission folder.")
-    parser.add_argument(
+    _ = parser.add_argument(
         "--irrelevant-token",
         default="无关图片",
         help="Substring that marks an image as irrelevant.")
-    parser.add_argument(
+    _ = parser.add_argument(
         "--min-useful",
         type=int,
         default=3,
         help="Minimum number of useful images required to keep pass.")
-    parser.add_argument(
+    _ = parser.add_argument(
         "--allow-no-irrelevant",
         action="store_true",
         help=(
@@ -54,35 +69,35 @@ def parse_args() -> argparse.Namespace:
             "Default: require at least one irrelevant image."
         ),
     )
-    parser.add_argument(
+    _ = parser.add_argument(
         "--apply",
         action="store_true",
         help="Apply filesystem moves and write in-place if --in-place is set.")
-    parser.add_argument(
+    _ = parser.add_argument(
         "--in-place",
         action="store_true",
         help="Overwrite the input JSONL (requires --apply).")
-    parser.add_argument(
+    _ = parser.add_argument(
         "--backup",
         action="store_true",
         help="When using --in-place, also save a .bak copy of the original.")
-    parser.add_argument(
+    _ = parser.add_argument(
         "--output",
         default=None,
         help="Output JSONL path (ignored if --in-place).")
-    return parser.parse_args()
+    return cast(Args, parser.parse_args())
 
 
-def _is_irrelevant(text: str, token: str) -> bool:
+def _is_irrelevant(text: str | None, token: str) -> bool:
     return token in (text or "")
 
 
-def _count_irrelevant(per_image: Dict[str, str], token: str) -> int:
+def _count_irrelevant(per_image: dict[str, str], token: str) -> int:
     return sum(1 for v in per_image.values() if _is_irrelevant(v, token))
 
 
 def _should_flip(
-    label: str,
+    label: str | None,
     total_images: int,
     irrelevant_count: int,
     min_useful: int,
@@ -96,20 +111,24 @@ def _should_flip(
     return useful < min_useful
 
 
-def _load_jsonl(path: Path) -> Iterable[dict]:
+def _load_jsonl(path: Path) -> Iterable[dict[str, object]]:
     with path.open("r", encoding="utf-8") as f:
-        for line in f:
+        for line_num, line in enumerate(f, start=1):
             line = line.strip()
             if not line:
                 continue
-            yield json.loads(line)
+            try:
+                yield json.loads(line)
+            except json.JSONDecodeError as e:
+                print(f"Error parsing {path} at line {line_num}: {e}")
+                continue
 
 
-def _write_jsonl(path: Path, records: Iterable[dict]) -> None:
+def _write_jsonl(path: Path, records: Iterable[dict[str, object]]) -> None:
     with path.open("w", encoding="utf-8") as f:
         for rec in records:
-            f.write(json.dumps(rec, ensure_ascii=False))
-            f.write("\n")
+            _ = f.write(json.dumps(rec, ensure_ascii=False))
+            _ = f.write("\n")
 
 
 def _move_group_dir(
@@ -119,7 +138,7 @@ def _move_group_dir(
     pass_dir: str,
     fail_dir: str,
     apply: bool,
-) -> Tuple[bool, str]:
+) -> tuple[bool, str]:
     mission_dir = group_root / mission
     src = mission_dir / pass_dir / group_id
     dst = mission_dir / fail_dir / group_id
@@ -131,7 +150,7 @@ def _move_group_dir(
 
     if apply:
         dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(src), str(dst))
+        _ = shutil.move(str(src), str(dst))
         return True, f"moved: {src} -> {dst}"
     return True, f"dry-run: {src} -> {dst}"
 
@@ -149,16 +168,29 @@ def main() -> None:
     else:
         output_path = stage_a_path.with_name(stage_a_path.stem + ".flipped" + stage_a_path.suffix)
 
-    flipped_records: List[dict] = []
-    move_logs: List[str] = []
+    flipped_records: list[dict[str, object]] = []
+    move_logs: list[str] = []
     flip_count = 0
 
+    if not stage_a_path.exists():
+        print(f"Error: input file does not exist: {stage_a_path}")
+        return
+
     for rec in _load_jsonl(stage_a_path):
-        per_image = dict(rec.get("per_image") or {})
-        images = list(rec.get("images") or [])
-        mission = rec.get("mission")
-        group_id = rec.get("group_id")
-        label = rec.get("label")
+        per_image_raw: object = rec.get("per_image")
+        per_image: dict[str, str] = {str(k): str(v) for k, v in per_image_raw.items()} if isinstance(per_image_raw, dict) else {}
+        
+        images_raw: object = rec.get("images")
+        images: list[object] = list(images_raw) if isinstance(images_raw, list) else []
+        
+        mission_raw: object = rec.get("mission")
+        mission: str | None = str(mission_raw) if mission_raw is not None else None
+        
+        group_id_raw: object = rec.get("group_id")
+        group_id: str | None = str(group_id_raw) if group_id_raw is not None else None
+        
+        label_raw: object = rec.get("label")
+        label: str | None = str(label_raw) if label_raw is not None else None
 
         irrelevant_count = _count_irrelevant(per_image, args.irrelevant_token)
         total_images = len(images)
@@ -188,7 +220,7 @@ def main() -> None:
     if args.in_place:
         if args.backup:
             backup_path = stage_a_path.with_suffix(stage_a_path.suffix + ".bak")
-            shutil.copy2(stage_a_path, backup_path)
+            _ = shutil.copy2(stage_a_path, backup_path)
         _write_jsonl(stage_a_path, flipped_records)
     else:
         _write_jsonl(output_path, flipped_records)
