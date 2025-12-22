@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from src.stage_b.runner import _split_train_holdout
+from src.stage_b.runner import _split_train_eval_pool
 from src.stage_b.types import GroupTicket, StageASummaries
 
 
@@ -14,16 +14,16 @@ def _ticket(i: int, *, label: str) -> GroupTicket:
     )
 
 
-def test_split_train_holdout_stratified_preserves_label_balance() -> None:
+def test_split_train_eval_pool_stratified_preserves_label_balance() -> None:
     tickets = []
     for i in range(50):
         tickets.append(_ticket(i, label="pass"))
     for i in range(50, 100):
         tickets.append(_ticket(i, label="fail"))
 
-    train, holdout = _split_train_holdout(
+    train, holdout = _split_train_eval_pool(
         tickets,
-        fraction=0.2,
+        eval_fraction=0.2,
         seed=7,
         stratify_by_label=True,
     )
@@ -31,4 +31,3 @@ def test_split_train_holdout_stratified_preserves_label_balance() -> None:
     assert len(holdout) == 20
     assert sum(1 for t in holdout if t.label == "pass") == 10
     assert sum(1 for t in holdout if t.label == "fail") == 10
-

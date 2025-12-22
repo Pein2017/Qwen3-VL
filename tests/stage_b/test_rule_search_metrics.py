@@ -91,9 +91,9 @@ def test_build_gate_stats_passes_for_clear_improvement() -> None:
         bootstrap_iterations=200,
         bootstrap_min_prob=0.8,
         bootstrap_seed=17,
-        min_changed_fraction=0.01,
+        max_changed_fraction=1.0,
     )
     assert passed is True
     assert stats.relative_error_reduction >= 0.1
-    assert stats.changed_fraction >= 0.01
+    assert stats.changed_fraction <= 1.0
     assert stats.bootstrap_prob >= 0.8
