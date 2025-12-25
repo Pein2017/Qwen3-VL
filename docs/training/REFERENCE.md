@@ -58,11 +58,11 @@ Comprehensive guide for training, inference, deployment, and advanced topics.
 
 **ConfigLoader** (`src/config/loader.py`):
 - Loads YAML and materializes frozen dataclasses (`TrainingConfig`, `CustomConfig`, `SaveDelayConfig`, `VisualKDConfig`)
-- Resolves `global_max_length` → `model.max_model_len` + `template.max_length`
+- Resolves `global_max_length` → `model.max_model_len` + `template.max_length` and forces `template.truncation_strategy: raise`
 - Attaches typed runtime toggles to `TrainArguments` (e.g., `save_delay_config`, `visual_kd_config`)
 - Fails fast with informative errors when schemas or inheritance are invalid
 - Source of truth for all configuration behavior
-- Over-length policy: when `template.truncation_strategy` is set to `raise`, downstream datasets catch `MaxLengthError` and drop the offending sample instead of truncating, then retry another record (see `DenseCaptionDataset`).
+- Over-length policy: when `template.truncation_strategy` is `raise`, downstream datasets surface `MaxLengthError` as a hard failure so training stops rather than truncating or skipping samples (see `DenseCaptionDataset`).
 
 **DenseCaptionDataset** (`src/datasets/dense_caption.py`):
 ```python
@@ -236,6 +236,7 @@ Keep configs under `configs/` in sync with the playbook when making behavioral c
   - `prompts.domain`: `bbu` | `rru` (required only when using runtime profile)
   - `prompts.system` / `prompts.user` remain authoritative overrides and bypass profile composition.
   - `custom.summary_label_grouping: false` appends a label rule to summary prompts to preserve raw OCR text (avoid `标签/可以识别` / `标签/无法识别` grouping).
+- **Stage-A runtime composition**: system prompt = summary task base + 全局“非现场/图纸”规则；user prompt = summary instruction + BBU/RRU 场景提示块 + 可选任务重点。
 
 ## Inference
 
@@ -245,8 +246,8 @@ Runtime/deployment instructions for Stage-A summaries and the Stage-B verdict lo
 - Adapter vs merged checkpoints, export commands, and decoding tips
 - Dense captioning usage examples
 - Stage-A CLI guardrails and output schemas
-- Stage-B 仅支持 `rule_search`（baseline rollout → proposer 产出 1–N 条候选操作 → **train pool** A/B gate → 通过者更新 guidance；eval pool 指标仅用于审计）。rollout 提示=guidance+Stage-A 摘要（不含 GT；S* 为结构不变量，G0+ 可学习），推理输出严格两行二分类（`Verdict: 通过|不通过` + `Reason: ...`）且禁止任何第三状态词面。`rule_search` 会写入 `rule_candidates.jsonl`、`benchmarks.jsonl`、`rule_search_hard_cases.jsonl`、`rule_search_candidate_regressions.jsonl`。重跑同一 run_name 重建 per-run artifacts，指导沿用上次快照。
-- Stage-B 可选在 rule-search 早停后导出 `distill_chatml.jsonl`（低温采样、随机抽样 `distill_size`）。
+- Stage-B 仅支持 `rule_search`（baseline rollout → proposer 产出 1–N 条候选操作 → **train pool** A/B gate → 通过者更新 guidance；eval pool 指标仅用于审计）。system prompt 固定为两行判决契约 + 规则/软硬信号；user prompt 仅包含 guidance（S*/G0/G*）+ Stage-A 摘要（不含 GT）。领域提示已上移到 Stage‑A user prompt。**规则默认 AND 关系**（未显式写“或/例外”的规则必须全部满足；缺证据即不通过），推理输出严格两行二分类（`Verdict: 通过|不通过` + `Reason: ...`）且禁止任何第三状态词面。rollout/proposer/reflection 超长提示不截断，直接 drop；全局配置建议：rollout `max_prompt_tokens=4096`，proposer/reflection `max_token_length=12000`。`rule_search` 会写入 `rule_candidates.jsonl`、`benchmarks.jsonl`、`rule_search_hard_cases.jsonl`、`rule_search_candidate_regressions.jsonl`。重跑同一 run_name 重建 per-run artifacts，指导沿用上次快照。另：可用 `jump_reflection=true`（或 `--jump-reflection` / YAML `jump_reflection: true`）跳过 proposer/reflection，仅跑 baseline rollout 并导出 `baseline_metrics.json` / `baseline_ticket_stats.jsonl` 以便人工分析后再手动修改 `initial_guidance.json`。
+- Stage-B 可选导出 `distill_chatml.jsonl` 供后训练使用（低温采样、随机抽样 `distill_size`）。
 - 生产约束：Stage‑A 与 Stage‑B 在最终环境中共用同一个 Qwen3‑VL 模型（同一组权重 / LoRA 组合），通过不同 prompt 和 config 切换任务；训练 summary‑mode 或添加新 LoRA 时，需要显式评估对 Stage‑B rollout/verdict 行为的影响。
 
 ## Advanced Topics & FAQ

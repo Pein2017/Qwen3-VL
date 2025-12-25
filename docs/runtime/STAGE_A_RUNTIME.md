@@ -55,6 +55,7 @@ Troubleshooting symptom:
 - `mission` (required) — must match `SUPPORTED_MISSIONS`.
 - `dataset` — `bbu|rru`; controls which domain knowledge pack is appended to the runtime summary prompt.
 - `prompt_profile` — summary prompt profile (`summary_runtime` default; `summary_train_min` for smoke/debug).
+  - `summary_runtime` 组合方式：system prompt = summary 任务基座 + 全局“非现场/图纸”规则；user prompt = 摘要指令 + BBU/RRU 场景提示块 + 任务重点。
 - `verify_inputs` — logs first-chunk hashes and grid/token counts; optional.
 - `no_mission` — skip mission focus text for smoke tests.
 - `gpus` — GPU device selection (comma-separated list, e.g., `gpus=0` or `gpus=0,1,2,3`). Use `gpus=cpu` for CPU mode.

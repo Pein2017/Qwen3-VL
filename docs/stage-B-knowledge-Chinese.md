@@ -88,7 +88,7 @@ Stage-B 现为“prompt-only”流程：推理输出**严格两行二分类**（
 - 使用“summary”能力对每张图片进行事实性归纳，输出每图单行摘要
 - 产出一份组级 JSONL：包含 `group_id / mission / label（历史人工）/ images / per_image` 的摘要字典
 - 作为 Stage-B 的唯一上游输入（事实来源），也是审核可追溯的依据
-- Prompt profiles：训练使用 **summary_train_min**（仅格式与任务准则，证据优先/反幻觉），推理使用 **summary_runtime**（在训练提示基础上追加简版领域提示；RRU 领域提示待补充）。
+- Prompt profiles：训练使用 **summary_train_min**（仅格式与任务准则，证据优先/反幻觉），推理使用 **summary_runtime**（system prompt = summary 任务基座 + 全局“非现场/图纸”规则；user prompt = 摘要指令 + BBU/RRU 场景提示块 + 任务重点）。
 
 质量注意点：
 - 摘要存在识别偏差（漏检/误检/幻觉），但统一格式与词表可显著降低 Stage-B 的解释难度
@@ -102,7 +102,7 @@ Stage-B 现为“prompt-only”流程：推理输出**严格两行二分类**（
 - 数据量有限：直接 RL 往往不稳定且成本较高
 
 设计选择：采用“training-free GRPO 风格”的 Prompt 优化与反思循环，维护一份“经验/知识库（guidance）”，由同一个底座模型（Qwen3-VL-4B-Instruct）在推理时读取，持续提升判定一致性。
-Stage‑B 额外在 system prompt 追加 **只读领域提示**（由 Stage‑B config 的 `domain_map/default_domain` 指定），避免把领域知识混入可学习 guidance。
+Stage‑B system prompt 不再包含领域提示；领域知识上移到 Stage‑A user prompt（BBU/RRU 场景提示块）。guidance 与 Stage‑A 摘要仅出现在 Stage‑B user prompt。
 
 核心需求（业务视角）：
 - 输入：多图摘要 + 任务/条目 + 当前 guidance + 历史人工 label
@@ -112,7 +112,7 @@ Stage‑B 额外在 system prompt 追加 **只读领域提示**（由 Stage‑B 
 
 高层架构（运行时）：
 1) Ingest：读取 Stage-A JSONL，规范化成组级工单（GroupTicket）
-2) Rollout：按解码网格（温度、top_p、max_new_tokens 等）对每组生成一个或多个候选判定，每个候选都遵守两行输出协议（Verdict/Reason）。
+2) Rollout：system prompt 固定为两行判决契约 + 规则/软硬信号；user prompt 仅包含 guidance（S*/G0/G*）+ Stage‑A 摘要（领域提示已上移到 Stage‑A user prompt）。按解码网格（温度、top_p、max_new_tokens 等）对每组生成候选判定，每个候选都遵守两行输出协议（Verdict/Reason）。规则默认 AND（S* 与 G* 必须同时满足；仅当规则文本明确写“或/例外条件”才允许 OR），缺证据即判不通过；超长提示直接 drop，不截断。
 3) Signals：为候选附加确定性信号（如与历史标签的一致性 `label_match`、在候选集合中的自洽度 self_consistency 等），不再调用 CriticEngine。
 4) Selection：基于多数表决 + fail-first 策略选择最终判定；并叠加 **mission-scoped fail-first** 确定性护栏（仅当负项与当前 mission 的 `G0` 相关时触发整组不通过；支持 pattern-first `不符合要求/<issue>`）。若护栏覆盖采样 verdict，则必须重写最终 `Reason` 以与最终 `Verdict` 一致，且仍不得出现第三状态词面。
 5) Reflection：对近期包含标签冲突或部分正确的轨迹进行批处理，比较模型判定与 GT 差异，构造 JSON-only 的 guidance 变更提案（增加/更新/删除经验规则），并先输出可证伪 hypothesis 进入候选池，跨批次证据累积后再晋升为 `G*` 规则。

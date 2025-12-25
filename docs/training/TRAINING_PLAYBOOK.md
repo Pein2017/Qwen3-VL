@@ -8,7 +8,7 @@
 - Avoid CLI flags beyond `--config` (and optional `--base_config`, `--debug`)
 - All configuration in YAML files
 - Single length knob: `global_max_length`
-- To preserve annotations, prefer `template.truncation_strategy: raise`; `DenseCaptionDataset` will drop and retry any sample exceeding `max_length`/`global_max_length` instead of truncating.
+- With `template.truncation_strategy: raise`, `DenseCaptionDataset` fails fast if any sample reaches `max_length`/`global_max_length` (no truncation, no silent drop).
 
 **Critical Setup**:
 ```yaml
@@ -18,7 +18,7 @@ model:
 template:
   template: qwen3_vl
   max_length: 4096           # Or use global_max_length
-  truncation_strategy: raise  # optional: raise so over-length samples are dropped, not truncated
+  truncation_strategy: raise  # fail fast on over-length samples (no truncation)
 
 # Set global_max_length as the single length knob
 global_max_length: 4096      # Proxies both model.max_model_len and template.max_length

@@ -1,4 +1,4 @@
-- [x] Confirm configuration defaults (train_pool_size=512, eval_pool_fraction=0.2, eval_veto.max_acc_drop=0.01).
+- [x] Confirm configuration defaults (train_pool_size=512, eval_pool_size=128, eval_veto.max_acc_drop=0.01).
 - [x] Update Stage‑B rule_search config schema to use train/eval names and add eval pool fields.
 - [x] Implement train/eval pool sampling logic (fixed eval pool; rolling train pool).
 - [x] Implement eval pool veto in rule_search acceptance logic.

@@ -1,0 +1,9 @@
+- [x] Update Stage-B rollout prompt to enforce default AND semantics for guidance rules and require evidence coverage in Reason.
+- [x] Add strict prompt-length handling in `src/stage_b/rollout.py`: drop overlength tickets before generation; do not truncate.
+- [x] Add strict prompt-length handling in rule-search proposer (`src/stage_b/runner.py`): drop/skip proposer when over budget instead of truncating.
+- [x] Add strict prompt-length handling in reflection engine (`src/stage_b/reflection/engine.py`) for legacy reflection mode.
+- [x] Update all Stage-B configs (`configs/stage_b/*.yaml`) to set `train_sampler.max_prompt_tokens` and `eval_sampler.max_prompt_tokens` to 4096, keep `max_token_length: 12000`.
+- [x] Add/adjust logging to report overlength drops and prompt budgets.
+- [x] Update docs: `docs/training/REFERENCE.md`, `docs/runtime/STAGE_B_RUNTIME.md`, `docs/runtime/STAGE_A_STAGE_B.md`, `docs/stage-B-knowledge-Chinese.md`.
+- [ ] (If needed) Add a small unit test for overlength drop behavior.
+- [x] Run: `openspec validate update-stageb-rollout-drop-overlength --strict`.

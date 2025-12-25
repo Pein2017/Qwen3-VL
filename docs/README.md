@@ -96,7 +96,7 @@ YAML → ConfigLoader → SwiftSft → DenseCaptionDataset → Trainer
 
 **Key Design Principles**:
 - Single length knob: `global_max_length` (proxies both model & template)
-- Over-length safety: when the template raises `MaxLengthError` (e.g., `truncation_strategy: raise`), `DenseCaptionDataset` drops that sample and retries another record instead of truncating, avoiding detail loss.
+- Over-length safety: when the template raises `MaxLengthError` (e.g., `truncation_strategy: raise`), `DenseCaptionDataset` now raises a hard error so training stops instead of truncating or silently skipping.
 - Adapters applied before trainer: `sft.prepare_model(...)`
 - Config-only surface (avoid CLI flags beyond `--config`)
 - Typed configuration contracts (`src/config/schema.py`) validate YAML before training launches.

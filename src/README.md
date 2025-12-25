@@ -290,7 +290,7 @@ model:
 template:
   template: qwen3_vl             # use model's chat_template.json (vision tokens handled automatically)
   max_length: 4096
-  truncation_strategy: right
+  truncation_strategy: raise     # fail fast if a sample reaches max_length
   max_pixels: 589824             # e.g., up to 1024x1024
 
 training:
@@ -456,6 +456,6 @@ These live under the `custom` section in YAML and are consumed by `src/sft.py` a
 | **`adapter_config.json` missing or `modules_to_save` empty** | LoRA not applied to model | Verify model is wrapped: `isinstance(model, (SwiftModel, PeftModel))` after `prepare_model()` |
 | **`TypeError: modules_to_save cannot be applied to ModuleList`** | Invalid `modules_to_save` path | Specify individual elements: `model.visual.deepstack_merger_list.0`, `.1`, `.2` instead of the container |
 | **FileNotFoundError** | Image paths must be relative | Runner auto-sets `ROOT_IMAGE_DIR` to JSONL dir; verify paths exist |
-| **MaxLengthError/OOM** | Long JSON-lines or many objects | Prefer `global_max_length` (single knob) or lower `template.max_length`; `truncation_strategy=right` (auto) |
+| **MaxLengthError/OOM** | Long JSON-lines or many objects | Increase `global_max_length` (single knob) or lower `template.max_length`; keep `truncation_strategy=raise` to avoid truncation |
 | **Points misalignment** | Augmentation bug | `AugmentationPreprocessor` updates images+geometries atomically; print sample to verify |
 | **Memory/performance** | Suboptimal settings | Use `attn_impl=flash_attn`, `torch_dtype=bfloat16`, `gradient_checkpointing=true`; adjust batch size; configure DeepSpeed for multi-GPU |
