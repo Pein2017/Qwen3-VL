@@ -1,4 +1,4 @@
-from typing import Any, Mapping
+from typing import Any, Mapping, cast
 
 import torch
 import torch.distributed as dist
@@ -26,7 +26,8 @@ class DatasetMetricsMixin:
         _ = inputs.pop(self.segment_field, None)  # Optional legacy field
         token_types = inputs.pop("token_types", None)
 
-        loss, outputs = super().compute_loss(  # type: ignore[misc]
+        parent = cast(Any, super())
+        loss, outputs = parent.compute_loss(
             model, inputs, return_outputs=True, num_items_in_batch=num_items_in_batch
         )
 
@@ -59,11 +60,8 @@ class DatasetMetricsMixin:
         if not isinstance(dataset_labels, (list, tuple)):
             return
 
-        mode = (
-            "train"
-            if getattr(self, "model", None) is None or self.model.training
-            else "eval"
-        )  # type: ignore[attr-defined]
+        model_attr = getattr(self, "model", None)
+        mode = "train" if model_attr is None or model_attr.training else "eval"
         custom_metrics = getattr(self, "custom_metrics", None)
         if custom_metrics is None or mode not in custom_metrics:
             return
