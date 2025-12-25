@@ -1,6 +1,6 @@
 """Format and clean annotation descriptions for data_conversion."""
 
-from typing import Dict
+from typing import Any, Dict
 
 from data_conversion.annotation_cleaner import clean_annotation_content
 
@@ -46,6 +46,6 @@ class FormatConverter:
         return components
 
     @staticmethod
-    def clean_annotation_content(data: Dict) -> Dict:
+    def clean_annotation_content(data: Dict[str, Any]) -> Dict[str, Any]:
         """Clean annotation content preserving essential Chinese structure only."""
         return clean_annotation_content(data, lang="zh")

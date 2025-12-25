@@ -75,7 +75,9 @@ _worker_processor = None
 # ============================================================================
 
 
-def _init_worker(config: DataConversionConfig, label_hierarchy: Dict) -> None:
+def _init_worker(
+    config: DataConversionConfig, label_hierarchy: Dict[str, List[str]]
+) -> None:
     """
     Initialize worker process state.
 
@@ -99,7 +101,7 @@ def _init_worker(config: DataConversionConfig, label_hierarchy: Dict) -> None:
     _worker_processor.label_hierarchy = label_hierarchy
 
 
-def _process_sample_worker(json_path: Path) -> Optional[Dict]:
+def _process_sample_worker(json_path: Path) -> Optional[Dict[str, Any]]:
     """
     Worker function for parallel sample processing.
 
@@ -168,16 +170,16 @@ class UnifiedProcessor:
         )
 
         # Track invalid objects and samples for reporting / legacy compatibility
-        self.invalid_objects: List[Dict] = []
-        self.invalid_samples: List[Dict] = []
+        self.invalid_objects: List[Dict[str, Any]] = []
+        self.invalid_samples: List[Dict[str, Any]] = []
 
         logger.info("UnifiedProcessor initialized successfully (Chinese-only mode)")
 
-    def extract_content_fields(self, source_dict: Dict) -> Dict[str, str]:
+    def extract_content_fields(self, source_dict: Dict[str, Any]) -> Dict[str, str]:
         """Extract and normalize content fields from Chinese contentZh format."""
         return self._extract_chinese_fields(source_dict)
 
-    def _extract_chinese_fields(self, source_dict: Dict) -> Dict[str, str]:
+    def _extract_chinese_fields(self, source_dict: Dict[str, Any]) -> Dict[str, str]:
         """Extract fields from Chinese contentZh format."""
         content_zh = source_dict.get("contentZh", {})
         if not content_zh:
@@ -366,7 +368,9 @@ class UnifiedProcessor:
             logger.error(f"Error rewriting desc with remark: {e}")
             raise Exception("Error rewriting desc with remark")
 
-    def extract_objects_from_datalist(self, data_list: List[Dict]) -> List[Dict]:
+    def extract_objects_from_datalist(
+        self, data_list: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
         """Extract objects from dataList format."""
         objects = []
 
@@ -411,8 +415,8 @@ class UnifiedProcessor:
         return objects
 
     def extract_objects_from_markresult(
-        self, features: List[Dict], image_id: Optional[str] = None
-    ) -> List[Dict]:
+        self, features: List[Dict[str, Any]], image_id: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         """Extract objects from markResult features with native geometry types.
 
         Args:
@@ -440,7 +444,7 @@ class UnifiedProcessor:
                 obj["desc"] = self._rewrite_desc_with_remark(d)
         return objects
 
-    def process_single_sample(self, json_path: Path) -> Optional[Dict]:
+    def process_single_sample(self, json_path: Path) -> Optional[Dict[str, Any]]:
         """Process a single JSON/image pair into a clean sample."""
         try:
             # Load JSON and find corresponding image
@@ -600,8 +604,12 @@ class UnifiedProcessor:
             return None
 
     def _filter_valid_objects(
-        self, objects: List[Dict], img_w: int, img_h: int, image_id: str
-    ) -> List[Dict]:
+        self,
+        objects: List[Dict[str, Any]],
+        img_w: int,
+        img_h: int,
+        image_id: str,
+    ) -> List[Dict[str, Any]]:
         """Filter objects using strict validation with reporting.
 
         This uses ValidationManager to validate each object and records
@@ -641,12 +649,12 @@ class UnifiedProcessor:
 
     def _process_sample_coordinates_unified(
         self,
-        sample_data: Dict,
+        sample_data: Dict[str, Any],
         image_path: Path,
         json_width: int,
         json_height: int,
         enable_smart_resize: bool = True,
-    ) -> Tuple[Dict, int, int]:
+    ) -> Tuple[Dict[str, Any], int, int]:
         """
         Process sample coordinates using unified geometry transformation.
 
@@ -858,7 +866,7 @@ class UnifiedProcessor:
             )
             return transformed_bbox
 
-    def process_all_samples(self) -> List[Dict]:
+    def process_all_samples(self) -> List[Dict[str, Any]]:
         """Process all samples in the input directory."""
         logger.info("🚀 Starting sample processing")
 
@@ -883,12 +891,12 @@ class UnifiedProcessor:
         else:
             return self._process_samples_sequential(json_files)
 
-    def _process_samples_sequential(self, json_files: List[Path]) -> List[Dict]:
+    def _process_samples_sequential(self, json_files: List[Path]) -> List[Dict[str, Any]]:
         """Process samples sequentially (original implementation)."""
         logger.info("📝 Processing samples sequentially (num_workers=1)")
 
         # Process all samples
-        all_samples: List[Dict] = []
+        all_samples: List[Dict[str, Any]] = []
         processed_count = 0
         skipped_count = 0
 
@@ -968,7 +976,7 @@ class UnifiedProcessor:
 
     def _process_samples_parallel(
         self, json_files: List[Path], num_workers: int
-    ) -> List[Dict]:
+    ) -> List[Dict[str, Any]]:
         """Process samples in parallel using multiprocessing."""
         # Limit workers to available CPU cores
         max_workers = min(num_workers, cpu_count(), len(json_files))
@@ -978,7 +986,7 @@ class UnifiedProcessor:
         )
 
         # Process samples in parallel
-        all_samples: List[Dict] = []
+        all_samples: List[Dict[str, Any]] = []
         processed_count = 0
         skipped_count = 0
 
@@ -1061,7 +1069,9 @@ class UnifiedProcessor:
 
         return all_samples
 
-    def split_into_sets(self, all_samples: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
+    def split_into_sets(
+        self, all_samples: List[Dict[str, Any]]
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
         """Split samples into training and validation sets.
 
         Teacher pool selection has been removed; all samples are used for train/val.
@@ -1085,8 +1095,8 @@ class UnifiedProcessor:
 
     def write_outputs(
         self,
-        train_samples: List[Dict],
-        val_samples: List[Dict],
+        train_samples: List[Dict[str, Any]],
+        val_samples: List[Dict[str, Any]],
     ) -> None:
         """Write output files in flat format only.
 
@@ -1120,8 +1130,10 @@ class UnifiedProcessor:
         )
 
     def _convert_to_teacher_student_format(
-        self, student_samples: List[Dict], teacher_pool: List[Dict]
-    ) -> List[Dict]:
+        self,
+        student_samples: List[Dict[str, Any]],
+        teacher_pool: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
         """DEPRECATED: No longer needed as we use flat format only.
 
         This method is kept for backward compatibility but now simply returns
@@ -1138,7 +1150,7 @@ class UnifiedProcessor:
         # This ensures all files use the flat format
         return student_samples.copy()
 
-    def _export_label_vocabulary(self, all_samples: List[Dict]) -> None:
+    def _export_label_vocabulary(self, all_samples: List[Dict[str, Any]]) -> None:
         """Extract and export unique labels from all samples."""
         unique_labels = set()
         unique_labels_excluded_tag = (

@@ -9,13 +9,13 @@ content under user control.
 
 from __future__ import annotations
 
-from typing import Dict, List
+from typing import Any, Dict, List
 
 
 ESSENTIAL_KEYS: List[str] = ["info", "tagInfo", "version"]
 
 
-def _normalize_geometry(geometry: Dict) -> Dict:
+def _normalize_geometry(geometry: Dict[str, Any]) -> Dict[str, Any]:
     """Return a copy of geometry with legacy types normalized."""
     if not geometry:
         return geometry
@@ -27,7 +27,9 @@ def _normalize_geometry(geometry: Dict) -> Dict:
     return geometry
 
 
-def clean_annotation_content(data: Dict, lang: str = "both") -> Dict:
+def clean_annotation_content(
+    data: Dict[str, Any], lang: str = "both"
+) -> Dict[str, Any]:
     """
     Clean annotation content preserving core metadata and requested languages.
 
@@ -44,7 +46,7 @@ def clean_annotation_content(data: Dict, lang: str = "both") -> Dict:
             f"Unsupported lang '{lang}'. Expected one of: zh, en, both"
         )
 
-    cleaned: Dict = {}
+    cleaned: Dict[str, Any] = {}
     for key in ESSENTIAL_KEYS:
         if key in data:
             cleaned[key] = data[key]
@@ -52,8 +54,8 @@ def clean_annotation_content(data: Dict, lang: str = "both") -> Dict:
     cleaned_features = []
     mark_result = data.get("markResult", {})
     for feature in mark_result.get("features", []) or []:
-        properties: Dict = {}
-        original_properties: Dict = feature.get("properties", {}) or {}
+        properties: Dict[str, Any] = {}
+        original_properties: Dict[str, Any] = feature.get("properties", {}) or {}
 
         if normalized_lang in {"zh", "both"}:
             properties["contentZh"] = original_properties.get("contentZh", {})

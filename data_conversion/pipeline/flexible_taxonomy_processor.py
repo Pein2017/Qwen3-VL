@@ -41,10 +41,10 @@ class AnnotationSample:
     coordinates: List[float]
     grouped_attributes: Dict[str, Dict[str, str]]  # group -> attribute -> value
     description: str
-    groups: Optional[List[Dict]] = None
-    original_geometry: Optional[Dict] = None
+    groups: Optional[List[Dict[str, Any]]] = None
+    original_geometry: Optional[Dict[str, Any]] = None
 
-    def to_training_format(self) -> Dict:
+    def to_training_format(self) -> Dict[str, Any]:
         """Convert to training format with native geometry type."""
         obj = {self.geometry_format: self.coordinates, "desc": self.description}
         if self.groups:
@@ -84,12 +84,14 @@ class FlexibleTaxonomyProcessor:
             f"Loaded hierarchical mapping for {len(self.hierarchical_object_types)} object types"
         )
 
-    def _load_taxonomy(self, taxonomy_path: str) -> Dict:
+    def _load_taxonomy(self, taxonomy_path: str) -> Dict[str, Any]:
         """Load the attribute taxonomy."""
         with open(taxonomy_path, "r", encoding="utf-8") as f:
             return json.load(f)
 
-    def process_v2_feature(self, feature: Dict, image_id: Optional[str] = None) -> Optional[AnnotationSample]:
+    def process_v2_feature(
+        self, feature: Dict[str, Any], image_id: Optional[str] = None
+    ) -> Optional[AnnotationSample]:
         """
         Process a single V2 feature into structured annotation sample.
 
@@ -178,7 +180,9 @@ class FlexibleTaxonomyProcessor:
             original_geometry=geometry,
         )
 
-    def _determine_object_type(self, content: Dict, content_zh: Dict) -> Optional[str]:
+    def _determine_object_type(
+        self, content: Dict[str, Any], content_zh: Dict[str, Any]
+    ) -> Optional[str]:
         """Determine object type from content fields."""
         # Check content.label first
         content_label = content.get("label", "").strip()
@@ -204,8 +208,12 @@ class FlexibleTaxonomyProcessor:
         return None
 
     def _process_geometry(
-        self, geometry: Dict, object_type: str, properties: Optional[Dict] = None,
-        image_id: Optional[str] = None, object_id: Optional[str] = None
+        self,
+        geometry: Dict[str, Any],
+        object_type: str,
+        properties: Optional[Dict[str, Any]] = None,
+        image_id: Optional[str] = None,
+        object_id: Optional[str] = None,
     ) -> Optional[Tuple[str, List[float]]]:
         """Process geometry based on object type and geometry structure.
         
@@ -379,7 +387,10 @@ class FlexibleTaxonomyProcessor:
         return None
 
     def _group_attributes(
-        self, content: Dict, content_zh: Dict, object_type: str
+        self,
+        content: Dict[str, Any],
+        content_zh: Dict[str, Any],
+        object_type: str,
     ) -> Dict[str, Dict[str, str]]:
         """Group attributes according to taxonomy."""
         grouped = {}
@@ -406,7 +417,11 @@ class FlexibleTaxonomyProcessor:
         return grouped
 
     def _extract_attribute_value(
-        self, content: Dict, content_zh: Dict, attr_info: Dict, object_type: str
+        self,
+        content: Dict[str, Any],
+        content_zh: Dict[str, Any],
+        attr_info: Dict[str, Any],
+        object_type: str,
     ) -> Optional[str]:
         """Extract attribute value from contentZh (Chinese) fields only."""
         # For Chinese mode, extract directly from contentZh using Chinese questions
@@ -435,7 +450,10 @@ class FlexibleTaxonomyProcessor:
         return None
 
     def _create_hierarchical_description(
-        self, object_type: str, content_zh: Dict, content: Dict
+        self,
+        object_type: str,
+        content_zh: Dict[str, Any],
+        content: Dict[str, Any],
     ) -> str:
         """Create hierarchical description with correct separators: comma for same-level, slash for different levels."""
 
@@ -514,7 +532,13 @@ class FlexibleTaxonomyProcessor:
         return "/".join(level_parts)
 
     def _extract_hierarchical_attribute_value(
-        self, attr: Dict, content_zh: Dict, content: Dict
+        self,
+        attr: Dict[str, Any],
+        content_zh: Dict[str, Any],
+        content: Dict[str, Any],
+        attr: Dict[str, Any],
+        content_zh: Dict[str, Any],
+        content: Dict[str, Any],
     ) -> Optional[str]:
         """Extract attribute value according to hierarchical mapping."""
         content_mapping = attr.get("content_mapping")
@@ -740,11 +764,20 @@ class FlexibleTaxonomyProcessor:
 class HierarchicalProcessor:
     """Clean processor for V2 data with native geometry output and object type filtering."""
 
-    def __init__(self, object_types=None, label_hierarchy: Optional[Dict] = None):
+    def __init__(
+        self,
+        object_types: Optional[List[str]] = None,
+        label_hierarchy: Optional[Dict[str, List[str]]] = None,
+    ):
         """Initialize processor for Chinese-only processing with object type filtering."""
         # object_types and label_hierarchy are retained for backward compatibility
         # but no longer used to drop objects.
-        self.object_types = object_types or {"bbu", "label", "fiber", "connect_point"}
+        self.object_types = set(object_types) if object_types is not None else {
+            "bbu",
+            "label",
+            "fiber",
+            "connect_point",
+        }
         self.label_hierarchy = label_hierarchy or {}
 
         # Create flexible processor
@@ -754,7 +787,9 @@ class HierarchicalProcessor:
             f"Initialized HierarchicalProcessor for Chinese-only processing with object types: {self.object_types}"
         )
 
-    def extract_objects_from_markresult(self, features: List[Dict], image_id: Optional[str] = None) -> List[Dict]:
+    def extract_objects_from_markresult(
+        self, features: List[Dict[str, Any]], image_id: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         """
         Extract objects from markResult features with native geometry types.
         Filters by specified object types for training subject separation.

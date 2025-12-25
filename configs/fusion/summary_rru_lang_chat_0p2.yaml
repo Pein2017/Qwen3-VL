@@ -1,0 +1,41 @@
+targets:
+  - name: rru_summary
+    dataset: rru
+    train_jsonl: data/rru_full_1024_poly/train.jsonl
+    val_jsonl: data/rru_full_1024_poly/val.jsonl
+    template: summary_rru
+    mode: summary
+    summary_label_grouping: false
+    ratio: 1.0
+
+sources:
+  - name: rru_dense
+    dataset: rru
+    train_jsonl: data/rru_full_1024_poly/train.jsonl
+    ratio: 0.1
+    template: target_dense
+    mode: dense
+    sample_without_replacement: true
+    augmentation_enabled: true
+    curriculum_enabled: false
+
+  - name: lvis
+    dataset: lvis
+    train_jsonl: public_data/lvis/rescale_32_768_poly_max_12/train.jsonl
+    ratio: 0.1
+    template: source_dense
+    mode: dense
+    sample_without_replacement: true
+    max_objects_per_image: 20
+    augmentation_enabled: false
+    curriculum_enabled: false
+
+  - name: lang_chat
+    dataset: chat
+    train_jsonl: public_data/coig_cqia/coig_cqia_merged.jsonl
+    ratio: 0.2
+    template: chatml
+    mode: dense
+    sample_without_replacement: true
+    augmentation_enabled: false
+    curriculum_enabled: false

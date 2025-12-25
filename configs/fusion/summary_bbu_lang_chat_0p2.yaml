@@ -6,42 +6,13 @@ targets:
     template: summary_bbu
     mode: summary
     summary_label_grouping: false
-    ratio: 0.8
-  - name: rru_summary
-    dataset: rru
-    train_jsonl: data/rru_full_1024_poly/train.jsonl
-    val_jsonl: data/rru_full_1024_poly/val.jsonl
-    template: summary_rru
-    mode: summary
-    summary_label_grouping: false
     ratio: 1.0
-  - name: irrelevant_summary
-    dataset: bbu
-    train_jsonl: data/irrelevant_summary/train.jsonl
-    val_jsonl: data/irrelevant_summary/train.jsonl
-    template: summary_bbu
-    mode: summary
-    ratio: 1.0
-    augmentation_enabled: true
-    curriculum_enabled: false
 
-# Text-only chat mix to preserve general reasoning/language capacity.
 sources:
-  # Small regularization mix from dense BBU/RRU and LVIS detection.
   - name: bbu_dense
     dataset: bbu
     train_jsonl: data/bbu_full_1024_poly-need_review/train.jsonl
-    ratio: 0.05
-    template: target_dense
-    mode: dense
-    sample_without_replacement: true
-    augmentation_enabled: true
-    curriculum_enabled: false
-
-  - name: rru
-    dataset: rru
-    train_jsonl: data/rru_full_768_poly/train.jsonl
-    ratio: 0.05
+    ratio: 0.1
     template: target_dense
     mode: dense
     sample_without_replacement: true

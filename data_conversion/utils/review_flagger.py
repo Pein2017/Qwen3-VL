@@ -10,7 +10,7 @@ Heuristic:
 
 from __future__ import annotations
 
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 
 POSITIVE_TOKENS = [
@@ -115,9 +115,9 @@ def is_contradictory_desc(desc: str) -> bool:
     return any(tok in remark for tok in UNCERTAIN_OR_NEG)
 
 
-def flag_objects_for_review(objects: List[Dict]) -> List[Dict]:
+def flag_objects_for_review(objects: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Rewrite contradictory desc to '<type>/需复核[,备注:...]'."""
-    flagged: List[Dict] = []
+    flagged: List[Dict[str, Any]] = []
     for obj in objects:
         desc = obj.get("desc", "")
         if not desc:

@@ -1,16 +1,16 @@
 extends: ./sft_base.yaml
 
-global_max_length: 12000
+global_max_length: 16000
 
 model:
-  model: output/12-9/res_1024_fusion_merged/epoch50-updated_aug-checkpoint-4650
+  model: output/12-23/summary_merged/epoch_2-bbu_rru-more_irrelevant-ocr
   # model: output/12-18/summary_merged/epoch_4-bbu_rru_summary
 
 tuner:
   # Freeze vision/aligner; LoRA only on last-2 LLM blocks (lm_head fixed)
   freeze_llm: false   # Enable LoRA adapters on selected LLM layers
   freeze_vit: true    # Freeze vision encoder
-  freeze_aligner: false  # Freeze MLP aligner
+  freeze_aligner: true  # Freeze MLP aligner
   # LoRA targets: LLM layers 34-35 (q/k/v/o + MLP) excluding lm_head
   target_regex: null
   modules_to_save: []  # Keep lm_head fixed (no tuning/saving)
@@ -18,22 +18,22 @@ tuner:
   lora_alpha: 32
 
 training:
-  per_device_train_batch_size: 2
-  per_device_eval_batch_size: 2
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 1
   effective_batch_size: 32
   num_train_epochs: 4
-  output_dir: ./output/12-21/summary
-  logging_dir: ./tb/12-21/summary
-  run_name: epoch_4-bbu_rru-more_irrelevant-ocr
-  learning_rate: 1.0e-4
+  output_dir: ./output/12-25/summary
+  logging_dir: ./tb/12-25/summary
+  run_name: epoch_4-rru_only-more_irrelevant-ocr
+  learning_rate: 1.0e-5
   vit_lr: 1.0e-7
   aligner_lr: 1.0e-6
-  save_delay_steps: 300
+  save_delay_steps: 200
   
 custom:
   # train_jsonl: data/bbu_full_768_poly-need_review/train.jsonl
   # val_jsonl: data/bbu_full_768_poly-need_review/val.jsonl
-  fusion_config: configs/fusion/summary_lang_chat_0p2.yaml
+  fusion_config: configs/fusion/summary_rru_lang_chat_0p2.yaml
   emit_norm: norm1000
   # Default to summary; individual fusion datasets can override with mode
   use_summary: true

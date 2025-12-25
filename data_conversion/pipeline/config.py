@@ -150,7 +150,7 @@ class DataConversionConfig:
         return self.get_dataset_output_dir() / "images"
     
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> Dict[str, Any]:
         """Convert config to dictionary for compatibility."""
         return {
             "input_dir": self.input_dir,
