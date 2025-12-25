@@ -9,12 +9,11 @@ summaries per image, grouped by mission and work order ID.
 from __future__ import annotations
 
 from .inference import run_stage_a_inference
-from .prompts import MISSION_FOCUS, build_user_prompt
+from .prompts import build_user_prompt
 from src.config.missions import SUPPORTED_MISSIONS
 
 __all__ = [
     "run_stage_a_inference",
-    "MISSION_FOCUS",
     "SUPPORTED_MISSIONS",
     "build_user_prompt",
 ]

@@ -9,7 +9,7 @@ import logging
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Mapping, MutableMapping, Optional, Sequence, Tuple
+from typing import Dict, Mapping, MutableMapping, Optional, Sequence, Tuple, cast
 
 from ..types import GroupLabel, GroupTicket, LabelProvenance, StageASummaries
 
@@ -61,7 +61,7 @@ def _parse_label(raw_label: str) -> GroupLabel:
     lowered = raw_label.strip().lower()
     if lowered not in {"pass", "fail"}:
         raise ValueError(f"Unsupported label value: {raw_label!r}")
-    return lowered  # type: ignore[return-value]
+    return cast(GroupLabel, lowered)
 
 
 def _parse_timestamp(raw: Optional[str]) -> Optional[datetime]:

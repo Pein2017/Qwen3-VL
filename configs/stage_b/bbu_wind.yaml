@@ -1,7 +1,9 @@
 stage_a_paths:
-  - output_post/stage_a_bbu_rru_summary/挡风板安装检查_stage_a.jsonl
+  - output_post/stage_a_bbu_rru_summary_12-22/挡风板安装检查_stage_a.jsonl
 seed: 17
+max_token_length: 120000000
 default_domain: bbu
+jump_reflection: true
 
 model:
   model_name_or_path: model_cache/models/Qwen/Qwen3-VL-8B-Instruct
@@ -16,7 +18,7 @@ guidance:
 
 output:
   root: output_post/stage_b
-  run_name: 12-18-rule-search-reflect-16-train-eval
+  run_name: 12-22-ocr
 
 rule_search:
   proposer_prompt_path: configs/prompts/stage_b_rule_search_proposer_prompt.txt
@@ -24,7 +26,7 @@ rule_search:
   num_candidate_rules: 3
 
   train_pool_size: 512
-  eval_pool_fraction: 0.1
+  eval_pool_size: 20
 
   gate:
     min_relative_error_reduction: 0.1
@@ -36,44 +38,58 @@ rule_search:
       seed: 17
 
   early_stop:
-    patience: 3
+    patience: 5
 
-  # Train pool uses multi-sample decoding for majority vote.
+  # Train pool uses decode-grid for rollout + gate.
   train_sampler:
-    samples_per_decode: 5
+    samples_per_decode: 1
+    max_prompt_tokens: 240000
     grid:
-      - temperature: 0.1
+      - temperature: 0.3
         top_p: 0.9
-        max_new_tokens: 1024
+        max_new_tokens: 4096
         seed: 43
         repetition_penalty: 1.05
-  # Eval pool uses low-temp single-sample decoding.
+      - temperature: 0.5
+        top_p: 0.9
+        max_new_tokens: 4096
+        seed: 43
+        repetition_penalty: 1.05
+      - temperature: 0.7
+        top_p: 0.9
+        max_new_tokens: 4096
+        seed: 43
+        repetition_penalty: 1.05
+  # Eval pool uses low-temp single decode.
   eval_sampler:
     samples_per_decode: 1
+    max_prompt_tokens: 240000
     grid:
       - temperature: 0.1
         top_p: 0.9
-        max_new_tokens: 1024
+        max_new_tokens: 4096
         seed: 43
         repetition_penalty: 1.05
 
-# Reflection block is required by schema (used for proposer in rule_search mode).
+# Reflection config required by schema (used for rule proposer in rule_search mode).
+# Note: decision_prompt_path and ops_prompt_path are not used in rule_search mode.
 reflection:
   decision_prompt_path: configs/prompts/stage_b_reflection_decision_prompt.txt
   ops_prompt_path: configs/prompts/stage_b_reflection_ops_prompt.txt
-  batch_size: 16
+  batch_size: 32
   max_operations: 2
-  temperature: 0.1
+  temperature: 0.3
   top_p: 0.9
   repetition_penalty: 1.05
-  max_new_tokens: 2048
-  max_reflection_length: 4096
-  token_budget: 18000
+  max_new_tokens: 1200000
 
 runner:
-  epochs: 50
+  # rule_search iterations; early_stop will end earlier if no-gain.
+  epochs: 20
   per_rank_rollout_batch_size: 32
   logging_steps: 64
 
 stage_b_distillation:
-  enabled: false
+  enabled: true
+  distill_size: 2000
+  distill_temperature: 0.1

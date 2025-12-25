@@ -1,16 +1,14 @@
 stage_a_paths:
   # - output_post/stage_a/挡风板安装检查_stage_a.jsonl
-  - output_post/stage_a_bbu_rru_summary_12-22/BBU线缆布放要求_stage_a.jsonl
+  - output_post/stage_a_bbu_rru_summary_12-22/RRU安装检查_stage_a.jsonl
   # - output_post/stage_a/BBU安装方式检查（正装）_stage_a.jsonl
 
 ticket_filter:
-  # Exclude GT=fail tickets whose reviewer remarks indicate "need extra info"
-  # (e.g., missing required views /补拍/拍摄/模糊/遮挡). These are typically not learnable
-  # from Stage-A summaries and should be skipped for rule learning / distillation.
-  exclude_ticket_keys_path: output_post/stage_b/filters/BBU线缆布放要求_need_extra_exclude_ticket_keys.txt
+  # Exclude known-noisy tickets (including GT=pass with too few useful images after removing irrelevant ones).
+  exclude_ticket_keys_path: output_post/stage_b/filters/rru_install_exclude_ticket_keys.txt
 seed: 17
 max_token_length: 120000000
-default_domain: bbu
+default_domain: rru
 jump_reflection: true
 
 model:
@@ -28,7 +26,7 @@ guidance:
 
 output:
   root: output_post/stage_b
-  run_name: 12-19-bbu-cable-rule-search-train-eval
+  run_name: 12-23-rru-install-rule-search
 
 rule_search:
   proposer_prompt_path: configs/prompts/stage_b_rule_search_proposer_prompt.txt

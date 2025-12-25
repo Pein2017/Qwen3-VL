@@ -7,7 +7,7 @@ EXCEL_PATH="/data/Qwen3-VL/output_post/BBU_scene_latest.xlsx"
 OUTPUT_ROOT=""
 RECURSIVE=true
 OVERWRITE=true
-MISSION="BBU线缆布放要求"
+MISSION="BBU安装方式检查（正装）"
 
 # === Execution ===
 SCRIPT_PATH="/data/Qwen3-VL/scripts/postprocess_rule_search_hard_cases.py"

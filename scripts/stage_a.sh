@@ -5,12 +5,13 @@ set -euo pipefail
 # Example: mission=挡风板安装检查 gpus=0 bash scripts/stage_a.sh
 # Example: mission=BBU安装方式检查（正装） gpus=1 bash scripts/stage_a.sh
 # Example: mission=挡风板安装检查 gpus=0,1,2,3 bash scripts/stage_a.sh  # multi-GPU
+# Example: mission=BBU安装方式检查（正装） gpus=0 add_gt_fail_reason=true bash scripts/stage_a.sh  # with gt_fail_reason_text
 
 # Fixed configuration
 # CHECKPOINT="output/11-30/summary_merged/epoch_10-lr_2e-4-bs_32-res_1024"
-CHECKPOINT="output/12-21/summary_merged/epoch_4-bbu_rru-more_irrelevant-ocr"
-INPUT_DIR="group_data/bbu_scene_2.0_order"
-OUTPUT_DIR="output_post/stage_a_bbu_rru_summary_12-22"
+CHECKPOINT="output/12-25/summary_merged/bbu_only-more_irrelevant-ocr"
+BASE_INPUT_DIR="group_data/scene_2.0_order"
+OUTPUT_DIR="output_post/stage_a_bbu_only-12-25"
 
 # Environment variable overrides (lowercase)
 # BBU接地线检查
@@ -18,11 +19,27 @@ OUTPUT_DIR="output_post/stage_a_bbu_rru_summary_12-22"
 # 挡风板安装检查
 # BBU安装方式检查（正装）
 
-MISSION="${mission:-BBU线缆布放要求}"
 DATASET="${dataset:-bbu}"
+if [[ -n "${mission:-}" ]]; then
+  MISSION="${mission}"
+elif [[ "${DATASET}" == "rru" ]]; then
+  MISSION="RRU安装检查"
+else
+  MISSION="BBU线缆布放要求"
+fi
+
+if [[ -n "${input_dir:-}" ]]; then
+  INPUT_DIR="${input_dir}"
+else
+  INPUT_DIR="${BASE_INPUT_DIR}"
+fi
+# Normalize when input_dir mistakenly points to a mission subdir.
+if [[ "${INPUT_DIR}" == */"${MISSION}" ]]; then
+  echo "[WARN] input_dir points to mission subdir; using parent instead: ${INPUT_DIR}"
+  INPUT_DIR="$(dirname "${INPUT_DIR}")"
+fi
 PROMPT_PROFILE="${prompt_profile:-summary_runtime}"
 CUDA_VISIBLE_DEVICES="${gpus:-0}"
-no_mission_flag="${no_mission:-true}"
 verify_flag="${verify_inputs:-true}"
 DEBUG_FLAG="${debug:-false}"
 PASS_GROUP_NUMBER="${pass_group_number:-8000}"
@@ -53,10 +70,10 @@ else
   DEVICE="cuda:0"
 fi
 
-# Fixed parameters
-BATCH_SIZE_PER_RANK="32"
-MAX_PIXELS="1048576"
-MAX_NEW_TOKENS="1024"
+# Fixed parameters (with env overrides)
+BATCH_SIZE_PER_RANK="${batch_size_per_rank:-32}"
+MAX_PIXELS="${max_pixels:-1048576}"
+MAX_NEW_TOKENS="${max_new_tokens:-1024}"
 TEMPERATURE="0.0001"
 TOP_P="1.0"
 REP_PENALTY="1.05"
@@ -64,6 +81,18 @@ LOG_LEVEL="INFO"
 SHARDING_MODE="${sharding_mode:-per_group}"  # per_group | per_image
 KEEP_INTERMEDIATE_OUTPUTS="${keep_intermediate_outputs:-false}"
 DEDUPLICATE="${deduplicate:-true}"  # Enable deduplication by default
+POSTPROCESS="${postprocess:-false}"  # Optional: postprocess Stage-A JSONL
+ADD_GT_FAIL_REASON="${add_gt_fail_reason:-false}"  # Optional: add gt_fail_reason_text from Excel
+EXCEL_PATH="${excel_path:-output_post/BBU_scene_latest.xlsx}"  # Excel file path for gt_fail_reason_text
+
+# RRU watermark/OCR tends to fail when images are downscaled too aggressively.
+# Use a higher pixel budget by default for RRU (can be overridden via max_pixels),
+# and reduce batch size to keep GPU memory roughly stable.
+if [[ "${DATASET}" == "rru" ]]; then
+  if [[ -z "${max_pixels:-}" ]]; then
+    MAX_PIXELS="4194304"  # ~2048x2048
+  fi
+fi
 
 # Resolve repository root from this script's location and set PYTHONPATH
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -94,11 +123,6 @@ echo "=================================="
 
 # Optional flags
 EXTRA_FLAGS=""
-case "${no_mission_flag,,}" in
-  1|true|yes)
-    EXTRA_FLAGS+=" --no_mission_focus"
-    ;;
-esac
 case "${verify_flag,,}" in
   1|true|yes)
     EXTRA_FLAGS+=" --verify_inputs"
@@ -215,4 +239,70 @@ if [[ "${DEDUPLICATE,,}" == "true" ]] || [[ "${DEDUPLICATE}" == "1" ]]; then
     fi
   fi
   echo "=================================="
+fi
+
+# Optional postprocess cleanup (RRU/BBU-specific)
+if [[ "${POSTPROCESS,,}" == "true" ]] || [[ "${POSTPROCESS}" == "1" ]]; then
+  echo ""
+  echo "=================================="
+  echo "Running Stage-A Postprocess"
+  echo "=================================="
+  OUTPUT_FILE="${OUTPUT_DIR}/${MISSION}_stage_a.jsonl"
+  if [[ ! -f "${OUTPUT_FILE}" ]]; then
+    echo "[WARNING] Output file not found: ${OUTPUT_FILE}"
+    echo "Skipping postprocess."
+  else
+    echo "Processing: ${OUTPUT_FILE}"
+    conda run -n "${CONDA_ENV}" --no-capture-output python -u -m src.stage_a.postprocess \
+      --input "${OUTPUT_FILE}" \
+      --dataset "${DATASET}" \
+      --inplace
+  fi
+  echo "=================================="
+fi
+
+# Optional: Add gt_fail_reason_text from Excel (BBU-specific only)
+if [[ "${ADD_GT_FAIL_REASON,,}" == "true" ]] || [[ "${ADD_GT_FAIL_REASON}" == "1" ]]; then
+  # Only process BBU dataset; RRU is not supported yet
+  if [[ "${DATASET}" == "bbu" ]]; then
+    echo ""
+    echo "=================================="
+    echo "Adding GT Fail Reason Text (BBU only)"
+    echo "=================================="
+    OUTPUT_FILE="${OUTPUT_DIR}/${MISSION}_stage_a.jsonl"
+    if [[ ! -f "${OUTPUT_FILE}" ]]; then
+      echo "[WARNING] Output file not found: ${OUTPUT_FILE}"
+      echo "Skipping gt_fail_reason addition."
+    else
+      echo "Processing: ${OUTPUT_FILE}"
+      echo "Excel file: ${EXCEL_PATH}"
+      if [[ ! -f "${EXCEL_PATH}" ]]; then
+        echo "[WARNING] Excel file not found: ${EXCEL_PATH}"
+        echo "Skipping gt_fail_reason addition."
+      else
+        conda run -n "${CONDA_ENV}" --no-capture-output python -u \
+          "${REPO_DIR}/scripts/add_gt_fail_reason_to_stage_a.py" \
+          "${OUTPUT_FILE}" \
+          --excel "${EXCEL_PATH}" \
+          --inplace 2>&1
+        
+        ADD_REASON_STATUS=$?
+        if [[ ${ADD_REASON_STATUS} -eq 0 ]]; then
+          echo ""
+          echo "[SUCCESS] GT fail reason text addition completed successfully"
+          echo "Original file updated: ${OUTPUT_FILE}"
+        else
+          echo ""
+          echo "[ERROR] GT fail reason text addition failed with status ${ADD_REASON_STATUS}"
+          echo "Original file preserved: ${OUTPUT_FILE}"
+          # Don't fail the entire script if addition fails
+        fi
+      fi
+    fi
+    echo "=================================="
+  else
+    echo ""
+    echo "[INFO] gt_fail_reason_text addition is only supported for dataset=bbu"
+    echo "[INFO] Current dataset=${DATASET}, skipping gt_fail_reason addition."
+  fi
 fi

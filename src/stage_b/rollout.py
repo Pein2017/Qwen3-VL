@@ -4,13 +4,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping, Sequence
 import logging
 import re
 from datetime import datetime, timezone
-from typing import Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import cast
 
 import torch
 from transformers import PreTrainedModel, PreTrainedTokenizerBase
+from transformers.generation.utils import GenerateOutput
 
 from .config import SamplerConfig
 from .sampling.prompts import build_messages
@@ -39,7 +41,7 @@ _ASSISTANT_MARKERS: Sequence[str] = (
     "<|im_start|>assistant\n",
 )
 
-_DEFAULT_STOP: Tuple[str, ...] = (
+_DEFAULT_STOP: tuple[str, ...] = (
     "\nassistant",
     "assistant\n",
     "assistant:",
@@ -48,6 +50,8 @@ _DEFAULT_STOP: Tuple[str, ...] = (
     "</s>",
     "<|im_end|>",
 )
+
+_DEFAULT_MAX_PROMPT_TOKENS = 4096
 
 
 def _trim_assistant_prefix(text: str) -> str:
@@ -63,7 +67,7 @@ def _trim_assistant_prefix(text: str) -> str:
     return text[last_index + marker_length :]
 
 
-def _normalize_verdict(text: str) -> Optional[GroupLabel]:
+def _normalize_verdict(text: str) -> GroupLabel | None:
     cleaned = text.strip().replace(" ", "").lower()
     if cleaned in {"通过", "pass", "通过。"}:
         return "pass"
@@ -81,7 +85,7 @@ def _normalize_verdict(text: str) -> Optional[GroupLabel]:
 
 def _parse_two_line_response(
     response: str,
-) -> Tuple[bool, Optional[GroupLabel], Optional[str]]:
+) -> tuple[bool, GroupLabel | None, str | None]:
     """Parse strict two-line protocol: Verdict + Reason (binary only)."""
 
     text = _trim_assistant_prefix(response).strip()
@@ -139,12 +143,14 @@ class RolloutSampler:
         tokenizer: PreTrainedTokenizerBase,
         config: SamplerConfig,
         *,
-        device: Optional[str] = None,
+        device: str | None = None,
     ) -> None:
-        self.model = model
-        self.tokenizer = tokenizer
-        self.config = config
-        self.device = device or (model.device if hasattr(model, "device") else "cpu")
+        self.model: PreTrainedModel = model
+        self.tokenizer: PreTrainedTokenizerBase = tokenizer
+        self.config: SamplerConfig = config
+        self.device: torch.device | str = (
+            device or (model.device if hasattr(model, "device") else "cpu")
+        )
 
     # ------------------------------------------------------------------
     # Prompt building
@@ -163,6 +169,45 @@ class RolloutSampler:
         assert isinstance(rendered, str), "apply_chat_template must return string"
         return rendered
 
+    def _count_prompt_tokens(self, prompts: Sequence[str]) -> list[int | None]:
+        if not prompts:
+            return []
+        try:
+            encoded = self.tokenizer(
+                list(prompts),
+                return_tensors="pt",
+                padding=True,
+                truncation=False,
+            )
+            if isinstance(encoded, Mapping):
+                attention_mask = encoded.get("attention_mask")
+                if isinstance(attention_mask, torch.Tensor):
+                    lengths = attention_mask.sum(dim=1).tolist()
+                    result: list[int | None] = [
+                        int(value) if value is not None else None for value in lengths
+                    ]
+                    return result
+                input_ids = encoded.get("input_ids")
+                if isinstance(input_ids, torch.Tensor):
+                    result: list[int | None] = [
+                        int((row != 0).sum().item()) for row in input_ids
+                    ]
+                    return result
+        except Exception:  # noqa: BLE001
+            pass
+
+        lengths: list[int | None] = []
+        for prompt in prompts:
+            try:
+                encoded = self.tokenizer(prompt, truncation=False)
+                input_ids = getattr(encoded, "input_ids", None)
+                if input_ids is None and isinstance(encoded, Mapping):
+                    input_ids = encoded.get("input_ids")
+                lengths.append(len(input_ids) if input_ids is not None else None)
+            except Exception:  # noqa: BLE001
+                lengths.append(None)
+        return lengths
+
     # ------------------------------------------------------------------
     # Generation helpers
     # ------------------------------------------------------------------
@@ -171,7 +216,7 @@ class RolloutSampler:
         prompts: Sequence[str],
         decode: DecodeConfig,
         sample_offset: int,
-    ) -> List[str]:
+    ) -> list[str]:
         if not prompts:
             return []
 
@@ -179,12 +224,13 @@ class RolloutSampler:
             list(prompts),
             return_tensors="pt",
             padding=True,
+            truncation=False,
         )
 
         inputs = {key: value.to(self.device) for key, value in encoded.items()}
         input_len = inputs["input_ids"].shape[1]
 
-        do_sample = decode.temperature is not None and decode.temperature > 0
+        do_sample = decode.temperature > 0
         stop_tokens = decode.stop if decode.stop else _DEFAULT_STOP
         # Treat common chat terminators as EOS to hard-stop generation
         stop_token_ids = []
@@ -196,7 +242,7 @@ class RolloutSampler:
             if len(ids) == 1:
                 stop_token_ids.append(ids[0])
 
-        eos_ids: List[int] = []
+        eos_ids: list[int] = []
         if self.tokenizer.eos_token_id is not None:
             eos_token_id = self.tokenizer.eos_token_id
             if isinstance(eos_token_id, int):
@@ -223,15 +269,20 @@ class RolloutSampler:
             torch.manual_seed(decode.seed + sample_offset)
 
         with torch.inference_mode():
-            generation = self.model.generate(**inputs, **generator_kwargs)  # type: ignore[operator]
+            generate_fn = cast(
+                Callable[..., torch.Tensor | GenerateOutput],
+                getattr(self.model, "generate"),
+            )
+            generation = generate_fn(**inputs, **generator_kwargs)
             maybe_empty_cache("rollout.generate")
 
-        sequences = (
-            generation.sequences if hasattr(generation, "sequences") else generation
-        )
+        if isinstance(generation, torch.Tensor):
+            sequences = generation
+        else:
+            sequences = generation.sequences
         sequences = sequences.to("cpu")
 
-        outputs: List[str] = []
+        outputs: list[str] = []
         for idx in range(sequences.size(0)):
             generated_ids = sequences[idx, input_len:]
 
@@ -279,11 +330,11 @@ class RolloutSampler:
         tickets: Sequence[GroupTicket],
         guidance_map: Mapping[str, MissionGuidance],
         domain_map: Mapping[str, str],
-    ) -> Mapping[str, List[ParsedTrajectory]]:
+    ) -> tuple[Mapping[str, list[ParsedTrajectory]], tuple[str, ...]]:
         if not tickets:
-            return {}
+            return {}, ()
 
-        prompts: List[str] = []
+        prompts: list[str] = []
         for ticket in tickets:
             if ticket.mission not in guidance_map:
                 raise KeyError(f"Missing mission guidance for {ticket.mission}")
@@ -299,19 +350,40 @@ class RolloutSampler:
                 )
             )
 
-        per_group: Dict[str, List[ParsedTrajectory]] = {
-            ticket.key: [] for ticket in tickets
+        max_prompt_tokens = (
+            self.config.max_prompt_tokens
+            if self.config.max_prompt_tokens is not None
+            else _DEFAULT_MAX_PROMPT_TOKENS
+        )
+        prompt_lengths = self._count_prompt_tokens(prompts)
+        kept_tickets: list[GroupTicket] = []
+        kept_prompts: list[str] = []
+        dropped_keys: list[str] = []
+        for ticket, prompt, length in zip(tickets, prompts, prompt_lengths):
+            if length is None or length > max_prompt_tokens:
+                dropped_keys.append(ticket.key)
+            else:
+                kept_tickets.append(ticket)
+                kept_prompts.append(prompt)
+
+        if not kept_tickets:
+            return {}, tuple(dropped_keys)
+
+        per_group: dict[str, list[ParsedTrajectory]] = {
+            ticket.key: [] for ticket in kept_tickets
         }
-        counters: Dict[str, int] = {ticket.key: 0 for ticket in tickets}
+        counters: dict[str, int] = {ticket.key: 0 for ticket in kept_tickets}
 
         for decode in self.config.grid:
             for sample_index in range(self.config.samples_per_decode):
-                responses = self._generate_with_prompts(prompts, decode, sample_index)
-                if len(responses) != len(tickets):
+                responses = self._generate_with_prompts(
+                    kept_prompts, decode, sample_index
+                )
+                if len(responses) != len(kept_tickets):
                     raise RuntimeError("Sampler returned mismatched response count")
 
                 current_time = datetime.now(timezone.utc)
-                for ticket, response_text in zip(tickets, responses):
+                for ticket, response_text in zip(kept_tickets, responses):
                     ticket_key = ticket.key
                     candidate_index = counters[ticket_key]
                     counters[ticket_key] += 1
@@ -350,7 +422,7 @@ class RolloutSampler:
 
         maybe_empty_cache("rollout.batch_end")
 
-        return per_group
+        return per_group, tuple(dropped_keys)
 
 
 __all__ = ["RolloutSampler"]

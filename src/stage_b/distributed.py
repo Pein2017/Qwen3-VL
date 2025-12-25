@@ -9,8 +9,9 @@ This module is intentionally lightweight:
 from __future__ import annotations
 
 import os
+from collections.abc import Sequence
 from datetime import timedelta
-from typing import List, Optional, Sequence, TypeVar
+from typing import TypeVar
 
 import torch
 import torch.distributed as dist
@@ -77,13 +78,13 @@ def barrier() -> None:
         dist.barrier()
 
 
-def broadcast_object(obj: Optional[T], *, src: int = 0) -> T:
+def broadcast_object(obj: T | None, *, src: int = 0) -> T:
     """Broadcast a Python object from src to all ranks and return it."""
     if not is_distributed_initialized() or get_world_size() <= 1:
         assert obj is not None
         return obj
 
-    payload: List[Optional[T]]
+    payload: list[T | None]
     if get_rank() == src:
         payload = [obj]
     else:
@@ -94,14 +95,14 @@ def broadcast_object(obj: Optional[T], *, src: int = 0) -> T:
     return result
 
 
-def gather_object(obj: T, *, dst: int = 0) -> Optional[List[T]]:
+def gather_object(obj: T, *, dst: int = 0) -> list[T] | None:
     """Gather Python objects on dst. Returns list on dst, else None."""
     if not is_distributed_initialized() or get_world_size() <= 1:
         return [obj]
 
     world_size = get_world_size()
     if get_rank() == dst:
-        gathered: List[Optional[T]] = [None for _ in range(world_size)]
+        gathered: list[T | None] = [None for _ in range(world_size)]
         dist.gather_object(obj, gathered, dst=dst)
         # dist.gather_object fills the list in rank order.
         return [item for item in gathered if item is not None]
@@ -109,13 +110,13 @@ def gather_object(obj: T, *, dst: int = 0) -> Optional[List[T]]:
     return None
 
 
-def all_gather_object(obj: T) -> List[T]:
+def all_gather_object(obj: T) -> list[T]:
     """All-gather Python objects across ranks in rank order."""
     if not is_distributed_initialized() or get_world_size() <= 1:
         return [obj]
 
     world_size = get_world_size()
-    gathered: List[Optional[T]] = [None for _ in range(world_size)]
+    gathered: list[T | None] = [None for _ in range(world_size)]
     dist.all_gather_object(gathered, obj)
     return [item for item in gathered if item is not None]
 
@@ -126,7 +127,7 @@ def broadcast_int(value: int, *, src: int = 0) -> int:
     return int(broadcast_object(int(value) if get_rank() == src else None, src=src))
 
 
-def broadcast_list_int(values: Sequence[int], *, src: int = 0) -> List[int]:
+def broadcast_list_int(values: Sequence[int], *, src: int = 0) -> list[int]:
     """Broadcast a list of ints from src; returns list on all ranks."""
     if not is_distributed_initialized() or get_world_size() <= 1:
         return [int(v) for v in values]

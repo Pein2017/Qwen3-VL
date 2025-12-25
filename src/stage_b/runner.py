@@ -11,9 +11,11 @@ import random
 import shutil
 import time
 import uuid
+from dataclasses import replace
 from collections import Counter, defaultdict
+from collections.abc import Mapping, Sequence, Iterator
 from pathlib import Path
-from typing import Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, cast
 
 import torch
 from transformers import (
@@ -21,6 +23,8 @@ from transformers import (
     AutoModelForCausalLM,
     AutoProcessor,
     AutoTokenizer,
+    PreTrainedModel,
+    PreTrainedTokenizerBase,
     Qwen3VLForConditionalGeneration,
 )
 
@@ -48,6 +52,8 @@ from .reflection import ReflectionEngine
 from .rollout import RolloutSampler
 from .rule_search import (
     EvalMetrics,
+    GateStats,
+    TicketRolloutStats,
     build_gate_stats,
     build_ticket_stats,
     compute_metrics as compute_rule_search_metrics,
@@ -57,6 +63,7 @@ from .rule_search import (
 from .sampling.prompts import build_messages
 from .types import (
     ExperienceOperation,
+    ExperienceOperationKind,
     GroupTicket,
     MissionGuidance,
     ReflectionAction,
@@ -67,6 +74,33 @@ from .utils.perf import enable_tf32
 from .utils.seed import seed_everything
 
 logger = get_logger("stage_b.runner")
+
+
+def _load_excluded_ticket_keys(config: StageBConfig) -> set[str]:
+    ticket_filter = getattr(config, "ticket_filter", None)
+    if ticket_filter is None:
+        return set()
+
+    excluded: set[str] = set()
+    excluded.update(getattr(ticket_filter, "exclude_ticket_keys", ()) or ())
+
+    path = getattr(ticket_filter, "exclude_ticket_keys_path", None)
+    if path is None:
+        return {key for key in excluded if key}
+
+    file_path = Path(path)
+    if not file_path.exists():
+        raise FileNotFoundError(
+            f"ticket_filter.exclude_ticket_keys_path not found: {file_path}"
+        )
+
+    with file_path.open("r", encoding="utf-8") as fh:
+        for line in fh:
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            excluded.add(stripped)
+    return {key for key in excluded if key}
 
 
 def _dtype_from_str(name: str):
@@ -94,7 +128,7 @@ def _detect_model_variant(model_path: str) -> str:
     return "lm"
 
 
-def _safe_model_max_length(tokenizer) -> int | None:
+def _safe_model_max_length(tokenizer: PreTrainedTokenizerBase) -> int | None:
     value = getattr(tokenizer, "model_max_length", None)
     if value is None:
         return None
@@ -148,7 +182,7 @@ def _load_model(config: StageBConfig):
     if variant == "vl":
         model = Qwen3VLForConditionalGeneration.from_pretrained(
             config.model.model_name_or_path,
-            **model_kwargs,
+            **cast(Any, model_kwargs),
             trust_remote_code=True,
         )
         processor = AutoProcessor.from_pretrained(
@@ -157,7 +191,7 @@ def _load_model(config: StageBConfig):
     else:
         model = AutoModelForCausalLM.from_pretrained(
             config.model.model_name_or_path,
-            **model_kwargs,
+            **cast(Any, model_kwargs),
             trust_remote_code=True,
         )
         processor = None
@@ -168,7 +202,7 @@ def _load_model(config: StageBConfig):
     return model, tokenizer, processor
 
 
-def _shuffle_indices(count: int, *, epoch: int, base_seed: int) -> List[int]:
+def _shuffle_indices(count: int, *, epoch: int, base_seed: int) -> list[int]:
     indices = list(range(count))
     seed_value = base_seed + epoch
     random.Random(seed_value).shuffle(indices)
@@ -179,7 +213,7 @@ def _resolve_train_pool_size(
     *,
     total: int,
     train_pool_size: int,
-    train_pool_fraction: Optional[float],
+    train_pool_fraction: float | None,
 ) -> int:
     if total <= 0:
         return 0
@@ -193,31 +227,53 @@ def _resolve_train_pool_size(
 def _split_train_eval_pool(
     tickets: Sequence[GroupTicket],
     *,
-    eval_fraction: float,
+    eval_size: int,
     seed: int,
     stratify_by_label: bool,
-) -> Tuple[List[GroupTicket], List[GroupTicket]]:
+) -> tuple[list[GroupTicket], list[GroupTicket]]:
     if not tickets:
         return [], []
-    if eval_fraction <= 0.0:
+    if eval_size <= 0:
         return list(tickets), []
-    if eval_fraction >= 1.0:
+    if eval_size >= len(tickets):
         return [], list(tickets)
 
     rng = random.Random(int(seed))
 
     if stratify_by_label:
-        by_label: Dict[str, List[GroupTicket]] = defaultdict(list)
+        by_label: dict[str, list[GroupTicket]] = defaultdict(list)
         for ticket in tickets:
             by_label[str(ticket.label)].append(ticket)
 
-        train: List[GroupTicket] = []
-        holdout: List[GroupTicket] = []
+        total = len(tickets)
+        eval_target = min(max(1, int(eval_size)), total)
+
+        desired_counts: dict[str, int] = {}
+        remainders: list[tuple[str, float]] = []
+        for label in sorted(by_label.keys()):
+            bucket_len = len(by_label[label])
+            raw = eval_target * bucket_len / total
+            count = int(raw)
+            desired_counts[label] = count
+            remainders.append((label, raw - count))
+
+        allocated = sum(desired_counts.values())
+        remaining = eval_target - allocated
+        if remaining > 0:
+            remainders.sort(key=lambda item: (-item[1], item[0]))
+            for label, _ in remainders:
+                if remaining <= 0:
+                    break
+                desired_counts[label] += 1
+                remaining -= 1
+
+        train: list[GroupTicket] = []
+        holdout: list[GroupTicket] = []
         for label in sorted(by_label.keys()):
             bucket = sorted(by_label[label], key=lambda t: t.key)
             indices = list(range(len(bucket)))
             rng.shuffle(indices)
-            cutoff = int(round(len(bucket) * float(eval_fraction)))
+            cutoff = min(desired_counts.get(label, 0), len(bucket))
             holdout.extend([bucket[i] for i in indices[:cutoff]])
             train.extend([bucket[i] for i in indices[cutoff:]])
         return train, holdout
@@ -225,7 +281,7 @@ def _split_train_eval_pool(
     ordered = sorted(tickets, key=lambda t: t.key)
     indices = list(range(len(ordered)))
     rng.shuffle(indices)
-    cutoff = int(round(len(ordered) * float(eval_fraction)))
+    cutoff = min(max(1, int(eval_size)), len(ordered))
     holdout = [ordered[i] for i in indices[:cutoff]]
     train = [ordered[i] for i in indices[cutoff:]]
     return train, holdout
@@ -237,7 +293,7 @@ def _sample_train_pool_tickets(
     pool_size: int,
     with_replacement: bool,
     seed: int,
-) -> List[GroupTicket]:
+) -> list[GroupTicket]:
     if not tickets or pool_size <= 0:
         return []
 
@@ -254,9 +310,9 @@ def _sample_train_pool_tickets(
 
 
 def _extract_verdict_samples(
-    trajectories: Sequence,
-) -> List[Optional[str]]:
-    verdicts: List[Optional[str]] = []
+    trajectories: Sequence[object],
+) -> list[str | None]:
+    verdicts: list[str | None] = []
     for cand in trajectories:
         verdict_val = getattr(cand, "verdict", None)
         format_ok = bool(getattr(cand, "format_ok", False))
@@ -268,9 +324,9 @@ def _extract_verdict_samples(
 
 
 def _extract_reason_samples(
-    trajectories: Sequence,
-) -> List[Optional[str]]:
-    reasons: List[Optional[str]] = []
+    trajectories: Sequence[object],
+) -> list[str | None]:
+    reasons: list[str | None] = []
     for cand in trajectories:
         format_ok = bool(getattr(cand, "format_ok", False))
         reason = getattr(cand, "reason", None)
@@ -289,10 +345,14 @@ def _distributed_rollout_payloads(
     mission: str,
     domain: str,
     per_rank_batch_size: int,
-) -> Dict[str, List[object]]:
-    """Run distributed rollout for a single mission and return per-ticket trajectories.
+    progress_logging_steps: int | None = None,
+    progress_label: str | None = None,
+    progress_gt_by_ticket_key: Mapping[str, str] | None = None,
+    progress_jsonl_path: Path | None = None,
+) -> tuple[dict[str, list[object]], tuple[str, ...]]:
+    """Run distributed rollout for a single mission and return trajectories + dropped keys.
 
-    Returns a mapping only on rank 0; other ranks return an empty dict.
+    Returns payloads only on rank 0; other ranks return empty payloads and drops.
     """
 
     world_size = get_world_size()
@@ -302,15 +362,45 @@ def _distributed_rollout_payloads(
     guidance_map = {mission: guidance}
     domain_map = {mission: domain}
 
-    merged: Dict[str, List[object]] = {}
+    merged: dict[str, list[object]] = {}
+    dropped: set[str] = set()
     batch_index = 0
+
+    log_every = int(progress_logging_steps or 0)
+    should_log_progress = bool(is_main_process() and log_every > 0)
+    gt_by_key: dict[str, str] | None = None
+    stats_by_key: dict[str, TicketRolloutStats] | None = None
+    next_log_at = log_every
+    total_batches = 0
+    start_time = time.time()
+    if should_log_progress:
+        total_batches = int((len(tickets) + global_batch_size - 1) / global_batch_size)
+        gt_by_key = (
+            dict(progress_gt_by_ticket_key)
+            if progress_gt_by_ticket_key is not None
+            else {ticket.key: ticket.label for ticket in tickets}
+        )
+        stats_by_key = {}
+        logger.info(
+            "%s rollout progress enabled: tickets=%d log_every=%d global_batch=%d budget=%s",
+            progress_label or "rollout",
+            len(tickets),
+            log_every,
+            global_batch_size,
+            sampler.config.max_prompt_tokens
+            if sampler.config.max_prompt_tokens is not None
+            else "default",
+        )
     for batch in _chunked(list(tickets), global_batch_size):
         batch_index += 1
         start, end = _shard_bounds(len(batch), world_size=world_size, rank=rank)
         shard = batch[start:end]
-        local_error: Optional[str] = None
+        local_error: str | None = None
         try:
-            local = sampler.generate_for_batch(shard, guidance_map, domain_map)
+            local_payloads, local_dropped = sampler.generate_for_batch(
+                shard, guidance_map, domain_map
+            )
+            local = {"payloads": local_payloads, "dropped": list(local_dropped)}
         except Exception as exc:  # noqa: BLE001
             local_error = f"{type(exc).__name__}: {exc}"
             logger.exception(
@@ -320,7 +410,7 @@ def _distributed_rollout_payloads(
                 int((len(tickets) + global_batch_size - 1) / global_batch_size),
                 len(shard),
             )
-            local = {"__error__": local_error}
+            local = {"__error__": local_error, "payloads": {}, "dropped": []}
         gathered = gather_object(local, dst=0)
         if not is_main_process():
             error_flag = broadcast_int(0, src=0)
@@ -329,19 +419,94 @@ def _distributed_rollout_payloads(
             continue
         assert gathered is not None
         error_flag = 0
+        updated_keys: set[str] | None = set() if should_log_progress else None
         for part in gathered:
             if "__error__" in part:
                 error_flag = 1
                 logger.error("rollout failed on a rank: %s", part.get("__error__"))
                 continue
-            for ticket_key, trajectories in part.items():
-                merged.setdefault(ticket_key, []).extend(trajectories)
+            part_payloads = part.get("payloads", {})
+            part_dropped = part.get("dropped", [])
+            if isinstance(part_dropped, Sequence) and not isinstance(
+                part_dropped, (str, bytes)
+            ):
+                for item in part_dropped:
+                    dropped.add(str(item))
+            if isinstance(part_payloads, Mapping):
+                for ticket_key, trajectories in part_payloads.items():
+                    merged.setdefault(ticket_key, []).extend(trajectories)
+                    if updated_keys is not None:
+                        updated_keys.add(str(ticket_key))
 
         error_flag = broadcast_int(error_flag, src=0)
         if error_flag:
             raise RuntimeError("rollout aborted due to upstream error")
 
-    return merged if is_main_process() else {}
+        if should_log_progress and updated_keys and gt_by_key is not None and stats_by_key is not None:
+            for ticket_key in updated_keys:
+                gt_label = gt_by_key.get(ticket_key)
+                if not gt_label:
+                    continue
+                verdicts = _extract_verdict_samples(merged.get(ticket_key, []))
+                stats_by_key[ticket_key] = build_ticket_stats(
+                    ticket_key=ticket_key,
+                    gt_label=gt_label,
+                    verdicts=verdicts,
+                )
+
+            while len(stats_by_key) >= next_log_at and next_log_at > 0:
+                metrics = compute_rule_search_metrics(list(stats_by_key.values()))
+                elapsed = time.time() - start_time
+                logger.info(
+                    "%s rollout progress: batch=%d/%d used=%d/%d dropped=%d acc=%.4f fn_rate=%.4f fp_rate=%.4f elapsed=%.1fs",
+                    progress_label or "rollout",
+                    batch_index,
+                    total_batches,
+                    metrics.n,
+                    len(tickets),
+                    len(dropped),
+                    metrics.acc,
+                    metrics.fn_rate,
+                    metrics.fp_rate,
+                    elapsed,
+                )
+                if progress_jsonl_path is not None:
+                    progress_jsonl_path.parent.mkdir(parents=True, exist_ok=True)
+                    with progress_jsonl_path.open("a", encoding="utf-8") as fh:
+                        fh.write(
+                            json.dumps(
+                                {
+                                    "timestamp": time.time(),
+                                    "label": progress_label or "rollout",
+                                    "batch_index": batch_index,
+                                    "total_batches": total_batches,
+                                    "n_total": len(tickets),
+                                    "n_used": metrics.n,
+                                    "n_dropped_overlength": len(dropped),
+                                    "acc": metrics.acc,
+                                    "fn": metrics.fn,
+                                    "fp": metrics.fp,
+                                    "tp": metrics.tp,
+                                    "fn_rate": metrics.fn_rate,
+                                    "fp_rate": metrics.fp_rate,
+                                    "elapsed_sec": elapsed,
+                                },
+                                ensure_ascii=False,
+                            )
+                            + "\n"
+                        )
+                next_log_at += log_every
+
+    if is_main_process() and dropped:
+        budget = sampler.config.max_prompt_tokens
+        logger.info(
+            "rollout dropped overlength prompts: dropped=%d kept=%d budget=%s",
+            len(dropped),
+            len(merged),
+            budget if budget is not None else "default",
+        )
+
+    return (merged, tuple(sorted(dropped))) if is_main_process() else ({}, ())
 
 
 def _distributed_rollout_verdicts(
@@ -352,10 +517,10 @@ def _distributed_rollout_verdicts(
     mission: str,
     domain: str,
     per_rank_batch_size: int,
-) -> Dict[str, List[Optional[str]]]:
-    """Run distributed rollout for a single mission and return per-ticket verdict samples.
+) -> tuple[dict[str, list[str | None]], tuple[str, ...]]:
+    """Run distributed rollout and return verdict samples plus dropped keys.
 
-    Returns a mapping only on rank 0; other ranks return an empty dict.
+    Returns payloads only on rank 0; other ranks return empty payloads and drops.
     """
 
     world_size = get_world_size()
@@ -365,22 +530,43 @@ def _distributed_rollout_verdicts(
     guidance_map = {mission: guidance}
     domain_map = {mission: domain}
 
-    merged: Dict[str, List[Optional[str]]] = {}
+    merged: dict[str, list[str | None]] = {}
+    dropped: set[str] = set()
     for batch in _chunked(list(tickets), global_batch_size):
         start, end = _shard_bounds(len(batch), world_size=world_size, rank=rank)
         shard = batch[start:end]
-        local = sampler.generate_for_batch(shard, guidance_map, domain_map)
+        local_payloads, local_dropped = sampler.generate_for_batch(
+            shard, guidance_map, domain_map
+        )
+        local = {"payloads": local_payloads, "dropped": list(local_dropped)}
         gathered = gather_object(local, dst=0)
         if not is_main_process():
             continue
         assert gathered is not None
         for part in gathered:
-            for ticket_key, trajectories in part.items():
-                merged.setdefault(ticket_key, []).extend(
-                    _extract_verdict_samples(trajectories)
-                )
+            part_payloads = part.get("payloads", {})
+            part_dropped = part.get("dropped", [])
+            if isinstance(part_dropped, Sequence) and not isinstance(
+                part_dropped, (str, bytes)
+            ):
+                for item in part_dropped:
+                    dropped.add(str(item))
+            if isinstance(part_payloads, Mapping):
+                for ticket_key, trajectories in part_payloads.items():
+                    merged.setdefault(ticket_key, []).extend(
+                        _extract_verdict_samples(trajectories)
+                    )
 
-    return merged if is_main_process() else {}
+    if is_main_process() and dropped:
+        budget = sampler.config.max_prompt_tokens
+        logger.info(
+            "rollout dropped overlength prompts (verdicts): dropped=%d kept=%d budget=%s",
+            len(dropped),
+            len(merged),
+            budget if budget is not None else "default",
+        )
+
+    return (merged, tuple(sorted(dropped))) if is_main_process() else ({}, ())
 
 
 def _build_rule_proposer_user_prompt(
@@ -402,7 +588,7 @@ def _build_rule_proposer_user_prompt(
         if key.startswith("G") and key != "G0"
     ]
 
-    lines: List[str] = [
+    lines: list[str] = [
         f"任务: {mission}",
         f"G0: {g0}",
     ]
@@ -426,8 +612,7 @@ def _build_rule_proposer_user_prompt(
         agreement = getattr(stats, "agreement", 0.0)
         difficulty = getattr(stats, "difficulty", 0.0)
         lines.append(
-            f"样本{idx}: ticket_key={ticket.key}; gt_label={ticket.label}; "
-            f"baseline_majority={majority_pred}; agreement={agreement:.3f}; difficulty={difficulty:.3f}"
+            f"样本{idx}: ticket_key={ticket.key}; gt_label={ticket.label}; baseline_majority={majority_pred}; agreement={agreement:.3f}; difficulty={difficulty:.3f}"
         )
         summaries = ticket.summaries.as_dict()
         lines.append("stage_a_summaries:")
@@ -442,7 +627,7 @@ def _build_rule_proposer_user_prompt(
 def _propose_rules(
     *,
     model: torch.nn.Module,
-    tokenizer,
+    tokenizer: PreTrainedTokenizerBase,
     config: StageBConfig,
     mission: str,
     guidance: MissionGuidance,
@@ -451,8 +636,8 @@ def _propose_rules(
     reflection_engine: ReflectionEngine,
     iteration: int,
     rejected_candidate_ids: Sequence[str],
-    log_dir: Optional[Path] = None,
-) -> List[Dict[str, object]]:
+    log_dir: Path | None = None,
+) -> list[dict[str, object]]:
     """Run proposer LLM once and return candidate operations (validated + de-duplicated)."""
 
     assert config.rule_search is not None
@@ -461,7 +646,7 @@ def _propose_rules(
     )
     max_prompt_tokens = int(config.rule_search.proposer_max_prompt_tokens)
     example_list = list(examples)
-    prompt_tokens: Optional[int] = None
+    prompt_tokens: int | None = None
 
     while True:
         user_prompt = _build_rule_proposer_user_prompt(
@@ -497,7 +682,13 @@ def _propose_rules(
                 padding=False,
                 truncation=False,
             )
-            prompt_tokens = int(encoded_probe["input_ids"].size(1))
+            input_ids = getattr(encoded_probe, "input_ids", None)
+            if input_ids is None and isinstance(encoded_probe, Mapping):
+                input_ids = encoded_probe.get("input_ids")
+            if isinstance(input_ids, torch.Tensor):
+                prompt_tokens = int(input_ids.size(1))
+            else:
+                prompt_tokens = len(input_ids[0]) if input_ids else None
         except Exception:  # noqa: BLE001
             prompt_tokens = None
 
@@ -507,13 +698,27 @@ def _propose_rules(
             break
         example_list.pop()
 
-    if prompt_tokens is not None and prompt_tokens > max_prompt_tokens:
+    if prompt_tokens is None or prompt_tokens > max_prompt_tokens:
         logger.warning(
-            "rule_search proposer prompt exceeds token budget after trimming: tokens=%d budget=%d examples=%d",
-            prompt_tokens,
+            "rule_search proposer prompt exceeds token budget after trimming: tokens=%s budget=%d examples=%d",
+            prompt_tokens if prompt_tokens is not None else "unknown",
             max_prompt_tokens,
             len(example_list),
         )
+        if log_dir is not None:
+            log_dir.mkdir(parents=True, exist_ok=True)
+            _append_jsonl(
+                log_dir / "rule_search_proposer_failures.jsonl",
+                {
+                    "timestamp": time.time(),
+                    "iteration": iteration,
+                    "mission": mission,
+                    "examples": len(example_list),
+                    "prompt_tokens": prompt_tokens,
+                    "error": "prompt_overlength",
+                },
+            )
+        return []
 
     model_max_length = _safe_model_max_length(tokenizer)
     if prompt_tokens is not None and model_max_length is not None:
@@ -543,7 +748,7 @@ def _propose_rules(
 
     torch.manual_seed(int(config.seed))
     with torch.inference_mode():
-        output = model.generate(  # type: ignore[call-overload]
+        output = cast(Any, model).generate(
             **inputs,
             max_new_tokens=config.rule_search.proposer_max_new_tokens,
             temperature=config.rule_search.proposer_temperature,
@@ -604,7 +809,7 @@ def _propose_rules(
         normalize_rule_signature(v) for v in guidance.experiences.values()
     }
 
-    candidates: List[Dict[str, object]] = []
+    candidates: list[dict[str, object]] = []
     seen_signatures: set[str] = set()
     seen_candidate_ids: set[str] = set()
     rejected_set = {str(item).strip() for item in rejected_candidate_ids if item}
@@ -619,7 +824,7 @@ def _propose_rules(
             continue
 
         target_signature = None
-        target_signatures: List[str] = []
+        target_signatures: list[str] = []
         if op in {"update", "remove"}:
             target_raw = entry.get("target_signature")
             target_signature = (
@@ -724,18 +929,27 @@ def _load_rejected_candidate_ids(rule_candidates_path: Path) -> set[str]:
     return rejected
 
 
-def _false_release_rate(metrics: Optional[EvalMetrics]) -> Optional[float]:
+def _false_release_rate(metrics: EvalMetrics | None) -> float | None:
     if metrics is None:
         return None
     denom = metrics.tp + metrics.fp
     return metrics.fp / denom if denom else 0.0
 
 
-def _false_block_rate(metrics: Optional[EvalMetrics]) -> Optional[float]:
+def _false_block_rate(metrics: EvalMetrics | None) -> float | None:
     if metrics is None:
         return None
     denom = metrics.tp + metrics.fn
     return metrics.fn / denom if denom else 0.0
+
+
+def _safe_float(value: object, default: float = 0.0) -> float:
+    if isinstance(value, (int, float, str)):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+    return default
 
 
 def _build_ablation_candidates(
@@ -743,12 +957,12 @@ def _build_ablation_candidates(
     guidance: MissionGuidance,
     max_candidates: int,
     rejected_candidate_ids: Sequence[str],
-) -> List[Dict[str, object]]:
+) -> list[dict[str, object]]:
     if max_candidates <= 0:
         return []
     rejected_set = {str(item).strip() for item in rejected_candidate_ids if item}
 
-    scored: List[Tuple[float, str, str]] = []
+    scored: list[tuple[float, str, str]] = []
     for key, text in guidance.experiences.items():
         if not key.startswith("G") or key == "G0":
             continue
@@ -763,7 +977,7 @@ def _build_ablation_candidates(
         scored.append((confidence, key, signature))
 
     scored.sort(key=lambda item: (item[0], item[1]))
-    candidates: List[Dict[str, object]] = []
+    candidates: list[dict[str, object]] = []
     for confidence, _key, signature in scored[:max_candidates]:
         candidates.append(
             {
@@ -784,12 +998,13 @@ def _build_ablation_candidates(
 def _run_rule_search_mission(
     *,
     config: StageBConfig,
-    model,
-    tokenizer,
+    model: PreTrainedModel,
+    tokenizer: PreTrainedTokenizerBase,
     mission: str,
     mission_tickets: Sequence[GroupTicket],
     mission_dir: Path,
     domain: str,
+    jump_reflection: bool = False,
 ) -> None:
     assert config.rule_search is not None
 
@@ -797,9 +1012,15 @@ def _run_rule_search_mission(
     benchmarks_path = mission_dir / "benchmarks.jsonl"
     hard_cases_path = mission_dir / "rule_search_hard_cases.jsonl"
     regressions_path = mission_dir / "rule_search_candidate_regressions.jsonl"
+    baseline_metrics_path = mission_dir / "baseline_metrics.json"
+    baseline_ticket_stats_path = mission_dir / "baseline_ticket_stats.jsonl"
+    baseline_wrong_cases_path = mission_dir / "baseline_wrong_cases.jsonl"
+    baseline_metrics_steps_path = mission_dir / "baseline_metrics_steps.jsonl"
+    baseline_np_cases_path = mission_dir / "baseline_np_cases.jsonl"
+    baseline_ng_cases_path = mission_dir / "baseline_ng_cases.jsonl"
 
-    mission_guidance_repo: Optional[GuidanceRepository] = None
-    reflection_engine: Optional[ReflectionEngine] = None
+    mission_guidance_repo: GuidanceRepository | None = None
+    reflection_engine: ReflectionEngine | None = None
     if is_main_process():
         mission_guidance_repo = _setup_mission_guidance(
             startup_path=config.guidance.path,
@@ -808,39 +1029,291 @@ def _run_rule_search_mission(
             retention=config.guidance.retention,
             reset=config.guidance.reset_on_rerun,
         )
-        reflection_engine = ReflectionEngine(
-            model=model,
-            tokenizer=tokenizer,
-            config=config.reflection,
-            guidance_repo=mission_guidance_repo,
-            reflection_log=None,
-        )
+        if not jump_reflection:
+            reflection_engine = ReflectionEngine(
+                model=model,
+                tokenizer=tokenizer,
+                config=config.reflection,
+                guidance_repo=mission_guidance_repo,
+                reflection_log=None,
+            )
 
-    rejected_candidate_ids = (
+    rejected_candidate_ids_raw = (
         _load_rejected_candidate_ids(rule_candidates_path)
         if is_main_process()
         else set()
     )
-    rejected_candidate_ids = broadcast_object(
-        rejected_candidate_ids if is_main_process() else None, src=0
+    rejected_candidate_ids_raw = cast(
+        object,
+        broadcast_object(rejected_candidate_ids_raw if is_main_process() else None, src=0),
     )
+    if isinstance(rejected_candidate_ids_raw, set):
+        rejected_candidate_ids = [str(item) for item in rejected_candidate_ids_raw]
+    elif isinstance(rejected_candidate_ids_raw, Sequence):
+        rejected_candidate_ids = [str(item) for item in rejected_candidate_ids_raw]
+    else:
+        rejected_candidate_ids = []
+    rejected_ids = sorted(rejected_candidate_ids)
+
+    # Shuffle once to avoid label-ordered tickets (deterministic per seed).
+    mission_tickets = list(mission_tickets)
+    random.Random(int(config.seed)).shuffle(mission_tickets)
 
     # Deterministic mission ticket lookup.
     ticket_by_key = {ticket.key: ticket for ticket in mission_tickets}
 
-    eval_fraction = float(config.rule_search.eval_pool_fraction)
+    # ------------------------------------------------------------------
+    # jump_reflection mode: baseline-only audit (no proposer, no gating).
+    # ------------------------------------------------------------------
+    if jump_reflection:
+        if config.rule_search.train_sampler is None:
+            raise ValueError("rule_search.train_sampler is required in rule_search mode")
+
+        train_sampler = RolloutSampler(
+            model=model, tokenizer=tokenizer, config=config.rule_search.train_sampler
+        )
+
+        distill_cfg = config.stage_b_distillation
+        distill_requested = bool(distill_cfg and distill_cfg.enabled and distill_cfg.distill_size)
+
+        current_guidance = None
+        if is_main_process():
+            assert mission_guidance_repo is not None
+            current_guidance = mission_guidance_repo.get(mission)
+        current_guidance = broadcast_object(current_guidance, src=0)
+
+        tickets_filtered = None
+        if is_main_process():
+            tickets_filtered, _ = _filter_overlength_tickets(
+                mission_tickets,
+                sampler=train_sampler,
+                guidance=current_guidance,
+                domain=domain,
+                label="jump_reflection baseline",
+            )
+        tickets_filtered = cast(
+            list[GroupTicket] | None,
+            broadcast_object(tickets_filtered if is_main_process() else None, src=0),
+        )
+        if tickets_filtered is None:
+            tickets_filtered = []
+
+        if is_main_process() and baseline_metrics_steps_path.exists():
+            baseline_metrics_steps_path.unlink()
+
+        base_payloads, dropped = _distributed_rollout_payloads(
+            tickets=tickets_filtered,
+            sampler=train_sampler,
+            guidance=current_guidance,
+            mission=mission,
+            domain=domain,
+            per_rank_batch_size=config.runner.per_rank_rollout_batch_size,
+            progress_logging_steps=config.runner.logging_steps,
+            progress_label="jump_reflection baseline",
+            progress_gt_by_ticket_key={ticket.key: ticket.label for ticket in tickets_filtered}
+            if is_main_process()
+            else None,
+            progress_jsonl_path=baseline_metrics_steps_path,
+        )
+
+        if is_main_process():
+            if dropped:
+                logger.info(
+                    "jump_reflection baseline dropped tickets: dropped=%d kept=%d",
+                    len(dropped),
+                    len(base_payloads),
+                )
+
+            stats_by_ticket: dict[str, TicketRolloutStats] = {}
+            reason_samples_by_ticket: dict[str, list[str]] = {}
+            for ticket in tickets_filtered:
+                if ticket.key not in base_payloads:
+                    continue
+                trajectories = base_payloads.get(ticket.key, [])
+                verdicts = _extract_verdict_samples(trajectories)
+                reasons = _extract_reason_samples(trajectories)
+                stats_by_ticket[ticket.key] = build_ticket_stats(
+                    ticket_key=ticket.key,
+                    gt_label=ticket.label,
+                    verdicts=verdicts,
+                )
+                reason_samples_by_ticket[ticket.key] = reasons
+
+            metrics = compute_rule_search_metrics(list(stats_by_ticket.values()))
+
+            # Write a compact baseline metrics blob for offline analysis.
+            payload = {
+                "timestamp": time.time(),
+                "mission": mission,
+                "mode": "jump_reflection",
+                "n_total": len(mission_tickets),
+                "n_used": len(stats_by_ticket),
+                "n_dropped_overlength": len(dropped),
+                "acc": metrics.acc,
+                "fn": metrics.fn,
+                "fp": metrics.fp,
+                "tp": metrics.tp,
+                "fn_rate": metrics.fn_rate,
+                "fp_rate": metrics.fp_rate,
+                "np": metrics.fn,  # NP: GT pass but predicted fail (false block)
+                "ng": metrics.fp,  # NG: GT fail but predicted pass (false release)
+            }
+            baseline_metrics_path.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+
+            # Write per-ticket stats (rank 0 only).
+            with baseline_ticket_stats_path.open("w", encoding="utf-8") as fh:
+                for key, entry in sorted(
+                    stats_by_ticket.items(), key=lambda item: item[0]
+                ):
+                    ticket = ticket_by_key.get(key)
+                    fh.write(
+                        json.dumps(
+                            {
+                                "ticket_key": entry.ticket_key,
+                                "gt_label": entry.gt_label,
+                                "majority_pred": entry.majority_pred,
+                                "agreement": entry.agreement,
+                                "hard_wrong": entry.hard_wrong,
+                                "pass_count": entry.pass_count,
+                                "fail_count": entry.fail_count,
+                                "invalid_count": entry.invalid_count,
+                                "total_samples": entry.total_samples,
+                                "n_images": (
+                                    len(ticket.summaries.as_dict()) if ticket else None
+                                ),
+                            },
+                            ensure_ascii=False,
+                        )
+                        + "\n"
+                    )
+
+            # Write joined wrong cases for fast manual/agent diagnosis.
+            with baseline_wrong_cases_path.open("w", encoding="utf-8") as fh:
+                for key, entry in sorted(
+                    stats_by_ticket.items(), key=lambda item: item[0]
+                ):
+                    if entry.majority_pred is None or entry.majority_pred == entry.gt_label:
+                        continue
+                    ticket = ticket_by_key.get(key)
+                    fh.write(
+                        json.dumps(
+                            {
+                                "ticket_key": entry.ticket_key,
+                                "group_id": key.split("::")[0],
+                                "mission": mission,
+                                "gt_label": entry.gt_label,
+                                "majority_pred": entry.majority_pred,
+                                "agreement": entry.agreement,
+                                "hard_wrong": entry.hard_wrong,
+                                "verdict_samples": list(entry.verdict_samples),
+                                "reason_samples": reason_samples_by_ticket.get(key, [])[:3],
+                                "per_image": (
+                                    ticket.summaries.as_dict() if ticket else None
+                                ),
+                            },
+                            ensure_ascii=False,
+                        )
+                        + "\n"
+                    )
+
+            # Write split error buckets for quick analysis:
+            # - NP: GT pass but predicted fail (false block)
+            # - NG: GT fail but predicted pass (false release)
+            with baseline_np_cases_path.open("w", encoding="utf-8") as fh_np, baseline_ng_cases_path.open(
+                "w", encoding="utf-8"
+            ) as fh_ng:
+                for key, entry in sorted(
+                    stats_by_ticket.items(), key=lambda item: item[0]
+                ):
+                    if entry.majority_pred is None or entry.majority_pred == entry.gt_label:
+                        continue
+                    ticket = ticket_by_key.get(key)
+                    row = {
+                        "ticket_key": entry.ticket_key,
+                        "group_id": key.split("::")[0],
+                        "mission": mission,
+                        "gt_label": entry.gt_label,
+                        "majority_pred": entry.majority_pred,
+                        "agreement": entry.agreement,
+                        "hard_wrong": entry.hard_wrong,
+                        "verdict_samples": list(entry.verdict_samples),
+                        "reason_samples": reason_samples_by_ticket.get(key, [])[:5],
+                        "per_image": (ticket.summaries.as_dict() if ticket else None),
+                    }
+                    if entry.gt_label == "pass" and entry.majority_pred == "fail":
+                        fh_np.write(json.dumps(row, ensure_ascii=False) + "\n")
+                    elif entry.gt_label == "fail" and entry.majority_pred == "pass":
+                        fh_ng.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+            # Also export hard cases for quick triage (same format as rule-search).
+            for row in _hard_case_rows(
+                stats_by_ticket,
+                mission=mission,
+                iteration=1,
+                sampler="baseline",
+                limit=max(200, int(config.rule_search.reflect_size) * 8),
+                reason_samples_by_ticket=reason_samples_by_ticket,
+            ):
+                _append_jsonl(hard_cases_path, row)
+
+            logger.info(
+                "jump_reflection baseline written: metrics=%s stats=%s wrong=%s hard_cases=%s",
+                baseline_metrics_path,
+                baseline_ticket_stats_path,
+                baseline_wrong_cases_path,
+                hard_cases_path,
+            )
+            logger.info(
+                "jump_reflection baseline progress snapshots: %s",
+                baseline_metrics_steps_path,
+            )
+            logger.info(
+                "jump_reflection split buckets written: np=%s ng=%s",
+                baseline_np_cases_path,
+                baseline_ng_cases_path,
+            )
+
+            if distill_requested:
+                logger.info(
+                    "jump_reflection distill enabled; exporting ChatML for post-training"
+                )
+
+        if distill_requested:
+            distill_guidance = current_guidance
+            _run_rule_search_distill(
+                config=config,
+                model=model,
+                tokenizer=tokenizer,
+                mission=mission,
+                mission_tickets=tickets_filtered,
+                mission_dir=mission_dir,
+                domain=domain,
+                guidance=distill_guidance,
+            )
+
+        return
+
+    eval_size = int(config.rule_search.eval_pool_size)
     train_tickets, eval_tickets = _split_train_eval_pool(
         list(mission_tickets),
-        eval_fraction=eval_fraction,
+        eval_size=eval_size,
         seed=config.seed,
         stratify_by_label=True,
     )
+    if not train_tickets and eval_tickets:
+        logger.warning(
+            "rule_search eval_pool_size >= total; falling back to train-all (eval=0) to avoid empty train pool"
+        )
+        train_tickets = list(eval_tickets)
+        eval_tickets = []
     logger.info(
-        "rule_search split: mission=%s train=%d eval=%d eval_fraction=%.3f",
+        "rule_search split: mission=%s train=%d eval=%d eval_size=%d",
         mission,
         len(train_tickets),
         len(eval_tickets),
-        eval_fraction,
+        eval_size,
     )
 
     if config.rule_search.train_sampler is None:
@@ -912,8 +1385,37 @@ def _run_rule_search_mission(
                         train_pool_size,
                     )
 
+        if is_main_process():
+            train_pool_tickets, _ = _filter_overlength_tickets(
+                train_pool_tickets,
+                sampler=train_sampler,
+                guidance=current_guidance,
+                domain=domain,
+                label=f"train pool iter{iteration}",
+            )
+        train_pool_tickets = broadcast_object(
+            train_pool_tickets if is_main_process() else None, src=0
+        )
+        if not train_pool_tickets:
+            if is_main_process():
+                logger.warning(
+                    "rule_search iteration %d: all train tickets exceed max_prompt_tokens; skipping",
+                    iteration,
+                )
+            no_gain_rounds = broadcast_int(
+                no_gain_rounds + 1 if is_main_process() else 0, src=0
+            )
+            should_stop = no_gain_rounds >= patience
+            should_stop = bool(
+                broadcast_int(1 if should_stop and is_main_process() else 0, src=0)
+            )
+            if should_stop:
+                early_stop_triggered = True
+                break
+            continue
+
         # Baseline rollout for gate evaluation (paired with candidate train sampler).
-        base_payloads_train = _distributed_rollout_payloads(
+        base_payloads_train, dropped_train = _distributed_rollout_payloads(
             tickets=train_pool_tickets,
             sampler=train_sampler,
             guidance=current_guidance,
@@ -921,17 +1423,35 @@ def _run_rule_search_mission(
             domain=domain,
             per_rank_batch_size=config.runner.per_rank_rollout_batch_size,
         )
-        base_samples_eval: Dict[str, List[Optional[str]]] = {}
-        base_reasons_eval: Dict[str, List[Optional[str]]] = {}
+        base_samples_eval: dict[str, list[str | None]] = {}
+        base_reasons_eval: dict[str, list[str | None]] = {}
         if is_main_process():
+            available_keys = set(base_payloads_train.keys())
+            missing_keys = {ticket.key for ticket in train_pool_tickets} - available_keys
+            if dropped_train or missing_keys:
+                dropped_all = set(dropped_train) | missing_keys
+                logger.info(
+                    "rule_search train rollout dropped tickets: dropped=%d kept=%d",
+                    len(dropped_all),
+                    len(available_keys),
+                )
+                train_pool_tickets = [
+                    ticket
+                    for ticket in train_pool_tickets
+                    if ticket.key in available_keys
+                ]
             for ticket_key, trajectories in base_payloads_train.items():
                 base_samples_eval[ticket_key] = _extract_verdict_samples(trajectories)
                 base_reasons_eval[ticket_key] = _extract_reason_samples(trajectories)
-        base_stats_by_ticket: Dict[str, object] = {}
-        stats_for_proposer: Dict[str, object] = {}
+
+        train_pool_tickets = broadcast_object(
+            train_pool_tickets if is_main_process() else None, src=0
+        )
+        base_stats_by_ticket: dict[str, TicketRolloutStats] = {}
+        stats_for_proposer: dict[str, TicketRolloutStats] = {}
         base_metrics = None
-        reflect_keys: List[str] = []
-        candidates: List[Dict[str, object]] = []
+        reflect_keys: list[str] = []
+        candidates: list[dict[str, object]] = []
 
         if is_main_process():
             for ticket in train_pool_tickets:
@@ -941,9 +1461,7 @@ def _run_rule_search_mission(
                     gt_label=ticket.label,
                     verdicts=verdicts,
                 )
-            base_metrics = compute_rule_search_metrics(
-                base_stats_by_ticket.values()  # type: ignore[arg-type]
-            )
+            base_metrics = compute_rule_search_metrics(list(base_stats_by_ticket.values()))
             stats_for_proposer = dict(base_stats_by_ticket)
             for row in _hard_case_rows(
                 base_stats_by_ticket,
@@ -957,7 +1475,7 @@ def _run_rule_search_mission(
 
             # Optional mining sampler for selecting harder mismatches (does not affect gate metrics).
             if config.rule_search.mining_sampler is not None:
-                base_samples_mining = _distributed_rollout_verdicts(
+                base_samples_mining, dropped_mining = _distributed_rollout_verdicts(
                     tickets=train_pool_tickets,
                     sampler=mining_sampler,
                     guidance=current_guidance,
@@ -965,9 +1483,17 @@ def _run_rule_search_mission(
                     domain=domain,
                     per_rank_batch_size=config.runner.per_rank_rollout_batch_size,
                 )
-                mining_stats: Dict[str, object] = {}
+                if dropped_mining:
+                    logger.info(
+                        "rule_search mining rollout dropped tickets: dropped=%d kept=%d",
+                        len(dropped_mining),
+                        len(base_samples_mining),
+                    )
+                mining_stats: dict[str, TicketRolloutStats] = {}
                 for ticket in train_pool_tickets:
                     verdicts = base_samples_mining.get(ticket.key, [])
+                    if not verdicts and ticket.key not in base_samples_mining:
+                        continue
                     mining_stats[ticket.key] = build_ticket_stats(
                         ticket_key=ticket.key,
                         gt_label=ticket.label,
@@ -984,7 +1510,7 @@ def _run_rule_search_mission(
                     _append_jsonl(hard_cases_path, row)
 
             reflect_keys = pick_reflection_ticket_keys(
-                stats_for_proposer,  # type: ignore[arg-type]
+                stats_for_proposer,
                 reflect_size=config.rule_search.reflect_size,
                 reflect_order=config.rule_search.reflect_order,
             )
@@ -1006,7 +1532,7 @@ def _run_rule_search_mission(
                         stats_by_ticket=stats_for_proposer,
                         reflection_engine=reflection_engine,
                         iteration=iteration,
-                        rejected_candidate_ids=rejected_candidate_ids,
+                        rejected_candidate_ids=rejected_ids,
                         log_dir=mission_dir / "reflection_cache",
                     )
                 except Exception as exc:  # noqa: BLE001
@@ -1020,7 +1546,7 @@ def _run_rule_search_mission(
                 ablation_candidates = _build_ablation_candidates(
                     guidance=current_guidance,
                     max_candidates=remaining,
-                    rejected_candidate_ids=rejected_candidate_ids,
+                    rejected_candidate_ids=rejected_ids,
                 )
                 candidates.extend(ablation_candidates)
 
@@ -1055,18 +1581,41 @@ def _run_rule_search_mission(
 
         # Prepare eval pool baseline (fixed for the run).
         base_eval_metrics = None
-        base_eval_stats: Optional[Dict[str, object]] = None
-        base_payloads_eval = _distributed_rollout_payloads(
-            tickets=eval_tickets,
+        base_eval_stats: dict[str, TicketRolloutStats] = {}
+        eval_tickets_filtered = None
+        if is_main_process():
+            eval_tickets_filtered, _ = _filter_overlength_tickets(
+                eval_tickets,
+                sampler=eval_sampler,
+                guidance=current_guidance,
+                domain=domain,
+                label=f"eval pool iter{iteration}",
+            )
+        eval_tickets_filtered = cast(
+            list[GroupTicket] | None,
+            broadcast_object(eval_tickets_filtered if is_main_process() else None, src=0),
+        )
+        if eval_tickets_filtered is None:
+            eval_tickets_filtered = []
+        base_payloads_eval, dropped_eval = _distributed_rollout_payloads(
+            tickets=eval_tickets_filtered,
             sampler=eval_sampler,
             guidance=current_guidance,
             mission=mission,
             domain=domain,
             per_rank_batch_size=config.runner.per_rank_rollout_batch_size,
         )
-        if is_main_process() and eval_tickets:
-            base_eval_stats = {}
-            for ticket in eval_tickets:
+        base_eval_stats: dict[str, TicketRolloutStats] = {}
+        if is_main_process() and eval_tickets_filtered:
+            if dropped_eval:
+                logger.info(
+                    "rule_search eval baseline dropped tickets: dropped=%d kept=%d",
+                    len(dropped_eval),
+                    len(base_payloads_eval),
+                )
+            for ticket in eval_tickets_filtered:
+                if ticket.key not in base_payloads_eval:
+                    continue
                 verdicts = _extract_verdict_samples(
                     base_payloads_eval.get(ticket.key, [])
                 )
@@ -1075,16 +1624,18 @@ def _run_rule_search_mission(
                     gt_label=ticket.label,
                     verdicts=verdicts,
                 )
-            base_eval_metrics = compute_rule_search_metrics(
-                base_eval_stats.values()  # type: ignore[arg-type]
-            )
+            base_eval_metrics = compute_rule_search_metrics(list(base_eval_stats.values()))
 
-        base_eval_metrics = broadcast_object(
-            base_eval_metrics if is_main_process() else None, src=0
+        base_eval_metrics = cast(
+            EvalMetrics | None,
+            broadcast_object(base_eval_metrics if is_main_process() else None, src=0),
         )
-        base_eval_stats = broadcast_object(
+        base_eval_stats_raw = broadcast_object(
             base_eval_stats if is_main_process() else None, src=0
         )
+        if base_eval_stats_raw is None:
+            base_eval_stats_raw = {}
+        base_eval_stats = cast(dict[str, TicketRolloutStats], base_eval_stats_raw)
 
         # Candidate evaluation (A/B on the same train pool, paired seeds by sampler config).
         signature_lookup = None
@@ -1093,7 +1644,7 @@ def _run_rule_search_mission(
                 normalize_rule_signature(text): key
                 for key, text in current_guidance.experiences.items()
             }
-        best_candidate: Optional[Dict[str, object]] = None
+        best_candidate: dict[str, object] | None = None
         for cand_idx, cand in enumerate(candidates, start=1):
             op = str(cand.get("op") or "upsert").strip().lower()
             if op not in {"upsert", "update", "merge", "remove"}:
@@ -1107,10 +1658,15 @@ def _run_rule_search_mission(
                 cand_sig = str(cand.get("target_signature") or "").strip()
             candidate_id = str(cand.get("candidate_id") or "").strip() or None
             target_signature = str(cand.get("target_signature") or "").strip()
-            target_signatures = cand.get("target_signatures") or []
-            if isinstance(target_signatures, (str, bytes)):
+            target_signatures_raw = cand.get("target_signatures") or []
+            if not isinstance(target_signatures_raw, Sequence) or isinstance(
+                target_signatures_raw, (str, bytes)
+            ):
                 target_signatures = []
-            target_signatures = [str(item).strip() for item in target_signatures if item]
+            else:
+                target_signatures = [
+                    str(item).strip() for item in target_signatures_raw if item
+                ]
             if op in {"upsert", "update", "merge"} and not cand_text:
                 continue
 
@@ -1122,7 +1678,7 @@ def _run_rule_search_mission(
                 reflection_id = f"rule_search_preview_{iteration}_{cand_idx}"
                 assert signature_lookup is not None
                 target_key = None
-                merged_from: Optional[Tuple[str, ...]] = None
+                merged_from: tuple[str, ...] | None = None
 
                 if op in {"update", "remove"}:
                     target_key = signature_lookup.get(target_signature)
@@ -1166,7 +1722,7 @@ def _run_rule_search_mission(
 
                 if not skip_candidate:
                     candidate_operation = ExperienceOperation(
-                        op=op,  # type: ignore[arg-type]
+                        op=cast(ExperienceOperationKind, op),
                         key=target_key,
                         text=cand_text or None,
                         rationale=str(cand.get("rationale") or "").strip() or None,
@@ -1202,8 +1758,36 @@ def _run_rule_search_mission(
                 candidate_guidance if is_main_process() else None, src=0
             )
 
-            cand_samples = _distributed_rollout_verdicts(
-                tickets=train_pool_tickets,
+            cand_train_tickets = None
+            if is_main_process():
+                cand_train_tickets, _ = _filter_overlength_tickets(
+                    train_pool_tickets,
+                    sampler=train_sampler,
+                    guidance=candidate_guidance,
+                    domain=domain,
+                    label=f"candidate iter{iteration}#{cand_idx}",
+                )
+                if not cand_train_tickets:
+                    logger.warning(
+                        "rule_search candidate skipped: all tickets exceed max_prompt_tokens"
+                    )
+                    skip_candidate = True
+            skip_candidate = bool(
+                broadcast_int(1 if skip_candidate and is_main_process() else 0, src=0)
+            )
+            if skip_candidate:
+                continue
+            cand_train_tickets = cast(
+                list[GroupTicket] | None,
+                broadcast_object(
+                    cand_train_tickets if is_main_process() else None, src=0
+                ),
+            )
+            if cand_train_tickets is None:
+                cand_train_tickets = []
+
+            cand_samples, dropped_cand = _distributed_rollout_verdicts(
+                tickets=cand_train_tickets,
                 sampler=train_sampler,
                 guidance=candidate_guidance,
                 mission=mission,
@@ -1212,12 +1796,20 @@ def _run_rule_search_mission(
             )
 
             passed = False
-            gate_stats = None
+            gate_stats: GateStats | None = None
             cand_metrics = None
-            cand_stats_by_ticket: Dict[str, object] = {}
+            cand_stats_by_ticket: dict[str, TicketRolloutStats] = {}
             if is_main_process():
                 # Build candidate stats and gate decision (rank 0 only).
+                if dropped_cand:
+                    logger.info(
+                        "rule_search candidate rollout dropped tickets: dropped=%d kept=%d",
+                        len(dropped_cand),
+                        len(cand_samples),
+                    )
                 for ticket in train_pool_tickets:
+                    if ticket.key not in cand_samples:
+                        continue
                     verdicts = cand_samples.get(ticket.key, [])
                     cand_stats_by_ticket[ticket.key] = build_ticket_stats(
                         ticket_key=ticket.key,
@@ -1225,42 +1817,66 @@ def _run_rule_search_mission(
                         verdicts=verdicts,
                     )
 
-                gate_stats, passed = build_gate_stats(
-                    base_stats=base_stats_by_ticket,  # type: ignore[arg-type]
-                    new_stats=cand_stats_by_ticket,  # type: ignore[arg-type]
-                    rer_threshold=config.rule_search.gate.min_relative_error_reduction,
-                    bootstrap_iterations=config.rule_search.gate.bootstrap.iterations,
-                    bootstrap_min_prob=config.rule_search.gate.bootstrap.min_prob,
-                    bootstrap_seed=config.rule_search.gate.bootstrap.seed + iteration,
-                    max_changed_fraction=config.rule_search.gate.max_changed_fraction,
-                )
-                cand_metrics = compute_rule_search_metrics(
-                    cand_stats_by_ticket.values()  # type: ignore[arg-type]
-                )
-                if op in {"update", "merge", "remove"} and base_metrics is not None:
-                    fp_delta = cand_metrics.fp_rate - base_metrics.fp_rate
-                    acc_delta = cand_metrics.acc - base_metrics.acc
-                    fp_improved = fp_delta < -1e-12
-                    acc_improved = acc_delta > 1e-12
-                    fp_increase_ok = (
-                        fp_delta
-                        <= float(config.rule_search.gate.max_fp_rate_increase) + 1e-12
+                common_keys = set(base_stats_by_ticket) & set(cand_stats_by_ticket)
+                if not common_keys:
+                    logger.warning(
+                        "rule_search candidate skipped: no common tickets after drops"
                     )
-                    lifecycle_passed = fp_improved and acc_improved and fp_increase_ok
-                    passed = passed and lifecycle_passed
-                else:
+                    passed = False
                     fp_delta = None
                     acc_delta = None
                     fp_improved = None
                     acc_improved = None
                     fp_increase_ok = None
+                else:
+                    base_stats_for_gate = {
+                        key: base_stats_by_ticket[key] for key in common_keys
+                    }
+                    cand_stats_for_gate = {
+                        key: cand_stats_by_ticket[key] for key in common_keys
+                    }
+                    gate_stats, passed = build_gate_stats(
+                        base_stats=base_stats_for_gate,
+                        new_stats=cand_stats_for_gate,
+                        rer_threshold=config.rule_search.gate.min_relative_error_reduction,
+                        bootstrap_iterations=config.rule_search.gate.bootstrap.iterations,
+                        bootstrap_min_prob=config.rule_search.gate.bootstrap.min_prob,
+                        bootstrap_seed=config.rule_search.gate.bootstrap.seed + iteration,
+                        max_changed_fraction=config.rule_search.gate.max_changed_fraction,
+                    )
+                    cand_metrics = compute_rule_search_metrics(
+                        list(cand_stats_for_gate.values())
+                    )
+                    base_metrics_for_gate = compute_rule_search_metrics(
+                        list(base_stats_for_gate.values())
+                    )
+                    if op in {"update", "merge", "remove"}:
+                        fp_delta = cand_metrics.fp_rate - base_metrics_for_gate.fp_rate
+                        acc_delta = cand_metrics.acc - base_metrics_for_gate.acc
+                        fp_improved = fp_delta < -1e-12
+                        acc_improved = acc_delta > 1e-12
+                        fp_increase_ok = (
+                            fp_delta
+                            <= float(config.rule_search.gate.max_fp_rate_increase)
+                            + 1e-12
+                        )
+                        lifecycle_passed = (
+                            fp_improved and acc_improved and fp_increase_ok
+                        )
+                        passed = passed and lifecycle_passed
+                    else:
+                        fp_delta = None
+                        acc_delta = None
+                        fp_improved = None
+                        acc_improved = None
+                        fp_increase_ok = None
 
             passed = bool(broadcast_int(1 if passed and is_main_process() else 0, src=0))
 
             eval_metrics = None
             eval_acc_drop = None
             if passed and eval_tickets and base_eval_metrics is not None:
-                cand_eval_payloads = _distributed_rollout_payloads(
+                cand_eval_payloads, dropped_eval = _distributed_rollout_payloads(
                     tickets=eval_tickets,
                     sampler=eval_sampler,
                     guidance=candidate_guidance,
@@ -1269,8 +1885,16 @@ def _run_rule_search_mission(
                     per_rank_batch_size=config.runner.per_rank_rollout_batch_size,
                 )
                 if is_main_process():
-                    cand_eval_stats: Dict[str, object] = {}
+                    if dropped_eval:
+                        logger.info(
+                            "rule_search eval rollout dropped tickets: dropped=%d kept=%d",
+                            len(dropped_eval),
+                            len(cand_eval_payloads),
+                        )
+                    cand_eval_stats: dict[str, TicketRolloutStats] = {}
                     for ticket in eval_tickets:
+                        if ticket.key not in cand_eval_payloads:
+                            continue
                         verdicts = _extract_verdict_samples(
                             cand_eval_payloads.get(ticket.key, [])
                         )
@@ -1279,9 +1903,7 @@ def _run_rule_search_mission(
                             gt_label=ticket.label,
                             verdicts=verdicts,
                         )
-                    eval_metrics = compute_rule_search_metrics(
-                        cand_eval_stats.values()  # type: ignore[arg-type]
-                    )
+                    eval_metrics = compute_rule_search_metrics(list(cand_eval_stats.values()))
                     eval_acc_drop = float(base_eval_metrics.acc) - float(
                         eval_metrics.acc
                     )
@@ -1291,8 +1913,8 @@ def _run_rule_search_mission(
 
             decision = "promoted" if passed else "rejected"
             regressions = _candidate_regressions(
-                base_stats_by_ticket,  # type: ignore[arg-type]
-                cand_stats_by_ticket,  # type: ignore[arg-type]
+                base_stats_by_ticket,
+                cand_stats_by_ticket,
                 limit=50,
             )
             if regressions:
@@ -1332,7 +1954,7 @@ def _run_rule_search_mission(
                     "base_acc": base_metrics.acc if base_metrics else None,
                     "base_false_release_rate": _false_release_rate(base_metrics),
                     "base_false_block_rate": _false_block_rate(base_metrics),
-                    "cand_acc": cand_metrics.acc,
+                    "cand_acc": cand_metrics.acc if cand_metrics else None,
                     "cand_false_release_rate": _false_release_rate(cand_metrics),
                     "cand_false_block_rate": _false_block_rate(cand_metrics),
                     "eval_n": len(eval_tickets),
@@ -1348,13 +1970,11 @@ def _run_rule_search_mission(
                 },
             )
 
-            if passed:
+            if passed and gate_stats is not None:
                 if (
                     best_candidate is None
                     or gate_stats.relative_error_reduction
-                    > float(
-                        best_candidate.get("relative_error_reduction", -1.0)  # type: ignore[union-attr]
-                    )
+                    > _safe_float(best_candidate.get("relative_error_reduction", -1.0), -1.0)
                 ):
                     best_candidate = {
                         "candidate_index": cand_idx,
@@ -1445,8 +2065,8 @@ def _run_rule_search_mission(
                             base_eval_metrics.acc if base_eval_metrics else None
                         ),
                         "eval_after_acc": (
-                            best_candidate["eval_metrics"].acc
-                            if best_candidate.get("eval_metrics") is not None
+                            (best_eval_metrics.acc if best_eval_metrics else None)
+                            if (best_eval_metrics := cast(EvalMetrics | None, best_candidate.get("eval_metrics"))) is not None
                             else None
                         ),
                         "eval_acc_drop": best_candidate.get("eval_acc_drop"),
@@ -1481,38 +2101,43 @@ def _run_rule_search_mission(
             early_stop_triggered = True
             break
 
-    distill_cfg = config.stage_b_distillation
-    distill_enabled = bool(distill_cfg.enabled) if distill_cfg else False
-    if distill_enabled and early_stop_triggered:
-        distill_guidance = None
-        if is_main_process():
-            assert mission_guidance_repo is not None
-            distill_guidance = mission_guidance_repo.get(mission)
-        distill_guidance = broadcast_object(
-            distill_guidance if is_main_process() else None, src=0
-        )
-        _run_rule_search_distill(
-            config=config,
-            model=model,
-            tokenizer=tokenizer,
-            mission=mission,
-            mission_tickets=mission_tickets,
-            mission_dir=mission_dir,
-            domain=domain,
-            guidance=distill_guidance,
-        )
+        distill_cfg = config.stage_b_distillation
+        distill_requested = bool(distill_cfg and distill_cfg.enabled and distill_cfg.distill_size)
+        if distill_requested:
+            distill_guidance = None
+            if is_main_process():
+                assert mission_guidance_repo is not None
+                distill_guidance = mission_guidance_repo.get(mission)
+            distill_guidance = broadcast_object(
+                distill_guidance if is_main_process() else None, src=0
+            )
+            if is_main_process():
+                logger.info(
+                    "rule_search distill enabled (early_stop=%s); exporting ChatML for post-training",
+                    early_stop_triggered,
+                )
+            _run_rule_search_distill(
+                config=config,
+                model=model,
+                tokenizer=tokenizer,
+                mission=mission,
+                mission_tickets=mission_tickets,
+                mission_dir=mission_dir,
+                domain=domain,
+                guidance=distill_guidance,
+            )
 
 
 def _run_rule_search_distill(
     *,
     config: StageBConfig,
-    model,
-    tokenizer,
+    model: PreTrainedModel,
+    tokenizer: PreTrainedTokenizerBase,
     mission: str,
     mission_tickets: Sequence[GroupTicket],
     mission_dir: Path,
     domain: str,
-    guidance: Optional[MissionGuidance],
+    guidance: MissionGuidance | None,
 ) -> None:
     distill_cfg = config.stage_b_distillation
     if distill_cfg is None or not distill_cfg.enabled:
@@ -1537,22 +2162,35 @@ def _run_rule_search_distill(
             logger.warning("rule_search distill skipped: train_sampler missing")
         return
 
-    min_temp = (
+    requested_temp = (
         float(distill_cfg.distill_temperature)
         if distill_cfg.distill_temperature is not None
+        else None
+    )
+    target_temp = (
+        requested_temp
+        if requested_temp is not None
         else min(decode.temperature for decode in train_sampler_cfg.grid)
     )
     low_temp_grid = tuple(
-        decode for decode in train_sampler_cfg.grid if decode.temperature == min_temp
+        decode for decode in train_sampler_cfg.grid if decode.temperature == target_temp
     )
     if not low_temp_grid:
         closest = min(
-            train_sampler_cfg.grid, key=lambda decode: abs(decode.temperature - min_temp)
+            train_sampler_cfg.grid,
+            key=lambda decode: abs(decode.temperature - target_temp),
         )
-        low_temp_grid = (closest,)
-        min_temp = closest.temperature
+        if requested_temp is not None:
+            low_temp_grid = (replace(closest, temperature=target_temp),)
+        else:
+            low_temp_grid = (closest,)
+            target_temp = closest.temperature
 
-    distill_sampler_cfg = SamplerConfig(grid=low_temp_grid, samples_per_decode=1)
+    distill_sampler_cfg = SamplerConfig(
+        grid=low_temp_grid,
+        samples_per_decode=1,
+        max_prompt_tokens=train_sampler_cfg.max_prompt_tokens,
+    )
     distill_sampler = RolloutSampler(
         model=model, tokenizer=tokenizer, config=distill_sampler_cfg
     )
@@ -1570,7 +2208,7 @@ def _run_rule_search_distill(
     else:
         distill_tickets = rng.sample(pool, distill_size)
 
-    distill_payloads = _distributed_rollout_payloads(
+    distill_payloads, dropped_distill = _distributed_rollout_payloads(
         tickets=distill_tickets,
         sampler=distill_sampler,
         guidance=guidance,
@@ -1581,6 +2219,13 @@ def _run_rule_search_distill(
 
     if not is_main_process():
         return
+
+    if dropped_distill:
+        logger.info(
+            "rule_search distill dropped tickets: dropped=%d kept=%d",
+            len(dropped_distill),
+            len(distill_payloads),
+        )
 
     distill_path = (
         Path(distill_cfg.log_chatml_path)
@@ -1593,17 +2238,24 @@ def _run_rule_search_distill(
     skipped = 0
     with distill_path.open("w", encoding="utf-8") as fh:
         for ticket in distill_tickets:
+            if ticket.key not in distill_payloads:
+                skipped += 1
+                continue
             trajectories = distill_payloads.get(ticket.key, [])
             parsed = None
             for candidate in trajectories:
-                if candidate.format_ok and candidate.verdict is not None:
+                if bool(getattr(candidate, "format_ok", False)) and getattr(
+                    candidate, "verdict", None
+                ) is not None:
                     parsed = candidate
                     break
             if parsed is None:
                 skipped += 1
                 continue
-            verdict_text = "通过" if parsed.verdict == "pass" else "不通过"
-            reason_text = parsed.reason or ""
+            verdict_text = (
+                "通过" if getattr(parsed, "verdict", None) == "pass" else "不通过"
+            )
+            reason_text = str(getattr(parsed, "reason", "") or "")
             assistant_content = f"Verdict: {verdict_text}\nReason: {reason_text}"
             messages = build_messages(ticket, guidance, domain=domain)
             messages.append({"role": "assistant", "content": assistant_content})
@@ -1622,21 +2274,64 @@ def _run_rule_search_distill(
         written,
         skipped,
         len(distill_tickets),
-        min_temp,
+        target_temp,
         distill_path,
     )
 
 
-def _append_jsonl(path: Path, payload: dict) -> None:
+def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
     with path.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(payload, ensure_ascii=False))
         fh.write("\n")
 
 
-def _load_jsonl(path: Path) -> List[dict]:
+def _filter_overlength_tickets(
+    tickets: Sequence[GroupTicket],
+    *,
+    sampler: RolloutSampler,
+    guidance: MissionGuidance,
+    domain: str,
+    label: str,
+) -> tuple[list[GroupTicket], tuple[str, ...]]:
+    """Drop tickets whose prompts exceed sampler max_prompt_tokens."""
+
+    max_prompt_tokens = sampler.config.max_prompt_tokens
+    if max_prompt_tokens is None:
+        return list(tickets), ()
+
+    prompts: list[str] = []
+    for ticket in tickets:
+        try:
+            prompts.append(sampler._build_prompt(ticket, guidance, domain=domain))
+        except Exception:  # noqa: BLE001
+            # Keep ticket if prompt build fails here; rollout will surface errors.
+            prompts.append("")
+
+    lengths = sampler._count_prompt_tokens(prompts)
+    kept: list[GroupTicket] = []
+    dropped: list[str] = []
+    for ticket, length in zip(tickets, lengths):
+        if length is None or length <= max_prompt_tokens:
+            kept.append(ticket)
+        else:
+            dropped.append(ticket.key)
+
+    if is_main_process() and dropped:
+        logger.info(
+            "rule_search %s prefilter dropped overlength tickets: dropped=%d kept=%d budget=%d",
+            label,
+            len(dropped),
+            len(kept),
+            max_prompt_tokens,
+        )
+
+    return kept, tuple(dropped)
+
+
+def _load_jsonl(path: Path) -> list[dict[str, Any]]:
     if not path.exists():
         return []
-    items: List[dict] = []
+    items: list[dict[str, Any]] = []
     with path.open("r", encoding="utf-8") as fh:
         for line in fh:
             line = line.strip()
@@ -1652,12 +2347,12 @@ def _load_jsonl(path: Path) -> List[dict]:
     return items
 
 
-def _chunked(seq: List, size: int):
+def _chunked(seq: list[Any], size: int) -> Iterator[list[Any]]:
     for i in range(0, len(seq), size):
         yield seq[i : i + size]
 
 
-def _shard_bounds(total: int, *, world_size: int, rank: int) -> Tuple[int, int]:
+def _shard_bounds(total: int, *, world_size: int, rank: int) -> tuple[int, int]:
     """Return [start, end) bounds for stable sharding across ranks."""
     if world_size <= 1:
         return 0, total
@@ -1680,9 +2375,9 @@ def _hard_case_rows(
     iteration: int,
     sampler: str,
     limit: int,
-    reason_samples_by_ticket: Optional[Mapping[str, Sequence[Optional[str]]]] = None,
-) -> List[Dict[str, object]]:
-    rows: List[Dict[str, object]] = []
+    reason_samples_by_ticket: Mapping[str, Sequence[str | None]] | None = None,
+) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
     for entry in stats_by_ticket.values():
         majority = getattr(entry, "majority_pred", None)
         gt_label = getattr(entry, "gt_label", None)
@@ -1690,9 +2385,9 @@ def _hard_case_rows(
             continue
         ticket_key = getattr(entry, "ticket_key", None)
         verdict_samples = list(getattr(entry, "verdict_samples", ()))
-        reason_samples: List[Optional[str]] = []
+        reason_samples: list[str | None] = []
         majority_reason = None
-        reason_counts: List[Dict[str, object]] = []
+        reason_counts: list[dict[str, object]] = []
         if reason_samples_by_ticket is not None and ticket_key is not None:
             raw_reasons = list(reason_samples_by_ticket.get(ticket_key, ()))
             if raw_reasons:
@@ -1734,8 +2429,8 @@ def _hard_case_rows(
 
     rows.sort(
         key=lambda row: (
-            float(row.get("hard_wrong") or 0.0),  # type: ignore[arg-type]
-            float(row.get("difficulty") or 0.0),  # type: ignore[arg-type]
+            _safe_float(row.get("hard_wrong")),
+            _safe_float(row.get("difficulty")),
         ),
         reverse=True,
     )
@@ -1747,12 +2442,12 @@ def _hard_case_rows(
 
 
 def _candidate_regressions(
-    base_stats: Mapping[str, object],
-    new_stats: Mapping[str, object],
+    base_stats: Mapping[str, TicketRolloutStats],
+    new_stats: Mapping[str, TicketRolloutStats],
     *,
     limit: int,
-) -> List[Dict[str, object]]:
-    rows: List[Dict[str, object]] = []
+) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
     keys = sorted(set(base_stats.keys()) & set(new_stats.keys()))
     for key in keys:
         base = base_stats[key]
@@ -1778,8 +2473,8 @@ def _candidate_regressions(
 
     rows.sort(
         key=lambda row: (
-            float(row.get("cand_agreement") or 0.0),  # type: ignore[arg-type]
-            float(row.get("base_agreement") or 0.0),  # type: ignore[arg-type]
+            _safe_float(row.get("cand_agreement")),
+            _safe_float(row.get("base_agreement")),
         ),
         reverse=True,
     )
@@ -1863,7 +2558,9 @@ def _setup_mission_guidance(
     return repo
 
 
-def run_all(config: StageBConfig, log_level: str = "logging") -> None:
+def run_all(
+    config: StageBConfig, log_level: str = "logging", *, jump_reflection: bool = False
+) -> None:
     level_map = {
         "debug": logging.DEBUG,
         "logging": logging.INFO,
@@ -1898,8 +2595,30 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
     if not tickets:
         raise RuntimeError("No Stage-A records ingested; aborting Stage-B run")
 
+    excluded_ticket_keys = _load_excluded_ticket_keys(config)
+    if excluded_ticket_keys:
+        before = len(tickets)
+        tickets = [ticket for ticket in tickets if ticket.key not in excluded_ticket_keys]
+        dropped = before - len(tickets)
+        if is_main_process():
+            logger.info(
+                "Ticket filter applied: excluded_keys=%d dropped=%d kept=%d",
+                len(excluded_ticket_keys),
+                dropped,
+                len(tickets),
+            )
+            if dropped:
+                shown = 0
+                examples: list[str] = []
+                for key in sorted(excluded_ticket_keys):
+                    examples.append(key)
+                    shown += 1
+                    if shown >= 8:
+                        break
+                logger.info("Ticket filter excluded (sample): %s", ", ".join(examples))
+
     # Group tickets by mission
-    tickets_by_mission: Dict[str, List[GroupTicket]] = defaultdict(list)
+    tickets_by_mission: dict[str, list[GroupTicket]] = defaultdict(list)
     for ticket in tickets:
         tickets_by_mission[ticket.mission].append(ticket)
 
@@ -1909,8 +2628,7 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
 
     if len(tickets_by_mission) != 1:
         raise RuntimeError(
-            "Stage-B rule_search expects exactly one mission per run_name; "
-            f"got {len(tickets_by_mission)} missions"
+            f"Stage-B rule_search expects exactly one mission per run_name; got {len(tickets_by_mission)} missions"
         )
 
     # Get the single mission name for directory structure: {root}/{mission_name}/{run_name}/
@@ -1949,6 +2667,7 @@ def run_all(config: StageBConfig, log_level: str = "logging") -> None:
         mission_tickets=training_by_mission[mission],
         mission_dir=run_dir,
         domain=domain,
+        jump_reflection=jump_reflection,
     )
     logger.info("Completed Stage-B rule_search run for mission %s", mission)
 
@@ -1973,12 +2692,24 @@ def main() -> None:
         action="store_true",
         help="Enable debug logging (HIGHEST PRIORITY, overrides --log-level)",
     )
+    parser.add_argument(
+        "--jump-reflection",
+        action="store_true",
+        help="Skip proposer/reflection and only run baseline rollouts + dumps (for manual guidance edits).",
+    )
     args = parser.parse_args()
 
     stage_b_config = load_stage_b_config(args.config)
     effective_level = "debug" if args.debug else args.log_level
+    effective_jump_reflection = bool(args.jump_reflection) or bool(
+        getattr(stage_b_config, "jump_reflection", False)
+    )
     if args.step == "all":
-        run_all(stage_b_config, log_level=effective_level)
+        run_all(
+            stage_b_config,
+            log_level=effective_level,
+            jump_reflection=effective_jump_reflection,
+        )
     else:  # pragma: no cover - defensive
         raise ValueError(f"Unsupported step: {args.step}")
 

@@ -7,10 +7,10 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from ..types import HypothesisCandidate
 from ..utils.chinese import normalize_spaces, to_simplified
@@ -37,19 +37,19 @@ def _normalize_signature(text: str) -> str:
 class HypothesisRecord:
     signature: str
     text: str
-    falsifier: Optional[str]
-    dimension: Optional[str]
+    falsifier: str | None
+    dimension: str | None
     status: str
     support_cycles: int
-    support_cycle_ids: Tuple[int, ...]
-    support_ticket_keys: Tuple[str, ...]
+    support_cycle_ids: tuple[int, ...]
+    support_ticket_keys: tuple[str, ...]
     first_seen: str
     last_seen: str
-    promoted_at: Optional[str] = None
-    rejected_at: Optional[str] = None
+    promoted_at: str | None = None
+    rejected_at: str | None = None
 
-    def to_payload(self) -> Dict[str, object]:
-        payload: Dict[str, object] = {
+    def to_payload(self) -> dict[str, object]:
+        payload: dict[str, object] = {
             "signature": self.signature,
             "text": self.text,
             "falsifier": self.falsifier,
@@ -82,19 +82,33 @@ class HypothesisRecord:
             else None
         )
         status = str(payload.get("status") or "candidate").strip()
-        support_cycles = int(payload.get("support_cycles") or 0)
+        raw_cycles = payload.get("support_cycles")
+        if isinstance(raw_cycles, (int, float, str)):
+            try:
+                support_cycles = int(raw_cycles)
+            except (TypeError, ValueError):
+                support_cycles = 0
+        else:
+            support_cycles = 0
 
         cycle_ids_raw = payload.get("support_cycle_ids") or []
-        cycle_ids: Tuple[int, ...]
+        cycle_ids: tuple[int, ...]
         if isinstance(cycle_ids_raw, Sequence) and not isinstance(
             cycle_ids_raw, (str, bytes)
         ):
-            cycle_ids = tuple(int(item) for item in cycle_ids_raw)
+            parsed_ids: list[int] = []
+            for item in cycle_ids_raw:
+                if isinstance(item, (int, float, str)):
+                    try:
+                        parsed_ids.append(int(item))
+                    except (TypeError, ValueError):
+                        continue
+            cycle_ids = tuple(parsed_ids)
         else:
             cycle_ids = ()
 
         ticket_keys_raw = payload.get("support_ticket_keys") or []
-        ticket_keys: Tuple[str, ...]
+        ticket_keys: tuple[str, ...]
         if isinstance(ticket_keys_raw, Sequence) and not isinstance(
             ticket_keys_raw, (str, bytes)
         ):
@@ -149,9 +163,9 @@ class HypothesisPool:
         self.events_path = events_path
         self.min_support_cycles = min_support_cycles
         self.min_unique_ticket_keys = min_unique_ticket_keys
-        self._cache: Optional[Dict[str, HypothesisRecord]] = None
+        self._cache: dict[str, HypothesisRecord] | None = None
 
-    def load(self) -> Dict[str, HypothesisRecord]:
+    def load(self) -> dict[str, HypothesisRecord]:
         if self._cache is not None:
             return self._cache
         if not self.pool_path.exists():
@@ -161,7 +175,7 @@ class HypothesisPool:
             raw_payload = json.load(fh) or {}
         if not isinstance(raw_payload, Mapping):
             raise ValueError("hypotheses.json must be a mapping of signature -> record")
-        parsed: Dict[str, HypothesisRecord] = {}
+        parsed: dict[str, HypothesisRecord] = {}
         for key, value in raw_payload.items():
             if not isinstance(value, Mapping):
                 continue
@@ -201,8 +215,8 @@ class HypothesisPool:
 
     def build_current_evidence_map(
         self, hypotheses: Sequence[HypothesisCandidate]
-    ) -> Dict[str, Tuple[str, ...]]:
-        evidence_map: Dict[str, List[str]] = {}
+    ) -> dict[str, tuple[str, ...]]:
+        evidence_map: dict[str, list[str]] = {}
         for hyp in hypotheses:
             signature = _normalize_signature(hyp.text)
             if not signature:
@@ -223,10 +237,10 @@ class HypothesisPool:
         reflection_cycle: int,
         epoch: int,
         allow_promote: bool = True,
-    ) -> Tuple[HypothesisRecord, ...]:
+    ) -> tuple[HypothesisRecord, ...]:
         pool = dict(self.load())
         now = _now().isoformat()
-        eligible: Dict[str, HypothesisRecord] = {}
+        eligible: dict[str, HypothesisRecord] = {}
 
         for hyp in hypotheses:
             signature = _normalize_signature(hyp.text)
@@ -292,10 +306,10 @@ class HypothesisPool:
         *,
         reflection_cycle: int,
         epoch: int,
-    ) -> Tuple[HypothesisRecord, ...]:
+    ) -> tuple[HypothesisRecord, ...]:
         pool = dict(self.load())
         now = _now().isoformat()
-        promoted: List[HypothesisRecord] = []
+        promoted: list[HypothesisRecord] = []
         for signature in signatures:
             record = pool.get(signature)
             if record is None:
@@ -332,11 +346,11 @@ class HypothesisPool:
         *,
         reflection_cycle: int,
         epoch: int,
-        reason: Optional[str] = None,
-    ) -> Tuple[HypothesisRecord, ...]:
+        reason: str | None = None,
+    ) -> tuple[HypothesisRecord, ...]:
         pool = dict(self.load())
         now = _now().isoformat()
-        rejected: List[HypothesisRecord] = []
+        rejected: list[HypothesisRecord] = []
         reason_text = reason.strip() if isinstance(reason, str) and reason.strip() else None
         for signature in signatures:
             record = pool.get(signature)

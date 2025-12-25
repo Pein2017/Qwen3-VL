@@ -8,9 +8,9 @@ can be unit-tested without running rollouts.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 import re
-from typing import Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from .utils.chinese import normalize_spaces, to_simplified
 
@@ -23,12 +23,12 @@ class TicketRolloutStats:
     fail_count: int
     invalid_count: int
     total_samples: int
-    majority_pred: Optional[str]
+    majority_pred: str | None
     majority_correct: bool
     agreement: float
     difficulty: float
     hard_wrong: float
-    verdict_samples: Tuple[Optional[str], ...]
+    verdict_samples: tuple[str | None, ...]
 
 
 @dataclass(frozen=True)
@@ -66,7 +66,7 @@ def normalize_rule_signature(text: str) -> str:
     return simplified.strip()
 
 
-def _majority_pred(pass_count: int, fail_count: int) -> Optional[str]:
+def _majority_pred(pass_count: int, fail_count: int) -> str | None:
     if pass_count <= 0 and fail_count <= 0:
         return None
     if pass_count > fail_count:
@@ -81,7 +81,7 @@ def build_ticket_stats(
     *,
     ticket_key: str,
     gt_label: str,
-    verdicts: Sequence[Optional[str]],
+    verdicts: Sequence[str | None],
 ) -> TicketRolloutStats:
     pass_count = 0
     fail_count = 0
@@ -244,7 +244,7 @@ def pick_reflection_ticket_keys(
     *,
     reflect_size: int,
     reflect_order: str = "hard_first",
-) -> List[str]:
+) -> list[str]:
     """Pick high-value mismatches for the proposer.
 
     Priority (reflect_order=hard_first):
@@ -256,7 +256,7 @@ def pick_reflection_ticket_keys(
     2) then higher hard_wrong (more confident mistakes)
     """
 
-    mismatches: List[TicketRolloutStats] = []
+    mismatches: list[TicketRolloutStats] = []
     for entry in stats_by_ticket.values():
         if entry.majority_pred is None:
             continue
@@ -279,7 +279,7 @@ def build_gate_stats(
     bootstrap_min_prob: float,
     bootstrap_seed: int,
     max_changed_fraction: float,
-) -> Tuple[GateStats, bool]:
+) -> tuple[GateStats, bool]:
     """Compute gate stats and return (stats, passed)."""
 
     base_metrics = compute_metrics(base_stats.values())

@@ -1,8 +1,8 @@
 targets:
   - name: stageb_teacher
     dataset: chat
-    train_jsonl: data/stage_b/distill_chatml.train.jsonl
-    val_jsonl: data/stage_b/distill_chatml.val.jsonl
+    train_jsonl: data/stage_b/distill.train.jsonl
+    val_jsonl: data/stage_b/distill.val.jsonl
     template: chatml
     mode: dense
     sample_without_replacement: true

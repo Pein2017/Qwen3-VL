@@ -6,7 +6,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Dict, Literal, Mapping, Optional, Sequence, Tuple
+from collections.abc import Mapping, Sequence
+from typing import Literal, cast
 
 ExperienceOperationKind = Literal["upsert", "update", "remove", "merge"]
 
@@ -17,15 +18,15 @@ class ExperienceMetadata:
 
     updated_at: datetime
     reflection_id: str
-    sources: Tuple[str, ...] = field(default_factory=tuple)
-    rationale: Optional[str] = None
+    sources: tuple[str, ...] = field(default_factory=tuple)
+    rationale: str | None = None
     # Lifecycle management fields
     hit_count: int = 0
     miss_count: int = 0
     confidence: float = 1.0
 
-    def to_payload(self) -> Dict[str, object]:
-        payload: Dict[str, object] = {
+    def to_payload(self) -> dict[str, object]:
+        payload: dict[str, object] = {
             "updated_at": self.updated_at.isoformat(),
             "reflection_id": self.reflection_id,
             "sources": list(self.sources),
@@ -96,11 +97,11 @@ class ExperienceOperation:
     """Incremental edit for the mission guidance experience list."""
 
     op: ExperienceOperationKind
-    key: Optional[str]
-    text: Optional[str]
-    rationale: Optional[str]
-    evidence: Tuple[str, ...] = field(default_factory=tuple)
-    merged_from: Optional[Tuple[str, ...]] = None
+    key: str | None
+    text: str | None
+    rationale: str | None
+    evidence: tuple[str, ...] = field(default_factory=tuple)
+    merged_from: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -108,9 +109,9 @@ class HypothesisCandidate:
     """Candidate hypothesis proposed by the reflection ops pass."""
 
     text: str
-    evidence: Tuple[str, ...] = field(default_factory=tuple)
-    falsifier: Optional[str] = None
-    dimension: Optional[str] = None
+    evidence: tuple[str, ...] = field(default_factory=tuple)
+    falsifier: str | None = None
+    dimension: str | None = None
 
 
 GroupLabel = Literal["pass", "fail"]
@@ -129,7 +130,7 @@ class StageASummaries:
 
     per_image: Mapping[str, str]
 
-    def as_dict(self) -> Dict[str, str]:
+    def as_dict(self) -> dict[str, str]:
         return dict(self.per_image)
 
 
@@ -137,9 +138,9 @@ class StageASummaries:
 class LabelProvenance:
     """Describes how a group label was obtained."""
 
-    source: Optional[str] = None
-    timestamp: Optional[datetime] = None
-    metadata: Optional[Mapping[str, object]] = None
+    source: str | None = None
+    timestamp: datetime | None = None
+    metadata: Mapping[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -150,8 +151,8 @@ class GroupTicket:
     mission: str
     label: GroupLabel
     summaries: StageASummaries
-    provenance: Optional[LabelProvenance] = None
-    uid: Optional[str] = None
+    provenance: LabelProvenance | None = None
+    uid: str | None = None
 
     @property
     def key(self) -> str:
@@ -169,21 +170,21 @@ class MissionGuidance:
     """Mission-level guidance entries with step metadata."""
 
     mission: str
-    experiences: Dict[str, str]
+    experiences: dict[str, str]
     step: int
     updated_at: datetime
-    metadata: Dict[str, ExperienceMetadata] = field(default_factory=dict)
+    metadata: dict[str, ExperienceMetadata] = field(default_factory=dict)
 
-    def to_payload(self) -> Dict[str, object]:
-        payload = {
+    def to_payload(self) -> dict[str, object]:
+        payload: dict[str, object] = {
             "step": self.step,
             "updated_at": self.updated_at.isoformat(),
             "experiences": self.experiences,
         }
         if self.metadata:
-            payload["metadata"] = {
-                key: meta.to_payload() for key, meta in self.metadata.items()
-            }
+            payload["metadata"] = cast(
+                object, {key: meta.to_payload() for key, meta in self.metadata.items()}
+            )
         return payload
 
 
@@ -194,10 +195,10 @@ class DecodeConfig:
     temperature: float
     top_p: float
     max_new_tokens: int
-    seed: Optional[int] = None
-    stop: Tuple[str, ...] = field(default_factory=tuple)
+    seed: int | None = None
+    stop: tuple[str, ...] = field(default_factory=tuple)
     repetition_penalty: float = 1.0
-    no_repeat_ngram_size: Optional[int] = None
+    no_repeat_ngram_size: int | None = None
 
 
 @dataclass(frozen=True)
@@ -217,23 +218,23 @@ class ParsedTrajectory:
     """Trajectory parsed into structured fields."""
 
     base: Trajectory
-    verdict: Optional[GroupLabel]
-    reason: Optional[str]
+    verdict: GroupLabel | None
+    reason: str | None
     format_ok: bool
-    confidence: Optional[float] = None
+    confidence: float | None = None
 
 
 @dataclass(frozen=True)
 class DeterministicSignals:
     """Minimal signals retained for compatibility (not used for selection)."""
 
-    label_match: Optional[bool]
-    self_consistency: Optional[float]
+    label_match: bool | None
+    self_consistency: float | None
     conflict_flag: bool = False
     needs_manual_review: bool = False
-    vote_strength: Optional[float] = None
+    vote_strength: float | None = None
     low_agreement: bool = False
-    confidence: Optional[float] = None
+    confidence: float | None = None
 
 
 @dataclass(frozen=True)
@@ -241,14 +242,14 @@ class ExperienceCandidate:
     """Candidate summary included in an experience bundle."""
 
     candidate_index: int
-    verdict: Optional[GroupLabel]
-    reason: Optional[str]
+    verdict: GroupLabel | None
+    reason: str | None
     signals: DeterministicSignals
-    confidence: Optional[float] = None
+    confidence: float | None = None
     # Critic insights (populated from CriticOutput when available)
-    summary: Optional[str] = None
-    critique: Optional[str] = None
-    raw_text: Optional[str] = None
+    summary: str | None = None
+    critique: str | None = None
+    raw_text: str | None = None
 
 
 @dataclass(frozen=True)
@@ -256,11 +257,11 @@ class ExperienceRecord:
     """Per-group record captured for reflection."""
 
     ticket: GroupTicket
-    candidates: Tuple[ExperienceCandidate, ...]
-    winning_candidate: Optional[int]
+    candidates: tuple[ExperienceCandidate, ...]
+    winning_candidate: int | None
     guidance_step: int
-    epoch_step: Optional[int] = None
-    global_step: Optional[int] = None
+    epoch_step: int | None = None
+    global_step: int | None = None
 
 
 @dataclass(frozen=True)
@@ -268,7 +269,7 @@ class ExperienceBundle:
     """Aggregated batch passed to the reflection LLM."""
 
     mission: str
-    records: Tuple[ExperienceRecord, ...]
+    records: tuple[ExperienceRecord, ...]
     reflection_cycle: int
     guidance_step: int
 
@@ -278,16 +279,16 @@ class ReflectionProposal:
     """Reflection LLM proposal for a guidance update."""
 
     action: ReflectionAction
-    summary: Optional[str]
-    critique: Optional[str]
-    operations: Tuple[ExperienceOperation, ...]
-    evidence_group_ids: Tuple[str, ...]
-    hypotheses: Tuple[HypothesisCandidate, ...] = field(default_factory=tuple)
-    uncertainty_note: Optional[str] = None
+    summary: str | None
+    critique: str | None
+    operations: tuple[ExperienceOperation, ...]
+    evidence_group_ids: tuple[str, ...]
+    hypotheses: tuple[HypothesisCandidate, ...] = field(default_factory=tuple)
+    uncertainty_note: str | None = None
     # Ticket keys that the reflection model declares "no evidence / cannot explain"
     # even after seeing the GT label. These are candidates for stop-gradient review.
-    no_evidence_group_ids: Tuple[str, ...] = field(default_factory=tuple)
-    text: Optional[str] = None
+    no_evidence_group_ids: tuple[str, ...] = field(default_factory=tuple)
+    text: str | None = None
 
 
 @dataclass(frozen=True)
@@ -300,11 +301,11 @@ class ReflectionOutcome:
     applied: bool
     guidance_step_before: int
     guidance_step_after: int
-    operations: Tuple[ExperienceOperation, ...]
+    operations: tuple[ExperienceOperation, ...]
     eligible: bool
-    applied_epoch: Optional[int] = None
-    ineligible_reason: Optional[str] = None
-    warnings: Tuple[str, ...] = field(default_factory=tuple)
+    applied_epoch: int | None = None
+    ineligible_reason: str | None = None
+    warnings: tuple[str, ...] = field(default_factory=tuple)
 
 
 __all__ = [

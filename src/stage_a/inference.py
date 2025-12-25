@@ -11,19 +11,30 @@ from __future__ import annotations
 import json
 import random
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Protocol, TypeVar, cast
 
 import torch
 from PIL import Image
-from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
+from transformers import (
+    AutoProcessor,
+    BatchEncoding,
+    GenerationConfig,
+    PreTrainedTokenizerBase,
+    Qwen3VLForConditionalGeneration,
+)
 
 from data_conversion.utils.exif_utils import apply_exif_orientation
 
 from ..utils import get_logger
 from .prompts import SUMMARY_SYSTEM_PROMPT, build_system_prompt, build_user_prompt
 from src.prompts.summary_profiles import DEFAULT_SUMMARY_PROFILE_RUNTIME
+
+
+def _build_generation_config(gen_config: dict[str, object]) -> GenerationConfig:
+    return GenerationConfig(**gen_config)
 
 # Import distributed helpers from stage_b (reusable lightweight module)
 try:
@@ -84,11 +95,27 @@ except ImportError:
         if dist.is_available() and dist.is_initialized() and get_world_size() > 1:
             dist.barrier()
 
-    def broadcast_object(obj: Optional[Any], *, src: int = 0) -> Any:
+    def broadcast_object(obj: object | None, *, src: int = 0) -> object:
         return obj
 
 
 logger = get_logger(__name__)
+
+
+class ProcessorProtocol(Protocol):
+    tokenizer: PreTrainedTokenizerBase
+
+    def apply_chat_template(self, *args: object, **kwargs: object) -> str: ...
+
+    def __call__(self, *args: object, **kwargs: object) -> BatchEncoding: ...
+
+    def batch_decode(self, *args: object, **kwargs: object) -> list[str]: ...
+
+
+def _safe_pbar_update(pbar: object, delta: int) -> None:
+    update = getattr(pbar, "update", None)
+    if callable(update):
+        update(delta)
 
 # Supported image extensions
 SUPPORTED_EXT = {".jpg", ".jpeg", ".png"}
@@ -107,18 +134,18 @@ LABEL_DIR_MAP = {
 class GroupInfo:
     """Information about a discovered group."""
 
-    paths: List[Path]
+    paths: list[Path]
     label: str
     mission: str
     group_id: str
 
 
-def _natural_key(s: str) -> List[Any]:
+def _natural_key(s: str) -> list[object]:
     """Natural sort key for filenames with numbers."""
     return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", s)]
 
 
-def _maybe_parse_json_object(text: str) -> Optional[Dict[str, Any]]:
+def _maybe_parse_json_object(text: str) -> dict[str, object] | None:
     """Attempt to parse a JSON object from a string.
     Returns dict if text is a JSON object; otherwise None.
     """
@@ -143,7 +170,7 @@ def sanitize_single_image_summary(text: str) -> str:
 
     obj = _maybe_parse_json_object(summary_text)
     if obj is not None:
-        extracted: Optional[str] = None
+        extracted: str | None = None
         for key in ("image_1", "图片_1"):
             val = obj.get(key)
             if isinstance(val, str):
@@ -151,7 +178,7 @@ def sanitize_single_image_summary(text: str) -> str:
                 break
         if extracted is None:
             # Fallback: join all string values if expected key missing
-            collected: List[str] = []
+            collected: list[str] = []
             for value in obj.values():
                 if isinstance(value, str):
                     collected.append(value.strip())
@@ -165,8 +192,96 @@ def sanitize_single_image_summary(text: str) -> str:
     return summary_text
 
 
+_GROUP_PREFIX_RE = re.compile(r"^(组\d+[:：])+")
+_GROUP_PREFIX_OF_RE = re.compile(r"^组(\d+)的")
+
+
+def sanitize_summary_by_dataset(text: str, dataset: str) -> str:
+    """Normalize summary text with dataset-specific constraints.
+
+    For RRU, drop non-domain items (e.g., BBU-only objects). If nothing remains,
+    return "无关图片". Preserve label/station OCR content.
+    """
+    summary_text = text.strip()
+    if not summary_text:
+        return summary_text
+
+    parts = [p.strip() for p in summary_text.split("，") if p.strip()]
+    if not parts:
+        return summary_text
+
+    def _normalize_irrelevant_only(items: list[str]) -> list[str]:
+        cleaned = []
+        for item in items:
+            if item.startswith("无关图片"):
+                continue
+            cleaned.append(item)
+        return cleaned
+
+    if dataset.lower() != "rru":
+        cleaned = _normalize_irrelevant_only(parts)
+        return "无关图片" if not cleaned else "，".join(cleaned)
+
+    allowed_prefixes = (
+        "标签/",
+        "站点距离/",
+        "RRU设备",
+        "RRU接地端",
+        "地排接地端螺丝",
+        "紧固件",
+        "尾纤",
+        "接地线",
+    )
+
+    cleaned: list[str] = []
+    for item in parts:
+        if item.startswith("无关图片"):
+            continue
+        normalized = _GROUP_PREFIX_OF_RE.sub(r"组\1:", item.replace("：", ":")).strip()
+        if not normalized:
+            continue
+        group_prefix = ""
+        match = _GROUP_PREFIX_RE.match(normalized)
+        core = normalized
+        if match:
+            group_prefix = match.group(0)
+            core = normalized[len(group_prefix) :]
+
+        count = ""
+        mcount = re.search(r"(×\d+)$", core)
+        if mcount:
+            count = mcount.group(1)
+            core = core[: -len(count)]
+
+        if not core.startswith("标签/"):
+            core = re.sub(r"备注[:：].*$", "", core).strip()
+            core = re.sub(r"[，,、;；]+$", "", core).strip()
+            if not core:
+                continue
+
+        if core.startswith("RRU设备/"):
+            normalized_core = f"RRU设备{count}"
+            cleaned.append(
+                f"{group_prefix}{normalized_core}" if group_prefix else normalized_core
+            )
+            continue
+
+        if count and core:
+            core = f"{core}{count}"
+
+        if core.startswith(allowed_prefixes):
+            cleaned.append(f"{group_prefix}{core}" if group_prefix else core)
+            continue
+
+    if not cleaned:
+        return "无关图片"
+    return "，".join(cleaned)
+
+
+
+
 def _trim_trailing_eos_pad(
-    gen_ids: torch.Tensor, eos_id: Optional[int], pad_id: Optional[int]
+    gen_ids: torch.Tensor, eos_id: int | None, pad_id: int | None
 ) -> torch.Tensor:
     """Trim trailing EOS/PAD token ids from a [1, T] tensor and return sliced view."""
     if gen_ids.ndim != 2 or gen_ids.size(0) != 1:
@@ -203,7 +318,7 @@ def _extract_group_id(path: Path) -> str:
     return path.parent.name
 
 
-def discover_groups(root: Path, mission: Optional[str] = None) -> List[GroupInfo]:
+def discover_groups(root: Path, mission: str | None = None) -> list[GroupInfo]:
     """Discover and group images from mission-based directory structure.
 
     Expected structure:
@@ -233,7 +348,7 @@ def discover_groups(root: Path, mission: Optional[str] = None) -> List[GroupInfo
         # Auto-discover all mission subdirectories
         mission_dirs = [d for d in root.iterdir() if d.is_dir()]
 
-    groups: List[GroupInfo] = []
+    groups: list[GroupInfo] = []
 
     for mission_dir in sorted(mission_dirs, key=lambda p: p.name):
         mission_name = mission_dir.name
@@ -255,7 +370,7 @@ def discover_groups(root: Path, mission: Optional[str] = None) -> List[GroupInfo
             )
             for group_dir in group_dirs:
                 # Discover images in group
-                image_paths: List[Path] = []
+                image_paths: list[Path] = []
                 for img_path in group_dir.iterdir():
                     if img_path.is_file() and img_path.suffix.lower() in SUPPORTED_EXT:
                         image_paths.append(img_path)
@@ -287,9 +402,12 @@ def discover_groups(root: Path, mission: Optional[str] = None) -> List[GroupInfo
     return groups
 
 
+T = TypeVar("T")
+
+
 def _sample_subset(
-    items: List[Any], target: Optional[int], rng: random.Random
-) -> List[Any]:
+    items: Sequence[T], target: int | None, rng: random.Random
+) -> list[T]:
     """Return up to `target` random items from the list respecting deterministic RNG."""
     if target is None or target >= len(items):
         return list(items)
@@ -297,11 +415,11 @@ def _sample_subset(
 
 
 def _sample_groups(
-    groups: List[GroupInfo],
-    pass_target: Optional[int],
-    fail_target: Optional[int],
+    groups: list[GroupInfo],
+    pass_target: int | None,
+    fail_target: int | None,
     seed: int,
-) -> Tuple[List[GroupInfo], Dict[str, int]]:
+) -> tuple[list[GroupInfo], dict[str, int]]:
     """Seeded sampling of pass/fail groups, preserving original order.
 
     Note: When both targets are None, sampling is disabled and all groups are returned.
@@ -333,7 +451,7 @@ def _sample_groups(
 
 def load_model_processor(
     checkpoint: str, device: str, max_pixels: int = 786432
-) -> Tuple[Qwen3VLForConditionalGeneration, AutoProcessor]:
+) -> tuple[Qwen3VLForConditionalGeneration, ProcessorProtocol]:
     """Load Qwen3-VL model and processor.
 
     Args:
@@ -354,10 +472,13 @@ def load_model_processor(
         else "eager",
         trust_remote_code=True,
     )
-    model.to(device)  # type: ignore[arg-type]
+    cast(torch.nn.Module, model).to(device)
     model.eval()
 
-    processor = AutoProcessor.from_pretrained(checkpoint, trust_remote_code=True)
+    processor = cast(
+        ProcessorProtocol,
+        AutoProcessor.from_pretrained(checkpoint, trust_remote_code=True),
+    )
     # IMPORTANT: For decoder-only generation with variable-length prompts (vision tokens vary by image),
     # batched inference MUST use left-padding. Right-padding puts PAD tokens at the end of shorter prompts
     # and can destabilize generation when mixed-size images are batched together (common in per_image mode).
@@ -441,18 +562,18 @@ def load_model_processor(
 
 def infer_one_image(
     model: Qwen3VLForConditionalGeneration,
-    processor: AutoProcessor,
+    processor: ProcessorProtocol,
     image: Image.Image,
     user_text: str,
-    gen_config: Dict[str, Any],
+    gen_config: dict[str, object],
     verify: bool = False,
-    system_prompt: Optional[str] = None,
-) -> Tuple[str, str]:
+    system_prompt: str | None = None,
+) -> tuple[str, str]:
     """Run inference on a single image.
 
     Args:
         model: Qwen3-VL model
-        processor: AutoProcessor
+        processor: ProcessorProtocol
         image: PIL Image
         user_text: User prompt text
         gen_config: Generation config dict
@@ -506,6 +627,7 @@ def infer_one_image(
     inputs = processor(  # type: ignore[operator]
         images=[image], text=[text], return_tensors="pt", images_kwargs=_img_kwargs
     )
+    inputs = cast(BatchEncoding, inputs)
     if verify:
         try:
             import hashlib
@@ -542,9 +664,7 @@ def infer_one_image(
             )
         except Exception:
             logger.warning("[verify] logging failed", exc_info=False)
-    inputs = {
-        k: v.to(model.device) if hasattr(v, "to") else v for k, v in inputs.items()
-    }
+    inputs = inputs.to(model.device)
     # Debug: verify grid/token alignment
     try:
         grid = inputs.get("image_grid_thw")
@@ -574,12 +694,14 @@ def infer_one_image(
     except Exception:
         pass
 
+    generation_config = _build_generation_config(gen_config)
+
     # Generate
     with torch.inference_mode():
         gen = model.generate(
             **inputs,
-            **gen_config,
             use_cache=True,
+            generation_config=generation_config,
             pad_token_id=processor.tokenizer.pad_token_id,  # type: ignore[attr-defined]
         )
 
@@ -629,18 +751,18 @@ def infer_one_image(
 
 def infer_batch(
     model: Qwen3VLForConditionalGeneration,
-    processor: AutoProcessor,
-    images: List[Image.Image],
+    processor: ProcessorProtocol,
+    images: list[Image.Image],
     user_text: str,
-    gen_config: Dict[str, Any],
+    gen_config: dict[str, object],
     verify: bool = False,
-    system_prompt: Optional[str] = None,
-) -> List[Tuple[str, str]]:
+    system_prompt: str | None = None,
+) -> list[tuple[str, str]]:
     """Run batched inference on multiple images.
 
     Args:
         model: Qwen3-VL model
-        processor: AutoProcessor
+        processor: ProcessorProtocol
         images: List of PIL Images
         user_text: User prompt text (same for all images)
         gen_config: Generation config dict
@@ -699,6 +821,7 @@ def infer_batch(
         padding=True,
         images_kwargs=_img_kwargs,
     )
+    inputs = cast(BatchEncoding, inputs)
     if verify and len(images) > 0:
         try:
             import hashlib
@@ -734,9 +857,7 @@ def infer_batch(
             )
         except Exception:
             logger.warning("[verify-batch] logging failed", exc_info=False)
-    inputs = {
-        k: v.to(model.device) if hasattr(v, "to") else v for k, v in inputs.items()
-    }
+    inputs = inputs.to(model.device)
     # Debug: verify first-sample grid/token alignment
     try:
         if len(images) > 0:
@@ -771,18 +892,20 @@ def infer_batch(
     except Exception:
         pass
 
+    generation_config = _build_generation_config(gen_config)
+
     # Generate for batch
     with torch.inference_mode():
         gen = model.generate(
             **inputs,
-            **gen_config,
             use_cache=True,
+            generation_config=generation_config,
             pad_token_id=processor.tokenizer.pad_token_id,  # type: ignore[attr-defined]
         )
 
     # Decode each output
     start = inputs["input_ids"].shape[-1]
-    outputs: List[Tuple[str, str]] = []
+    outputs: list[tuple[str, str]] = []
 
     for i in range(len(images)):
         gen_only = gen[i : i + 1, start:]
@@ -834,22 +957,21 @@ def process_group(
     group_id: str,
     group_info: GroupInfo,
     model: Qwen3VLForConditionalGeneration,
-    processor: AutoProcessor,
-    mission: Optional[str],
+    processor: ProcessorProtocol,
+    mission: str | None,
     dataset: str = "bbu",
     prompt_profile: str = DEFAULT_SUMMARY_PROFILE_RUNTIME,
-    gen_config: Optional[Dict[str, Any]] = None,
+    gen_config: dict[str, object] | None = None,
     batch_size: int = 8,
-    include_mission_focus: bool = True,
     verify: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, object]:
     """Process a single group with batched inference.
 
     Args:
         group_id: Group ID
         group_info: GroupInfo with paths and metadata
         model: Qwen3-VL model
-        processor: AutoProcessor
+        processor: ProcessorProtocol
         mission: Mission name (for prompt building)
         dataset: Dataset type ("bbu" or "rru")
         gen_config: Generation config dict
@@ -862,9 +984,13 @@ def process_group(
         ValueError: If validation fails (empty summary or per-image index mismatch)
     """
     # Build mission-dependent prompts
-    user_text = build_user_prompt(mission if include_mission_focus else None)
+    user_text = build_user_prompt(
+        mission,
+        dataset=dataset,
+        profile_name=prompt_profile,
+    )
     system_text = build_system_prompt(
-        mission if include_mission_focus else None,
+        mission,
         dataset=dataset,
         profile_name=prompt_profile,
     )
@@ -880,7 +1006,7 @@ def process_group(
         }
 
     # Load images
-    images: List[Image.Image] = []
+    images: list[Image.Image] = []
     for path in group_info.paths:
         try:
             img = apply_exif_orientation(Image.open(path))
@@ -889,8 +1015,8 @@ def process_group(
             raise RuntimeError(f"Failed to open image: {path}") from e
 
     # Run inference with batching
-    raw_texts: List[str] = []
-    clean_texts: List[str] = []
+    raw_texts: list[str] = []
+    clean_texts: list[str] = []
 
     num_images = len(images)
     for i in range(0, num_images, batch_size):
@@ -925,10 +1051,11 @@ def process_group(
                 clean_texts.append(clean)
 
     # Build per_image mapping with deterministic image_i keys
-    per_image: Dict[str, str] = {}
+    per_image: dict[str, str] = {}
     for idx, clean_text in enumerate(clean_texts, start=1):
         key = f"image_{idx}"
-        per_image[key] = clean_text
+        sanitized = sanitize_summary_by_dataset(clean_text, dataset)
+        per_image[key] = sanitized
 
     # Strict validation: coverage check
     if len(per_image) != num_images:
@@ -945,7 +1072,7 @@ def process_group(
 
     # Build record
     # Flattened record: keep only essential fields; drop raw/clean arrays to reduce redundancy
-    record = {
+    record: dict[str, object] = {
         "group_id": group_id,
         "mission": group_info.mission,
         "label": group_info.label,
@@ -964,13 +1091,12 @@ def run_stage_a_inference(
     dataset: str = "bbu",
     prompt_profile: str = DEFAULT_SUMMARY_PROFILE_RUNTIME,
     device: str = "cuda:0",
-    gen_params: Optional[Dict[str, Any]] = None,
+    gen_params: dict[str, object] | None = None,
     batch_size: int = 8,
     max_pixels: int = 786432,
-    include_mission_focus: bool = True,
     verify_inputs: bool = False,
-    pass_group_number: Optional[int] = None,
-    fail_group_number: Optional[int] = None,
+    pass_group_number: int | None = None,
+    fail_group_number: int | None = None,
     sample_seed: int = 42,
     sharding_mode: str = "per_group",
     keep_intermediate_outputs: bool = False,
@@ -1048,14 +1174,16 @@ def run_stage_a_inference(
     if is_main_process() or not distributed:
         logger.info(f"Found {original_group_count} groups for mission '{mission}'")
 
-    sampled_groups: Optional[List[GroupInfo]] = None
-    sampling_stats: Optional[Dict[str, int]] = None
+    sampled_groups: list[GroupInfo] | None = None
+    sampling_stats: dict[str, int] | None = None
     if distributed:
         if is_main_process():
             sampled_groups, sampling_stats = _sample_groups(
                 groups, pass_group_number, fail_group_number, sample_seed
             )
-        sampled_groups = broadcast_object(sampled_groups)
+        sampled_groups = cast(
+            list[GroupInfo] | None, broadcast_object(sampled_groups)
+        )
         groups = sampled_groups if sampled_groups is not None else []
     else:
         groups, sampling_stats = _sample_groups(
@@ -1127,7 +1255,6 @@ def run_stage_a_inference(
             prompt_profile=prompt_profile,
             gen_config=gen_params,
             batch_size=batch_size,
-            include_mission_focus=include_mission_focus,
             verify_inputs=verify_inputs,
             output_path=output_path,
             pbar=pbar,
@@ -1223,7 +1350,6 @@ def run_stage_a_inference(
         prompt_profile=prompt_profile,
         gen_config=gen_params,
         batch_size=batch_size,
-        include_mission_focus=include_mission_focus,
         verify_inputs=verify_inputs,
         output_path=per_image_path,
         pbar=pbar,
@@ -1245,6 +1371,7 @@ def run_stage_a_inference(
             mission=mission,
             world_size=world_size if distributed else 1,
             keep_intermediate_outputs=keep_intermediate_outputs,
+            dataset=dataset,
         )
 
         logger.info("=" * 70)
@@ -1271,20 +1398,19 @@ def run_stage_a_inference(
 
 def _run_per_group(
     *,
-    groups: List[GroupInfo],
+    groups: list[GroupInfo],
     model: Qwen3VLForConditionalGeneration,
-    processor: AutoProcessor,
+    processor: ProcessorProtocol,
     mission: str,
     dataset: str,
     prompt_profile: str,
-    gen_config: Dict[str, Any],
+    gen_config: dict[str, object],
     batch_size: int,
-    include_mission_focus: bool,
     verify_inputs: bool,
     output_path: Path,
-    pbar: Optional[object],
+    pbar: object | None,
     distributed: bool,
-) -> Tuple[int, int]:
+) -> tuple[int, int]:
     processed = 0
     errors = 0
 
@@ -1299,19 +1425,18 @@ def _run_per_group(
                     processor=processor,
                     mission=mission,
                     dataset=dataset,
-                    prompt_profile=prompt_profile,
-                    gen_config=gen_config,
-                    batch_size=batch_size,
-                    include_mission_focus=include_mission_focus,
-                    verify=verify_inputs,
-                )
+                prompt_profile=prompt_profile,
+                gen_config=gen_config,
+                batch_size=batch_size,
+                verify=verify_inputs,
+            )
 
                 f_out.write(json.dumps(record, ensure_ascii=False) + "\n")
                 f_out.flush()
                 processed += 1
 
                 if pbar is not None:
-                    pbar.update(1)  # type: ignore[call-arg]
+                    _safe_pbar_update(pbar, 1)
 
                 if (is_main_process() or not distributed) and processed % 10 == 0:
                     logger.info(f"Processed {processed}/{len(groups)} groups")
@@ -1327,7 +1452,7 @@ class _GroupAccum:
     seq: int
     info: GroupInfo
     expected_images: int
-    per_image: List[Optional[str]]
+    per_image: list[str | None]
     done: bool = False
     failed: bool = False
 
@@ -1339,9 +1464,9 @@ class _ImageJob:
     path: Path
 
 
-def _build_image_jobs(groups: List[GroupInfo]) -> List[_ImageJob]:
+def _build_image_jobs(groups: list[GroupInfo]) -> list[_ImageJob]:
     """Flatten groups into a deterministic list of per-image jobs."""
-    jobs: List[_ImageJob] = []
+    jobs: list[_ImageJob] = []
     for group_seq, info in enumerate(groups):
         for image_index, path in enumerate(info.paths, start=1):
             jobs.append(
@@ -1352,21 +1477,20 @@ def _build_image_jobs(groups: List[GroupInfo]) -> List[_ImageJob]:
 
 def _run_per_image_jobs(
     *,
-    jobs: List[_ImageJob],
-    groups: List[GroupInfo],
+    jobs: list[_ImageJob],
+    groups: list[GroupInfo],
     model: Qwen3VLForConditionalGeneration,
-    processor: AutoProcessor,
+    processor: ProcessorProtocol,
     mission: str,
     dataset: str,
     prompt_profile: str,
-    gen_config: Dict[str, Any],
+    gen_config: dict[str, object],
     batch_size: int,
-    include_mission_focus: bool,
     verify_inputs: bool,
     output_path: Path,
-    pbar: Optional[object],
+    pbar: object | None,
     distributed: bool,
-) -> Tuple[int, int]:
+) -> tuple[int, int]:
     """Run Stage-A in per-image mode and write per-image intermediate outputs.
 
     Each job produces exactly one JSONL line:
@@ -1376,9 +1500,13 @@ def _run_per_image_jobs(
     if batch_size <= 0:
         raise ValueError("batch_size must be a positive integer")
 
-    user_text = build_user_prompt(mission if include_mission_focus else None)
+    user_text = build_user_prompt(
+        mission,
+        dataset=dataset,
+        profile_name=prompt_profile,
+    )
     system_text = build_system_prompt(
-        mission if include_mission_focus else None,
+        mission,
         dataset=dataset,
         profile_name=prompt_profile,
     )
@@ -1391,13 +1519,13 @@ def _run_per_image_jobs(
         for start in range(0, len(jobs), batch_size):
             chunk = jobs[start : start + batch_size]
 
-            loaded_jobs: List[_ImageJob] = []
-            images: List[Image.Image] = []
+            loaded_jobs: list[_ImageJob] = []
+            images: list[Image.Image] = []
 
             def _write_failure(job: _ImageJob, *, error: str) -> None:
                 nonlocal processed, errors
                 info = groups[job.group_seq]
-                payload: Dict[str, Any] = {
+                payload: dict[str, object] = {
                     "group_seq": job.group_seq,
                     "group_id": info.group_id,
                     "label": info.label,
@@ -1411,25 +1539,26 @@ def _run_per_image_jobs(
                 processed += 1
                 errors += 1
                 if pbar is not None:
-                    pbar.update(1)  # type: ignore[call-arg]
+                    _safe_pbar_update(pbar, 1)
 
             def _write_success(job: _ImageJob, *, summary: str) -> None:
                 nonlocal processed
                 info = groups[job.group_seq]
-                payload: Dict[str, Any] = {
+                sanitized = sanitize_summary_by_dataset(summary, dataset)
+                payload: dict[str, object] = {
                     "group_seq": job.group_seq,
                     "group_id": info.group_id,
                     "label": info.label,
                     "image_index": job.image_index,
                     "image_name": job.path.name,
                     "ok": True,
-                    "summary": summary,
+                    "summary": sanitized,
                 }
                 f_out.write(json.dumps(payload, ensure_ascii=False) + "\n")
                 f_out.flush()
                 processed += 1
                 if pbar is not None:
-                    pbar.update(1)  # type: ignore[call-arg]
+                    _safe_pbar_update(pbar, 1)
 
             # Decode images (bounded by batch_size).
             for job in chunk:
@@ -1453,8 +1582,8 @@ def _run_per_image_jobs(
                 continue
 
             # Infer for this batch. If batch inference fails, fall back to per-image.
-            outputs: List[Tuple[str, str]] = []
-            per_job_error: Dict[int, str] = {}
+            outputs: list[tuple[str, str]] = []
+            per_job_error: dict[int, str] = {}
 
             if len(images) == 1:
                 try:
@@ -1545,12 +1674,13 @@ def _run_per_image_jobs(
 
 def _merge_per_image_outputs(
     *,
-    groups: List[GroupInfo],
+    groups: list[GroupInfo],
     output_dir: Path,
     mission: str,
     world_size: int,
     keep_intermediate_outputs: bool,
-) -> Tuple[int, int]:
+    dataset: str,
+) -> tuple[int, int]:
     """Merge per-rank per-image outputs into group-level Stage-A JSONL.
 
     Returns:
@@ -1559,11 +1689,11 @@ def _merge_per_image_outputs(
     final_output_path = output_dir / f"{mission}_stage_a.jsonl"
 
     # Prepare per-group buffers.
-    per_group: List[List[Optional[str]]] = [
+    per_group: list[list[str | None]] = [
         [None for _ in range(len(info.paths))] for info in groups
     ]
-    failed: List[bool] = [False for _ in groups]
-    seen: set[Tuple[int, int]] = set()
+    failed: list[bool] = [False for _ in groups]
+    seen: set[tuple[int, int]] = set()
 
     def _mark_failed(group_seq: int, *, reason: str) -> None:
         if group_seq < 0 or group_seq >= len(groups):
@@ -1642,7 +1772,8 @@ def _merge_per_image_outputs(
                     _mark_failed(group_seq, reason="empty summary")
                     continue
 
-                per_group[group_seq][image_index - 1] = summary
+                sanitized = sanitize_summary_by_dataset(summary, dataset)
+                per_group[group_seq][image_index - 1] = sanitized
 
     merged_groups = 0
     failed_groups = 0
@@ -1658,7 +1789,7 @@ def _merge_per_image_outputs(
                 failed_groups += 1
                 continue
 
-            per_image_map: Dict[str, str] = {}
+            per_image_map: dict[str, str] = {}
             for idx, text in enumerate(per_group[group_seq], start=1):
                 if text is None:
                     # Defensive: should have been caught above.
@@ -1692,19 +1823,19 @@ def _merge_per_image_outputs(
 
 def _run_cross_group_batches(
     *,
-    groups: List[GroupInfo],
+    groups: list[GroupInfo],
     model: Qwen3VLForConditionalGeneration,
-    processor: AutoProcessor,
+    processor: ProcessorProtocol,
     mission: str,
     dataset: str,
-    gen_config: Dict[str, Any],
+    gen_config: dict[str, object],
     batch_size: int,
-    include_mission_focus: bool,
     verify_inputs: bool,
+    prompt_profile: str,
     output_path: Path,
-    pbar: Optional[object],
+    pbar: object | None,
     distributed: bool,
-) -> Tuple[int, int]:
+) -> tuple[int, int]:
     """Run Stage-A using cross-group image batching while preserving per-group outputs.
 
     Constraints:
@@ -1715,12 +1846,18 @@ def _run_cross_group_batches(
     if batch_size <= 0:
         raise ValueError("batch_size must be a positive integer")
 
-    user_text = build_user_prompt(mission if include_mission_focus else None)
+    user_text = build_user_prompt(
+        mission,
+        dataset=dataset,
+        profile_name=prompt_profile,
+    )
     system_text = build_system_prompt(
-        mission if include_mission_focus else None, dataset=dataset
+        mission,
+        dataset=dataset,
+        profile_name=prompt_profile,
     )
 
-    accums: List[_GroupAccum] = []
+    accums: list[_GroupAccum] = []
     for seq, info in enumerate(groups):
         expected = len(info.paths)
         accums.append(
@@ -1736,7 +1873,7 @@ def _run_cross_group_batches(
     errors = 0
 
     # Completed group outputs keyed by seq; value None means "failed, no record".
-    completed: Dict[int, Optional[Dict[str, Any]]] = {}
+    completed: dict[int, dict[str, object] | None] = {}
     next_flush_seq = 0
 
     # Sequential cursor over groups and per-group image index.
@@ -1754,7 +1891,7 @@ def _run_cross_group_batches(
         completed[group_seq] = None
         errors += 1
         if pbar is not None:
-            pbar.update(1)  # type: ignore[call-arg]
+            _safe_pbar_update(pbar, 1)
 
     def _maybe_finish_group(group_seq: int) -> None:
         acc = accums[group_seq]
@@ -1764,7 +1901,7 @@ def _run_cross_group_batches(
             return
 
         # Build record with strict coverage (fail-fast defensive checks).
-        per_image_map: Dict[str, str] = {}
+        per_image_map: dict[str, str] = {}
         for idx, text in enumerate(acc.per_image, start=1):
             if text is None:
                 raise ValueError("Internal error: per_image missing after completion")
@@ -1781,7 +1918,7 @@ def _run_cross_group_batches(
         acc.done = True
         completed[group_seq] = record
         if pbar is not None:
-            pbar.update(1)  # type: ignore[call-arg]
+            _safe_pbar_update(pbar, 1)
 
     def _flush_ready(f_out) -> None:
         nonlocal next_flush_seq, processed
@@ -1804,8 +1941,8 @@ def _run_cross_group_batches(
                 continue
 
             # Assemble a batch of jobs from successive groups.
-            jobs: List[_ImageJob] = []
-            images: List[Image.Image] = []
+            jobs: list[_ImageJob] = []
+            images: list[Image.Image] = []
 
             local_group_cursor = group_cursor
             local_image_cursor = image_cursor
@@ -1859,7 +1996,7 @@ def _run_cross_group_batches(
             image_cursor = local_image_cursor
 
             # Run inference for the batch. If batch inference fails, fallback to per-image.
-            outputs: List[Tuple[str, str]] = []
+            outputs: list[tuple[str, str]] = []
             if batch_size == 1 and len(images) == 1:
                 try:
                     outputs = [
@@ -1950,7 +2087,8 @@ def _run_cross_group_batches(
                 if slot < 0 or slot >= acc.expected_images:
                     _mark_group_failed(job.group_seq)
                     continue
-                acc.per_image[slot] = clean
+                sanitized = sanitize_summary_by_dataset(clean, dataset)
+                acc.per_image[slot] = sanitized
                 _maybe_finish_group(job.group_seq)
 
             _flush_ready(f_out)

@@ -126,7 +126,7 @@ rule_search:
   num_candidate_rules: 1
 
   train_pool_size: 4
-  eval_pool_fraction: 0.5
+  eval_pool_size: 2
 
   gate:
     min_relative_error_reduction: 0.0

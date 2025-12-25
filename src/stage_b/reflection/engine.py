@@ -20,8 +20,9 @@ import json
 import logging
 import re
 from collections import Counter
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, cast
 
 import torch
 from transformers import PreTrainedModel, PreTrainedTokenizerBase
@@ -107,11 +108,11 @@ def _is_non_removable_experience_key(key: object) -> bool:
     return value == "G0" or _is_scaffold_experience_key(value)
 
 
-def _balanced_json_span(text: str, start: int) -> Optional[str]:
+def _balanced_json_span(text: str, start: int) -> str | None:
     opener = text[start]
     if opener not in "{[":
         return None
-    stack: List[str] = [opener]
+    stack: list[str] = [opener]
     in_string = False
     escape = False
 
@@ -146,6 +147,10 @@ def _balanced_json_span(text: str, start: int) -> Optional[str]:
     return None
 
 
+class PromptTooLongError(RuntimeError):
+    """Raised when a reflection prompt exceeds the configured max length."""
+
+
 class ReflectionEngine:
     """Coordinates reflection prompting and strict JSON parsing/validation."""
 
@@ -156,7 +161,7 @@ class ReflectionEngine:
         config: ReflectionConfig,
         guidance_repo: GuidanceRepository,
         *,
-        reflection_log: Optional[Path] = None,
+        reflection_log: Path | None = None,
     ) -> None:
         self.model = model
         self.tokenizer = tokenizer
@@ -171,8 +176,8 @@ class ReflectionEngine:
         self.reflection_log = reflection_log
         self.device = model.device if hasattr(model, "device") else "cpu"
 
-        self._last_debug_info: Optional[Dict[str, Any]] = None
-        self._group_id_mapping: Dict[str, str] = {}
+        self._last_debug_info: dict[str, Any] | None = None
+        self._group_id_mapping: dict[str, str] = {}
 
         self._validate_template(self.decision_prompt_template)
         self._validate_template(self.ops_prompt_template)
@@ -182,12 +187,12 @@ class ReflectionEngine:
             raise ValueError("Reflection prompt template must be non-empty")
 
     @staticmethod
-    def _extract_json_candidates(text: str) -> List[str]:
+    def _extract_json_candidates(text: str) -> list[str]:
         raw = normalize_spaces(to_simplified(text or "")).strip()
         if not raw:
             return []
 
-        candidates: List[str] = []
+        candidates: list[str] = []
 
         # Code-fenced JSON blocks (common for LLMs).
         for match in re.finditer(
@@ -227,7 +232,7 @@ class ReflectionEngine:
 
         # De-dup while preserving order.
         seen: set[str] = set()
-        unique: List[str] = []
+        unique: list[str] = []
         for cand in candidates:
             if not cand or cand in seen:
                 continue
@@ -275,10 +280,10 @@ class ReflectionEngine:
             padding=True,
             truncation=False,
         )
-        input_ids_full = encoded_full["input_ids"]  # type: ignore[assignment]
-        full_token_length = int(input_ids_full.size(1))  # type: ignore[attr-defined]
+        input_ids_full = cast(torch.Tensor, encoded_full["input_ids"])
+        full_token_length = int(input_ids_full.size(1))
         model_max_length_raw = getattr(self.tokenizer, "model_max_length", None)
-        model_max_length: Optional[int]
+        model_max_length: int | None
         try:
             model_max_length = int(model_max_length_raw) if model_max_length_raw else None
         except Exception:  # noqa: BLE001
@@ -309,17 +314,19 @@ class ReflectionEngine:
                 )
         if full_token_length > self.config.max_reflection_length:
             logger.warning(
-                "Reflection prompt will be truncated: %d tokens > %d (max_reflection_length).",
+                "Reflection prompt exceeds max_reflection_length: %d tokens > %d; dropping.",
                 full_token_length,
                 self.config.max_reflection_length,
+            )
+            raise PromptTooLongError(
+                f"Reflection prompt exceeds max_reflection_length: {full_token_length} > {self.config.max_reflection_length}"
             )
 
         encoded = self.tokenizer(
             chat_prompt,
             return_tensors="pt",
             padding=True,
-            truncation=True,
-            max_length=self.config.max_reflection_length,
+            truncation=False,
         )
         inputs = {k: v.to(self.device) for k, v in encoded.items()}
 
@@ -335,7 +342,8 @@ class ReflectionEngine:
                 "eos_token_id": self.tokenizer.eos_token_id,
                 "use_cache": True,
             }
-            output = self.model.generate(  # type: ignore[call-overload]
+            model = cast(Any, self.model)
+            output = model.generate(
                 **inputs,
                 **generate_kwargs,
             )
@@ -392,7 +400,7 @@ class ReflectionEngine:
     @classmethod
     def _find_similar_guidance_key(
         cls, text: str, experiences: Mapping[str, str]
-    ) -> Optional[str]:
+    ) -> str | None:
         if not text or not experiences:
             return None
         target = cls._normalize_guidance_signature(text)
@@ -421,7 +429,7 @@ class ReflectionEngine:
         return None
 
     @staticmethod
-    def _is_brand_dimension(value: Optional[str]) -> bool:
+    def _is_brand_dimension(value: str | None) -> bool:
         if not value:
             return False
         lowered = normalize_spaces(to_simplified(value)).lower()
@@ -487,23 +495,27 @@ class ReflectionEngine:
         normalized = cls._normalize_forbidden_check(text)
         return ("通过" in normalized) or ("不通过" in normalized)
 
-    def run_decision_pass(self, bundle: ExperienceBundle) -> Tuple[Tuple[str, ...], str]:
+    def run_decision_pass(self, bundle: ExperienceBundle) -> tuple[tuple[str, ...], str]:
         """Run decision pass and return (no_evidence_ticket_keys, decision_analysis)."""
 
         user_prompt = self._build_reflection_prompt(
             bundle,
             system_template=self.decision_prompt_template,
         )
-        payload = self._generate_json_payload(
-            system_template=self.decision_prompt_template,
-            user_prompt=user_prompt,
-        )
+        try:
+            payload = self._generate_json_payload(
+                system_template=self.decision_prompt_template,
+                user_prompt=user_prompt,
+            )
+        except PromptTooLongError as exc:
+            logger.warning("Reflection decision pass skipped: %s", exc)
+            return (), "prompt_too_long"
         if not isinstance(payload, Mapping):
             raise ValueError("Decision pass must return a JSON object")
 
         ticket_keys = {rec.ticket.key for rec in bundle.records}
         raw_ids = payload.get("no_evidence_group_ids", [])
-        no_evidence: List[str] = []
+        no_evidence: list[str] = []
         if isinstance(raw_ids, Sequence) and not isinstance(raw_ids, (str, bytes)):
             for item in raw_ids:
                 resolved = self._resolve_group_identifier(item)
@@ -516,10 +528,10 @@ class ReflectionEngine:
     def run_ops_pass(
         self,
         bundle: ExperienceBundle,
-    ) -> Tuple[
-        Tuple[ExperienceOperation, ...],
-        Tuple[HypothesisCandidate, ...],
-        Tuple[str, ...],
+    ) -> tuple[
+        tuple[ExperienceOperation, ...],
+        tuple[HypothesisCandidate, ...],
+        tuple[str, ...],
         str,
     ]:
         """Run ops pass and return (operations, hypotheses, evidence_ticket_keys_union, evidence_analysis)."""
@@ -528,10 +540,14 @@ class ReflectionEngine:
             bundle,
             system_template=self.ops_prompt_template,
         )
-        payload = self._generate_json_payload(
-            system_template=self.ops_prompt_template,
-            user_prompt=user_prompt,
-        )
+        try:
+            payload = self._generate_json_payload(
+                system_template=self.ops_prompt_template,
+                user_prompt=user_prompt,
+            )
+        except PromptTooLongError as exc:
+            logger.warning("Reflection ops pass skipped: %s", exc)
+            return (), (), (), "prompt_too_long"
         if not isinstance(payload, Mapping):
             raise ValueError("Ops pass must return a JSON object")
 
@@ -545,9 +561,9 @@ class ReflectionEngine:
         max_ops = self.config.max_operations
         max_ops = int(max_ops) if max_ops is not None else None
 
-        operations: List[ExperienceOperation] = []
-        hypotheses: List[HypothesisCandidate] = []
-        evidence_union: List[str] = []
+        operations: list[ExperienceOperation] = []
+        hypotheses: list[HypothesisCandidate] = []
+        evidence_union: list[str] = []
         seen_op_norms: set[str] = set()
 
         guidance_map = self.guidance_repo.load()
@@ -601,7 +617,7 @@ class ReflectionEngine:
                 continue
 
             merged_from_raw = entry.get("merged_from")
-            merged_from: Tuple[str, ...] = tuple()
+            merged_from: tuple[str, ...] = tuple()
             if isinstance(merged_from_raw, Sequence) and not isinstance(
                 merged_from_raw, (str, bytes)
             ):
@@ -711,7 +727,7 @@ class ReflectionEngine:
         ):
             raise ValueError("hypotheses must be a list when provided")
 
-        scaffold_texts: List[str] = []
+        scaffold_texts: list[str] = []
         if current_guidance:
             scaffold_texts = [
                 text
@@ -792,7 +808,7 @@ class ReflectionEngine:
     def build_record(
         self,
         ticket: GroupTicket,
-        candidates: Sequence,
+        candidates: Sequence[object],
         winning_candidate: int | None,
         guidance_step: int,
         *,
@@ -803,7 +819,7 @@ class ReflectionEngine:
             raise ValueError(
                 f"Stage-A summaries missing for ticket {ticket.group_id}; reflection requires evidence"
             )
-        experience_candidates: List[ExperienceCandidate] = []
+        experience_candidates: list[ExperienceCandidate] = []
         for item in candidates:
             parsed = getattr(item, "parsed", None)
             if parsed is None:
@@ -857,7 +873,7 @@ class ReflectionEngine:
     @staticmethod
     def _sorted_stage_a_summaries(
         stage_a_summaries: Mapping[str, str],
-    ) -> List[Tuple[str, str]]:
+    ) -> list[tuple[str, str]]:
         def _index(key: str) -> int:
             match = re.search(r"(\d+)$", key)
             if match:
@@ -928,7 +944,7 @@ class ReflectionEngine:
                 for key, value in sorted(current_guidance.experiences.items())
                 if not _is_scaffold_experience_key(key)
             ]
-            formatted: List[str] = []
+            formatted: list[str] = []
             if scaffold_lines:
                 formatted.extend(["SCAFFOLD (S*):", *scaffold_lines, ""])
             if guidance_lines:
@@ -955,11 +971,11 @@ class ReflectionEngine:
             try:
                 encoded = self.tokenizer(text, return_tensors="pt", truncation=False)
                 if isinstance(encoded, dict) and "input_ids" in encoded:
-                    ids = encoded["input_ids"]
-                    if hasattr(ids, "size"):
-                        return int(ids.size(1))  # type: ignore[attr-defined]
-                if hasattr(encoded, "input_ids") and hasattr(encoded.input_ids, "size"):
-                    return int(encoded.input_ids.size(1))  # type: ignore[attr-defined]
+                    ids = cast(torch.Tensor, encoded["input_ids"])
+                    return int(ids.size(1))
+                if hasattr(encoded, "input_ids"):
+                    ids = cast(torch.Tensor, encoded.input_ids)
+                    return int(ids.size(1))
             except Exception:
                 pass
             return max(1, len(text) // 6)
@@ -986,7 +1002,7 @@ class ReflectionEngine:
             return 0
 
         def _record_block(idx: int, rec: ExperienceRecord) -> str:
-            lines: List[str] = []
+            lines: list[str] = []
             ticket = rec.ticket
             short_group_id = f"第{idx}组"
             lines.extend(
@@ -1139,7 +1155,7 @@ class ReflectionEngine:
         outcome: ReflectionOutcome,
         *,
         epoch: int,
-        trace: Optional[Mapping[str, object]] = None,
+        trace: Mapping[str, object] | None = None,
     ) -> None:
         if self.reflection_log is None:
             return
@@ -1164,7 +1180,7 @@ class ReflectionEngine:
             }
             for hyp in outcome.proposal.hypotheses
         ]
-        payload = {
+        payload: dict[str, Any] = {
             "epoch": epoch,
             "reflection": {
                 "reflection_id": outcome.reflection_id,
@@ -1188,11 +1204,13 @@ class ReflectionEngine:
                 "warnings": list(outcome.warnings),
             },
         }
-        if self._last_debug_info is not None:
-            payload["reflection"]["debug_info"] = self._last_debug_info
-            self._last_debug_info = None
-        if trace:
-            payload["reflection"]["trace"] = trace
+        reflection_payload = payload.get("reflection")
+        if isinstance(reflection_payload, dict):
+            if self._last_debug_info is not None:
+                reflection_payload["debug_info"] = self._last_debug_info
+                self._last_debug_info = None
+            if trace:
+                reflection_payload["trace"] = trace
         with self.reflection_log.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(payload, ensure_ascii=False))
             fh.write("\n")
