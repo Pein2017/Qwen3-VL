@@ -1,16 +1,17 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Dict, List, Literal, Sequence, Tuple, Union
+from typing import Any, Literal
 
 
-def _pair_points(points: Sequence[float]) -> List[Tuple[float, float]]:
+def _pair_points(points: Sequence[float]) -> list[tuple[float, float]]:
     assert len(points) % 2 == 0, f"points length must be even, got {len(points)}"
     return [(float(points[i]), float(points[i + 1])) for i in range(0, len(points), 2)]
 
 
-def points_to_xyxy(points: Sequence[float]) -> List[float]:
+def points_to_xyxy(points: Sequence[float]) -> list[float]:
     """
     Compute [x1,y1,x2,y2] axis-aligned bounding box that encloses arbitrary points.
 
@@ -36,9 +37,9 @@ def points_to_xyxy(points: Sequence[float]) -> List[float]:
     return [float(min(xs)), float(min(ys)), float(max(xs)), float(max(ys))]
 
 
-def scale_points(points: Sequence[float], sx: float, sy: float) -> List[float]:
+def scale_points(points: Sequence[float], sx: float, sy: float) -> list[float]:
     """Scale x by sx and y by sy for all points in a flat [x0,y0,x1,y1,...] list."""
-    out: List[float] = []
+    out: list[float] = []
     for i, v in enumerate(points):
         if i % 2 == 0:
             out.append(float(v) * sx)
@@ -49,7 +50,7 @@ def scale_points(points: Sequence[float], sx: float, sy: float) -> List[float]:
 
 def normalize_points(
     points: Sequence[float], width: float, height: float, space: str
-) -> List[int]:
+) -> list[int]:
     """Normalize to integer grid (norm100 or norm1000) from pixel coords.
 
     space: "norm100" or "norm1000"
@@ -59,7 +60,7 @@ def normalize_points(
     denom_x = width if width else 1.0
     denom_y = height if height else 1.0
     scale = 100 if space == "norm100" else 1000
-    out: List[int] = []
+    out: list[int] = []
     for i, v in enumerate(points):
         if i % 2 == 0:
             out.append(int(round(float(v) / denom_x * scale)))
@@ -68,7 +69,7 @@ def normalize_points(
     return out
 
 
-def _matmul_affine(M: List[List[float]], x: float, y: float) -> Tuple[float, float]:
+def _matmul_affine(M: list[list[float]], x: float, y: float) -> tuple[float, float]:
     """Apply 3x3 affine to (x, y, 1)."""
     nx = M[0][0] * x + M[0][1] * y + M[0][2]
     ny = M[1][0] * x + M[1][1] * y + M[1][2]
@@ -78,7 +79,7 @@ def _matmul_affine(M: List[List[float]], x: float, y: float) -> Tuple[float, flo
     return nx / w, ny / w
 
 
-def compose_affine(A: List[List[float]], B: List[List[float]]) -> List[List[float]]:
+def compose_affine(A: list[list[float]], B: list[list[float]]) -> list[list[float]]:
     """Return A @ B for 3x3 matrices."""
     C = [[0.0] * 3 for _ in range(3)]
     for i in range(3):
@@ -87,15 +88,15 @@ def compose_affine(A: List[List[float]], B: List[List[float]]) -> List[List[floa
     return C
 
 
-def translate(tx: float, ty: float) -> List[List[float]]:
+def translate(tx: float, ty: float) -> list[list[float]]:
     return [[1.0, 0.0, tx], [0.0, 1.0, ty], [0.0, 0.0, 1.0]]
 
 
-def scale_matrix(sx: float, sy: float) -> List[List[float]]:
+def scale_matrix(sx: float, sy: float) -> list[list[float]]:
     return [[sx, 0.0, 0.0], [0.0, sy, 0.0], [0.0, 0.0, 1.0]]
 
 
-def rotate_center(deg: float, cx: float, cy: float) -> List[List[float]]:
+def rotate_center(deg: float, cx: float, cy: float) -> list[list[float]]:
     rad = math.radians(deg)
     c, s = math.cos(rad), math.sin(rad)
     R = [[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]]
@@ -104,25 +105,25 @@ def rotate_center(deg: float, cx: float, cy: float) -> List[List[float]]:
     return compose_affine(T2, compose_affine(R, T1))
 
 
-def hflip_matrix(width: float) -> List[List[float]]:
+def hflip_matrix(width: float) -> list[list[float]]:
     # x' = (width - 1) - x
     return [[-1.0, 0.0, width - 1.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
 
 
-def vflip_matrix(height: float) -> List[List[float]]:
+def vflip_matrix(height: float) -> list[list[float]]:
     # y' = (height - 1) - y
     return [[1.0, 0.0, 0.0], [0.0, -1.0, height - 1.0], [0.0, 0.0, 1.0]]
 
 
-def apply_affine(points: Sequence[float], M: List[List[float]]) -> List[float]:
-    out: List[float] = []
+def apply_affine(points: Sequence[float], M: list[list[float]]) -> list[float]:
+    out: list[float] = []
     for x, y in _pair_points(points):
         nx, ny = _matmul_affine(M, x, y)
         out.extend([nx, ny])
     return out
 
 
-def invert_affine(M: List[List[float]]) -> List[List[float]]:
+def invert_affine(M: list[list[float]]) -> list[list[float]]:
     """Invert an affine 3x3 matrix with bottom row [0,0,1].
 
     For M = [[a,b,c],[d,e,f],[0,0,1]], returns M_inv such that M_inv @ M = I.
@@ -142,7 +143,7 @@ def invert_affine(M: List[List[float]]) -> List[List[float]]:
     return [[inv_a, inv_b, inv_c], [inv_d, inv_e, inv_f], [0.0, 0.0, 1.0]]
 
 
-def scale_center(sx: float, sy: float, cx: float, cy: float) -> List[List[float]]:
+def scale_center(sx: float, sy: float, cx: float, cy: float) -> list[list[float]]:
     """Scale about a center point (cx, cy)."""
     T1 = translate(-cx, -cy)
     S = scale_matrix(sx, sy)
@@ -150,8 +151,8 @@ def scale_center(sx: float, sy: float, cx: float, cy: float) -> List[List[float]
     return compose_affine(T2, compose_affine(S, T1))
 
 
-def clamp_points(points: Sequence[float], width: float, height: float) -> List[int]:
-    out: List[int] = []
+def clamp_points(points: Sequence[float], width: float, height: float) -> list[int]:
+    out: list[int] = []
     for i, v in enumerate(points):
         if i % 2 == 0:
             out.append(max(0, min(int(width) - 1, int(round(float(v))))))
@@ -160,11 +161,11 @@ def clamp_points(points: Sequence[float], width: float, height: float) -> List[i
     return out
 
 
-def dedupe_consecutive_points(points: Sequence[int]) -> List[int]:
+def dedupe_consecutive_points(points: Sequence[int]) -> list[int]:
     if not points:
         return []
-    out: List[int] = []
-    prev: Tuple[int, int] | None = None
+    out: list[int] = []
+    prev: tuple[int, int] | None = None
     for x, y in _pair_points(points):
         pt = (int(round(x)), int(round(y)))
         if prev is None or pt != prev:
@@ -174,8 +175,8 @@ def dedupe_consecutive_points(points: Sequence[int]) -> List[int]:
 
 
 # Round points to nearest integer without clamping to bounds
-def round_points(points: Sequence[float]) -> List[int]:
-    out: List[int] = []
+def round_points(points: Sequence[float]) -> list[int]:
+    out: list[int] = []
     for v in points:
         out.append(int(round(float(v))))
     return out
@@ -184,7 +185,7 @@ def round_points(points: Sequence[float]) -> List[int]:
 # --- Robust geometry helpers for augmentation ---
 
 
-def _rect_bounds(width: float, height: float) -> Tuple[float, float, float, float]:
+def _rect_bounds(width: float, height: float) -> tuple[float, float, float, float]:
     # left, top, right, bottom in float space
     return (
         0.0,
@@ -207,18 +208,18 @@ def is_clockwise(points: Sequence[float]) -> bool:
     return area > 0.0
 
 
-def to_clockwise(points: Sequence[float]) -> List[float]:
+def to_clockwise(points: Sequence[float]) -> list[float]:
     if is_clockwise(points):
         return [float(v) for v in points]
     pts = list(reversed(_pair_points(points)))
-    out: List[float] = []
+    out: list[float] = []
     for x, y in pts:
         out.extend([float(x), float(y)])
     return out
 
 
 def _inside(
-    px: float, py: float, edge: str, bounds: Tuple[float, float, float, float]
+    px: float, py: float, edge: str, bounds: tuple[float, float, float, float]
 ) -> bool:
     left, t, r, b = bounds
     if edge == "left":
@@ -238,8 +239,8 @@ def _intersect(
     x2: float,
     y2: float,
     edge: str,
-    bounds: Tuple[float, float, float, float],
-) -> Tuple[float, float]:
+    bounds: tuple[float, float, float, float],
+) -> tuple[float, float]:
     left, t, r, b = bounds
     dx = x2 - x1
     dy = y2 - y1
@@ -264,7 +265,7 @@ def _intersect(
 
 def sutherland_hodgman_clip(
     points: Sequence[float], width: float, height: float
-) -> List[float]:
+) -> list[float]:
     """Clip polygon to image rectangle [0..W-1]x[0..H-1] in float.
 
     Returns a flat list of points (may be empty). Assumes input polygon is simple/convex.
@@ -276,7 +277,7 @@ def sutherland_hodgman_clip(
     for edge in ("left", "right", "top", "bottom"):
         if not poly:
             break
-        output: List[Tuple[float, float]] = []
+        output: list[tuple[float, float]] = []
         sx, sy = poly[-1]
         for ex, ey in poly:
             if _inside(ex, ey, edge, bounds):
@@ -289,7 +290,7 @@ def sutherland_hodgman_clip(
                 output.append((ix, iy))
             sx, sy = ex, ey
         poly = output
-    out: List[float] = []
+    out: list[float] = []
     for x, y in poly:
         out.extend([x, y])
     return out
@@ -303,7 +304,7 @@ def _dist2(ax: float, ay: float, bx: float, by: float) -> float:
 
 def simplify_polygon(
     points: Sequence[float], *, eps_collinear: float = 1e-6, eps_dup: float = 1e-9
-) -> List[float]:
+) -> list[float]:
     """Remove duplicate and nearly-collinear consecutive vertices from a polygon.
 
     This keeps the polygon shape but drops redundant points that often appear
@@ -314,7 +315,7 @@ def simplify_polygon(
         return [v for p in pts for v in p]
 
     # Remove consecutive duplicates
-    dedup: List[Tuple[float, float]] = []
+    dedup: list[tuple[float, float]] = []
     for x, y in pts:
         if not dedup or _dist2(dedup[-1][0], dedup[-1][1], x, y) > eps_dup:
             dedup.append((x, y))
@@ -329,7 +330,7 @@ def simplify_polygon(
         return [v for p in dedup for v in p]
 
     # Remove nearly collinear interior points
-    out: List[Tuple[float, float]] = []
+    out: list[tuple[float, float]] = []
     n = len(dedup)
     for i in range(n):
         x_prev, y_prev = dedup[(i - 1) % n]
@@ -343,13 +344,13 @@ def simplify_polygon(
             out.append((x_cur, y_cur))
     if len(out) < 3:
         out = dedup
-    flat: List[float] = []
+    flat: list[float] = []
     for x, y in out:
         flat.extend([x, y])
     return flat
 
 
-def _polygon_centroid(points: Sequence[float]) -> Tuple[float, float]:
+def _polygon_centroid(points: Sequence[float]) -> tuple[float, float]:
     pts = _pair_points(points)
     if not pts:
         return 0.0, 0.0
@@ -358,7 +359,7 @@ def _polygon_centroid(points: Sequence[float]) -> Tuple[float, float]:
     return cx, cy
 
 
-def choose_four_corners(points: Sequence[float]) -> List[float]:
+def choose_four_corners(points: Sequence[float]) -> list[float]:
     """Select four most salient corners from a convex polygon.
 
     Heuristic: rank vertices by corner strength (normalized cross product of
@@ -370,7 +371,7 @@ def choose_four_corners(points: Sequence[float]) -> List[float]:
     if n < 3:
         return []
     # Corner strength per vertex
-    strengths: List[Tuple[float, int]] = []
+    strengths: list[tuple[float, int]] = []
     for i in range(n):
         x_prev, y_prev = pts[(i - 1) % n]
         x_cur, y_cur = pts[i]
@@ -400,33 +401,33 @@ def choose_four_corners(points: Sequence[float]) -> List[float]:
     # Order clockwise around centroid
     cx, cy = _polygon_centroid([v for p in sel for v in p])
 
-    def angle(p: Tuple[float, float]) -> float:
+    def angle(p: tuple[float, float]) -> float:
         return math.atan2(p[1] - cy, p[0] - cx)
 
     sel.sort(key=angle)
-    flat: List[float] = []
+    flat: list[float] = []
     for x, y in sel:
         flat.extend([x, y])
     return to_clockwise(flat)
 
 
 def _orientation(
-    a: Tuple[float, float], b: Tuple[float, float], c: Tuple[float, float]
+    a: tuple[float, float], b: tuple[float, float], c: tuple[float, float]
 ) -> float:
     return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
 
 
-def _convex_hull(points: Sequence[float]) -> List[Tuple[float, float]]:
+def _convex_hull(points: Sequence[float]) -> list[tuple[float, float]]:
     pts = _pair_points(points)
     pts = sorted(set((float(x), float(y)) for x, y in pts))
     if len(pts) <= 1:
         return pts
-    lower: List[Tuple[float, float]] = []
+    lower: list[tuple[float, float]] = []
     for p in pts:
         while len(lower) >= 2 and _orientation(lower[-2], lower[-1], p) <= 0:
             lower.pop()
         lower.append(p)
-    upper: List[Tuple[float, float]] = []
+    upper: list[tuple[float, float]] = []
     for p in reversed(pts):
         while len(upper) >= 2 and _orientation(upper[-2], upper[-1], p) <= 0:
             upper.pop()
@@ -435,11 +436,11 @@ def _convex_hull(points: Sequence[float]) -> List[Tuple[float, float]]:
     return hull
 
 
-def _rotate_point(x: float, y: float, c: float, s: float) -> Tuple[float, float]:
+def _rotate_point(x: float, y: float, c: float, s: float) -> tuple[float, float]:
     return c * x - s * y, s * x + c * y
 
 
-def min_area_rect(points: Sequence[float]) -> List[float]:
+def min_area_rect(points: Sequence[float]) -> list[float]:
     """Approximate minimum-area rectangle around polygon points.
 
     Uses rotating calipers on the convex hull; returns 4 vertices (clockwise).
@@ -454,7 +455,7 @@ def min_area_rect(points: Sequence[float]) -> List[float]:
         (x1, y1), (x2, y2) = hull
         return [x1, y1, x2, y2, x2, y2, x1, y1]
     best_area = float("inf")
-    best_rect: List[float] = []
+    best_rect: list[float] = []
     for i in range(len(hull)):
         x1, y1 = hull[i]
         x2, y2 = hull[(i + 1) % len(hull)]
@@ -463,8 +464,8 @@ def min_area_rect(points: Sequence[float]) -> List[float]:
         if length == 0:
             continue
         c, s = dx / length, dy / length
-        xs: List[float] = []
-        ys: List[float] = []
+        xs: list[float] = []
+        ys: list[float] = []
         for x, y in hull:
             rx, ry = _rotate_point(x, y, c, s)
             xs.append(rx)
@@ -483,7 +484,7 @@ def min_area_rect(points: Sequence[float]) -> List[float]:
             ]
             # rotate back
             inv_c, inv_s = c, -s
-            pts: List[float] = []
+            pts: list[float] = []
             for rx, ry in rect_rot:
                 x, y = _rotate_point(rx, ry, inv_c, inv_s)
                 pts.extend([x, y])
@@ -491,7 +492,7 @@ def min_area_rect(points: Sequence[float]) -> List[float]:
     return to_clockwise(best_rect)
 
 
-def classify_affine_kind(M: List[List[float]], tol: float = 1e-6) -> str:
+def classify_affine_kind(M: list[list[float]], tol: float = 1e-6) -> str:
     """Classify affine as axis-aligned or general.
 
     Axis-aligned iff off-diagonals ~ 0 (no rotation/shear). Allows flips and scales.
@@ -505,7 +506,7 @@ def classify_affine_kind(M: List[List[float]], tol: float = 1e-6) -> str:
 
 
 def _cohen_sutherland_code(
-    x: float, y: float, bounds: Tuple[float, float, float, float]
+    x: float, y: float, bounds: tuple[float, float, float, float]
 ) -> int:
     left, t, r, b = bounds
     code = 0
@@ -525,8 +526,8 @@ def _clip_segment_cs(
     y1: float,
     x2: float,
     y2: float,
-    bounds: Tuple[float, float, float, float],
-) -> Tuple[bool, float, float, float, float]:
+    bounds: tuple[float, float, float, float],
+) -> tuple[bool, float, float, float, float]:
     left, t, r, b = bounds
     c1 = _cohen_sutherland_code(x1, y1, bounds)
     c2 = _cohen_sutherland_code(x2, y2, bounds)
@@ -561,12 +562,12 @@ def _clip_segment_cs(
 
 def clip_polyline_to_rect(
     points: Sequence[float], width: float, height: float
-) -> List[float]:
+) -> list[float]:
     bounds = _rect_bounds(width, height)
     pts = _pair_points(points)
     if len(pts) < 2:
         return []
-    out: List[Tuple[float, float]] = []
+    out: list[tuple[float, float]] = []
     # Process each segment; stitch consecutive segments
     for i in range(len(pts) - 1):
         x1, y1 = pts[i]
@@ -581,7 +582,7 @@ def clip_polyline_to_rect(
             if (abs(out[-1][0] - nx1) > 1e-9) or (abs(out[-1][1] - ny1) > 1e-9):
                 out.append((nx1, ny1))
         out.append((nx2, ny2))
-    flat: List[float] = []
+    flat: list[float] = []
     for x, y in out:
         flat.extend([x, y])
     return flat
@@ -597,10 +598,10 @@ class BBox:
     x2: float
     y2: float
 
-    def to_poly_points(self) -> List[float]:
+    def to_poly_points(self) -> list[float]:
         return [self.x1, self.y1, self.x2, self.y1, self.x2, self.y2, self.x1, self.y2]
 
-    def apply_affine(self, M: List[List[float]]) -> Union["BBox", "Polygon"]:
+    def apply_affine(self, M: list[list[float]]) -> "BBox | Polygon":
         kind = classify_affine_kind(M)
         pts = apply_affine(self.to_poly_points(), M)
         if kind == "axis_aligned":
@@ -616,9 +617,9 @@ class BBox:
 
 @dataclass(frozen=True)
 class Polygon:
-    points: Tuple[float, ...]
+    points: tuple[float, ...]
 
-    def apply_affine(self, M: List[List[float]]) -> "Polygon":
+    def apply_affine(self, M: list[list[float]]) -> "Polygon":
         pts = apply_affine(self.points, M)
         if len(pts) % 2 != 0:
             raise ValueError(f"Polygon must have even number of points, got {len(pts)}")
@@ -627,14 +628,14 @@ class Polygon:
 
 @dataclass(frozen=True)
 class Polyline:
-    points: Tuple[float, ...]
+    points: tuple[float, ...]
 
-    def apply_affine(self, M: List[List[float]]) -> "Polyline":
+    def apply_affine(self, M: list[list[float]]) -> "Polyline":
         pts = apply_affine(self.points, M)
         return Polyline(tuple(pts))
 
 
-def geometry_from_dict(g: Dict[str, Any]) -> Union[BBox, Polygon, Polyline]:
+def geometry_from_dict(g: dict[str, Any]) -> "BBox | Polygon | Polyline":
     if "bbox_2d" in g:
         x1, y1, x2, y2 = map(float, g["bbox_2d"])
         return BBox(x1, y1, x2, y2)
@@ -657,7 +658,7 @@ def geometry_from_dict(g: Dict[str, Any]) -> Union[BBox, Polygon, Polyline]:
 # ============================================================================
 
 
-def get_aabb(geom: Dict[str, Any]) -> List[float]:
+def get_aabb(geom: dict[str, Any]) -> list[float]:
     """
     Get axis-aligned bounding box [x1, y1, x2, y2] from any geometry type.
 
@@ -678,7 +679,7 @@ def get_aabb(geom: Dict[str, Any]) -> List[float]:
         raise ValueError(f"Unknown geometry type: {list(geom.keys())}")
 
 
-def intersect_aabb(bbox_a: List[float], bbox_b: List[float]) -> List[float]:
+def intersect_aabb(bbox_a: list[float], bbox_b: list[float]) -> list[float]:
     """
     Compute intersection of two axis-aligned bounding boxes.
 
@@ -701,7 +702,7 @@ def intersect_aabb(bbox_a: List[float], bbox_b: List[float]) -> List[float]:
     return [x1, y1, x2, y2]
 
 
-def aabb_area(bbox: List[float]) -> float:
+def aabb_area(bbox: list[float]) -> float:
     """
     Compute area of an axis-aligned bounding box.
 
@@ -716,7 +717,7 @@ def aabb_area(bbox: List[float]) -> float:
     return width * height
 
 
-def _polygon_area(points: List[float]) -> float:
+def _polygon_area(points: list[float]) -> float:
     if len(points) < 6:
         return 0.0
     area = 0.0
@@ -729,8 +730,8 @@ def _polygon_area(points: List[float]) -> float:
 
 
 def compute_polygon_coverage(
-    geom: Dict[str, Any],
-    crop_bbox: List[float],
+    geom: dict[str, Any],
+    crop_bbox: list[float],
     *,
     fallback: Literal["bbox", "auto"] = "auto",
 ) -> float:
@@ -755,7 +756,7 @@ def compute_polygon_coverage(
         total_area = _polygon_area(pts)
         if total_area <= 0.0:
             return 0.0
-        translated: List[float] = []
+        translated: list[float] = []
         for i in range(0, len(pts), 2):
             translated.append(pts[i] - x1)
             translated.append(pts[i + 1] - y1)
@@ -787,7 +788,7 @@ def compute_polygon_coverage(
     return coverage
 
 
-def compute_coverage(geom: Dict[str, Any], crop_bbox: List[float]) -> float:
+def compute_coverage(geom: dict[str, Any], crop_bbox: list[float]) -> float:
     """
     Compute fraction of geometry that falls inside crop region.
 
@@ -830,7 +831,7 @@ def compute_coverage(geom: Dict[str, Any], crop_bbox: List[float]) -> float:
     return max(0.0, min(1.0, coverage))
 
 
-def translate_geometry(geom: Dict[str, Any], dx: float, dy: float) -> Dict[str, Any]:
+def translate_geometry(geom: dict[str, Any], dx: float, dy: float) -> dict[str, Any]:
     """
     Translate geometry by offset (dx, dy).
 
@@ -867,13 +868,13 @@ def translate_geometry(geom: Dict[str, Any], dx: float, dy: float) -> Dict[str, 
 
 
 def transform_geometry(
-    g: Dict[str, Any],
-    M: List[List[float]],
+    g: dict[str, Any],
+    M: list[list[float]],
     *,
     width: int,
     height: int,
     allow_poly: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Single entrypoint for geometry transform with promotion, ordering, and clipping/rounding.
 

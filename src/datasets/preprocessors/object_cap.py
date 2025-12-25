@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import random
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 from ..contracts import ConversationRecord
 from .base import BasePreprocessor
@@ -36,7 +36,7 @@ class ObjectCapPreprocessor(BasePreprocessor):
         keep_indices = sorted(rng.sample(range(len(objects)), keep))
         row_copy = dict(row)
         row_copy["objects"] = [objects[i] for i in keep_indices]
-        return row_copy  # type: ignore[return-value]
+        return cast(ConversationRecord, cast(object, row_copy))
 
 
 __all__ = ["ObjectCapPreprocessor"]

@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, Optional
+from typing import Any, Optional, cast
 
 from .base import BasePreprocessor
+from ..contracts import ConversationRecord
 
 
 class SummaryLabelNormalizer(BasePreprocessor):
@@ -37,7 +38,7 @@ class SummaryLabelNormalizer(BasePreprocessor):
             rf"^{re.escape(self.label_prefix)}/(.+)[×xX]\s*(\d+)$"
         )
 
-    def preprocess(self, row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def preprocess(self, row: ConversationRecord) -> Optional[ConversationRecord]:
         summary = row.get("summary")
         if not isinstance(summary, str):
             return row
@@ -95,7 +96,7 @@ class SummaryLabelNormalizer(BasePreprocessor):
 
         row_copy = dict(row)
         row_copy["summary"] = self.delimiter.join(new_segments)
-        return row_copy  # type: ignore[return-value]
+        return cast(ConversationRecord, cast(object, row_copy))
 
 
 __all__ = ["SummaryLabelNormalizer"]

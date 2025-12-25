@@ -6,7 +6,9 @@ have been completed, preventing unnecessary saves during the initial warmup phas
 when eval_loss is decreasing rapidly.
 """
 
-from typing import Any, Mapping, Optional
+from collections.abc import Mapping
+from typing import cast
+from typing_extensions import override
 
 from transformers import (
     TrainerCallback,
@@ -39,23 +41,21 @@ class SaveDelayCallback(TrainerCallback):
                 )
             config = SaveDelayConfig.from_raw(save_delay_steps, save_delay_epochs)
 
-        if not isinstance(config, SaveDelayConfig):
-            raise TypeError("config must be a SaveDelayConfig instance")
         if not config.active:
             raise ValueError("SaveDelayConfig must have steps or epochs > 0")
 
-        self.config = config
-        self.save_delay_steps = config.steps
-        self.save_delay_epochs = config.epochs
+        self.config: SaveDelayConfig = config
+        self.save_delay_steps: int | None = config.steps
+        self.save_delay_epochs: float | None = config.epochs
 
         # Runtime state
-        self._delay_active: Optional[bool] = None
-        self._block_logged = False
-        self._release_logged = False
-        self._pending_reset = False
-        self._warned_missing_metric = False
-        self._metric_key_cache: Optional[str] = None
-        self._metric_epsilon = 1e-12
+        self._delay_active: bool | None = None
+        self._block_logged: bool = False
+        self._release_logged: bool = False
+        self._pending_reset: bool = False
+        self._warned_missing_metric: bool = False
+        self._metric_key_cache: str | None = None
+        self._metric_epsilon: float = 1e-12
 
     def _in_delay_period(self, state: TrainerState) -> bool:
         if self.save_delay_steps is not None:
@@ -65,7 +65,7 @@ class SaveDelayCallback(TrainerCallback):
             return epoch < self.save_delay_epochs
         return False
 
-    def _resolve_metric_key(self, args: TrainingArguments) -> Optional[str]:
+    def _resolve_metric_key(self, args: TrainingArguments) -> str | None:
         if self._metric_key_cache is not None:
             return self._metric_key_cache
 
@@ -77,26 +77,25 @@ class SaveDelayCallback(TrainerCallback):
         self._metric_key_cache = key
         return key
 
-    def _guard_metric(
-        self, metric_value: float, greater_is_better: Optional[bool]
-    ) -> float:
+    def _guard_metric(self, metric_value: float, greater_is_better: bool | None) -> float:
         if greater_is_better is False:
             return metric_value - self._metric_epsilon
         # Default to treating higher as better when unset; transformers also defaults this way for non-loss metrics.
         return metric_value + self._metric_epsilon
 
     @staticmethod
-    def _baseline_metric(greater_is_better: Optional[bool]) -> float:
+    def _baseline_metric(greater_is_better: bool | None) -> float:
         if greater_is_better is False:
             return float("inf")
         return float("-inf")
 
+    @override
     def on_step_end(
         self,
         args: TrainingArguments,
         state: TrainerState,
         control: TrainerControl,
-        **kwargs,
+        **kwargs: object,
     ) -> None:
         """Override should_save if we're still in the delay period."""
 
@@ -137,12 +136,13 @@ class SaveDelayCallback(TrainerCallback):
 
         self._delay_active = in_delay_period
 
+    @override
     def on_evaluate(
         self,
         args: TrainingArguments,
         state: TrainerState,
         control: TrainerControl,
-        **kwargs,
+        **kwargs: object,
     ) -> None:
         if args.save_strategy != SaveStrategy.BEST:
             return
@@ -152,10 +152,11 @@ class SaveDelayCallback(TrainerCallback):
         if in_delay_period:
             control.should_save = False
 
-            metrics: Mapping[str, Any] | None = kwargs.get("metrics")
-            if metrics is None:
+            metrics_raw = kwargs.get("metrics")
+            if not isinstance(metrics_raw, Mapping):
                 # Worker ranks do not receive metrics but must still block saving.
                 return
+            metrics = cast(Mapping[str, float], metrics_raw)
 
             metric_key = self._resolve_metric_key(args)
             if metric_key is None:

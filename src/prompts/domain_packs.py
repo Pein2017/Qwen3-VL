@@ -14,16 +14,24 @@ class DomainKnowledgePack:
 
 _BBU_BLOCK = (
     "【BBU领域提示（简版）】\n"
-    "只做客观罗列；desc 原文保持不改写。\n"
-    "核心类别：BBU设备、挡风板、螺丝/光纤插头、光纤、电线、标签、需复核备注。\n"
-    "常见关系：安装螺丝/光纤插头（含BBU端/ODF端/接地螺丝）、光纤保护与弯曲半径、电线捆扎、标签无法识别。"
+    "客观罗列，desc 原文不改写；标签文本需完整保留，无法识别写“标签/无法识别”。\n"
+    "关注点：BBU设备、挡风板、螺丝/光纤插头、光纤、电线。\n"
+    "要点：BBU设备显示完整/挡风板需求；挡风板方向/遮挡；螺丝插头完整/符合（不符合写原因）；"
+    "光纤保护/弯曲半径；电线捆扎。仅写可见证据，不确定写“需复核”。"
 )
 
-_RRU_BLOCK = "【RRU领域提示】待补充"
+_RRU_BLOCK = (
+    "【RRU领域提示（简版）】\n"
+    "客观罗列，desc 原文不改写；标签与站点距离文本需完整保留，无法识别写“标签/无法识别”。\n"
+    "关注点：RRU设备、紧固件、接地线、尾纤、标签、站点距离。\n"
+    "要点：只需强调“配对关系”和“站点距离”的使用——同图优先用组N配对；跨图用站点距离标识同一安装点。\n"
+    "站点距离强制输出：凡非“无关图片”，必须输出站点距离（站点距离/<数字或无法识别>×1）。\n"
+    "分组前缀（组N:）保持原样；不输出BBU/机柜/挡风板/品牌/BBU端/ODF端等内容。"
+)
 
 _DOMAIN_PACKS = {
     "bbu": DomainKnowledgePack(domain="bbu", block=_BBU_BLOCK),
-    "rru": DomainKnowledgePack(domain="rru", block=_RRU_BLOCK, is_placeholder=True),
+    "rru": DomainKnowledgePack(domain="rru", block=_RRU_BLOCK),
 }
 
 

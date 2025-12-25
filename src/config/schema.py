@@ -4,14 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import (
-    Any,
-    Literal,
-    Mapping,
-    MutableMapping,
-    Optional,
-    cast,
-)
+from collections.abc import Mapping, MutableMapping
+from typing import Any, Literal, cast
 
 AllowedNorm = Literal["none", "norm100", "norm1000"]
 AllowedVisualDistance = Literal["mse", "cosine"]
@@ -20,7 +14,7 @@ AllowedJsonFormat = Literal["standard"]
 ALLOWED_JSON_FORMATS: set[str] = {"standard"}
 
 
-def _normalize_json_format(value: Any) -> AllowedJsonFormat:
+def _normalize_json_format(value: object) -> AllowedJsonFormat:
     if not isinstance(value, str):
         raise TypeError("custom.json_format must be a string")
     normalized = value.strip().lower().replace("-", "_").replace(" ", "_")
@@ -29,7 +23,7 @@ def _normalize_json_format(value: Any) -> AllowedJsonFormat:
     return cast(AllowedJsonFormat, normalized)
 
 
-def _as_dict(value: Optional[Mapping[str, Any]]) -> Mapping[str, Any]:
+def _as_dict(value: Mapping[str, Any] | None) -> Mapping[str, Any]:
     if value is None:
         return {}
     if not isinstance(value, Mapping):
@@ -40,8 +34,8 @@ def _as_dict(value: Optional[Mapping[str, Any]]) -> Mapping[str, Any]:
 
 @dataclass(frozen=True)
 class PromptOverrides:
-    system: Optional[str] = None
-    user: Optional[str] = None
+    system: str | None = None
+    user: str | None = None
     output_variant: Literal["dense", "summary"] = "dense"
 
 
@@ -59,7 +53,7 @@ class TokenTypeMetricsConfig:
         object.__setattr__(self, "exclude", exc)
 
     @classmethod
-    def from_mapping(cls, payload: Any) -> "TokenTypeMetricsConfig":
+    def from_mapping(cls, payload: object) -> "TokenTypeMetricsConfig":
         if payload is None:
             return cls()
         if not isinstance(payload, Mapping):
@@ -69,7 +63,7 @@ class TokenTypeMetricsConfig:
         include_raw = payload.get("include", cls.include)
         exclude_raw = payload.get("exclude", cls.exclude)
 
-        def _to_tuple(value: Any, field: str) -> tuple[str, ...]:
+        def _to_tuple(value: object, field: str) -> tuple[str, ...]:
             if value is None:
                 return ()
             if isinstance(value, (list, tuple)):
@@ -89,8 +83,8 @@ class DeepSpeedConfig:
 
     @classmethod
     def from_mapping(
-        cls, payload: Optional[Mapping[str, Any]]
-    ) -> Optional["DeepSpeedConfig"]:
+        cls, payload: Mapping[str, Any] | None
+    ) -> DeepSpeedConfig | None:
         if payload is None:
             return None
         if not isinstance(payload, Mapping):
@@ -118,12 +112,12 @@ class DeepSpeedConfig:
 
 @dataclass(frozen=True)
 class SaveDelayConfig:
-    steps: Optional[int] = None
-    epochs: Optional[float] = None
+    steps: int | None = None
+    epochs: float | None = None
 
     @classmethod
     def from_raw(cls, steps: Any, epochs: Any) -> "SaveDelayConfig":
-        parsed_steps: Optional[int] = None
+        parsed_steps: int | None = None
         if steps is not None:
             try:
                 value = int(steps)
@@ -132,7 +126,7 @@ class SaveDelayConfig:
             if value > 0:
                 parsed_steps = value
 
-        parsed_epochs: Optional[float] = None
+        parsed_epochs: float | None = None
         if epochs is not None:
             try:
                 value = float(epochs)
@@ -148,7 +142,7 @@ class SaveDelayConfig:
         return (self.steps or 0) > 0 or (self.epochs or 0.0) > 0
 
     @classmethod
-    def from_mapping(cls, payload: Optional[Mapping[str, Any]]) -> "SaveDelayConfig":
+    def from_mapping(cls, payload: Mapping[str, Any] | None) -> "SaveDelayConfig":
         if payload is None:
             return cls()
         if not isinstance(payload, Mapping):
@@ -183,8 +177,7 @@ class VisualKDConfig:
             return
         if not (self.vit.enabled or self.aligner.enabled or self.deepstack.enabled):
             raise ValueError(
-                "custom.visual_kd must enable at least one of vit/aligner/deepstack "
-                "when visual_kd.enabled is true"
+                "custom.visual_kd must enable at least one of vit/aligner/deepstack when visual_kd.enabled is true"
             )
 
     @classmethod
@@ -192,7 +185,7 @@ class VisualKDConfig:
         return cls(enabled=False)
 
     @classmethod
-    def from_mapping(cls, payload: Optional[Mapping[str, Any]]) -> "VisualKDConfig":
+    def from_mapping(cls, payload: Mapping[str, Any] | None) -> "VisualKDConfig":
         if payload is None:
             return cls.disabled()
         if not isinstance(payload, Mapping):
@@ -203,7 +196,7 @@ class VisualKDConfig:
             return cls.disabled()
 
         def parse_target(
-            name: str, raw: Optional[Mapping[str, Any]]
+            name: str, raw: Mapping[str, Any] | None
         ) -> VisualKDTargetConfig:
             if raw is None:
                 return VisualKDTargetConfig()
@@ -224,7 +217,7 @@ class VisualKDConfig:
             raw_distance = raw.get("distance", "mse")
             if not isinstance(raw_distance, str):
                 raise TypeError(f"custom.visual_kd.{name}.distance must be a string")
-            distance = raw_distance.lower()
+            distance = cast(AllowedVisualDistance, raw_distance.lower())
 
             if distance not in {"mse", "cosine"}:
                 raise ValueError(
@@ -234,7 +227,7 @@ class VisualKDConfig:
             return VisualKDTargetConfig(
                 enabled=target_enabled,
                 weight=weight,
-                distance=distance,  # type: ignore[arg-type]
+                distance=distance,
             )
 
         vit_cfg = parse_target("vit", payload.get("vit"))
@@ -243,8 +236,7 @@ class VisualKDConfig:
 
         if not (vit_cfg.enabled or aligner_cfg.enabled or deepstack_cfg.enabled):
             raise ValueError(
-                "custom.visual_kd.enabled is true but all per-target configs are disabled; "
-                "enable at least one of vit/aligner/deepstack"
+                "custom.visual_kd.enabled is true but all per-target configs are disabled; enable at least one of vit/aligner/deepstack"
             )
 
         return cls(
@@ -263,22 +255,22 @@ class CustomConfig:
     json_format: AllowedJsonFormat
     use_summary: bool = False
     summary_label_grouping: bool = False
-    system_prompt_summary: Optional[str] = None
-    augmentation: Optional[Mapping[str, Any]] = None
-    augmentation_curriculum: Optional[Mapping[str, Any]] = None
+    system_prompt_summary: str | None = None
+    augmentation: Mapping[str, Any] | None = None
+    augmentation_curriculum: Mapping[str, Any] | None = None
     bypass_prob: float = 0.0
-    trainer_variant: Optional[str] = None
-    sample_limit: Optional[Any] = None
-    train_sample_limit: Optional[Any] = None
-    val_sample_limit: Optional[Any] = None
+    trainer_variant: str | None = None
+    sample_limit: int | None = None
+    train_sample_limit: int | None = None
+    val_sample_limit: int | None = None
     dump_conversation_text: bool = False
-    dump_conversation_path: Optional[str] = None
-    val_jsonl: Optional[str] = None
+    dump_conversation_path: str | None = None
+    val_jsonl: str | None = None
     output_variant: Literal["dense", "summary"] = "dense"
     visual_kd: VisualKDConfig = field(default_factory=VisualKDConfig.disabled)
     token_type_metrics: TokenTypeMetricsConfig = field(default_factory=TokenTypeMetricsConfig)
     extra: Mapping[str, Any] = field(default_factory=dict)
-    fusion_config: Optional[str] = None
+    fusion_config: str | None = None
 
     def __post_init__(self) -> None:
         if not self.train_jsonl:
@@ -296,7 +288,7 @@ class CustomConfig:
 
     @classmethod
     def from_mapping(
-        cls, payload: Optional[Mapping[str, Any]], *, prompts: PromptOverrides
+        cls, payload: Mapping[str, Any] | None, *, prompts: PromptOverrides
     ) -> "CustomConfig":
         if not isinstance(payload, Mapping):
             raise TypeError("custom section must be a mapping")
@@ -321,7 +313,7 @@ class CustomConfig:
                 "custom.summary_ratio has been removed; use custom.use_summary instead."
             )
 
-        def _parse_bool(value: Any, field_name: str) -> bool:
+        def _parse_bool(value: object, field_name: str) -> bool:
             if isinstance(value, bool):
                 return value
             if isinstance(value, (int, float)):
@@ -362,9 +354,37 @@ class CustomConfig:
         augmentation_curriculum = data.pop("augmentation_curriculum", None)
         bypass_prob = float(data.pop("bypass_prob", 0.0))
         trainer_variant = data.pop("trainer_variant", None)
-        sample_limit = data.pop("sample_limit", None)
-        train_sample_limit = data.pop("train_sample_limit", None)
-        val_sample_limit = data.pop("val_sample_limit", None)
+        def _parse_sample_limit(value: Any, field_name: str) -> int | None:
+            if value is None:
+                return None
+            if isinstance(value, bool):
+                raise TypeError(f"{field_name} must be an integer when provided")
+            if isinstance(value, (int, float)):
+                if isinstance(value, float) and not value.is_integer():
+                    raise ValueError(
+                        f"{field_name} must be an integer, got {value!r}"
+                    )
+                int_value = int(value)
+                return int_value if int_value > 0 else None
+            if isinstance(value, str):
+                stripped = value.strip()
+                if stripped.isdigit():
+                    int_value = int(stripped)
+                    return int_value if int_value > 0 else None
+                raise ValueError(
+                    f"{field_name} must be an integer or numeric string, got {value!r}"
+                )
+            raise TypeError(f"{field_name} must be an integer when provided")
+
+        sample_limit = _parse_sample_limit(
+            data.pop("sample_limit", None), "custom.sample_limit"
+        )
+        train_sample_limit = _parse_sample_limit(
+            data.pop("train_sample_limit", None), "custom.train_sample_limit"
+        )
+        val_sample_limit = _parse_sample_limit(
+            data.pop("val_sample_limit", None), "custom.val_sample_limit"
+        )
         dump_conversation_text = bool(data.pop("dump_conversation_text", False))
         dump_conversation_path = data.pop("dump_conversation_path", None)
         val_jsonl = data.pop("val_jsonl", None)
@@ -440,8 +460,8 @@ class TrainingConfig:
     training: Mapping[str, Any] = field(default_factory=dict)
     rlhf: Mapping[str, Any] = field(default_factory=dict)
     prompts: PromptOverrides = field(default_factory=PromptOverrides)
-    deepspeed: Optional[DeepSpeedConfig] = None
-    global_max_length: Optional[int] = None
+    deepspeed: DeepSpeedConfig | None = None
+    global_max_length: int | None = None
     extra: Mapping[str, Any] = field(default_factory=dict)
 
     @classmethod

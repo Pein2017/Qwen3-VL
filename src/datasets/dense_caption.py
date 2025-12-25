@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import copy
 import random
-from typing import Any, Dict, List, Literal, MutableMapping, Optional, Sequence
+from collections.abc import Mapping, MutableMapping, Sequence
+from typing import Literal
 
 from src.utils import get_logger
 
@@ -17,11 +18,11 @@ from .preprocessors import AugmentationPreprocessor, SequentialPreprocessor
 from .utils import extract_object_points, load_jsonl
 
 # Exposed for debugging (e.g., OOM tracing)
-LAST_SAMPLE_DEBUG: Dict[str, Any] = {}
+LAST_SAMPLE_DEBUG: dict[str, object] = {}
 logger = get_logger(__name__)
 
 
-class BaseCaptionDataset(Dataset):
+class BaseCaptionDataset(Dataset[object]):
     """Base caption dataset without dynamic pairing.
 
     Each sample corresponds to a single base record. The dataset supports
@@ -31,21 +32,21 @@ class BaseCaptionDataset(Dataset):
 
     def __init__(
         self,
-        base_records: Sequence[Any],
-        template: Any,
+        base_records: Sequence[object],
+        template: object,
         user_prompt: str,
         emit_norm: Literal["none", "norm100", "norm1000"],
         json_format: Literal["standard"],
-        user_prompt_summary: Optional[str] = None,
-        augmenter: Optional[Any] = None,
-        preprocessor: Optional[Any] = None,
+        user_prompt_summary: str | None = None,
+        augmenter: object | None = None,
+        preprocessor: object | None = None,
         use_summary: bool = False,
-        system_prompt_dense: Optional[str] = None,
-        system_prompt_summary: Optional[str] = None,
+        system_prompt_dense: str | None = None,
+        system_prompt_summary: str | None = None,
         bypass_prob: float = 0.0,
         seed: int = 2025,
-        curriculum_state: Optional[MutableMapping[str, Any]] = None,
-        dataset_name: Optional[str] = None,
+        curriculum_state: MutableMapping[str, object] | None = None,
+        dataset_name: str | None = None,
         allow_empty: bool = False,
     ):
         self.use_summary = bool(use_summary)
@@ -84,7 +85,7 @@ class BaseCaptionDataset(Dataset):
                 except Exception:
                     pass
 
-        validated_records: List[ConversationRecord] = []
+        validated_records: list[ConversationRecord] = []
         for idx, record in enumerate(base_records):
             try:
                 validated = validate_conversation_record(record)
@@ -127,7 +128,7 @@ class BaseCaptionDataset(Dataset):
         self._index_perm = list(range(len(self.base_records)))
         self._rebuild_perm_for_epoch()
         self.dataset_name = dataset_name or "dataset"
-        self.last_sample_debug: Dict[str, Any] = {}
+        self.last_sample_debug: dict[str, object] = {}
 
     @staticmethod
     def _make_sample_id(dataset_name: str, base_idx: int) -> int:
@@ -139,7 +140,7 @@ class BaseCaptionDataset(Dataset):
     @staticmethod
     def from_jsonl(
         jsonl_path: str,
-        template: Any,
+        template: object,
         **kwargs,
     ) -> "BaseCaptionDataset":
         records = load_jsonl(jsonl_path, resolve_relative=True)
@@ -193,104 +194,111 @@ class BaseCaptionDataset(Dataset):
             json_format=self.json_format,
         )
 
-    def __getitem__(self, index: int) -> Dict[str, Any]:
+    def __getitem__(self, index: int) -> dict[str, object]:
         if not self.base_records:
             raise IndexError("BaseCaptionDataset is empty")
 
-        max_attempts = min(5, len(self.base_records))
-        attempt = 0
-        while True:
-            base_idx = self._index_perm[(index + attempt) % len(self._index_perm)]
-            record = copy.deepcopy(self.base_records[base_idx])
+        base_idx = self._index_perm[index % len(self._index_perm)]
+        record = copy.deepcopy(self.base_records[base_idx])
 
-            worker = get_worker_info()
-            seed_local = self._rng.randrange(0, 2**32 - 1)
-            if worker is not None:
-                seed_local ^= ((worker.id + 1) * 0xC2B2AE35) & 0xFFFFFFFF
-            rng_local = random.Random(seed_local & 0xFFFFFFFF)
+        worker = get_worker_info()
+        seed_local = self._rng.randrange(0, 2**32 - 1)
+        if worker is not None:
+            seed_local ^= ((worker.id + 1) * 0xC2B2AE35) & 0xFFFFFFFF
+        rng_local = random.Random(seed_local & 0xFFFFFFFF)
 
-            if self.preprocessor is not None:
-                if hasattr(self.preprocessor, "rng"):
-                    self.preprocessor.rng = rng_local
-                processed = self.preprocessor(record)
-                if processed is None:
-                    raise ValueError(
-                        "Preprocessor removed the record; dataset does not duplicate samples"
-                    )
-                record = processed
-
-            mode = self.mode
-            if not record.get("messages"):
-                if mode == "summary":
-                    summary_val = record.get("summary")
-                    if not isinstance(summary_val, str) or not summary_val.strip():
-                        raise ValueError(
-                            f"Dataset '{self.dataset_name}' is in summary mode but record is missing a non-empty 'summary' string."
-                        )
-                else:
-                    objects = record.get("objects") or []
-                    if not isinstance(objects, list) or not objects:
-                        raise ValueError(
-                            f"Dataset '{self.dataset_name}' is in dense mode but record has no objects."
-                        )
-                    for obj_idx, obj in enumerate(objects, start=1):
-                        geom_type, points = extract_object_points(obj)
-                        if not geom_type or not points:
-                            raise ValueError(
-                                f"Dataset '{self.dataset_name}' dense mode requires geometry; object_{obj_idx} is missing bbox_2d/poly/line points."
-                            )
-
-            builder = self._create_builder(mode)
-            merged = builder.build_many([record])
-
-            system_prompt = None
-            if mode == "summary" and self.system_prompt_summary:
-                system_prompt = self.system_prompt_summary
-            elif mode == "dense" and self.system_prompt_dense:
-                system_prompt = self.system_prompt_dense
-
-            conversation_messages = copy.deepcopy(merged.get("messages", []) or [])
-            if system_prompt is not None:
-                conversation_messages = [
-                    {"role": "system", "content": system_prompt},
-                    *conversation_messages,
-                ]
-
-            original_system = None
-            if system_prompt is not None:
-                try:
-                    original_system = getattr(self.template, "system", None)
-                    self.template.system = system_prompt
-                except Exception:
-                    original_system = None
-
-            try:
-                encoded = self.template.encode(merged, return_length=True)
-            except MaxLengthError as exc:
-                # Drop over-length sample instead of truncating; try another record.
-                logger.warning(
-                    "Dropping over-length sample (dataset=%s, base_idx=%s, max_length=%s): %s",
-                    self.dataset_name,
-                    base_idx,
-                    getattr(self.template, "max_length", None),
-                    exc,
+        if self.preprocessor is not None:
+            if hasattr(self.preprocessor, "rng"):
+                self.preprocessor.rng = rng_local
+            processed = self.preprocessor(record)
+            if processed is None:
+                raise ValueError(
+                    "Preprocessor removed the record; dataset does not duplicate samples"
                 )
-                if system_prompt is not None and original_system is not None:
-                    try:
-                        self.template.system = original_system
-                    except Exception:
-                        pass
-                attempt += 1
-                if attempt >= max_attempts:
-                    raise
-                continue
-            finally:
-                if system_prompt is not None and original_system is not None:
-                    try:
-                        self.template.system = original_system
-                    except Exception:
-                        pass
-            break
+            record = processed
+
+        mode = self.mode
+        if not record.get("messages"):
+            if mode == "summary":
+                summary_val = record.get("summary")
+                if not isinstance(summary_val, str) or not summary_val.strip():
+                    raise ValueError(
+                        f"Dataset '{self.dataset_name}' is in summary mode but record is missing a non-empty 'summary' string."
+                    )
+            else:
+                objects = record.get("objects") or []
+                if not isinstance(objects, list) or not objects:
+                    raise ValueError(
+                        f"Dataset '{self.dataset_name}' is in dense mode but record has no objects."
+                    )
+                for obj_idx, obj in enumerate(objects, start=1):
+                    geom_type, points = extract_object_points(obj)
+                    if not geom_type or not points:
+                        raise ValueError(
+                            f"Dataset '{self.dataset_name}' dense mode requires geometry; object_{obj_idx} is missing bbox_2d/poly/line points."
+                        )
+
+        builder = self._create_builder(mode)
+        merged = builder.build_many([record])
+
+        system_prompt = None
+        if mode == "summary" and self.system_prompt_summary:
+            system_prompt = self.system_prompt_summary
+        elif mode == "dense" and self.system_prompt_dense:
+            system_prompt = self.system_prompt_dense
+
+        conversation_messages = copy.deepcopy(merged.get("messages", []) or [])
+        if system_prompt is not None:
+            conversation_messages = [
+                {"role": "system", "content": system_prompt},
+                *conversation_messages,
+            ]
+
+        original_system = None
+        if system_prompt is not None:
+            try:
+                original_system = getattr(self.template, "system", None)
+                self.template.system = system_prompt
+            except Exception:
+                original_system = None
+
+        try:
+            encoded = self.template.encode(merged, return_length=True)
+        except MaxLengthError as exc:
+            max_length = getattr(self.template, "max_length", None)
+            raise ValueError(
+                "Sample exceeds max_length with truncation disabled "
+                f"(dataset={self.dataset_name}, base_idx={base_idx}, max_length={max_length}). "
+                "Increase global_max_length or reduce prompt/image size to keep full samples."
+            ) from exc
+        finally:
+            if system_prompt is not None and original_system is not None:
+                try:
+                    self.template.system = original_system
+                except Exception:
+                    pass
+        input_ids = encoded.get("input_ids")
+        max_length = getattr(self.template, "max_length", None)
+        if max_length is not None and input_ids is not None:
+            seq_len = None
+            try:
+                shape = getattr(input_ids, "shape", None)
+                if shape:
+                    seq_len = int(shape[-1])
+            except Exception:
+                seq_len = None
+            if seq_len is None:
+                try:
+                    seq_len = int(len(input_ids))
+                except Exception:
+                    seq_len = None
+            if seq_len is not None and seq_len >= int(max_length):
+                raise ValueError(
+                    "Encoded sequence length reaches global_max_length; "
+                    f"seq_len={seq_len} max_length={max_length} "
+                    f"(dataset={self.dataset_name}, base_idx={base_idx}). "
+                    "Do not truncate; increase global_max_length or reduce the prompt/image size."
+                )
 
         self._validate_mm_length(encoded, record, base_idx)
 
@@ -335,7 +343,7 @@ class BaseCaptionDataset(Dataset):
         return encoded
 
     def _validate_mm_length(
-        self, encoded: Dict[str, Any], record: Dict[str, Any], base_idx: int
+        self, encoded: dict[str, object], record: Mapping[str, object], base_idx: int
     ) -> None:
         input_ids = encoded.get("input_ids")
         image_grid_thw = encoded.get("image_grid_thw")
@@ -370,7 +378,10 @@ class BaseCaptionDataset(Dataset):
             return
 
         if expected != image_token_count:
-            meta = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+            meta: dict[str, object] = {}
+            meta_raw = record.get("metadata")
+            if isinstance(meta_raw, Mapping):
+                meta = dict(meta_raw)
             src = meta.get("_fusion_source") or meta.get("dataset") or self.dataset_name
             img0 = None
             images = record.get("images") or []

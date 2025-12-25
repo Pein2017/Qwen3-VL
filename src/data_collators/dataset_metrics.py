@@ -1,4 +1,5 @@
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from typing import cast
 
 import torch
 
@@ -9,10 +10,9 @@ from src.utils import get_logger
 logger = get_logger(__name__)
 
 
-def _resolve_label(row: Mapping[str, Any]) -> str:
-    if not isinstance(row, Mapping):
-        return "default"
-    meta = row.get("metadata") if isinstance(row.get("metadata"), Mapping) else None
+def _resolve_label(row: Mapping[str, object]) -> str:
+    raw_meta = row.get("metadata")
+    meta = raw_meta if isinstance(raw_meta, Mapping) else None
     if meta:
         label = meta.get("_fusion_source") or meta.get("dataset")
         if label:
@@ -22,10 +22,10 @@ def _resolve_label(row: Mapping[str, Any]) -> str:
 
 
 def build_dataset_metrics_collator(
-    template: Any,
-    base_collator: Callable[[List[Dict[str, Any]]], Dict[str, Any]] | None = None,
-    token_type_cfg: Optional[TokenTypeMetricsConfig] = None,
-) -> Callable[[List[Dict[str, Any]]], Dict[str, Any]]:
+    template: object,
+    base_collator: Callable[[list[dict[str, object]]], dict[str, object]] | None = None,
+    token_type_cfg: TokenTypeMetricsConfig | None = None,
+) -> Callable[[list[dict[str, object]]], dict[str, object]]:
     """Wrap the template collator to attach per-sample dataset labels (and lengths).
 
     Works with padded batches (no packing). Lengths are derived from attention_mask
@@ -33,26 +33,35 @@ def build_dataset_metrics_collator(
     requires `dataset_labels`; `dataset_segments` is kept for compatibility/debug.
     """
 
-    collate_fn = base_collator or template.data_collator
+    collate_fn = base_collator or cast(
+        Callable[[list[dict[str, object]]], dict[str, object]],
+        getattr(template, "data_collator"),
+    )
 
-    def _collate(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def _collate(batch: list[dict[str, object]]) -> dict[str, object]:
         dataset_labels = [_resolve_label(row) for row in batch]
         collated = collate_fn(batch)
 
         # Derive per-sample lengths from attention_mask if present, else input_ids.
-        segments: List[int]
+        segments: list[int]
         if "attention_mask" in collated:
             am = collated["attention_mask"]
             if isinstance(am, torch.Tensor):
                 segments = am.long().sum(dim=-1).tolist()
+            elif isinstance(am, Sequence):
+                am_list = cast(Sequence[Sequence[int]], am)
+                segments = [int(sum(x)) for x in am_list]
             else:
-                segments = [int(sum(x)) for x in am]
+                segments = [0 for _ in dataset_labels]
         elif "input_ids" in collated:
             ids = collated["input_ids"]
             if isinstance(ids, torch.Tensor):
                 segments = [ids.shape[-1]] * ids.shape[0]
+            elif isinstance(ids, Sequence):
+                ids_list = cast(Sequence[Sequence[int]], ids)
+                segments = [len(x) for x in ids_list]
             else:
-                segments = [len(x) for x in ids]
+                segments = [0 for _ in dataset_labels]
         else:
             segments = [0 for _ in dataset_labels]
 
@@ -73,11 +82,11 @@ def build_dataset_metrics_collator(
 
 def _maybe_attach_token_types(
     *,
-    collated: Dict[str, Any],
-    raw_batch: Sequence[Mapping[str, Any]],
+    collated: dict[str, object],
+    raw_batch: Sequence[Mapping[str, object]],
     dataset_labels: Sequence[str],
-    template: Any,
-    cfg: Optional[TokenTypeMetricsConfig],
+    template: object,
+    cfg: TokenTypeMetricsConfig | None,
 ) -> None:
     if cfg is None or not cfg.enabled:
         return
@@ -94,7 +103,7 @@ def _maybe_attach_token_types(
     if tokenizer is None:
         return
 
-    token_type_list: List[torch.Tensor] = []
+    token_type_list: list[torch.Tensor] = []
     has_included = False
 
     include_set = set(cfg.include)
@@ -102,11 +111,11 @@ def _maybe_attach_token_types(
 
     for idx, (raw, label) in enumerate(zip(raw_batch, dataset_labels)):
         labels_row: torch.Tensor = labels_tensor[idx]
-        attn_row: Optional[torch.Tensor] = None
+        attn_row: torch.Tensor | None = None
         if isinstance(attention_mask, torch.Tensor) and attention_mask.ndim == 2:
             attn_row = attention_mask[idx]
 
-        label_str = str(label) if label is not None else ""
+        label_str = str(label)
         label_key = label_str.lower()
         included = label_key in include_set and label_key not in exclude_set
         payload = raw.get("assistant_payload")

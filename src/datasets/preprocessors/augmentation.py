@@ -3,7 +3,8 @@
 import copy
 import random
 import re
-from typing import Any, Dict, List, Mapping, MutableMapping, Optional
+from collections.abc import Mapping, MutableMapping
+from typing import cast
 
 from ...utils.logger import get_logger
 from ..augmentation.curriculum import NumericParam, _build_base_ops
@@ -24,11 +25,11 @@ class AugmentationPreprocessor(BasePreprocessor):
     def __init__(
         self,
         *,
-        augmenter: Optional[Any] = None,
-        rng: Optional[random.Random] = None,
+        augmenter: object | None = None,
+        rng: random.Random | None = None,
         bypass_prob: float = 0.0,
-        curriculum_state: Optional[MutableMapping[str, Any]] = None,
-        **kwargs: Any,
+        curriculum_state: MutableMapping[str, object] | None = None,
+        **kwargs: object,
     ):
         """Initialize augmentation preprocessor.
 
@@ -45,7 +46,7 @@ class AugmentationPreprocessor(BasePreprocessor):
         self.curriculum_state = curriculum_state
         self._curriculum_last_step: int | None = None
 
-    def preprocess(self, row: ConversationRecord) -> Optional[ConversationRecord]:
+    def preprocess(self, row: ConversationRecord) -> ConversationRecord | None:
         """Apply augmentations to a record.
 
         Args:
@@ -87,14 +88,15 @@ class AugmentationPreprocessor(BasePreprocessor):
             Compose = None  # type: ignore
             _get = None  # type: ignore
 
-        images = rec.get("images") or []
-        objs = rec.get("objects") or []
+        rec_map = cast(MutableMapping[str, object], cast(object, rec))
+        images = rec_map.get("images") or []
+        objs = rec_map.get("objects") or []
 
         # Extract geometries and keep an index mapping back to the object list.
         # This lets us append new duplicated objects when PatchOps increase geometry count
         # (e.g., small_object_zoom_paste).
-        per_obj_geoms: List[Dict[str, Any]] = []
-        obj_idx_with_geom: List[int] = []
+        per_obj_geoms: list[dict[str, object]] = []
+        obj_idx_with_geom: list[int] = []
         for idx, obj in enumerate(objs):
             g = extract_geometry(obj)
             if g:
@@ -112,7 +114,7 @@ class AugmentationPreprocessor(BasePreprocessor):
             images, per_obj_geoms, pipeline, rng=self.rng
         )
 
-        telemetry: Optional[AugmentationTelemetry] = getattr(
+        telemetry: AugmentationTelemetry | None = getattr(
             pipeline, "last_summary", None
         )
 
@@ -131,13 +133,15 @@ class AugmentationPreprocessor(BasePreprocessor):
             # 2) Append any extra geometries as duplicated objects (labeled).
             extra_geoms = per_obj_geoms_new[len(obj_idx_with_geom) :]
             if extra_geoms and obj_idx_with_geom:
-                appended_objs: List[Dict[str, Any]] = []
+                appended_objs: list[dict[str, object]] = []
                 for geom in extra_geoms:
                     src_idx = geom.get("__src_geom_idx")
-                    try:
-                        src_idx_int = int(src_idx) if src_idx is not None else 0
-                    except (TypeError, ValueError):
-                        src_idx_int = 0
+                    src_idx_int = 0
+                    if isinstance(src_idx, (int, float, str)):
+                        try:
+                            src_idx_int = int(src_idx)
+                        except (TypeError, ValueError):
+                            src_idx_int = 0
                     if src_idx_int < 0 or src_idx_int >= len(obj_idx_with_geom):
                         src_idx_int = 0
 
@@ -146,10 +150,10 @@ class AugmentationPreprocessor(BasePreprocessor):
                     self._update_geometry_field(dup_obj, geom)
                     appended_objs.append(dup_obj)
                 objs.extend(appended_objs)
-                rec["objects"] = objs  # type: ignore[typeddict-item]
+                rec_map["objects"] = objs
         else:
             # Crop was applied - filter objects and update completeness
-            filtered_objects: List[Dict[str, Any]] = []
+            filtered_objects: list[dict[str, object]] = []
             kept_indices = list(telemetry.kept_indices)
             coverages = list(telemetry.coverages)
 
@@ -214,13 +218,15 @@ class AugmentationPreprocessor(BasePreprocessor):
             # Append any extra geometries as duplicated objects (labeled).
             extra_geoms = per_obj_geoms_new[len(kept_indices) :]
             if extra_geoms and filtered_objects:
-                appended_objs_crop: List[Dict[str, Any]] = []
+                appended_objs_crop: list[dict[str, object]] = []
                 for geom in extra_geoms:
                     src_idx = geom.get("__src_geom_idx")
-                    try:
-                        src_idx_int = int(src_idx) if src_idx is not None else 0
-                    except (TypeError, ValueError):
-                        src_idx_int = 0
+                    src_idx_int = 0
+                    if isinstance(src_idx, (int, float, str)):
+                        try:
+                            src_idx_int = int(src_idx)
+                        except (TypeError, ValueError):
+                            src_idx_int = 0
                     if src_idx_int < 0 or src_idx_int >= len(filtered_objects):
                         src_idx_int = 0
 
@@ -231,7 +237,7 @@ class AugmentationPreprocessor(BasePreprocessor):
                 filtered_objects.extend(appended_objs_crop)
 
             # Replace objects list with filtered objects
-            rec["objects"] = filtered_objects  # type: ignore[typeddict-item]
+            rec_map["objects"] = filtered_objects
 
             # Log crop filtering results (debug level)
             logger = get_logger("augmentation.preprocessor")
@@ -240,7 +246,7 @@ class AugmentationPreprocessor(BasePreprocessor):
                 f"({completeness_updates} desc updates, {structured_updates} attribute updates)"
             )
 
-        rec["images"] = images_bytes  # type: ignore[typeddict-item]
+        rec_map["images"] = images_bytes
 
         # Update record width/height to reflect any resize/pad ops in augmentation
         try:
@@ -253,8 +259,8 @@ class AugmentationPreprocessor(BasePreprocessor):
                 if isinstance(b0, (bytes, bytearray)):
                     with Image.open(io.BytesIO(b0)) as im0:
                         im0 = im0.convert("RGB")
-                        rec["width"] = int(im0.width)  # type: ignore[typeddict-item]
-                        rec["height"] = int(im0.height)  # type: ignore[typeddict-item]
+                        rec_map["width"] = int(im0.width)
+                        rec_map["height"] = int(im0.height)
         except Exception:
             # Non-fatal: leave original width/height
             pass
@@ -291,7 +297,7 @@ class AugmentationPreprocessor(BasePreprocessor):
         self._curriculum_last_step = step
 
     def _apply_curriculum_overrides(
-        self, overrides: Mapping[str, Mapping[str, Any]]
+        self, overrides: Mapping[str, Mapping[str, object]]
     ) -> None:
         if self.augmenter is None:
             return
@@ -300,7 +306,7 @@ class AugmentationPreprocessor(BasePreprocessor):
             n = str(name).lower()
             return n == "prob" or n.endswith("_prob")
 
-        def _coerce_value(current: Any, new_value: Any) -> Any:
+        def _coerce_value(current: object, new_value: object) -> object:
             """Preserve operator parameter types when applying overrides."""
             if current is None:
                 return new_value
@@ -334,7 +340,7 @@ class AugmentationPreprocessor(BasePreprocessor):
                     or re.sub(r"(?<!^)(?=[A-Z])", "_", op.__class__.__name__).lower()
                 )
                 name_map.setdefault(n, []).append(op)
-        base_map: Dict[str, Dict[str, NumericParam]] = (
+        base_map: dict[str, dict[str, NumericParam]] = (
             getattr(self.augmenter, "_curriculum_base_ops", {}) or {}
         )
         if not base_map:
@@ -398,7 +404,7 @@ class AugmentationPreprocessor(BasePreprocessor):
                     setattr(op, param_name, coerced)
 
     def _update_geometry_field(
-        self, obj: Dict[str, Any], new_geom: Dict[str, Any]
+        self, obj: dict[str, object], new_geom: dict[str, object]
     ) -> None:
         """
         Update object's geometry field, ensuring only ONE geometry type exists.

@@ -10,14 +10,14 @@ Goals:
 
 import logging
 import os
-from typing import Optional
+from typing_extensions import override
 
 BASE_LOGGER_NAME = "src"
 
 # State
-_GLOBAL_DEBUG_FLAG: bool = False
-_GLOBAL_LOG_LEVEL: int = logging.INFO
-_LOGGING_CONFIGURED: bool = False
+_global_debug_flag: bool = False
+_global_log_level: int = logging.INFO
+_logging_configured: bool = False
 
 
 def get_rank() -> int:
@@ -74,6 +74,7 @@ class RankFilter(logging.Filter):
     Can be overridden with QWEN3VL_VERBOSE=1 environment variable.
     """
 
+    @override
     def filter(self, record: logging.LogRecord) -> bool:
         """
         Filter log records based on process rank.
@@ -98,8 +99,8 @@ def _base_logger() -> logging.Logger:
 
 def _ensure_base_logger() -> None:
     """Install handler/formatter/rank filter on the src root logger once."""
-    global _LOGGING_CONFIGURED
-    if _LOGGING_CONFIGURED:
+    global _logging_configured
+    if _logging_configured:
         return
 
     base = _base_logger()
@@ -113,16 +114,16 @@ def _ensure_base_logger() -> None:
         handler.addFilter(RankFilter())
         base.addHandler(handler)
     base.propagate = False  # contain logs within src namespace
-    _LOGGING_CONFIGURED = True
+    _logging_configured = True
 
 
-def _logger_name(name: Optional[str]) -> str:
+def _logger_name(name: str | None) -> str:
     if name in (None, "", BASE_LOGGER_NAME):
         return BASE_LOGGER_NAME
     return f"{BASE_LOGGER_NAME}.{name}"
 
 
-def get_logger(name: Optional[str] = None) -> logging.Logger:
+def get_logger(name: str | None = None) -> logging.Logger:
     """Return a child logger under the `src` namespace."""
     _ensure_base_logger()
     logger = logging.getLogger(_logger_name(name))
@@ -143,16 +144,16 @@ def configure_logging(
     - Respects rank filtering unless `verbose` is True or QWEN3VL_VERBOSE=1.
     - When debug=True, elevates to DEBUG for src loggers only.
     """
-    global _GLOBAL_DEBUG_FLAG, _GLOBAL_LOG_LEVEL
+    global _global_debug_flag, _global_log_level
 
     if verbose:
         os.environ["QWEN3VL_VERBOSE"] = "1"
     elif not is_verbose_enabled():
         os.environ["QWEN3VL_VERBOSE"] = "0"
 
-    _GLOBAL_DEBUG_FLAG = bool(debug)
+    _global_debug_flag = bool(debug)
     resolved_level = logging.DEBUG if debug else int(level)
-    _GLOBAL_LOG_LEVEL = resolved_level
+    _global_log_level = resolved_level
 
     _ensure_base_logger()
     base = _base_logger()
@@ -176,11 +177,11 @@ def configure_logging(
 
 
 def set_global_debug(debug: bool = True) -> None:
-    configure_logging(level=_GLOBAL_LOG_LEVEL, debug=debug, verbose=is_verbose_enabled())
+    configure_logging(level=_global_log_level, debug=debug, verbose=is_verbose_enabled())
 
 
 def is_global_debug_enabled() -> bool:
-    return _GLOBAL_DEBUG_FLAG
+    return _global_debug_flag
 
 
 def set_log_level(level: int) -> None:
@@ -189,12 +190,12 @@ def set_log_level(level: int) -> None:
 
 def enable_verbose_logging() -> None:
     os.environ["QWEN3VL_VERBOSE"] = "1"
-    configure_logging(level=_GLOBAL_LOG_LEVEL, debug=_GLOBAL_DEBUG_FLAG, verbose=True)
+    configure_logging(level=_global_log_level, debug=_global_debug_flag, verbose=True)
 
 
 def disable_verbose_logging() -> None:
     os.environ["QWEN3VL_VERBOSE"] = "0"
-    configure_logging(level=_GLOBAL_LOG_LEVEL, debug=_GLOBAL_DEBUG_FLAG, verbose=False)
+    configure_logging(level=_global_log_level, debug=_global_debug_flag, verbose=False)
 
 
 # Convenience logger for this module

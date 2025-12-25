@@ -12,20 +12,10 @@ from __future__ import annotations
 import logging
 import math
 import os
+from collections.abc import Callable, Iterable, MutableMapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import (
-    Any,
-    Callable,
-    Dict,
-    Iterable,
-    List,
-    MutableMapping,
-    Optional,
-    Sequence,
-    Tuple,
-    cast,
-)
+from typing import cast
 
 from PIL import Image
 
@@ -100,14 +90,14 @@ def smart_resize(
 
 
 def _scale_and_clamp_geometry(
-    objects: Iterable[MutableMapping[str, Any]],
+    objects: Iterable[MutableMapping[str, object]],
     sx: float,
     sy: float,
     width: int,
     height: int,
-) -> List[MutableMapping[str, Any]]:
+) -> list[MutableMapping[str, object]]:
     """Scale geometries by (sx, sy) and clamp to the new bounds."""
-    scaled: List[MutableMapping[str, Any]] = []
+    scaled: list[MutableMapping[str, object]] = []
     for obj in objects:
         updated = dict(obj)
         if obj.get("bbox_2d") is not None:
@@ -168,7 +158,7 @@ class Resizer:
         if self.output_dir:
             self.output_dir.mkdir(parents=True, exist_ok=True)
 
-    def resize_record(self, row: Dict[str, Any]) -> Dict[str, Any]:
+    def resize_record(self, row: dict[str, object]) -> dict[str, object]:
         images = row.get("images") or []
         if not images:
             return row
@@ -191,7 +181,7 @@ class Resizer:
         # Idempotent path: still rewrite images to output_dir when requested
         if target_h == height and target_w == width:
             if self.write_images:
-                rewritten: List[str] = []
+                rewritten: list[str] = []
                 for path in resolved_paths:
                     rewritten.append(
                         str(self._resize_image(Path(path), target_w, target_h))
@@ -225,7 +215,7 @@ class Resizer:
             )
 
         if self.write_images:
-            rewritten: List[str] = []
+            rewritten: list[str] = []
             for path in resolved_paths:
                 rewritten.append(
                     str(self._resize_image(Path(path), target_w, target_h))
@@ -235,8 +225,8 @@ class Resizer:
             row["images"] = self._maybe_relativize_paths(resolved_paths)
         return row
 
-    def _resolve_image_paths(self, images: Sequence[Any]) -> List[str]:
-        resolved: List[str] = []
+    def _resolve_image_paths(self, images: Sequence[object]) -> list[str]:
+        resolved: list[str] = []
         base = self.jsonl_dir
         for img in images:
             if isinstance(img, str):
@@ -253,10 +243,10 @@ class Resizer:
                 resolved.append(img)
         return resolved
 
-    def _maybe_relativize_paths(self, paths: Sequence[Any]) -> List[Any]:
+    def _maybe_relativize_paths(self, paths: Sequence[object]) -> list[object]:
         if not self.relative_output_root:
             return list(paths)
-        rel_paths: List[Any] = []
+        rel_paths: list[object] = []
         relative_output_root_resolved = self.relative_output_root.resolve()
         output_dir_resolved = self.output_dir.resolve() if self.output_dir else None
 
@@ -333,7 +323,7 @@ class Resizer:
 
         return rel_paths
 
-    def _probe_image_size(self, image_path: str) -> Tuple[int, int]:
+    def _probe_image_size(self, image_path: str) -> tuple[int, int]:
         with Image.open(image_path) as img:
             img = img.convert("RGB")
             return int(img.height), int(img.width)
@@ -371,7 +361,7 @@ class Resizer:
         return out_path
 
     @staticmethod
-    def _safe_int(value: Any) -> Optional[int]:
+    def _safe_int(value: object) -> int | None:
         try:
             return int(value)
         except (TypeError, ValueError):
@@ -391,7 +381,7 @@ class SmartResizePreprocessor(BasePreprocessor):
         images_root_override: str | Path | None = None,
         relative_output_root: str | Path | None = None,
         exif_fn: Callable[[Image.Image], Image.Image] | None = None,
-        **kwargs: Any,
+        **kwargs: object,
     ) -> None:
         super().__init__(**kwargs)
         self.resizer = Resizer(
@@ -405,13 +395,13 @@ class SmartResizePreprocessor(BasePreprocessor):
         )
 
     def preprocess(self, row: ConversationRecord) -> ConversationRecord | None:
-        result = self.resizer.resize_record(cast(Dict[str, Any], row))
-        return cast(ConversationRecord | None, result)
+        result = self.resizer.resize_record(dict(row))
+        return cast(ConversationRecord | None, cast(object, result))
 
 
 def smart_resize_params_from_env(
     prefix: str = "SMART_RESIZE_GUARD",
-) -> Optional[SmartResizeParams]:
+) -> SmartResizeParams | None:
     """Build SmartResizeParams from environment variables when guard is requested.
 
     Env variables:

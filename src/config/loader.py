@@ -2,8 +2,9 @@
 
 import logging
 import math
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, cast
 
 import yaml
 from swift.llm.argument import RLHFArguments, TrainArguments
@@ -23,7 +24,7 @@ class ConfigLoader:
     """
 
     @staticmethod
-    def load_yaml(config_path: str) -> Dict[str, Any]:
+    def load_yaml(config_path: str) -> dict[str, Any]:
         """Load YAML file into dictionary.
 
         Args:
@@ -34,10 +35,14 @@ class ConfigLoader:
         """
         with open(config_path, "r", encoding="utf-8") as f:
             config = yaml.safe_load(f)
+        if config is None:
+            return {}
+        if not isinstance(config, dict):
+            raise TypeError("Top-level YAML config must be a mapping")
         return config
 
     @staticmethod
-    def _normalize_to_list(value: Any) -> List[str]:
+    def _normalize_to_list(value: object) -> list[str]:
         if value is None:
             return []
         if isinstance(value, (list, tuple)):
@@ -45,7 +50,7 @@ class ConfigLoader:
         return [str(value)]
 
     @staticmethod
-    def _coerce_bool(value: Any, field_name: str) -> bool:
+    def _coerce_bool(value: object, field_name: str) -> bool:
         if isinstance(value, bool):
             return value
         if isinstance(value, (int, float)):
@@ -65,8 +70,8 @@ class ConfigLoader:
 
     @staticmethod
     def load_yaml_with_extends(
-        config_path: str, _visited: Optional[Set[str]] = None
-    ) -> Dict[str, Any]:
+        config_path: str, _visited: set[str] | None = None
+    ) -> dict[str, Any]:
         """Load YAML and resolve inheritance via 'extends'/'inherit'.
 
         Supports a top-level key in the YAML:
@@ -78,7 +83,7 @@ class ConfigLoader:
         Cycles are detected and will raise a ValueError.
         """
         abs_path = str(Path(config_path).resolve())
-        visited: Set[str] = set(_visited or set())
+        visited: set[str] = set(_visited or set())
         if abs_path in visited:
             raise ValueError(f"Cyclic config inheritance detected at: {abs_path}")
         visited.add(abs_path)
@@ -96,7 +101,7 @@ class ConfigLoader:
         base_paths = ConfigLoader._normalize_to_list(extends_value)
 
         # Merge all bases in order
-        merged_base: Dict[str, Any] = {}
+        merged_base: dict[str, Any] = {}
         for base_ref in base_paths:
             base_path = Path(base_ref)
             if not base_path.is_absolute():
@@ -108,7 +113,9 @@ class ConfigLoader:
         return ConfigLoader.merge_configs(merged_base, config)
 
     @staticmethod
-    def merge_configs(base: Dict, override: Dict) -> Dict:
+    def merge_configs(
+        base: dict[str, Any], override: dict[str, Any]
+    ) -> dict[str, Any]:
         """Deep merge two config dictionaries.
 
         Args:
@@ -120,18 +127,18 @@ class ConfigLoader:
         """
         merged = base.copy()
         for key, value in override.items():
-            if (
-                isinstance(value, dict)
-                and key in merged
-                and isinstance(merged[key], dict)
-            ):
-                merged[key] = ConfigLoader.merge_configs(merged[key], value)
+            existing = merged.get(key)
+            if isinstance(value, dict) and isinstance(existing, dict):
+                merged[key] = ConfigLoader.merge_configs(
+                    cast(dict[str, Any], existing),
+                    cast(dict[str, Any], value),
+                )
             else:
                 merged[key] = value
         return merged
 
     @staticmethod
-    def resolve_prompts(config: Dict[str, Any]) -> PromptOverrides:
+    def resolve_prompts(config: dict[str, Any]) -> PromptOverrides:
         # Lazy import to avoid circular dependency
         from ..prompts.summary_profiles import (
             DEFAULT_SUMMARY_PROFILE_TRAIN,
@@ -139,18 +146,20 @@ class ConfigLoader:
         )
 
         prompts_config = config.get("prompts", {}) or {}
-        if not isinstance(prompts_config, dict):
+        if not isinstance(prompts_config, Mapping):
             raise TypeError("prompts section must be a mapping if provided")
+        prompts_config = dict(prompts_config)
 
         use_summary = False
         custom_section = config.get("custom")
-        json_format_hint: Optional[str] = None
-        summary_label_grouping: Optional[bool] = None
+        json_format_hint: str | None = None
+        summary_label_grouping: bool | None = None
         if custom_section is not None:
-            if not isinstance(custom_section, dict):
+            if not isinstance(custom_section, Mapping):
                 raise TypeError(
                     "custom section must be a mapping when resolving prompts"
                 )
+            custom_section = dict(custom_section)
             if "summary_ratio" in custom_section:
                 raise ValueError(
                     "custom.summary_ratio has been removed; use custom.use_summary instead."
@@ -171,8 +180,12 @@ class ConfigLoader:
         if use_summary:
             output_variant = "summary"
             default_user = USER_PROMPT_SUMMARY
-            profile_name = prompts_config.get("profile", DEFAULT_SUMMARY_PROFILE_TRAIN)
-            domain_name = prompts_config.get("domain")
+            profile_name_raw = prompts_config.get(
+                "profile", DEFAULT_SUMMARY_PROFILE_TRAIN
+            )
+            profile_name = str(profile_name_raw)
+            domain_raw = prompts_config.get("domain")
+            domain_name = str(domain_raw) if domain_raw is not None else None
             if "system" in prompts_config:
                 default_system = prompts_config.get("system")
             else:
@@ -296,15 +309,23 @@ class ConfigLoader:
             )
 
             logger.info(
-                f"Auto-calculated gradient_accumulation_steps={gradient_accumulation_steps} "
-                f"from effective_batch_size={effective_batch_size}, "
-                f"per_device_train_batch_size={per_device_train_batch_size}, "
-                f"world_size={world_size}"
+                "Auto-calculated gradient_accumulation_steps=%s from effective_batch_size=%s, per_device_train_batch_size=%s, world_size=%s",
+                gradient_accumulation_steps,
+                effective_batch_size,
+                per_device_train_batch_size,
+                world_size,
             )
 
         if config.global_max_length is not None:
-            model_section.setdefault("max_model_len", config.global_max_length)
-            template_section.setdefault("max_length", config.global_max_length)
+            model_section["max_model_len"] = config.global_max_length
+            template_section["max_length"] = config.global_max_length
+            if template_section.get("truncation_strategy") not in (None, "raise"):
+                logger.warning(
+                    "Overriding template.truncation_strategy=%s to 'raise' "
+                    "because global_max_length enforces no truncation.",
+                    template_section.get("truncation_strategy"),
+                )
+            template_section["truncation_strategy"] = "raise"
 
         if "system" not in template_section and config.prompts.system:
             template_section["system"] = config.prompts.system
@@ -316,10 +337,10 @@ class ConfigLoader:
         if kd_requested and not teacher_model_path:
             raise ValueError(
                 "rlhf.teacher_model must be provided when llm KD or visual KD is enabled. "
-                "Set rlhf.llm_kd_weight to 0 and disable custom.visual_kd to run without a teacher."
+                + "Set rlhf.llm_kd_weight to 0 and disable custom.visual_kd to run without a teacher."
             )
 
-        args_dict: Dict[str, Any] = {}
+        args_dict: dict[str, Any] = {}
         for section in (
             model_section,
             quant_section,
@@ -408,7 +429,7 @@ class ConfigLoader:
 
     @staticmethod
     def _materialize_training_config(
-        raw_config: Dict[str, Any], prompts: PromptOverrides
+        raw_config: dict[str, Any], prompts: PromptOverrides
     ) -> TrainingConfig:
         try:
             return TrainingConfig.from_mapping(raw_config, prompts)
@@ -419,7 +440,7 @@ class ConfigLoader:
 
     @staticmethod
     def load_training_config(
-        config_path: str, base_config_path: Optional[str] = None
+        config_path: str, base_config_path: str | None = None
     ) -> tuple[TrainArguments, TrainingConfig]:
         config = ConfigLoader.load_yaml_with_extends(config_path)
 

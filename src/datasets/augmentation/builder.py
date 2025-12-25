@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from typing import Any, Dict, List
+from typing import Any
 
 from .base import Compose, ImageAugmenter
 from .curriculum import NumericParam
 from .registry import get as get_augmenter
 
 
-def build_compose_from_config(cfg: Dict[str, Any]) -> Compose:
+def build_compose_from_config(cfg: dict[str, Any]) -> Compose:
     """Build a Compose pipeline from a simple dict schema.
 
     Schema example (list of ops):
@@ -27,12 +27,12 @@ def build_compose_from_config(cfg: Dict[str, Any]) -> Compose:
     """
     if cfg is None:
         raise ValueError("augmentation config is required to build pipeline")
-    ops_cfg: List[Dict[str, Any]] = cfg.get("ops") or []
+    ops_cfg: list[dict[str, Any]] = cfg.get("ops") or []
     if not isinstance(ops_cfg, list):
         raise TypeError("augmentation.ops must be a list of operations")
-    ops: List[ImageAugmenter] = []
-    ops_meta: List[Dict[str, Any]] = []
-    curriculum_base: Dict[str, Dict[str, NumericParam]] = {}
+    ops: list[ImageAugmenter] = []
+    ops_meta: list[dict[str, Any]] = []
+    curriculum_base: dict[str, dict[str, NumericParam]] = {}
 
     def _is_prob_field(name: str) -> bool:
         n = name.lower()
@@ -54,7 +54,7 @@ def build_compose_from_config(cfg: Dict[str, Any]) -> Compose:
         setattr(augmenter_instance, "_aug_name", name)
         ops.append(augmenter_instance)
         # Capture curriculum-exposed numeric params (typed) from the instance
-        curr_params: Dict[str, NumericParam] = {}
+        curr_params: dict[str, NumericParam] = {}
         raw_curr = getattr(augmenter_instance, "curriculum_params", None)
         if callable(raw_curr):
             raw_curr = raw_curr()
@@ -70,7 +70,7 @@ def build_compose_from_config(cfg: Dict[str, Any]) -> Compose:
                 curr_params[param_name] = numeric
                 curriculum_base.setdefault(name, {}).update({param_name: numeric})
 
-        meta_entry: Dict[str, Any] = {"name": name, "params": deepcopy(params_copy)}
+        meta_entry: dict[str, Any] = {"name": name, "params": deepcopy(params_copy)}
         if curr_params:
             meta_entry["curriculum_params"] = {
                 k: v.to_python_value() for k, v in curr_params.items()
@@ -78,7 +78,7 @@ def build_compose_from_config(cfg: Dict[str, Any]) -> Compose:
         ops_meta.append(meta_entry)
     pipeline = Compose(ops)
     pipeline._augmentation_meta = ops_meta  # type: ignore[attr-defined]
-    name_map: Dict[str, List[ImageAugmenter]] = {}
+    name_map: dict[str, list[ImageAugmenter]] = {}
     for meta, instance in zip(ops_meta, ops):
         name_map.setdefault(meta["name"], []).append(instance)
     pipeline._augmentation_name_map = name_map  # type: ignore[attr-defined]

@@ -5,7 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
-from src.config.prompts import build_summary_system_prompt_minimal, MISSION_SPECIFIC_PRIOR_RULES
+from src.prompts.summary_core import (
+    build_summary_system_prompt_minimal,
+    MISSION_SPECIFIC_PRIOR_RULES,
+)
 
 from .domain_packs import get_domain_pack
 
