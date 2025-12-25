@@ -1,0 +1,38 @@
+{
+  "BBU安装方式检查（正装）": {
+    "stage_a_path": "output_post/stage_a_bbu_rru_summary_12-22/BBU安装方式检查（正装）_stage_a.jsonl",
+    "total_records": 11000,
+    "fail": 3125,
+    "all_irrel_any_label": 235,
+    "pass": 7875,
+    "noise_all_irrel_pass_count": 0,
+    "noise_mostly_irrel_pass_no_key_evidence_count": 0
+  },
+  "BBU接地线检查": {
+    "stage_a_path": "output_post/stage_a_bbu_rru_summary_12-22/BBU接地线检查_stage_a.jsonl",
+    "total_records": 2765,
+    "fail": 450,
+    "all_irrel_any_label": 55,
+    "pass": 2315,
+    "noise_all_irrel_pass_count": 0,
+    "noise_mostly_irrel_pass_no_key_evidence_count": 0
+  },
+  "BBU线缆布放要求": {
+    "stage_a_path": "output_post/stage_a_bbu_rru_summary_12-22/BBU线缆布放要求_stage_a.jsonl",
+    "total_records": 11000,
+    "fail": 3234,
+    "all_irrel_any_label": 105,
+    "pass": 7766,
+    "noise_all_irrel_pass_count": 0,
+    "noise_mostly_irrel_pass_no_key_evidence_count": 0
+  },
+  "挡风板安装检查": {
+    "stage_a_path": "output_post/stage_a_bbu_rru_summary_12-22/挡风板安装检查_stage_a.jsonl",
+    "total_records": 121,
+    "fail": 23,
+    "all_irrel_any_label": 4,
+    "pass": 98,
+    "noise_all_irrel_pass_count": 0,
+    "noise_mostly_irrel_pass_no_key_evidence_count": 0
+  }
+}

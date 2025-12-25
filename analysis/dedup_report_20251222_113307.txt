@@ -1,0 +1,37 @@
+Filesystem dedup summary
+BBU安装方式检查（正装）	180075	14	0.000078
+BBU接地线检查	7126	0	0.000000
+BBU线缆布放要求	156269	2	0.000013
+
+Filesystem dedup by status
+BBU安装方式检查（正装）	审核不通过	22115	4	0.000181
+BBU安装方式检查（正装）	审核通过	157960	10	0.000063
+BBU接地线检查	审核不通过	1026	0	0.000000
+BBU接地线检查	审核通过	6100	0	0.000000
+BBU线缆布放要求	审核不通过	16851	0	0.000000
+BBU线缆布放要求	审核通过	139418	2	0.000014
+
+JSONL dedup summary
+output_post/stage_a_bbu_rru_summary_12-22/BBU线缆布放要求_stage_a.jsonl	39470	0	0.000000
+output_post/stage_a_bbu_rru_summary_12-22/BBU安装方式检查（正装）_stage_a.jsonl	37541	7	0.000186
+output_post/stage_a_bbu_rru_summary_12-22/BBU接地线检查_stage_a.jsonl	7126	0	0.000000
+
+Missing image mappings (jsonl)
+
+Detailed actions/errors
+[DEDUP] BBU安装方式检查（正装） / 审核不通过 / QC-20231121-0024022: kept QC-20231121-0024022_3275469.jpeg, removed 1
+[DEDUP] BBU安装方式检查（正装） / 审核不通过 / QC-20231121-0024022: kept QC-20231121-0024022_3275473.jpeg, removed 1
+[DEDUP] BBU安装方式检查（正装） / 审核不通过 / QC-20231121-0024022: kept QC-20231121-0024022_3275479.jpeg, removed 1
+[DEDUP] BBU安装方式检查（正装） / 审核不通过 / QC-20231121-0024022: kept QC-20231121-0024022_3275482.jpeg, removed 1
+[DEDUP] BBU安装方式检查（正装） / 审核通过 / QC-20241129-0034784: kept QC-20241129-0034784_1967162.jpeg, removed 1
+[DEDUP] BBU安装方式检查（正装） / 审核通过 / QC-20231121-0024022: kept QC-20231121-0024022_3275469.jpeg, removed 1
+[DEDUP] BBU安装方式检查（正装） / 审核通过 / QC-20231121-0024022: kept QC-20231121-0024022_3275473.jpeg, removed 1
+[DEDUP] BBU安装方式检查（正装） / 审核通过 / QC-20231121-0024022: kept QC-20231121-0024022_3275479.jpeg, removed 1
+[DEDUP] BBU安装方式检查（正装） / 审核通过 / QC-20231121-0024022: kept QC-20231121-0024022_3275482.jpeg, removed 1
+[DEDUP] BBU安装方式检查（正装） / 审核通过 / QC-20231121-0024022: kept QC-20231121-0024022_3275533.jpeg, removed 1
+[DEDUP] BBU安装方式检查（正装） / 审核通过 / QC-20231121-0024022: kept QC-20231121-0024022_3275538.jpeg, removed 1
+[DEDUP] BBU安装方式检查（正装） / 审核通过 / QC-20231121-0024022: kept QC-20231121-0024022_3275541.jpeg, removed 1
+[DEDUP] BBU安装方式检查（正装） / 审核通过 / QC-20230808-0014872: kept QC-20230808-0014872_1967162.jpeg, removed 1
+[DEDUP] BBU安装方式检查（正装） / 审核通过 / QC-TEMP-20230717-0006451: kept QC-TEMP-20230717-0006451_1967162.jpeg, removed 1
+[DEDUP] BBU线缆布放要求 / 审核通过 / QC-20241125-0034647: kept QC-20241125-0034647_4444417.jpeg, removed 1
+[DEDUP] BBU线缆布放要求 / 审核通过 / QC-20241125-0034647: kept QC-20241125-0034647_4444421.jpeg, removed 1
