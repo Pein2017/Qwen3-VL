@@ -87,9 +87,7 @@ JSONL_PATH = "data_new_schema/bbu_full_1024_poly_new_schema/val.jsonl"
 
 # Target-domain prompt placeholders (align with training assistant_prefix_format)
 # - DOMAIN_KEY: "bbu" / "rru" (None => inferred from JSONL_PATH)
-# - TASK_MODE: "dense" / "summary"
 DOMAIN_KEY: str | None = None
-TASK_MODE: str = "dense"
 
 # Runtime settings
 LIMIT = 10
@@ -138,9 +136,7 @@ if str(SRC_DIR) not in sys.path:
 try:
     from src.config.prompts import (  # type: ignore
         USER_PROMPT_JSON,
-        USER_PROMPT_SUMMARY,
         build_dense_system_prompt,
-        build_summary_system_prompt,
     )
 except Exception:
     raise Exception("Failed to import prompts")
@@ -177,11 +173,6 @@ def _domain_token(domain_key: str) -> str:
     return "RRU" if key == "rru" else "BBU"
 
 
-def _task_token(task_mode: str) -> str:
-    key = (task_mode or "dense").strip().lower()
-    return "SUMMARY" if key == "summary" else "DETECTION"
-
-
 def _fill_domain_task_placeholders(text: str, *, domain: str, task: str) -> str:
     """Fill {domain}/{task} placeholders without str.format (prompts contain JSON braces)."""
     return text.replace("{domain}", domain).replace("{task}", task)
@@ -189,14 +180,10 @@ def _fill_domain_task_placeholders(text: str, *, domain: str, task: str) -> str:
 
 resolved_domain_key = DOMAIN_KEY or _infer_domain_key(JSONL_PATH)
 resolved_domain_token = _domain_token(resolved_domain_key)
-resolved_task_token = _task_token(TASK_MODE)
+resolved_task_token = "DETECTION"
 
-if TASK_MODE.strip().lower() == "summary":
-    SYSTEM_PROMPT_TEXT = build_summary_system_prompt(dataset=resolved_domain_key)
-    default_user_prompt = USER_PROMPT_SUMMARY
-else:
-    SYSTEM_PROMPT_TEXT = build_dense_system_prompt(json_format, dataset=resolved_domain_key)
-    default_user_prompt = USER_PROMPT_JSON
+SYSTEM_PROMPT_TEXT = build_dense_system_prompt(json_format, dataset=resolved_domain_key)
+default_user_prompt = USER_PROMPT_JSON
 
 SYSTEM_PROMPT_TEXT = _fill_domain_task_placeholders(
     SYSTEM_PROMPT_TEXT, domain=resolved_domain_token, task=resolved_task_token
@@ -1225,7 +1212,6 @@ def main() -> None:
 
         raw_text = ""
         clean_text = ""
-        pred_summary_text = ""
         try:
             raw_text, clean_text = run_infer_one(img, USER_PROMPT_TEXT)
             # Print raw first for debugging
@@ -1237,92 +1223,17 @@ def main() -> None:
             clean_payload = _strip_assistant_prefix_line(clean_text)
             raw_payload = _strip_assistant_prefix_line(raw_text)
 
-            if TASK_MODE.strip().lower() == "summary":
-                pred_summary_text = (clean_payload or raw_payload).strip()
-                pred_objs = []
-            else:
-                # Try parsing with clean_payload first, fallback to raw_payload if needed
-                pred_objs = parse_prediction(clean_payload)
-                if not pred_objs:
-                    # If clean_payload parsing failed, try raw_payload (might preserve formatting better)
-                    print("[WARNING] Parsing with clean_text failed, trying raw_text...")
-                    pred_objs = parse_prediction(raw_payload)
-                # Deduplicate predictions to remove identical objects
-                pred_objs, _ = deduplicate_predictions(pred_objs, verbose=True)
+            # Try parsing with clean_payload first, fallback to raw_payload if needed
+            pred_objs = parse_prediction(clean_payload)
+            if not pred_objs:
+                # If clean_payload parsing failed, try raw_payload (might preserve formatting better)
+                print("[WARNING] Parsing with clean_text failed, trying raw_text...")
+                pred_objs = parse_prediction(raw_payload)
+            # Deduplicate predictions to remove identical objects
+            pred_objs, _ = deduplicate_predictions(pred_objs, verbose=True)
         except Exception as e:
             print(f"[ERROR] Failed to parse prediction: {e}")
             pred_objs = []
-
-        if TASK_MODE.strip().lower() == "summary":
-            gt_summary_text = rec.get("summary") or ""
-            if not isinstance(gt_summary_text, str):
-                gt_summary_text = str(gt_summary_text)
-
-            def _pretty_summary(text: str) -> str:
-                s = (text or "").strip()
-                if not s:
-                    return ""
-                if s == "无关图片":
-                    return s
-                raw_json = _extract_outer_json(s) or s
-                parsed = _json_loads_best_effort(raw_json)
-                if isinstance(parsed, dict):
-                    try:
-                        return json.dumps(parsed, ensure_ascii=False, indent=2)
-                    except Exception:
-                        return s
-                return s
-
-            gt_pretty = _pretty_summary(gt_summary_text)
-            pred_pretty = _pretty_summary(pred_summary_text)
-
-            fig, (ax_l, ax_r) = plt.subplots(1, 2, figsize=(18, 6))
-            ax_l.imshow(img)
-            ax_l.axis("off")
-            ax_l.set_title("Image")
-
-            ax_r.axis("off")
-            summary_block = "\n".join(
-                [
-                    "GT Summary:",
-                    gt_pretty or "(empty)",
-                    "",
-                    "Pred Summary:",
-                    pred_pretty or "(empty)",
-                ]
-            )
-            ax_r.text(
-                0.0,
-                1.0,
-                summary_block,
-                transform=ax_r.transAxes,
-                va="top",
-                ha="left",
-                fontsize=9,
-                family="monospace",
-            )
-            out_path = Path(SAVE_DIR) / f"vis_{count:05d}.jpg"
-            fig.tight_layout()
-            fig.savefig(out_path, dpi=120)
-            plt.close(fig)
-
-            if SAVE_JSONL:
-                dumped_records.append(
-                    {
-                        "image_path": images[0],
-                        "gt_summary": gt_summary_text,
-                        "pred_summary": pred_summary_text,
-                        "raw_text": raw_text,
-                        "clean_text": clean_text,
-                        "width": w,
-                        "height": h,
-                    }
-                )
-
-            count += 1
-            if count >= LIMIT:
-                break
-            continue
 
         # Convert predictions from norm1000 to pixels for evaluation and drawing
         pred_px = [
