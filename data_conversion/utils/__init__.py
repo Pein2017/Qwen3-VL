@@ -7,6 +7,8 @@ Validation and transformation utilities live in `data_conversion.pipeline.coordi
 
 from .file_ops import FileOperations
 from .sanitizers import (
+    sanitize_desc_value,
+    sanitize_free_text_value,
     sanitize_text,
     standardize_label_description,
     strip_occlusion_tokens,
@@ -16,6 +18,8 @@ from .sanitizers import (
 __all__ = [
     "FileOperations",
     "strip_occlusion_tokens",
+    "sanitize_desc_value",
+    "sanitize_free_text_value",
     "sanitize_text",
     "standardize_label_description",
 ]

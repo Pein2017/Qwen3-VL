@@ -1,304 +1,225 @@
 #!/usr/bin/env python3
 """
-Deterministic summary builder for BBU/rru QC dataset (raw-desc mode).
+Summary builder for BBU/RRU datasets (key=value desc mode).
 
-Current rule set (2025-11):
-- Do NOT parse/canonicalize; use the raw `desc` string as the grouping key.
-- Count identical desc values, sort by desc length (asc), tie-break by first appearance.
-- Emit `desc×N` segments joined with '，'.
-- Fail-fast: raises `ValueError` when objects list is empty or all desc are empty/blank.
-
-Legacy parsing helpers remain below for reference/compatibility but are not used by the
-active build_summary_from_objects implementation.
+Outputs a JSON-string summary with per-category statistics and optional
+remarks/group breakdowns. This replaces the legacy desc×N aggregation.
 """
 
 from __future__ import annotations
 
-import re
+import json
 from typing import Any, Dict, List, Tuple
 
-
-# Object type headers (Chinese)
-BBU = "BBU设备"
-SHIELD = "挡风板"
-CONNECT = "螺丝、光纤插头"
-LABEL = "标签"
-FIB = "光纤"
-WIRE = "电线"
-
-# Canonical tokens
-CP_COMPLY_OK = "符合要求"
-CP_COMPLY_BAD = "不符合要求"
-CP_ISSUES = {"未拧紧", "露铜", "复接", "生锈"}
-
-# Connect point sub-types to retain in summary (first-level token)
-CP_TYPES = {"BBU安装螺丝", "机柜处接地螺丝", "地排处接地螺丝", "ODF端光纤插头", "BBU端光纤插头"}
-
-SHIELD_DIR_OK = "安装方向正确"
-SHIELD_DIR_BAD = "安装方向错误"
-
-FIB_PROTECT_NONE = "无保护措施"
-FIB_PROTECT_HAVE = "有保护措施"
-FIB_PROTECT_DETAILS = {"蛇形管", "铠装", "同时有蛇形管和铠装"}
-FIB_BEND_OK = "弯曲半径合理"
-FIB_BEND_BAD = "弯曲半径不合理（弯曲半径<4cm或者成环）"
-# Legacy half-width variant (accepted for robustness)
-FIB_BEND_BAD_HALF = "弯曲半径不合理(弯曲半径<4cm或者成环)"
-
-WIRE_NEAT = "捆扎整齐"
-WIRE_MESS = "分布散乱"
-
-BBU_WS_REQ = "机柜空间充足需要安装"
-BBU_WS_NO = "无需安装"
-BBU_WS_OK = "这个BBU设备按要求配备了挡风板"
-BBU_WS_BAD = "这个BBU设备未按要求配备挡风板"
+from data_conversion.utils.sanitizers import sanitize_free_text_value
 
 
-_RE_REMARK = re.compile(r"备注[:：]\s*(.+)$")
+NEGATIVE_MARKERS = ("不符合", "不合规", "不合格", "不合理", "错误", "不能")
+FREE_TEXT_KEYS = {"备注", "文本"}
+
+BBU_CATEGORIES = {
+    "BBU设备",
+    "挡风板",
+    "光纤",
+    "电线",
+    "标签",
+    "BBU安装螺丝",
+    "机柜处接地螺丝",
+    "地排处接地螺丝",
+    "ODF端光纤插头",
+    "BBU端光纤插头",
+}
+
+RRU_CATEGORIES = {
+    "RRU设备",
+    "紧固件",
+    "RRU接地端",
+    "地排接地端螺丝",
+    "尾纤",
+    "接地线",
+    "标签",
+    "站点距离",
+}
 
 
-def _split_commas(text: str) -> List[str]:
-    """Split by Chinese/ASCII commas and strip."""
-    if not isinstance(text, str) or not text:
-        return []
-    return [t.strip() for t in text.replace("，", ",").split(",") if t.strip()]
+def _is_negative_value(value: str) -> bool:
+    return any(marker in value for marker in NEGATIVE_MARKERS)
 
 
-def _collect_remarks(objects: List[Dict[str, Any]]) -> List[str]:
-    """Collect unique remarks from all objects (matches SummaryHandler)."""
-    remarks: List[str] = []
-    seen: set[str] = set()
-    pattern = re.compile(r"备注[:：]\s*(.+)$")
-    for obj in objects:
-        desc = str(obj.get("desc", "")).strip()
-        if not desc:
-            continue
-        for seg in desc.split("/"):
-            m = pattern.search(seg)
-            if not m:
-                continue
-            content = m.group(1).strip()
-            if not content:
-                continue
-            # normalize ending punctuation
-            content = content.strip("；，。;,")
-            if content and content not in seen:
-                seen.add(content)
-                remarks.append(content)
-    return remarks
-
-
-def _summarize_object_string(desc: str) -> str:
-    """Summarize a single object's desc to one canonical string with full context.
-
-    Examples:
-    - BBU/华为/无需挡风板
-    - BBU/爱立信/挡风板未按要求配备
-    - 连接点/不合规-未拧紧,生锈
-    - 连接点/合规
-    - 光纤/无保护/弯曲合理
-    - 光纤/有保护/蛇形管/弯曲不合理
-    - 电线/捆扎整齐
-    - 标签/可以识别
-    - 挡风板/安装方向错误
-    """
-    if not isinstance(desc, str) or not desc.strip():
-        return ""
-    parts = [p.strip() for p in desc.split("/") if p.strip()]
-    if not parts:
-        return ""
-
-    kind = parts[0]
-
-    if kind == BBU:
-        lvl1 = _split_commas(parts[1]) if len(parts) >= 2 else []
-        brand = ""
-        for b in ("华为", "中兴", "爱立信"):
-            if b in lvl1:
-                brand = b
-                break
-        completeness = ""
-        if "显示完整" in lvl1:
-            completeness = "显示完整"
-        elif "只显示部分" in lvl1:
-            completeness = "只显示部分"
-        status = ""
-        if BBU_WS_REQ in lvl1:
-            conf = parts[2].strip() if len(parts) >= 3 else ""
-            if conf == BBU_WS_OK:
-                status = "这个BBU设备按要求配备了挡风板"
-            elif conf == BBU_WS_BAD or conf == "":
-                status = "这个BBU设备未按要求配备挡风板"
-        elif BBU_WS_NO in lvl1:
-            status = "无需安装"
-        tokens = ["BBU设备"]
-        if brand:
-            tokens.append(brand)
-        if completeness:
-            tokens.append(completeness)
-        if status:
-            # normalize to mapping's first value tokens
-            tokens.append(status)
-        return "/".join(tokens)
-
-    if kind == CONNECT and len(parts) >= 2:
-        lvl1 = _split_commas(parts[1])
-        # Keep the connect_point subtype (e.g., BBU安装螺丝) if present
-        cp_type = next((t for t in lvl1 if t in CP_TYPES), "")
-        completeness = ""
-        if "显示完整" in lvl1:
-            completeness = "显示完整"
-        elif "只显示部分" in lvl1:
-            completeness = "只显示部分"
-        if CP_COMPLY_BAD in lvl1:
-            issues: List[str] = []
-            if len(parts) >= 3:
-                issues = [it for it in _split_commas(parts[2]) if it in CP_ISSUES]
-            if issues:
-                return "/".join([
-                    p for p in [
-                        "螺丝、光纤插头",
-                        cp_type,
-                        completeness,
-                        f"不符合要求/{','.join(sorted(set(issues)))}",
-                    ]
-                    if p
-                ])
-            return "/".join([p for p in ["螺丝、光纤插头", cp_type, completeness, "不符合要求"] if p])
-        if CP_COMPLY_OK in lvl1:
-            return "/".join([p for p in ["螺丝、光纤插头", cp_type, completeness, "符合要求"] if p])
-        return ""
-
-    if kind == FIB and len(parts) >= 2:
-        lvl1 = _split_commas(parts[1])
-        protect = ""
-        detail = ""
-        if FIB_PROTECT_NONE in lvl1:
-            protect = "无保护措施"
-        elif FIB_PROTECT_HAVE in lvl1:
-            protect = "有保护措施"
-            det = parts[2].strip() if len(parts) >= 3 else ""
-            if det in FIB_PROTECT_DETAILS:
-                detail = det
-        bend = ""
-        if (FIB_BEND_BAD in lvl1) or (FIB_BEND_BAD_HALF in lvl1):
-            bend = "弯曲半径不合理（弯曲半径<4cm或者成环）"
-        elif FIB_BEND_OK in lvl1:
-            bend = "弯曲半径合理"
-        tokens = ["光纤"]
-        if protect:
-            tokens.append(protect)
-        if detail:
-            tokens.append(detail)
-        if bend:
-            tokens.append(bend)
-        return "/".join(tokens)
-
-    if kind == WIRE and len(parts) >= 2:
-        lvl1 = _split_commas(parts[1])
-        if WIRE_MESS in lvl1:
-            return "电线/分布散乱"
-        if WIRE_NEAT in lvl1:
-            return "电线/捆扎整齐"
-        return ""
-
-    if kind == LABEL:
-        text = parts[1].strip() if len(parts) >= 2 else ""
-        if text in {"无法识别", "不能"}:
-            return "标签/无法识别"
-        return "标签/可以识别"
-
-    if kind == SHIELD and len(parts) >= 2:
-        lvl1 = _split_commas(parts[1])
-        completeness = ""
-        if "显示完整" in lvl1:
-            completeness = "显示完整"
-        elif "只显示部分" in lvl1:
-            completeness = "只显示部分"
-        if SHIELD_DIR_BAD in lvl1:
-            return "/".join([p for p in ["挡风板", completeness, "安装方向错误"] if p])
-        if SHIELD_DIR_OK in lvl1:
-            return "/".join([p for p in ["挡风板", completeness, "安装方向正确"] if p])
-        return ""
-
-    return ""
-
-
-def _type_order_key(s: str) -> Tuple[int, int, int, str]:
-    """Stable ordering: type → negative-first → brand → lexicographic."""
-    # Custom ordering: BBU设备 → 挡风板 → 光纤 → 电线 → 螺丝、光纤插头 → 标签
-    type_map = {
-        "BBU设备": 0,
-        "挡风板": 1,
-        "光纤": 2,
-        "电线": 3,
-        "螺丝、光纤插头": 4,
-        "标签": 5,
+def _parse_desc(desc: str) -> Tuple[str, Dict[str, List[str]], Dict[str, bool]]:
+    """Parse key=value desc into category, kv map, and error flags."""
+    kv: Dict[str, List[str]] = {}
+    errors = {
+        "invalid": False,
+        "conflict": False,
     }
-    head = s.split("/", 1)[0]
-    primary = type_map.get(head, 99)
-    # negative-first within types
-    negative_score = 1
-    if head == "螺丝、光纤插头":
-        negative_score = 0 if "/不符合要求" in s else 1
-    elif head == "光纤":
-        negative_score = 0 if "弯曲半径不合理" in s else 1
-    elif head == "挡风板":
-        negative_score = 0 if "安装方向错误" in s else 1
-    elif head == "BBU设备":
-        if "未按要求配备挡风板" in s:
-            negative_score = 0
-        elif "按要求配备了挡风板" in s:
-            negative_score = 1
-        elif "无需安装" in s:
-            negative_score = 2
+
+    tokens = [t.strip() for t in desc.split(",") if t.strip()]
+    current_key = None
+    current_value = ""
+    stray_tokens: List[str] = []
+
+    def _append_value(key: str, value: str) -> None:
+        if not key or not value:
+            errors["invalid"] = True
+            return
+        if key in FREE_TEXT_KEYS:
+            value = sanitize_free_text_value(value)
+            if not value:
+                return
+            kv.setdefault(key, []).append(value)
         else:
-            negative_score = 3
-    # brand order for BBU
-    brand_score = 9
-    if head == "BBU设备":
-        parts = s.split("/")
-        brand = parts[1] if len(parts) >= 2 else ""
-        brand_order = {"华为": 0, "中兴": 1, "爱立信": 2, "": 3}
-        brand_score = brand_order.get(brand, 8)
-    return (primary, negative_score, brand_score, s)
+            values = [v for v in value.split("|") if v]
+            if not values:
+                return
+            kv.setdefault(key, []).extend(values)
+
+    for token in tokens:
+        if "=" in token:
+            if current_key is not None:
+                _append_value(current_key, current_value)
+            key, value = token.split("=", 1)
+            key = key.strip()
+            value = value.strip()
+            if not key:
+                errors["invalid"] = True
+                current_key = None
+                current_value = ""
+                stray_tokens.append(token)
+                continue
+            current_key = key
+            current_value = value
+        else:
+            if current_key in FREE_TEXT_KEYS:
+                current_value = f"{current_value},{token}" if current_value else token
+            else:
+                stray_tokens.append(token)
+
+    if current_key is not None:
+        _append_value(current_key, current_value)
+
+    if stray_tokens:
+        remark_value = sanitize_free_text_value(",".join(stray_tokens))
+        if remark_value:
+            kv.setdefault("备注", []).append(remark_value)
+
+    category = ""
+    if "类别" in kv and kv["类别"]:
+        category = kv["类别"][0]
+
+    for values in kv.values():
+        if len(values) < 2:
+            continue
+        has_negative = any(_is_negative_value(v) for v in values)
+        has_positive = any(not _is_negative_value(v) for v in values)
+        if has_negative and has_positive:
+            errors["conflict"] = True
+            break
+
+    if not category:
+        errors["invalid"] = True
+
+    return category, kv, errors
 
 
-def build_summary_from_objects(objects: List[Dict[str, Any]]) -> str:
-    """Build one-line summary by grouping on the raw `desc` strings.
-
-    - No parsing/canonicalization: use the full desc as the grouping key.
-    - Count identical desc values.
-    - Sort by string length (ascending); ties keep first appearance order.
-    - Emit segments like: 'BBU设备/需复核,备注:无法判断品牌×1，标签/无法识别×2'.
-    """
+def build_summary_from_objects(
+    objects: List[Dict[str, Any]], *, dataset: str = "BBU"
+) -> str:
+    """Build JSON-string summary from objects with key=value descs."""
     if not objects:
         raise ValueError("build_summary_from_objects: no objects provided (fail-fast)")
 
-    descs: List[str] = []
+    summary_stats: Dict[str, Dict[str, Dict[str, int]]] = {}
+    remarks: List[str] = []
+    remark_seen: set[str] = set()
+    group_stats: Dict[str, int] = {}
+
+    invalid = 0
+    unknown_category = 0
+    conflicts = 0
+    error_examples: Dict[str, str] = {}
+
+    expected_categories = BBU_CATEGORIES if dataset.upper() == "BBU" else RRU_CATEGORIES
+
     for obj in objects:
         desc = obj.get("desc", "")
         if not isinstance(desc, str):
             desc = str(desc)
         desc = desc.strip()
-        if desc:
-            descs.append(desc)
+        if not desc:
+            invalid += 1
+            error_examples.setdefault("无法解析", "<empty>")
+            continue
 
-    if not descs:
-        raise ValueError("build_summary_from_objects: objects missing non-empty desc (fail-fast)")
+        category, kv, errors = _parse_desc(desc)
+        if errors["invalid"]:
+            invalid += 1
+            error_examples.setdefault("无法解析", desc)
+        if errors["conflict"]:
+            conflicts += 1
+            error_examples.setdefault("冲突值", desc)
 
-    first_seen: Dict[str, int] = {}
-    counts: Dict[str, int] = {}
-    for idx, desc in enumerate(descs):
-        if desc not in first_seen:
-            first_seen[desc] = idx
-            counts[desc] = 0
-        counts[desc] += 1
+        if category and category not in expected_categories:
+            unknown_category += 1
+            error_examples.setdefault("未知类别", desc)
 
-    # Stable sort: length first, then first appearance index to preserve input order for ties
-    sorted_descs = sorted(counts.keys(), key=lambda d: (len(d), first_seen[d]))
-    segments = [f"{d}×{counts[d]}" for d in sorted_descs]
+        if not category:
+            continue
 
-    summary = "，".join(segments)
-    summary = summary.replace("<", "").replace(">", "").replace("[", "").replace("]", "")
-    return summary
+        cat_stats = summary_stats.setdefault(category, {})
+
+        for key, values in kv.items():
+            if key == "类别":
+                continue
+            if key == "备注":
+                if dataset.upper() == "BBU":
+                    for value in values:
+                        if value and value not in remark_seen:
+                            remark_seen.add(value)
+                            remarks.append(value)
+                continue
+            if key == "组":
+                for gid in values:
+                    if not gid:
+                        continue
+                    group_stats[gid] = group_stats.get(gid, 0) + 1
+                    cat_group_stats = cat_stats.setdefault("组", {})
+                    cat_group_stats[gid] = cat_group_stats.get(gid, 0) + 1
+                continue
+
+            value_counts = cat_stats.setdefault(key, {})
+            for value in values:
+                if not value:
+                    continue
+                value_counts[value] = value_counts.get(value, 0) + 1
+
+    summary_obj: Dict[str, Any] = {
+        "dataset": dataset.upper(),
+        "objects_total": len(objects),
+        "统计": [],
+    }
+
+    for category in sorted(summary_stats.keys()):
+        entry: Dict[str, Any] = {"类别": category}
+        for key in sorted(summary_stats[category].keys()):
+            entry[key] = summary_stats[category][key]
+        summary_obj["统计"].append(entry)
+
+    if dataset.upper() == "BBU" and remarks:
+        summary_obj["备注"] = remarks
+    elif dataset.upper() != "BBU" and group_stats:
+        summary_obj["分组统计"] = group_stats
+
+    error_fields: Dict[str, Any] = {}
+    if invalid:
+        error_fields["无法解析"] = invalid
+    if unknown_category:
+        error_fields["未知类别"] = unknown_category
+    if conflicts:
+        error_fields["冲突值"] = conflicts
+    if error_examples:
+        error_fields["示例"] = error_examples
+    if error_fields:
+        raise ValueError(f"summary anomalies detected: {error_fields}")
+
+    return json.dumps(summary_obj, ensure_ascii=False, separators=(", ", ": "))

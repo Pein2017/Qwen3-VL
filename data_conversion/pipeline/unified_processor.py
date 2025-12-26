@@ -36,12 +36,12 @@ from data_conversion.pipeline.validation_manager import (
 )
 from data_conversion.pipeline.vision_process import ImageProcessor
 from data_conversion.utils.file_ops import FileOperations
-from data_conversion.utils.review_flagger import flag_objects_for_review
 from data_conversion.utils.sanitizer_pipeline import (
     SanitizerPipeline,
     SanitizerStep,
 )
 from data_conversion.utils.sanitizers import (
+    fold_free_text_into_remark,
     remove_screw_completeness_attributes,
     remove_specific_annotation_remark,
     sanitize_text,
@@ -297,6 +297,13 @@ class UnifiedProcessor:
                 mandatory=False,
             )
         )
+        steps.append(
+            SanitizerStep(
+                "fold_free_text_into_remark",
+                fold_free_text_into_remark,
+                mandatory=False,
+            )
+        )
 
         if not steps:
             return desc
@@ -315,14 +322,16 @@ class UnifiedProcessor:
         - Levels are separated by '/'; same-level attributes use ','.
         - Remark exists only for non-标签 types and is always the final level AFTER all structured levels.
           Structured levels depend on object type and L1 values:
-            * BBU设备: if L1 contains '机柜空间充足需要安装', then level-2 is structured (挡风板符合性)
-            * 螺丝、光纤插头: if L1 contains '不符合要求', then level-2 is structured (具体问题)
-            * 光纤: if L1 contains '有保护措施', then level-2 is structured (保护细节)
+            * BBU设备: if L1 contains '空间充足需安装', then level-2 is structured (挡风板符合性)
+            * 螺丝、光纤插头: if L1 contains '不符合', then level-2 is structured (具体问题)
+            * 光纤: if L1 contains '有保护', then level-2 is structured (保护细节)
             * 挡风板/电线: only level-1 is structured
             * 标签: no remark
         - If a remark is detected, remove its slash-level and append ',备注:{remark}'.
         - If no remark is detected, return desc unchanged.
         """
+        if "类别=" in (desc or ""):
+            return desc
         try:
             # 如果包含组信息，直接跳过改写以避免把组当作备注
             if "组/" in (desc or ""):
@@ -341,14 +350,16 @@ class UnifiedProcessor:
             if levels:
                 l1_tokens = [t.strip() for t in levels[0].split(",") if t.strip()]
             if obj.startswith("BBU设备") and any(
-                "机柜空间充足需要安装" in t for t in l1_tokens
+                ("机柜空间充足需要安装" in t or "空间充足需安装" in t) for t in l1_tokens
             ):
                 structured_count = min(2, len(levels))
             elif obj.startswith("螺丝、光纤插头") and any(
-                "不符合要求" in t for t in l1_tokens
+                ("不符合要求" in t or "不符合" in t) for t in l1_tokens
             ):
                 structured_count = min(2, len(levels))
-            elif obj.startswith("光纤") and any("有保护措施" in t for t in l1_tokens):
+            elif obj.startswith("光纤") and any(
+                ("有保护措施" in t or "有保护" in t) for t in l1_tokens
+            ):
                 structured_count = min(2, len(levels))
             elif obj.startswith("挡风板") or obj.startswith("电线"):
                 structured_count = min(1, len(levels))
@@ -554,15 +565,11 @@ class UnifiedProcessor:
                     "Preserving legacy annotation order for %s", image_path.name
                 )
 
-            # Detection desc 后处理：将矛盾/不确定的标注改写为 “<type>/需复核”
-            objects = flag_objects_for_review(objects)
-
-            # Summary 直接继承处理后的 desc（含需复核）
-            if self.is_rru:
-                summary_text = self._build_rru_summary(objects)
-            else:
-                summary_objects = [obj.copy() for obj in objects]
-                summary_text = build_summary_from_objects(summary_objects)
+            # Summary generation (JSON string format)
+            summary_objects = [obj.copy() for obj in objects]
+            summary_text = build_summary_from_objects(
+                summary_objects, dataset="RRU" if self.is_rru else "BBU"
+            )
 
             # Process image (copy/resize) to match coordinate transformations
             processed_image_path, img_w, img_h = self.image_processor.process_image(
@@ -598,9 +605,22 @@ class UnifiedProcessor:
             }
 
         except Exception as e:
-            logger.error(f"Error processing {json_path}: {e}")
             if self.config.fail_fast:
+                logger.error(f"Error processing {json_path}: {e}")
                 raise
+            logger.warning(f"Error processing {json_path}: {e}")
+            image_path_value = locals().get("image_path")
+            reason = "processing_error"
+            if isinstance(e, ValueError) and "summary anomalies detected" in str(e):
+                reason = "summary_anomaly"
+            invalid_sample = {
+                "sample_id": str(json_path.name),
+                "reason": reason,
+                "image_path": str(image_path_value) if image_path_value else None,
+                "json_path": str(json_path),
+                "error": str(e),
+            }
+            self.invalid_samples.append(invalid_sample)
             return None
 
     def _filter_valid_objects(
@@ -1339,42 +1359,6 @@ class UnifiedProcessor:
 
         return result
 
-    def _build_rru_summary(self, objects: List[Dict[str, Any]]) -> str:
-        """
-        Build RRU summary text by grouping descriptions with the same rules as BBU.
-        Special handling: remove ×1 suffix from 站点距离/* entries since they always appear once.
-        """
-        summary_objects = []
-        for obj in objects:
-            desc = obj.get("desc", "")
-            if not isinstance(desc, str):
-                desc = str(desc)
-            desc = desc.strip()
-            if not desc:
-                continue
-            summary_objects.append({"desc": desc})
-
-        if not summary_objects:
-            return "无关图片"
-
-        try:
-            summary = build_summary_from_objects(summary_objects)
-            # Post-process: remove ×1 from 站点距离/* entries
-            # Split by Chinese comma, process each segment, then rejoin
-            segments = summary.split("，")
-            processed_segments = []
-            for segment in segments:
-                segment = segment.strip()
-                if segment.startswith("站点距离/") and segment.endswith("×1"):
-                    # Remove ×1 suffix for 站点距离/* entries
-                    processed_segments.append(segment[:-2])
-                else:
-                    processed_segments.append(segment)
-            return "，".join(processed_segments)
-        except ValueError:
-            return "无关图片"
-
-
 # TeacherSelector has been extracted to data_conversion.teacher_selector
 
 
@@ -1457,7 +1441,7 @@ def main():
     parser.add_argument(
         "--standardize_label_desc",
         action="store_true",
-        help="Standardize label descriptions: map '标签/*' empty-like values (空格/看不清/、 or empty) to '标签/无法识别'",
+        help="Legacy flag (no-op in key=value mode); kept for backward compatibility",
     )
     parser.add_argument(
         "--preserve_annotation_order",
