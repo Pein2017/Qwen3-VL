@@ -1039,15 +1039,32 @@ def main() -> None:
         DEVICE = f"cuda:{args.device_id}"
     # DEVICE already set to "cuda:7" from runtime settings if CLI arg not provided
 
-    os.makedirs(SAVE_DIR, exist_ok=True)
-    root = Path(JSONL_PATH).resolve().parent
+    def _resolve_repo_relative(path: str) -> Path:
+        p = Path(path)
+        return p.resolve() if p.is_absolute() else (REPO_DIR / p).resolve()
+
+    save_dir = _resolve_repo_relative(SAVE_DIR)
+    save_dir.mkdir(parents=True, exist_ok=True)
+
+    jsonl_path = _resolve_repo_relative(JSONL_PATH)
+    root = jsonl_path.parent
     # Provide a consistent default for image path resolving in downstream libs
     os.environ.setdefault("ROOT_IMAGE_DIR", str(root))
 
+    dump_jsonl_path = save_dir / "gt_vs_pred.jsonl"
+    plot_jsonl_path = (
+        dump_jsonl_path
+        if PLOT_JSONL_PATH == DUMP_JSONL_PATH
+        else _resolve_repo_relative(PLOT_JSONL_PATH)
+    )
+
+    print(f"[INFO] JSONL_PATH: {jsonl_path}", flush=True)
+    print(f"[INFO] SAVE_DIR:   {save_dir}", flush=True)
+
     # Optionally plot from a dumped JSONL (skip inference)
     if PLOT_FROM_JSONL:
-        print(f"[INFO] Plotting from JSONL (no inference): {PLOT_JSONL_PATH}")
-        dumped = list(load_records(PLOT_JSONL_PATH))
+        print(f"[INFO] Plotting from JSONL (no inference): {plot_jsonl_path}")
+        dumped = list(load_records(str(plot_jsonl_path)))
         count = 0
         total_gt = 0
         total_pred = 0
@@ -1163,10 +1180,11 @@ def main() -> None:
             ax_r.set_title("Prediction" + ("" if pred_px else " (parse failed)"))
             _create_legend(ax_legend, color_map, legend_counts)
 
-            out_path = Path(SAVE_DIR) / f"vis_{count:05d}.jpg"
+            out_path = save_dir / f"vis_{count:05d}.jpg"
             fig.tight_layout()
             fig.savefig(out_path, dpi=120)
             plt.close(fig)
+            print(f"[SAVE] {out_path}", flush=True)
             count += 1
             if count >= LIMIT:
                 break
@@ -1177,7 +1195,7 @@ def main() -> None:
                 f"{count} samples: GT={total_gt}, Pred={total_pred}, "
                 f"Matched={total_matched}, Missing={total_missing}"
             )
-        print(f"[DONE] Saved {count} figures to {SAVE_DIR}")
+        print(f"[DONE] Saved {count} figures to {save_dir}")
         return
 
     count = 0
@@ -1186,7 +1204,7 @@ def main() -> None:
     total_matched = 0
     total_missing = 0
     dumped_records: List[Dict[str, Any]] = []
-    for rec in load_records(JSONL_PATH):
+    for rec in load_records(str(jsonl_path)):
         images = (rec.get("images") or [])[:1]  # one image per figure
         if not images:
             continue
@@ -1322,10 +1340,11 @@ def main() -> None:
 
         _create_legend(ax_legend, color_map, counts)
 
-        out_path = Path(SAVE_DIR) / f"vis_{count:05d}.jpg"
+        out_path = save_dir / f"vis_{count:05d}.jpg"
         fig.tight_layout()
         fig.savefig(out_path, dpi=120)
         plt.close(fig)
+        print(f"[SAVE] {out_path}", flush=True)
 
         count += 1
         if count >= LIMIT:
@@ -1333,8 +1352,8 @@ def main() -> None:
 
     # Write out dump JSONL if requested
     if SAVE_JSONL and dumped_records:
-        write_jsonl(dumped_records, DUMP_JSONL_PATH)
-        print(f"[INFO] Dumped GT vs Pred JSONL: {DUMP_JSONL_PATH}")
+        write_jsonl(dumped_records, str(dump_jsonl_path))
+        print(f"[INFO] Dumped GT vs Pred JSONL: {dump_jsonl_path}")
 
     if count > 0:
         print(
@@ -1343,7 +1362,7 @@ def main() -> None:
             f"Matched={total_matched}, Missing={total_missing}"
         )
 
-    print(f"[DONE] Saved {count} figures to {SAVE_DIR}")
+    print(f"[DONE] Saved {count} figures to {save_dir}")
 
 
 if __name__ == "__main__":
