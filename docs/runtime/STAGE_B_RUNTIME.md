@@ -85,5 +85,5 @@ Stage‑B currently expects **exactly one mission per run**. Artifacts are writt
 ##### Guardrails & Label Alignment
 
 - Deterministic fail-first guardrails are removed; rule-search guidance drives decision behavior.
-- Stage-A 摘要中的“只显示部分/无法判断/需复核”等软信号仅作为提示，不作为硬触发词。
-- 推理 user prompt 会提供每张图的 `ImageN(obj=...)` 统计（由摘要中的 `×N` 求和得到），用于帮助模型推断全局图/局部特写图并进行多图协同判断。
+- Stage-A 摘要中的“部分/无法判断”等软信号仅作为提示，不作为硬触发词（需复核已移除）。
+- 推理 user prompt 会提供每张图的 `ImageN(obj=...)` 统计（来自摘要 JSON 的 `objects_total`），用于帮助模型推断全局图/局部特写图并进行多图协同判断。

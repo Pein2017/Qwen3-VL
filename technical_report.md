@@ -57,7 +57,7 @@ Key entrypoints (orchestration wrappers):
 ### 1.3 Data contracts at a glance
 
 - **Dense‑caption training JSONL**: `images`, `width`, `height`, and `objects[]` with `desc` + one geometry (`bbox_2d|poly|line`). Used for geometry‑grounded captioning.
-- **Summary‑mode training JSONL**: requires a non‑empty `summary` string (single‑line). Objects may be present but are not required for summary‑only training.
+- **Summary‑mode training JSONL**: requires a non‑empty `summary` JSON string (single‑line). Irrelevant-image pools use the literal `无关图片`. Objects may be present but are not required for summary‑only training.
 - **Stage‑A evidence JSONL**: `mission`, `group_id`, `label` (`pass|fail`), `images[]`, `per_image{image_i: summary}`. This is the sole input to Stage‑B.
 - **Stage‑B guidance + artifacts**: `guidance.json` (per‑mission experiences + metadata) plus rule‑search artifacts (`rule_candidates.jsonl`, `benchmarks.jsonl`, `rule_search_*`, optional `distill_chatml.jsonl`).
 
@@ -77,7 +77,7 @@ Inputs are labeling-platform exports (JSON + images). The converter maintains ta
 - Attribute taxonomy: `data_conversion/attribute_taxonomy.json`
 - Hierarchical attribute mapping: `data_conversion/hierarchical_attribute_mapping.json`
 
-The output `desc` strings are **hierarchical** and mission/domain-specific (Chinese for BBU/RRU). Stage‑A summaries and Stage‑B reasoning depend on this consistency.
+The output `desc` strings are **hierarchical key=value pairs** and mission/domain-specific (Chinese for BBU/RRU). Stage‑A summaries and Stage‑B reasoning depend on this consistency.
 
 ### 2.2 Processing stages (module responsibilities)
 
@@ -103,11 +103,12 @@ The pipeline is organized around `UnifiedProcessor` (`data_conversion/pipeline/u
    - `data_conversion/pipeline/validation_manager.py` enforces core invariants (bounds, size thresholds, required `desc` when strict, etc.) and emits reports. The pipeline is designed to **report** issues explicitly rather than silently re-writing data.
 
 6. **Summary generation**
-   - `data_conversion/pipeline/summary_builder.py` produces the per-image `summary` field used in summary-mode SFT. The active implementation is **raw-desc grouping**:
-     - group by *raw* `desc` (no canonicalization)
-     - merge identical entries into `desc×N`
-     - sort by `len(desc)` ascending with first-appearance tie-break
-     - fail-fast if objects are missing or `desc` is empty
+   - `data_conversion/pipeline/summary_builder.py` produces a **JSON-string** `summary` with per-category stats:
+     - required keys: `dataset`, `objects_total`, `统计`
+     - `异常` is included only when non-zero; BBU includes `备注` only when non-empty; RRU may include `分组统计`
+   - Only observed values are counted (no missing/需复核/遮挡 placeholders).
+   - OCR/备注 are free text: whitespace removed only; punctuation preserved; unreadable → `可读性=不可读`.
+   - Fail-fast if objects are missing or any `desc` is empty; irrelevant-image samples keep `summary: 无关图片` and bypass the builder.
 
 7. **Deterministic splitting and tiny subsets**
    - `data_conversion/pipeline/data_splitter.py` produces train/val splits using a fixed seed and can also emit `*_tiny.jsonl` for smoke testing.
@@ -133,14 +134,16 @@ The converter emits JSONL records that follow the shared training contract descr
 Key invariants (contract-level):
 - Top-level keys: `images`, `objects`, `width`, `height`, optional `summary`, optional `metadata`.
 - Dense mode requires a non-empty `objects` list; each object must include `desc` and **exactly one** geometry key among `bbox_2d`, `poly`, `line` (flat even-length list of x/y values). `quad` is rejected in favor of `poly`.
-- Summary mode requires a non-empty `summary` string; `objects` may be present but is not required for summary-only training.
-- `desc` must be a non-empty string with no control newlines/tabs and no extra whitespace around commas or slashes.
-- Group membership for RRU/BBU is encoded in `desc` using a prefix like `组1:`. There is **no top-level** `groups` field.
+- Summary mode requires a non-empty `summary` JSON string (single line) or the literal `无关图片`; `objects` may be present but is not required for summary-only training.
+- `desc` must be a non-empty string with no control newlines/tabs. For BBU/RRU it uses comma‑separated `key=value` pairs with **no spaces** and `类别` first. `文本`/`备注` are free text: whitespace removed only; punctuation (including `,|=`) is preserved; unreadable → `可读性=不可读`. `需复核/遮挡` are not emitted.
+- **Groups (RRU only)**: group membership is encoded directly in `desc` as `组=<id>` (multiple groups joined with `|` if present). BBU MUST NOT include `组`. There is **no top‑level** `groups` field.
+- **Station distance (RRU only)**: represented as `类别=站点距离,站点距离=<int>` and carried through to summary stats as `站点距离`.
+- Assistant outputs are serialized with separators `", "` and `": "` to retain spaces in coordinate lists and JSON summaries (tokenizer stability).
 
 #### Example: minimal (demo) record
 
 ```json
-{"images":["../images/QC-20230106-0000211_16517.jpeg"],"objects":[{"bbox_2d":[48,76,312,428],"desc":"设备/示例"},{"poly":[360,120,480,120,480,260,360,260],"poly_points":4,"desc":"标签/示例"}],"summary":"设备×1，标签×1","width":532,"height":728}
+{"images":["../images/QC-20230106-0000211_16517.jpeg"],"objects":[{"bbox_2d":[48, 76, 312, 428],"desc":"类别=BBU设备,品牌=示例,可见性=部分,挡风板需求=免装"},{"poly":[360, 120, 480, 120, 480, 260, 360, 260],"poly_points":4,"desc":"类别=标签,文本=NR900-BBU"}],"summary":"{\"dataset\": \"BBU\", \"objects_total\": 2, \"统计\": [{\"类别\": \"BBU设备\", \"品牌\": {\"示例\": 1}, \"可见性\": {\"部分\": 1}, \"挡风板需求\": {\"免装\": 1}}, {\"类别\": \"标签\", \"文本\": {\"NR900-BBU\": 1}}]}","width":532,"height":728}
 ```
 
 #### Example: BBU record with mixed geometry + summary
@@ -153,48 +156,28 @@ Key invariants (contract-level):
   "objects": [
     {
       "poly": [0, 190, 438, 230, 401, 622, 0, 614],
-      "desc": "BBU设备/华为,只显示部分,机柜空间充足需要安装/这个BBU设备按要求配备了挡风板,备注:无法判断品牌"
+      "desc": "类别=BBU设备,品牌=华为,可见性=部分,挡风板需求=免装,备注=无法判断品牌"
     },
     {
       "bbox_2d": [443, 226, 491, 286],
-      "desc": "螺丝、光纤插头/BBU安装螺丝,符合要求"
-    },
-    {
-      "bbox_2d": [429, 426, 460, 458],
-      "desc": "螺丝、光纤插头/机柜处接地螺丝,符合要求"
+      "desc": "类别=BBU安装螺丝,符合性=符合"
     },
     {
       "line": [453, 469, 470, 572, 501, 630, 529, 670, 611, 726],
-      "desc": "电线/捆扎整齐"
-    },
-    {
-      "bbox_2d": [411, 544, 450, 587],
-      "desc": "螺丝、光纤插头/BBU安装螺丝,符合要求"
+      "desc": "类别=电线,捆扎=整齐"
     },
     {
       "poly": [481, 553, 661, 544, 644, 618, 507, 624],
-      "desc": "标签/5GBBU接地线"
-    },
-    {
-      "poly": [0, 615, 385, 630, 377, 793, 0, 801],
-      "desc": "挡风板/华为,只显示部分,安装方向正确,备注:无法判断品牌和安装方向是否正确"
-    },
-    {
-      "poly": [157, 898, 252, 895, 260, 1023, 163, 1023],
-      "desc": "标签/无法识别"
-    },
-    {
-      "poly": [307, 1021, 354, 956, 414, 1023, 309, 1023],
-      "desc": "标签/无法识别"
+      "desc": "类别=标签,文本=5GBBU接地线"
     }
   ],
-  "summary": "BBU设备/华为/只显示部分×1，螺丝、光纤插头/BBU安装螺丝/符合要求×2，螺丝、光纤插头/机柜处接地螺丝/符合要求×1，电线/捆扎整齐×1，标签/可以识别×1，标签/无法识别×2，挡风板/只显示部分/安装方向正确×1，备注: 无法判断品牌；无法判断品牌和安装方向是否正确",
+  "summary": "{\"dataset\": \"BBU\", \"objects_total\": 4, \"统计\": [{\"类别\": \"BBU设备\", \"品牌\": {\"华为\": 1}, \"可见性\": {\"部分\": 1}, \"挡风板需求\": {\"免装\": 1}}, {\"类别\": \"BBU安装螺丝\", \"符合性\": {\"符合\": 1}}, {\"类别\": \"电线\", \"捆扎\": {\"整齐\": 1}}, {\"类别\": \"标签\", \"文本\": {\"5GBBU接地线\": 1}}], \"备注\": [\"无法判断品牌\"]}",
   "width": 768,
   "height": 1024
 }
 ```
 
-#### Example: RRU record with group-encoded membership (`组<id>:`)
+#### Example: RRU record with group-encoded membership (`组=<id>`)
 
 ```json
 {
@@ -202,13 +185,12 @@ Key invariants (contract-level):
     "images/审核通过/QC-20240424-0028974/QC-20240424-0028974_3119298.jpeg"
   ],
   "objects": [
-    { "bbox_2d": [37, 269, 79, 298], "desc": "站点距离/98" },
-    { "line": [122, 1173, 105, 799, 245, 703, 235, 269], "desc": "组2:接地线/有标签" },
-    { "line": [40, 1111, 16, 833, 165, 540, 138, 118], "desc": "组1:尾纤/有标签,有套管保护" },
-    { "poly": [128, 840, 86, 852, 104, 954, 149, 941], "desc": "组2:标签/900M-RRU2-接地" },
-    { "poly": [53, 843, 5, 862, 53, 966, 94, 945], "desc": "组1:标签/900M-RRU2-光纤" }
+    { "bbox_2d": [37, 269, 79, 298], "desc": "类别=站点距离,站点距离=98" },
+    { "line": [122, 1173, 105, 799, 245, 703, 235, 269], "desc": "类别=接地线,标签=有标签,组=2" },
+    { "line": [40, 1111, 16, 833, 165, 540, 138, 118], "desc": "类别=尾纤,标签=有标签,套管保护=有套管,组=1" },
+    { "poly": [128, 840, 86, 852, 104, 954, 149, 941], "desc": "类别=标签,文本=900M-RRU2-接地,组=2" }
   ],
-  "summary": "站点距离/98，组2:接地线/有标签，组1:尾纤/有标签,有套管保护，组2:标签/900M-RRU2-接地，组1:标签/900M-RRU2-光纤",
+  "summary": "{\"dataset\": \"RRU\", \"objects_total\": 4, \"统计\": [{\"类别\": \"站点距离\", \"站点距离\": {\"98\": 1}}, {\"类别\": \"接地线\", \"标签\": {\"有标签\": 1}}, {\"类别\": \"尾纤\", \"标签\": {\"有标签\": 1}, \"套管保护\": {\"有套管\": 1}}, {\"类别\": \"标签\", \"文本\": {\"900M-RRU2-接地\": 1}}], \"分组统计\": [{\"组\": 1, \"objects_total\": 1}, {\"组\": 2, \"objects_total\": 2}]}",
   "width": 672,
   "height": 1504
 }
@@ -275,14 +257,14 @@ Core components:
 2. Sort objects deterministically (`data_conversion/utils/sorting.py`, `sort_objects_tlbr`).
 3. Build a single-turn conversation:
    - user: `[image, prompt]`
-   - assistant: JSON mapping `object_1`, `object_2`, … to `{desc, geometry...}` (`JSONLinesBuilder._build_group_entry`).
+   - assistant: JSON mapping `object_1`, `object_2`, … to `{desc, geometry...}` (`JSONLinesBuilder._build_group_entry`), optionally prefixed with `<DOMAIN=...>, <TASK=DETECTION>` + newline when `assistant_prefix_format` is enabled (required for BBU/RRU).
 4. Attach top-level `objects` metadata (pixel-space points) for template-side normalization and downstream tooling.
 
 **Summary mode workflow**
 1. Load a JSONL record with a non-empty `summary`.
 2. Build a single-turn conversation:
    - user: `[image, summary_prompt]`
-   - assistant: the summary string (single line; no coordinates)
+   - assistant: the summary JSON string (single line; no coordinates), optionally prefixed with `<DOMAIN=...>, <TASK=SUMMARY>` + newline when `assistant_prefix_format` is enabled (required for BBU/RRU). Irrelevant-image samples use the literal `无关图片` as the summary line.
 
 ### 3.3 Template encoding and token flow (vision placeholders)
 
@@ -372,15 +354,15 @@ Example record:
     "QC-20231218-0025165_4127784.jpeg"
   ],
   "per_image": {
-    "image_1": "BBU设备/需复核,备注:无法判断品牌,从空间角度看,无法判断是否足够空间安装挡风板×1，螺丝、光纤插头/BBU安装螺丝,符合要求×1，BBU设备/华为,备注:只显示部分,拍摄角度原因无法框选完整×1",
-    "image_2": "电线/捆扎整齐×1，标签/5G-BBU-接地线×1，螺丝、光纤插头/机柜处接地螺丝,符合要求×1",
-    "image_3": "标签/无法识别×3，BBU设备/华为,只显示部分,无需安装×1，螺丝、光纤插头/BBU安装螺丝,符合要求×2，螺丝、光纤插头/BBU端光纤插头,符合要求×3，挡风板/华为,显示完整,安装方向正确×1，BBU设备/华为,显示完整,机柜空间充足需要安装/这个BBU设备按要求配备了挡风板×1"
+    "image_1": "<DOMAIN=BBU>, <TASK=SUMMARY>\\n{\"dataset\": \"BBU\", \"objects_total\": 3, \"统计\": [{\"类别\": \"BBU设备\", \"品牌\": {\"华为\": 1}, \"可见性\": {\"部分\": 1}}, {\"类别\": \"BBU安装螺丝\", \"符合性\": {\"符合\": 1}}, {\"类别\": \"标签\", \"文本\": {\"5GBBU接地线\": 1}}]}",
+    "image_2": "<DOMAIN=BBU>, <TASK=SUMMARY>\\n{\"dataset\": \"BBU\", \"objects_total\": 2, \"统计\": [{\"类别\": \"电线\", \"捆扎\": {\"整齐\": 1}}, {\"类别\": \"标签\", \"文本\": {\"NR900-BBU\": 1}}]}",
+    "image_3": "<DOMAIN=BBU>, <TASK=SUMMARY>\\n{\"dataset\": \"BBU\", \"objects_total\": 1, \"统计\": [{\"类别\": \"挡风板\", \"安装方向\": {\"方向正确\": 1}}]}"
   }
 }
 ```
 
 Notes:
-- Stage‑A attempts to sanitize model outputs that accidentally return JSON objects (it extracts `image_1`/`图片_1` or joins string values) while otherwise preserving raw content (`sanitize_single_image_summary` in `src/stage_a/inference.py`).
+- Stage‑A attempts to sanitize model outputs that accidentally return JSON objects (it extracts `image_1`/`图片_1` or joins string values) while otherwise preserving raw content, including the optional `<DOMAIN=...>, <TASK=...>` prefix line (`sanitize_single_image_summary` in `src/stage_a/inference.py`).
 - Stage‑A applies EXIF orientation fixes (`data_conversion/utils/exif_utils.py`, `apply_exif_orientation`) before encoding images.
 
 ### 4.4 Operational verification hooks
@@ -432,7 +414,7 @@ Each ticket is prompted with a system+user pair:
   - per‑image summaries (sanitized), plus a derived `ImageN(obj=...)` statistic,
   - optional aggregation blocks for RRU missions (installation/position/cable summaries by station distance).
 
-Stage‑A summaries may contain `需复核,备注:`. These markers are sanitized to `备注(待确认):` and stripped from forbidden phrasing before prompting to avoid third‑state leakage.
+Stage‑A summaries are expected to contain **no third‑state markers** (e.g., 需复核/遮挡). Any stray forbidden tokens are stripped before Stage‑B prompting to avoid third‑state leakage.
 
 **Output contract (strict two lines):**
 - `Verdict: 通过|不通过` (binary only)

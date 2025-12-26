@@ -57,7 +57,7 @@ Use these scripts instead of ad-hoc commands so telemetry, logging, and environm
 ## Recent Updates
 
 ### v1.1.3 - RRU Support & Canonical Polygons (Nov 2025) 🛰️
-- Unified converter now handles RRU raw annotations: taxonomy additions (`ground_screw`, 尾纤/接地线标签与套管保护, 站点距离/*), group membership encoded in `desc` via `组<id>:` prefix (no `groups` field). Summaries keep the full `desc` and aggregate identical strings with ×N.
+- Unified converter now handles RRU raw annotations: taxonomy additions (`ground_screw`, 尾纤/接地线标签与套管保护, 站点距离=数字), group membership encoded in `desc` via `组=<id>` (no `groups` field). Summaries are JSON strings with per-category stats (no ×N aggregation).
 - Polygon vertices are canonicalized offline (clockwise, top-most then left-most first) and `vis_tools` mirrors the ordering to avoid self-crossing during visualization.
 
 ### v1.1.2 - Config & Telemetry Contracts (Oct 2025) 📐
@@ -73,7 +73,7 @@ Use these scripts instead of ad-hoc commands so telemetry, logging, and environm
 ### v1.1.0 - Smart Cropping with Label Filtering (Oct 2025) 🆕
 - **RandomCrop** operator with automatic label filtering and geometry truncation
 - Perfect visual-label alignment for dense detection captioning
-- Completeness field tracking: `显示完整` ↔ `只显示部分` updates
+- Completeness field tracking: `可见性=完整` ↔ `可见性=部分` updates
 - Quad rotation fix + redundancy cleanup (removed CenterCrop, Equalize)
 
 ---

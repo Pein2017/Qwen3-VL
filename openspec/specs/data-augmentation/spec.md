@@ -240,14 +240,14 @@ All geometries (bbox_2d, poly, line) SHALL remain correct and valid in the augme
 - AND messages contain specific dimensions and remediation advice
 
 ### Requirement: Smart Random Cropping with Label Filtering and Completeness Tracking
-The system SHALL provide random crop operators that automatically filter objects, truncate geometries, AND update completeness fields (`显示完整`/`只显示部分`) to match visual reality in the cropped region.
+The system SHALL provide random crop operators that automatically filter objects, truncate geometries, AND update completeness fields (`完整`/`部分`) to match visual reality in the cropped region.
 
 #### Scenario: Random crop with coverage-based filtering and completeness update
 - **WHEN** random_crop is applied with min_coverage=0.3 and completeness_threshold=0.95
 - **AND** an object has 80% of its area inside the crop region
 - **THEN** the object is retained and its geometry is clipped to the crop boundary
 - **AND** the cropped geometry is translated to the new coordinate system [0, crop_w-1] × [0, crop_h-1]
-- **AND** if the object description contains "显示完整", it is changed to "只显示部分"
+- **AND** if the object description contains "完整", it is changed to "部分"
 
 #### Scenario: Drop objects below visibility threshold
 - **WHEN** random_crop is applied with min_coverage=0.3
@@ -296,25 +296,25 @@ For objects that meet the visibility threshold but extend beyond the crop region
 - **AND** result is translated to crop coordinates with duplicate points removed
 
 ### Requirement: Completeness Field Update Based on Coverage
-The system MUST update object description completeness fields (`显示完整` → `只显示部分`) when crop-induced truncation makes objects partially visible.
+The system MUST update object description completeness fields (`完整` → `部分`) when crop-induced truncation makes objects partially visible.
 
 #### Scenario: Fully visible object keeps completeness unchanged
 - **WHEN** an object has 98% coverage (≥ completeness_threshold of 0.95)
-- **AND** the object description contains "显示完整"
-- **THEN** the completeness field remains "显示完整" (no update)
+- **AND** the object description contains "完整"
+- **THEN** the completeness field remains "完整" (no update)
 
 #### Scenario: Truncated object gets completeness updated
 - **WHEN** an object has 70% coverage (< completeness_threshold of 0.95 but ≥ min_coverage of 0.3)
-- **AND** the object description contains "显示完整"
-- **THEN** the description is updated to replace "显示完整" with "只显示部分"
+- **AND** the object description contains "完整"
+- **THEN** the description is updated to replace "完整" with "部分"
 
 #### Scenario: Already partial object remains partial
 - **WHEN** an object has 60% coverage
-- **AND** the object description already contains "只显示部分"
+- **AND** the object description already contains "部分"
 - **THEN** the completeness field remains unchanged (already marked as partial)
 
 #### Scenario: Objects without completeness field unchanged
-- **WHEN** an object description does not contain "显示完整" or "只显示部分"
+- **WHEN** an object description does not contain "完整" or "部分"
 - **THEN** the description remains unchanged (no completeness update applied)
 
 ### Requirement: Coverage Computation for Filtering
@@ -322,7 +322,7 @@ Coverage SHALL be computed as the ratio of object area inside the crop region to
 
 **Coverage is used for two purposes**:
 1. **Filtering**: Drop objects with coverage < min_coverage (e.g., 0.3)
-2. **Completeness**: Update "显示完整" → "只显示部分" for objects with coverage < completeness_threshold (e.g., 0.95)
+2. **Completeness**: Update "完整" → "部分" for objects with coverage < completeness_threshold (e.g., 0.95)
 
 #### Scenario: AABB-based coverage for all geometry types
 - **WHEN** computing coverage for any geometry (bbox, poly, or line)
@@ -376,7 +376,7 @@ The system SHALL provide a `RandomCrop` operator with configurable crop size, as
 
 #### Scenario: Configurable completeness threshold
 - **WHEN** random_crop is configured with completeness_threshold=0.95
-- **THEN** objects with coverage < 0.95 get "显示完整" → "只显示部分" update
+- **THEN** objects with coverage < 0.95 get "完整" → "部分" update
 - **AND** objects with coverage >= 0.95 keep original completeness field
 
 #### Scenario: Configurable minimum object count for dense scenes
@@ -410,7 +410,7 @@ The system SHALL provide a `CenterCrop` operator as a drop-in replacement for `s
 #### Scenario: Center crop with label filtering and completeness update
 - **WHEN** center_crop is applied with min_coverage=0.3 and completeness_threshold=0.95
 - **THEN** edge objects with <30% coverage are dropped
-- **AND** objects with 30-95% coverage get "显示完整" → "只显示部分"
+- **AND** objects with 30-95% coverage get "完整" → "部分"
 - **AND** objects with 95%+ coverage keep original completeness
 - **AND** remaining objects are clipped and translated
 - **AND** generated JSON only describes visible objects with correct completeness

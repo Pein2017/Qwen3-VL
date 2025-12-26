@@ -1,23 +1,25 @@
 # Proposal: update-desc-summary-contract
 
 ## Summary
-Refactor BBU/RRU conversion outputs to a key=value description contract, remove slash-delimited descs, emit JSON-string summaries instead of xN aggregation, and codify BBU vs. RRU differences (BBU has remarks but no groups; RRU has optional groups but no remarks). Keep geometry output formatting stable (with spaces in JSON text) to preserve tokenizer distribution.
+Refactor BBU/RRU conversion outputs to a key=value description contract, remove slash-delimited descs, emit JSON-string summaries instead of xN aggregation, and codify BBU vs. RRU differences (BBU has remarks but no groups; RRU has optional groups but no remarks). Normalize station distance to integer tokens and keep irrelevant-image summaries as the literal `无关图片`. Keep geometry output formatting stable (with spaces in JSON text) to preserve tokenizer distribution.
 
 ## Background & Evidence
 - Current desc strings are slash/comma hybrids and include 需复核, which is redundant and user-rejected.
 - Summary currently aggregates as desc×N, which causes model bias. Requested replacement is JSON-string summaries.
 - OCR content must preserve '-' and '/' characters; values may include those tokens in real data.
 - Raw data review:
-  - BBU: fixed value sets match taxonomy; only conflict found is 符合要求 + 不符合要求/问题 in the same list (5 samples). Rule: if any negative value exists, choose negative.
+  - BBU: fixed value sets match taxonomy; only conflict found is 符合 + 不符合/问题 in the same list (5 samples). Rule: if any negative value exists, choose negative.
   - RRU: no conflicts detected; labels/keys align with expected vocabulary.
   - RRU groups only appear as 组1/组2 and are optional.
-- train_tiny.jsonl confirms no additional categories beyond plan; 地排接地端 is RRU-only and must remain distinct from BBU.
+- train_tiny.jsonl confirms no additional categories beyond plan; 地排接地端螺丝 is RRU-only and must remain distinct from BBU.
 
 ## Goals
 - Make desc unambiguous and parseable with key=value pairs and comma separators.
 - Remove 需复核 from outputs entirely; preserve 备注 only for BBU.
 - Preserve OCR payloads (keep '-' and '/') while maintaining desc parse safety.
 - Make summary output a JSON string with per-category statistics (no × tokens).
+- Normalize 站点距离 values to integer tokens by stripping non-digits; current RRU exports yield `站点距离=<int>` (no fallback token).
+- Allow irrelevant-image summaries to remain the literal `无关图片` instead of JSON.
 - Maintain geometry JSON formatting with spaces to avoid tokenizer drift.
 
 ## Non-Goals

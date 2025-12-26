@@ -77,33 +77,49 @@ Each record in your training data follows this structure:
 
 **Summary Mode**:
 ```
-"单行汇总文本"
+"{...JSON summary string...}"
 ```
-Requires `summary` field in every record.
+Requires `summary` field in every record (JSON string), except irrelevant-image samples which remain `summary: 无关图片`.
 For fusion runs, set `mode: summary` (or `use_summary: true`) per dataset inside the fusion config to mix summary targets with dense sources. When `mode` is omitted, datasets fall back to `custom.use_summary` (default = dense) for backward compatibility.
 Dense mode validation requires at least one object with geometry; summary mode validation requires a non-empty `summary` string.
 
 ### Summary Field Standard
 
 Format requirements (aligned with training/inference prompts):
-- Use Chinese comma '，' between items (object entries)
-- Group strictly by the raw `desc` text; do not rewrite/canonicalize
-- Merge identical desc into `desc×N` (full-width ×, no space)
-- Ordering: sort by `len(desc)` ascending; ties keep first appearance order
-- Keep `desc` exactly as annotated（含备注、组前缀等），不把备注另行拆出
-- Single sentence per image: no newlines, no trailing '。', no extra spaces
-- No geometry or coordinate arrays in summary strings
-- Optional training toggle: set `custom.summary_label_grouping: true` to collapse all 标签/* entries that are not `标签/无法识别` into `标签/可以识别×N` while preserving the `无法识别` count separately.
-- Fusion per-dataset override: set `summary_label_grouping: true|false` on a fusion dataset entry to override the global `custom.summary_label_grouping` default for that dataset (summary mode only).
+- Summary is a **single-line JSON string** (no newlines, no trailing punctuation), except irrelevant-image samples which keep `summary: 无关图片`.
+- Required keys: `dataset`, `objects_total`, `统计`.
+- `统计` is a list; each item contains `类别` plus any observed attribute counts (`{value: count}`).
+- BBU summaries include a top-level `备注` list when non-empty; RRU summaries omit `备注` and may include `分组统计` when present.
+- `异常` is included only when any error counters/examples are non-zero.
+- Only observed values are counted; do not emit missing/需复核/遮挡 placeholders.
+- OCR/备注 are free text: remove whitespace only (preserve `,|=` and other symbols); unreadable → `可读性=不可读` (no “可以识别/无法识别”). Any stray comma tokens without `key=` are folded into `备注`, and `这里已经帮助修改,请注意参考学习` is stripped if present.
 - Conversion is fail-fast: if a sample has no objects or all `desc` are空/缺失，`build_summary_from_objects` raises `ValueError` and the sample is rejected.
+- Conversion also raises when invalid/unknown/conflict markers are detected in desc; fix raw annotations rather than emitting placeholder `异常` fields.
+- `custom.summary_label_grouping` is legacy for desc×N summaries; it has no effect on JSON summaries.
+
+#### Fixed Value Compression (BBU/RRU)
+
+BBU/RRU converters normalize fixed (non‑free‑text) values to compact forms. OCR/备注 are **not** compressed.
+
+- **可见性**: `完整` / `部分` (from `显示完整` / `只显示部分`)
+- **挡风板需求**: `免装` / `空间充足需安装`
+- **挡风板符合性**: `按要求配备` / `未按要求配备`
+- **安装方向**: `方向正确` / `方向错误`
+- **符合性**: `符合` / `不符合`
+- **保护措施**: `有保护` / `无保护`
+- **保护细节**: `蛇形管` / `铠装` / `蛇形管+铠装`
+- **弯曲半径**: `半径合理` / `半径不合理<4cm或成环`
+- **捆扎**: `整齐` / `散乱`
+- **安装状态**（RRU紧固类）: `合格` / `不合格`
+- **标签**（RRU尾纤/接地线）: `有标签` / `无标签`
+- **套管保护**（RRU尾纤）: `有套管` / `无套管`
 
 #### RRU Summary Guidance
 
-- RRU now reuses `build_summary_from_objects` without filtering any `desc` values; every annotated entry (including `标签/*` and `站点距离/*`) contributes to the grouped summary string, so the existing `desc×N` ordering rules continue to apply.
-- To propose a summary for RRU, inspect `data/rru_full_1024_poly/label_vocabulary.json` and follow the same `desc×N` grouping/ordering rules as BBU to draft the single-line summary.
+- RRU summaries are built from key=value descs; `站点距离` appears as `类别=站点距离,站点距离=<int>` in desc (current exports yield digits) and becomes a `统计` entry with key `站点距离`.
 - Train a summary-only stream against RRU data via `configs/summary_rru.yaml`, which inherits the BBU summary settings but points to `data/rru_full_1024_poly` and the new model run directory.
 
-**Example**: `光模块×3，线缆×2，BBU设备/需复核,备注:无法判断品牌×1`
+**Example**: `{"dataset": "BBU", "objects_total": 2, "统计": [{"类别": "BBU设备", "品牌": {"华为": 1}}, {"类别": "标签", "文本": {"NR900-BBU": 1}}]}`
 
 ---
 
@@ -171,8 +187,8 @@ If your source is a human-annotation export, start with the intake guide (`./DAT
   - Taxonomies live in `attribute_taxonomy.json` + `hierarchical_attribute_mapping.json`; update both when new object types/attributes ship. `pipeline/summary_builder.py` and `pipeline/flexible_taxonomy_processor.py` consume these definitions.
   - Validation artifacts (`invalid_objects.jsonl`, `validation_results.json`) allow offline QA before a dataset ever reaches `src/datasets/`.
   - Coordinate sanity is centralized in `pipeline/coordinate_manager.py` (EXIF + smart-resize + clamp) and `pipeline/vision_process.py`.
-  - RRU now reuses the same pipeline: new classes/attributes (`ground_screw`, 尾纤/接地线标签与套管保护等) are defined in the taxonomy JSONs; station + distance are merged to `站点距离/<text>`; group info is encoded in `desc` via `组<id>:` prefix (no top-level `groups`). Records fail fast if any group has only one member.
-  - RRU summaries preserve the full `desc` (including组前缀/备注) and aggregate identical entries with `×N`, matching BBU dense/summary behavior while avoiding geometry text.
+  - RRU now reuses the same pipeline: new classes/attributes (`ground_screw`, 尾纤/接地线标签与套管保护等) are defined in the taxonomy JSONs; station distance is represented as `类别=站点距离,站点距离=<int>` (digits extracted from raw text); group info is encoded in `desc` via `组=<id>` (no top-level `groups`). Records fail fast if any group has only one member.
+  - RRU summaries are JSON strings with per-category stats (no `×N` aggregation); `备注` is omitted and `分组统计` may appear when group counts exist.
   - Polygon vertices are canonicalized offline (clockwise, top-most vertex first, closing-duplicate removed) to prevent self-crossing; `vis_tools/` applies the same ordering when overlaying samples.
 - **Public datasets (`public_data/`)**:
   - See `PUBLIC_DATA.md` + `public_data/README.md` for LVIS download, conversion, sampling, visualization, and pytest coverage.
@@ -185,6 +201,15 @@ If your source is a human-annotation export, start with the intake guide (`./DAT
 ## Multi-Dataset Fusion
 
 When you want BBU/RRU multi-target dense-caption training to consume auxiliary detection datasets (LVIS, COCO, etc.), provide a `custom.fusion_config` (YAML/JSON). The unified fusion loader mixes:
+
+### Supported Templates & Description Styles
+Fusion can mix multiple record styles as long as the base template is compatible:
+
+- **ChatML text-only**: JSONL with `messages` only (no `images`/`objects`/`summary`). Use `dataset: chat` with `template: chatml` (or another chatml-compatible template). These samples bypass dense-caption construction.
+- **Generic detection (LVIS/COCO, etc.)**: JSONL with `images` + `objects`, `desc` is typically a single category token or short phrase (no key/value hierarchy), and `summary` is usually absent.
+- **Target domain (BBU/RRU)**: JSONL with `images` + `objects`, `desc` uses comma-separated `key=value` pairs (`类别` first); `summary` is a JSON string (or the literal `无关图片` for irrelevant streams).
+
+**Template note**: `FusionCaptionDataset` uses a **single template instance**; per-dataset `template` selects prompt presets, not a different template class. When mixing chat-only + dense-caption sources, choose a base template that can encode both formats (ChatML family recommended).
 
 - **Targets (one or more)**: declare under `targets:`. Optional per-target `ratio` is self-scaled: `quota_i = round(len_i * ratio_i)` with `ratio_i` defaulting to `1.0` (ratio < 1 downsamples, ratio > 1 upsamples with replacement; ratio = 1 or unset keeps full coverage). Target indices are shuffled deterministically per epoch. Evaluation concatenates all target `val_jsonl` splits (no sources).
 - **Auxiliary sources**: each entry declares the dataset wrapper (e.g., `coco`, `lvis`, `objects365`) plus a `ratio`. Each epoch samples `round(ratio * N_target_total)` records **with replacement**, where `N_target_total` is the sum of target quotas for that epoch. Errors if the source pool is empty; shuffles deterministically using the fusion seed and optional per-dataset seed.
@@ -238,7 +263,7 @@ For the universal JSONL record contract shared by all domains, see `./DATA_JSONL
 **Purpose**: Formats single-image records into single-turn conversation messages
 
 **Dense Mode**:
-```python
+```text
 # User message: embed the image followed by the prompt
 [
   {"type": "image", "image": "path"},
@@ -246,22 +271,28 @@ For the universal JSONL record contract shared by all domains, see `./DATA_JSONL
 ]
 
 # Assistant message: minimal object hierarchy (no per-image wrapper)
+# (When assistant_prefix_format is enabled, prepend the prefix line + newline.)
+<DOMAIN=BBU>, <TASK=DETECTION>
 {
-  "object_1": {"bbox_2d": [...], "desc": "类型/属性/..."},
-  "object_2": {"line_points": 4, "line": [...], "desc": "..."}
+  "object_1": {"bbox_2d": [...], "desc": "类别=BBU设备,品牌=华为,可见性=部分"},
+  "object_2": {"line_points": 4, "line": [...], "desc": "类别=站点距离,站点距离=51"}
 }
+# For generic detection sources (LVIS/COCO), desc can be a short class token (e.g., "person", "car").
 ```
 
 **Summary Mode**:
-```python
-# Assistant message: single summary string
-"标签×3，BBU设备×1，挡风板×1"
+```text
+# Assistant message: single summary string (JSON), with optional prefix line.
+<DOMAIN=BBU>, <TASK=SUMMARY>
+{"dataset": "BBU", "objects_total": 3, "统计": [{"类别": "BBU设备", "品牌": {"华为": 1}}]}
 ```
 
 **Key Behavior**:
 - Attaches top-level `objects` with pixel coords (for template normalization)
 - Geometries normalized based on `emit_norm` setting
 - Deterministic ordering of object indices (`object_1`, `object_2`, ...)
+- Assistant JSON/summary serialization uses separators `", "` and `": "` to preserve spaces in coordinate lists (tokenizer stability).
+- When `custom.assistant_prefix_format` is set (e.g., `<DOMAIN={domain}>, <TASK={task}>`), assistant text is prefixed with that line plus a newline for target BBU/RRU samples (source datasets are unchanged).
 - Consumes validated `ConversationRecord` objects and exposes augmentation telemetry (`pipeline.last_summary`) for downstream health checks.
 
 ---
@@ -325,7 +356,7 @@ This corpus covers telecom cabinet inspections, focused on **BBU (Baseband Unit)
   - Stage-A generates per-image summaries (requires every record to carry a `summary`).
   - Stage-B consumes multiple images per site to emit a final deployment verdict.
   - Keep taxonomies in sync so Stage pipelines and dense training stay compatible.
-- **Hierarchy semantics**: Attribute templates are slash-delimited (`brand/completeness/...`). Conditional levels (e.g., windshield conformity) only appear when parent attributes require them. Free-text `备注` fields append at the end.
+- **Hierarchy semantics**: Attribute templates are comma‑separated `key=value` pairs (`类别` first, no spaces). Conditional attributes only appear when parent values require them. Free-text `备注`/OCR append at the end (whitespace stripped, punctuation preserved). RRU may include `组=<id>`; BBU never includes `组`.
 
 When adding new inspection criteria, update both conversion JSON files and regenerate summaries before training to avoid drift between dense captions and production outputs.
 

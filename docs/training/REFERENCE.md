@@ -129,6 +129,14 @@ Image (PIL)
 - Do NOT manually insert placeholders in text
 - Template handles vision token expansion automatically
 
+**Template + Record Compatibility**:
+- `scripts/train.sh` launches SFT with a **single base template** (from config), even when `custom.fusion_config` mixes datasets. Per-dataset `template` strings select **prompt presets** only.
+- Supported record styles in fusion:
+  - **ChatML text-only** (`messages` only; no `images/objects/summary`) for chat corpora.
+  - **Generic detection** (LVIS/COCO, etc.) with simple `desc` tokens and no summary.
+  - **Target domain** (BBU/RRU) with `key=value` `desc` and JSON-string `summary`.
+- When mixing chat + dense-caption sources, choose a base template that can encode both formats (ChatML family recommended).
+
 ### Logging & Callbacks
 
 **Rank-Aware Logging** (`src/utils/logger.py`):
@@ -235,7 +243,8 @@ Keep configs under `configs/` in sync with the playbook when making behavioral c
   - `prompts.profile`: `summary_train_min` | `summary_runtime`
   - `prompts.domain`: `bbu` | `rru` (required only when using runtime profile)
   - `prompts.system` / `prompts.user` remain authoritative overrides and bypass profile composition.
-  - `custom.summary_label_grouping: false` appends a label rule to summary prompts to preserve raw OCR text (avoid `标签/可以识别` / `标签/无法识别` grouping).
+  - `custom.assistant_prefix_format`: required for BBU/RRU targets to prepend `<DOMAIN=...>, <TASK=...>` + newline before assistant payloads (dense + summary). Source datasets remain unchanged.
+  - `custom.summary_label_grouping` is legacy for desc×N summaries and has no effect on JSON-summary prompts (OCR text is preserved by default).
 - **Stage-A runtime composition**: system prompt = summary task base + 全局“非现场/图纸”规则；user prompt = summary instruction + BBU/RRU 场景提示块 + 可选任务重点。
 
 ## Inference
