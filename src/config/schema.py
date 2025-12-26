@@ -253,6 +253,7 @@ class CustomConfig:
     user_prompt: str
     emit_norm: AllowedNorm
     json_format: AllowedJsonFormat
+    assistant_prefix_format: str | None = None
     use_summary: bool = False
     summary_label_grouping: bool = False
     system_prompt_summary: str | None = None
@@ -285,6 +286,20 @@ class CustomConfig:
             raise TypeError("custom.use_summary must be a boolean value")
         if self.json_format not in ALLOWED_JSON_FORMATS:
             raise ValueError("custom.json_format must be 'standard'")
+        if self.assistant_prefix_format is not None:
+            fmt = self.assistant_prefix_format.strip()
+            if not fmt:
+                raise ValueError(
+                    "custom.assistant_prefix_format must be a non-empty string"
+                )
+            if "\n" in fmt or "\r" in fmt:
+                raise ValueError(
+                    "custom.assistant_prefix_format must be a single-line string"
+                )
+            if "{domain}" not in fmt or "{task}" not in fmt:
+                raise ValueError(
+                    "custom.assistant_prefix_format must include '{domain}' and '{task}' placeholders"
+                )
 
     @classmethod
     def from_mapping(
@@ -402,6 +417,14 @@ class CustomConfig:
         if json_format_raw is None:
             raise ValueError("custom.json_format must be provided")
         json_format = _normalize_json_format(json_format_raw)
+        assistant_prefix_format_raw = data.pop("assistant_prefix_format", None)
+        assistant_prefix_format = None
+        if assistant_prefix_format_raw is not None:
+            if not isinstance(assistant_prefix_format_raw, str):
+                raise TypeError(
+                    "custom.assistant_prefix_format must be a string if provided"
+                )
+            assistant_prefix_format = assistant_prefix_format_raw.strip()
 
         extra = dict(data)
 
@@ -420,6 +443,7 @@ class CustomConfig:
             user_prompt=str(user_prompt) if user_prompt is not None else "",
             emit_norm=cast("AllowedNorm", emit_norm_value),
             json_format=json_format,
+            assistant_prefix_format=assistant_prefix_format,
             use_summary=use_summary,
             summary_label_grouping=summary_label_grouping,
             system_prompt_summary=system_prompt_summary,

@@ -24,6 +24,7 @@ class JSONLinesBuilder(BaseBuilder):
     - ``dense``: assistant returns a JSON object mapping ``object_{n}`` keys to
       geometry/description payloads.
     - ``summary``: assistant returns the summary string stored in the record.
+    - Optional ``assistant_prefix`` prepends a single line before the assistant payload.
     """
 
     def __init__(
@@ -33,6 +34,7 @@ class JSONLinesBuilder(BaseBuilder):
         emit_norm: Literal["none", "norm100", "norm1000"],
         mode: Literal["dense", "summary"] = "dense",
         json_format: Literal["standard"] = "standard",
+        assistant_prefix: str | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -40,6 +42,7 @@ class JSONLinesBuilder(BaseBuilder):
         self.emit_norm = emit_norm
         self.mode = mode
         self.json_format = json_format
+        self.assistant_prefix = assistant_prefix.strip() if assistant_prefix else None
 
     def _get_summary_text(self, record: ConversationRecord, record_index: int) -> str:
         """Extract and validate summary from record.
@@ -120,6 +123,9 @@ class JSONLinesBuilder(BaseBuilder):
             )
         else:
             assistant_text = self._render_json_text(assistant_payload)
+
+        if self.assistant_prefix:
+            assistant_text = f"{self.assistant_prefix}\n{assistant_text}"
 
         messages = [
             {"role": "user", "content": user_contents},
@@ -203,7 +209,15 @@ class JSONLinesBuilder(BaseBuilder):
             objects_out["image_id"].append(image_id)
             desc = obj.get("desc")
             if desc:
-                objects_out["ref"].append(desc.split("/")[0])
+                head = ""
+                for token in str(desc).split(","):
+                    token = token.strip()
+                    if token.startswith("类别="):
+                        head = token.split("=", 1)[1]
+                        break
+                if not head:
+                    head = str(desc).split("/", 1)[0]
+                objects_out["ref"].append(head)
 
     def _format_points(
         self, points: list[float], width: float, height: float

@@ -462,6 +462,8 @@ class ReflectionEngine:
             "无法确认",
             "只显示部分",
             "显示完整",
+            "可见性=部分",
+            "可见性=完整",
             "关键点",
         ):
             if token in text:
@@ -856,6 +858,23 @@ class ReflectionEngine:
 
     @staticmethod
     def _estimate_obj_count(text: str) -> int:
+        stripped = (text or "").strip()
+        if stripped.startswith("{") and stripped.endswith("}"):
+            try:
+                obj = json.loads(stripped)
+            except Exception:  # pragma: no cover - defensive
+                obj = None
+            if isinstance(obj, dict) and {
+                "dataset",
+                "统计",
+                "objects_total",
+            }.issubset(obj.keys()):
+                total = obj.get("objects_total")
+                if isinstance(total, int):
+                    return total
+                if isinstance(total, str) and total.isdigit():
+                    return int(total)
+
         simplified = to_simplified(text or "")
         simplified = normalize_spaces(simplified)
         matches = re.findall(r"×(\d+)", simplified)
@@ -888,6 +907,19 @@ class ReflectionEngine:
     @staticmethod
     def _reject_experience_text(text: str) -> bool:
         """Heuristic to block Stage-A style summaries leaking into guidance."""
+        stripped = (text or "").strip()
+        if stripped.startswith("{") and stripped.endswith("}"):
+            try:
+                obj = json.loads(stripped)
+            except Exception:
+                obj = None
+            if isinstance(obj, dict) and {
+                "dataset",
+                "统计",
+                "objects_total",
+            }.issubset(obj.keys()):
+                return True
+
         lowered = (text or "").lower()
         slash_count = text.count("/")
         has_summary_markers = any(
@@ -897,6 +929,7 @@ class ReflectionEngine:
                 "image_",
                 "备注:",
                 "标签/",
+                "类别=",
             )
         )
         has_object_chain_vocab = any(
@@ -904,8 +937,14 @@ class ReflectionEngine:
             for k in (
                 "显示完整",
                 "只显示部分",
+                "完整",
+                "部分",
                 "符合要求",
                 "不符合要求",
+                "符合",
+                "不符合",
+                "合格",
+                "不合格",
                 "无法判断",
                 "需复核",
             )

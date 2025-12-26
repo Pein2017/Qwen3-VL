@@ -1,16 +1,36 @@
 targets:
-  - name: bbu
+  - name: bbu_dense
     dataset: bbu
-    train_jsonl: data/bbu_full_1024_poly-need_review/train.jsonl
-    val_jsonl: data/bbu_full_1024_poly-need_review/val.jsonl
+    train_jsonl: data_new_schema/bbu_full_1024_poly_new_schema/train.jsonl
+    val_jsonl: data_new_schema/bbu_full_1024_poly_new_schema/val.jsonl
     template: target_dense
+    mode: dense
     ratio: 1.0
-  - name: rru
+  - name: bbu_summary
+    dataset: bbu
+    train_jsonl: data_new_schema/bbu_full_1024_poly_new_schema/train.jsonl
+    val_jsonl: data_new_schema/bbu_full_1024_poly_new_schema/val.jsonl
+    template: summary_bbu
+    mode: summary
+    augmentation_enabled: false
+    curriculum_enabled: false
+    ratio: 0.2
+  - name: rru_dense
     dataset: rru
-    train_jsonl: data/rru_full_1024_poly/train.jsonl
-    val_jsonl: data/rru_full_1024_poly/val.jsonl
+    train_jsonl: data_new_schema/rru_full_1024_poly_new_schema/train.jsonl
+    val_jsonl: data_new_schema/rru_full_1024_poly_new_schema/val.jsonl
     template: target_dense
+    mode: dense
     ratio: 1.0
+  - name: rru_summary
+    dataset: rru
+    train_jsonl: data_new_schema/rru_full_1024_poly_new_schema/train.jsonl
+    val_jsonl: data_new_schema/rru_full_1024_poly_new_schema/val.jsonl
+    template: summary_rru
+    mode: summary
+    augmentation_enabled: false
+    curriculum_enabled: false
+    ratio: 0.2
 
 sources:
   # LVIS auxiliary detection dataset

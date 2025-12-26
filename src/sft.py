@@ -365,6 +365,14 @@ def main():
     fusion_config_obj: FusionConfig | None = None
     if custom_config.fusion_config:
         fusion_config_obj = FusionConfig.from_file(custom_config.fusion_config)
+        if any(
+            getattr(spec, "key", "").lower() in {"bbu", "rru"}
+            for spec in fusion_config_obj.targets
+        ):
+            if not custom_config.assistant_prefix_format:
+                raise ValueError(
+                    "custom.assistant_prefix_format must be provided for BBU/RRU fusion training."
+                )
 
     def _requires_summary(spec: object) -> bool:
         mode_val = getattr(spec, "mode", None)
@@ -489,6 +497,7 @@ def main():
             user_prompt=custom_config.user_prompt,
             emit_norm=custom_config.emit_norm,
             json_format=custom_config.json_format,
+            assistant_prefix_format=custom_config.assistant_prefix_format,
             augmenter=augmenter,
             bypass_prob=bypass_prob,
             curriculum_state=curriculum_state,
@@ -519,6 +528,7 @@ def main():
             system_prompt_dense=system_prompt_dense,
             system_prompt_summary=system_prompt_summary,
             seed=dataset_seed,
+            assistant_prefix_format=None,
         )
     logger.info(f"Training dataset size: {len(dataset)}")
 
@@ -753,6 +763,7 @@ def main():
             user_prompt=custom_config.user_prompt,
             emit_norm=custom_config.emit_norm,
             json_format=custom_config.json_format,
+            assistant_prefix_format=custom_config.assistant_prefix_format,
             augmenter=None,  # No augmentation for validation
             bypass_prob=0.0,
             curriculum_state=None,
@@ -787,6 +798,7 @@ def main():
                 system_prompt_summary=system_prompt_summary,
                 preprocessor=summary_preprocessor,
                 seed=dataset_seed,
+                assistant_prefix_format=None,
             )
             logger.info(f"Validation dataset size: {len(eval_dataset)}")
 

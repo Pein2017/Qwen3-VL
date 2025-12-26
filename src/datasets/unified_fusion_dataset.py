@@ -11,7 +11,7 @@ import random
 from collections.abc import Mapping, MutableMapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, cast
+from typing import Literal, cast, override
 
 from torch.utils.data import get_worker_info
 
@@ -21,6 +21,11 @@ from ..config.prompts import (
     SYSTEM_PROMPT_SUMMARY,
     USER_PROMPT_SUMMARY,
     get_template_prompts,
+)
+from .assistant_prefix import (
+    build_assistant_prefix,
+    resolve_domain_token,
+    resolve_task_token,
 )
 from .builders import JSONLinesBuilder
 from .contracts import validate_conversation_record
@@ -54,7 +59,21 @@ class _DatasetPolicy:
 class FusionCaptionDataset(BaseCaptionDataset):
     """Fusion dataset that concatenates multiple JSONL sources with a unified template."""
 
-    _logger = get_logger(__name__)
+    _logger: object = get_logger(__name__)
+    _fusion_config: FusionConfig
+    _augmenter: object | None
+    bypass_prob: float
+    curriculum_state: MutableMapping[str, object] | None
+    _shuffle: bool
+    _include_source_eval: bool
+    _sample_limit: int | None
+    _epoch: int
+    _assistant_prefix_format: str | None
+    _target_names: list[str]
+    _dataset_order: list[str]
+    _primary_target: str
+    _rng: random.Random
+    last_sample_debug: dict[str, object]
 
     def __init__(
         self,
@@ -71,6 +90,7 @@ class FusionCaptionDataset(BaseCaptionDataset):
         use_summary: bool,
         system_prompt_dense: str | None,
         system_prompt_summary: str | None,
+        assistant_prefix_format: str | None = None,
         summary_label_grouping_default: bool = False,
         seed: int = 42,
         shuffle: bool = True,
@@ -96,6 +116,9 @@ class FusionCaptionDataset(BaseCaptionDataset):
         self._preprocessors_aug: dict[str, AugmentationPreprocessor] = {}
         self._preprocessors_cap: dict[str, ObjectCapPreprocessor] = {}
         self.epoch_plan: dict[str, dict[str, object]] = {}
+        self._assistant_prefix_format = (
+            assistant_prefix_format.strip() if assistant_prefix_format else None
+        )
 
         self._target_names = [t.name for t in fusion_config.targets]
         self._dataset_order = [
@@ -140,6 +163,7 @@ class FusionCaptionDataset(BaseCaptionDataset):
             if override is None:
                 return bool(summary_label_grouping_default)
             return bool(override)
+
         # Load pools for the selected split
         if split == "eval" and target_eval_jsonl is not None:
             override_target_path = Path(target_eval_jsonl)
@@ -185,7 +209,9 @@ class FusionCaptionDataset(BaseCaptionDataset):
                     target, mode=mode
                 ),
                 seed=target.seed,
-                sample_without_replacement=False,
+                sample_without_replacement=bool(
+                    getattr(target, "sample_without_replacement", False)
+                ),
             )
 
         # Sources
@@ -455,17 +481,18 @@ class FusionCaptionDataset(BaseCaptionDataset):
                     0xA1,
                 )
             )
-            indices = list(range(len(pool)))
-            if self._shuffle and len(indices) > 1:
-                rng_target.shuffle(indices)
-            if quota <= len(pool):
+            policy = self._policies[target.name]
+            # Use replacement sampling for targets (consistent with sources when sample_without_replacement=False)
+            # This allows duplicates within an epoch and ensures different samples each epoch
+            if policy.sample_without_replacement and quota <= len(pool):
+                # Without replacement: shuffle and take first quota
+                indices = list(range(len(pool)))
+                if self._shuffle and len(indices) > 1:
+                    rng_target.shuffle(indices)
                 sampled_target = indices[:quota]
             else:
-                sampled_target = indices[:]
-                extra_needed = quota - len(pool)
-                sampled_target.extend(
-                    rng_target.randrange(len(pool)) for _ in range(extra_needed)
-                )
+                # With replacement: sample quota indices with replacement
+                sampled_target = [rng_target.randrange(len(pool)) for _ in range(quota)]
             counts[target.name] = len(sampled_target)
             schedule.extend((target.name, idx) for idx in sampled_target)
 
@@ -495,7 +522,9 @@ class FusionCaptionDataset(BaseCaptionDataset):
             )
             # Fallback path uses replacement when quota > pool.
             if policy.sample_without_replacement and fell_back:
-                sampled_indices = [rng_source.randrange(len(pool)) for _ in range(quota)]
+                sampled_indices = [
+                    rng_source.randrange(len(pool)) for _ in range(quota)
+                ]
             counts[source.name] = len(sampled_indices)
             schedule.extend((source.name, idx) for idx in sampled_indices)
             self._without_replacement_fallbacks[source.name] = bool(fell_back)
@@ -565,6 +594,7 @@ class FusionCaptionDataset(BaseCaptionDataset):
             }
         self.epoch_plan = plan
 
+    @override
     def set_epoch(self, epoch: int) -> None:
         self._epoch = int(epoch)
         self._rng = random.Random(self._seed_for_epoch(self._epoch))
@@ -573,9 +603,11 @@ class FusionCaptionDataset(BaseCaptionDataset):
         else:
             self._build_train_schedule()
 
+    @override
     def __len__(self) -> int:
         return len(self._schedule)
 
+    @override
     def __getitem__(self, index: int) -> dict[str, object]:
         if not self._schedule:
             raise IndexError("FusionCaptionDataset is empty")
@@ -607,7 +639,8 @@ class FusionCaptionDataset(BaseCaptionDataset):
 
         was_augmented = False
         cap_applied = False
-        objects_before = len(record.get("objects") or [])
+        objects_raw = record.get("objects")
+        objects_before = len(objects_raw) if isinstance(objects_raw, list) else 0
 
         aug_pre = self._preprocessors_aug.get(dataset_name)
         if allow_augmentation and aug_pre is not None:
@@ -643,12 +676,18 @@ class FusionCaptionDataset(BaseCaptionDataset):
                     "Preprocessor removed the record; dataset does not duplicate samples"
                 )
             record = capped
-            objects_after = len(record.get("objects") or [])
+            objects_raw_after = record.get("objects")
+            objects_after = (
+                len(objects_raw_after) if isinstance(objects_raw_after, list) else 0
+            )
             cap_applied = objects_after < objects_before or (
                 objects_before > policy.max_objects_per_image
             )
         else:
-            objects_after = len(record.get("objects") or [])
+            objects_raw_else = record.get("objects")
+            objects_after = (
+                len(objects_raw_else) if isinstance(objects_raw_else, list) else 0
+            )
 
         if (
             policy.mode == "summary"
@@ -669,6 +708,18 @@ class FusionCaptionDataset(BaseCaptionDataset):
 
         # Build conversation
         mode = policy.mode
+        assistant_prefix = None
+        if self._assistant_prefix_format and policy.spec.domain == "target":
+            domain_token = resolve_domain_token(policy.spec.key)
+            if domain_token is None:
+                raise ValueError(
+                    f"assistant_prefix_format configured but unsupported dataset key '{policy.spec.key}'."
+                )
+            assistant_prefix = build_assistant_prefix(
+                fmt=self._assistant_prefix_format,
+                domain=domain_token,
+                task=resolve_task_token(mode),
+            )
         prompts = policy.prompts
         system_prompt = prompts.system
         if system_prompt is None:
@@ -682,6 +733,7 @@ class FusionCaptionDataset(BaseCaptionDataset):
             emit_norm=self.emit_norm,
             mode=mode,
             json_format=self.json_format,
+            assistant_prefix=assistant_prefix,
         )
         merged = builder.build_many([record])
         conversation_messages = copy.deepcopy(merged.get("messages", []) or [])
@@ -696,14 +748,17 @@ class FusionCaptionDataset(BaseCaptionDataset):
         try:
             if system_prompt is not None:
                 try:
-                    self.template.system = system_prompt
+                    setattr(self.template, "system", system_prompt)
                 except Exception:
                     pass
-            encoded = self.template.encode(merged, return_length=True)
+            encode_method = getattr(self.template, "encode", None)
+            if encode_method is None:
+                raise AttributeError("template.encode is not available")
+            encoded = encode_method(merged, return_length=True)
         finally:
             if system_prompt is not None:
                 try:
-                    self.template.system = original_system
+                    setattr(self.template, "system", original_system)
                 except Exception:
                     pass
 
@@ -761,7 +816,9 @@ class FusionCaptionDataset(BaseCaptionDataset):
                 if domain == "target" and was_augmented:
                     log_parts.append("aug=True")
 
-                self._logger.debug(" | ".join(log_parts))
+                debug_method = getattr(self._logger, "debug", None)
+                if debug_method is not None:
+                    debug_method(" | ".join(log_parts))
             except Exception:
                 pass
         self.last_sample_debug = info
@@ -800,16 +857,16 @@ class FusionCaptionDataset(BaseCaptionDataset):
         )
         use_summary_mode = policy.mode == "summary"
         system_prompt_dense = (
-            policy.prompts.system if policy.mode == "dense" else self.system_prompt_dense
+            policy.prompts.system
+            if policy.mode == "dense"
+            else self.system_prompt_dense
         )
         system_prompt_summary = (
             policy.prompts.system
             if policy.mode == "summary"
             else self.system_prompt_summary
         )
-        user_prompt_summary = (
-            policy.prompts.user if policy.mode == "summary" else None
-        )
+        user_prompt_summary = policy.prompts.user if policy.mode == "summary" else None
         return BaseCaptionDataset(
             base_records=self._record_pools[primary],
             template=self.template,

@@ -37,7 +37,7 @@ custom:
   emit_norm: norm1000
   # Default to summary; individual fusion datasets can override with mode
   use_summary: true
-  # Collapse identifiable 标签/* entries into 标签/可以识别 while keeping 无法识别 separate
+  # Legacy: summary_label_grouping has no effect on JSON summaries
   summary_label_grouping: false
   dump_conversation_text: false
   # Geometry-safe global augmentation (count/group stable; no crop/patch ops)

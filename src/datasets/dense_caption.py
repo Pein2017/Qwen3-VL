@@ -13,6 +13,11 @@ from swift.llm.template.base import MaxLengthError
 from src.config.prompts import USER_PROMPT_SUMMARY
 
 from .builders import JSONLinesBuilder
+from .assistant_prefix import (
+    build_assistant_prefix,
+    resolve_domain_token,
+    resolve_task_token,
+)
 from .contracts import ConversationRecord, validate_conversation_record
 from .preprocessors import AugmentationPreprocessor, SequentialPreprocessor
 from .utils import extract_object_points, load_jsonl
@@ -37,6 +42,7 @@ class BaseCaptionDataset(Dataset[object]):
         user_prompt: str,
         emit_norm: Literal["none", "norm100", "norm1000"],
         json_format: Literal["standard"],
+        assistant_prefix_format: str | None = None,
         user_prompt_summary: str | None = None,
         augmenter: object | None = None,
         preprocessor: object | None = None,
@@ -58,6 +64,9 @@ class BaseCaptionDataset(Dataset[object]):
         )
         self.emit_norm: Literal["none", "norm100", "norm1000"] = emit_norm
         self.json_format: Literal["standard"] = json_format
+        self.assistant_prefix_format = (
+            assistant_prefix_format.strip() if assistant_prefix_format else None
+        )
         self.bypass_prob = float(bypass_prob)
         self.seed = int(seed)
         self.template = template
@@ -130,6 +139,23 @@ class BaseCaptionDataset(Dataset[object]):
         self.dataset_name = dataset_name or "dataset"
         self.last_sample_debug: dict[str, object] = {}
 
+    def _resolve_assistant_prefix(
+        self, mode: Literal["dense", "summary"]
+    ) -> str | None:
+        if not self.assistant_prefix_format:
+            return None
+        domain_token = resolve_domain_token(self.dataset_name)
+        if domain_token is None:
+            raise ValueError(
+                "assistant_prefix_format configured but dataset_name is not supported; "
+                "set dataset_name to 'bbu' or 'rru' for non-fusion training."
+            )
+        return build_assistant_prefix(
+            fmt=self.assistant_prefix_format,
+            domain=domain_token,
+            task=resolve_task_token(mode),
+        )
+
     @staticmethod
     def _make_sample_id(dataset_name: str, base_idx: int) -> int:
         import zlib
@@ -187,11 +213,13 @@ class BaseCaptionDataset(Dataset[object]):
         user_prompt = (
             self.user_prompt_summary if mode == "summary" else self.user_prompt
         )
+        assistant_prefix = self._resolve_assistant_prefix(mode)
         return JSONLinesBuilder(
             user_prompt=user_prompt,
             emit_norm=self.emit_norm,
             mode=mode,
             json_format=self.json_format,
+            assistant_prefix=assistant_prefix,
         )
 
     def __getitem__(self, index: int) -> dict[str, object]:

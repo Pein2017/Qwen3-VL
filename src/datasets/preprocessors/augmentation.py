@@ -190,8 +190,21 @@ class AugmentationPreprocessor(BasePreprocessor):
                 # Update completeness field if below threshold
                 if cov < completeness_threshold:
                     desc = obj.get("desc", "")
-                    if "显示完整" in desc:
+                    if "可见性=完整" in desc:
+                        obj["desc"] = desc.replace("可见性=完整", "可见性=部分")
+                        completeness_updates += 1
+                    elif "可见性=显示完整" in desc:
+                        # Legacy key=value tokens.
+                        obj["desc"] = desc.replace(
+                            "可见性=显示完整", "可见性=只显示部分"
+                        )
+                        completeness_updates += 1
+                    elif "显示完整" in desc:
+                        # Legacy (slash-delimited) completeness token fallback.
                         obj["desc"] = desc.replace("显示完整", "只显示部分")
+                        completeness_updates += 1
+                    elif "完整" in desc:
+                        obj["desc"] = desc.replace("完整", "部分")
                         completeness_updates += 1
                     # Structured completeness metadata support
                     attrs = obj.get("attributes")
@@ -203,14 +216,16 @@ class AugmentationPreprocessor(BasePreprocessor):
                                 break
                         if completeness_key is not None:
                             value = attrs.get(completeness_key)
-                            if value == "显示完整":
-                                attrs[completeness_key] = "只显示部分"
+                            if value in {"显示完整", "完整"}:
+                                attrs[completeness_key] = (
+                                    "只显示部分" if value == "显示完整" else "部分"
+                                )
                                 structured_updates += 1
                         else:
                             logger = get_logger("augmentation.preprocessor")
                             logger.debug(
                                 "Completeness metadata missing expected key on object; desc_updated=%s",
-                                "显示完整" in desc,
+                                ("可见性=显示完整" in desc) or ("显示完整" in desc),
                             )
 
                 filtered_objects.append(obj)

@@ -19,14 +19,9 @@ OUTPUT_DIR="output_post/stage_a_bbu_only-12-25"
 # 挡风板安装检查
 # BBU安装方式检查（正装）
 
-DATASET="${dataset:-bbu}"
-if [[ -n "${mission:-}" ]]; then
-  MISSION="${mission}"
-elif [[ "${DATASET}" == "rru" ]]; then
-  MISSION="RRU安装检查"
-else
-  MISSION="BBU线缆布放要求"
-fi
+DATASET="${dataset:-}"
+MISSION="${mission:-}"
+
 
 if [[ -n "${input_dir:-}" ]]; then
   INPUT_DIR="${input_dir}"
@@ -42,8 +37,8 @@ PROMPT_PROFILE="${prompt_profile:-summary_runtime}"
 CUDA_VISIBLE_DEVICES="${gpus:-0}"
 verify_flag="${verify_inputs:-true}"
 DEBUG_FLAG="${debug:-false}"
-PASS_GROUP_NUMBER="${pass_group_number:-8000}"
-FAIL_GROUP_NUMBER="${fail_group_number:-3000}"
+PASS_GROUP_NUMBER="${pass_group_number:-2000}"
+FAIL_GROUP_NUMBER="${fail_group_number:-500}"
 SAMPLE_SEED="${sample_seed:-42}"
 
 # Derive number of GPUs (ignore empty/whitespace tokens)

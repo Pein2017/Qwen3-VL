@@ -24,7 +24,7 @@ def parse_item(item_str: str) -> Tuple[str, int]:
     Parse an item string to extract the base item and count.
 
     Args:
-        item_str: Item string like "标签/无法识别×3" or "螺丝、光纤插头/BBU安装螺丝,符合要求×2"
+    item_str: Item string like "标签/无法识别×3" or "螺丝、光纤插头/BBU安装螺丝,符合×2"
 
     Returns:
         Tuple of (base_item, count). If no count found, count defaults to 1.

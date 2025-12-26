@@ -32,7 +32,7 @@ custom:
   emit_norm: norm1000
   # Toggle summary-only mode (no mixed sampling)
   use_summary: true
-  # Collapse identifiable 标签/* entries into 标签/可以识别 while keeping 无法识别 separate
+  # Legacy: summary_label_grouping has no effect on JSON summaries
   summary_label_grouping: true
   dump_conversation_text: false
   augmentation:

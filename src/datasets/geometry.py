@@ -808,7 +808,7 @@ def compute_coverage(geom: dict[str, Any], crop_bbox: list[float]) -> float:
 
     Used for two purposes:
     1. Filtering: Drop objects if coverage < min_coverage (e.g., 0.3)
-    2. Completeness tracking: Mark "只显示部分" if coverage < completeness_threshold (e.g., 0.95)
+    2. Completeness tracking: Mark "部分" if coverage < completeness_threshold (e.g., 0.95)
     """
     geom_bbox = get_aabb(geom)
     geom_area = aabb_area(geom_bbox)

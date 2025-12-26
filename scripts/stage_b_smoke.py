@@ -67,7 +67,7 @@ def _write_guidance_json(path: Path, *, mission: str) -> None:
             "updated_at": _now().isoformat(),
             "experiences": {
                 "G0": "只围绕当前 mission 的关键检查项做结论。",
-                "G1": "出现明确负项（缺失/错误/松动/不符合要求）且与G0相关 → 判不通过。",
+                "G1": "出现明确负项（缺失/错误/松动/不符合）且与G0相关 → 判不通过。",
             },
         }
     }

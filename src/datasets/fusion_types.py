@@ -22,7 +22,7 @@ class DatasetSpec:
     supports_curriculum: bool
     # Optional explicit mode; defaults applied elsewhere when None.
     mode: Optional[Literal["dense", "summary"]] = None
-    # Optional summary label grouping override (标签/* → 标签/可以识别) for summary mode.
+    # Optional summary label grouping override (legacy desc×N summaries only).
     summary_label_grouping: Optional[bool] = None
     poly_fallback: Literal["off", "bbox_2d"] = "off"
     poly_max_points: Optional[int] = None

@@ -12,11 +12,8 @@ from ..contracts import ConversationRecord
 class SummaryLabelNormalizer(BasePreprocessor):
     """Collapse identifiable 标签/* entries into a single 标签/可以识别 bucket.
 
-    The summary field typically contains segments such as
-    ``标签/信号线标签×1`` or ``标签/无法识别×3`` separated by ``，``.
-    When enabled, all label entries whose descriptor does *not* contain
-    ``无法识别`` are merged into ``标签/可以识别×N`` while preserving the
-    total counts for both identifiable and unidentifiable labels.
+    Legacy summary strings contain segments such as ``标签/信号线标签×1`` or
+    ``标签/无法识别×3`` separated by ``，``. JSON summaries bypass this logic.
     """
 
     def __init__(
@@ -41,6 +38,8 @@ class SummaryLabelNormalizer(BasePreprocessor):
     def preprocess(self, row: ConversationRecord) -> Optional[ConversationRecord]:
         summary = row.get("summary")
         if not isinstance(summary, str):
+            return row
+        if summary.strip().startswith("{"):
             return row
 
         # Split on the primary delimiter; fall back to comma if needed.

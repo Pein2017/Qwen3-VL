@@ -10,7 +10,7 @@ noise-by-remark tickets) is:
   - label=fail
   - Stage-A summaries contain both:
       * "BBU设备"
-      * "BBU安装螺丝,符合要求"
+      * "BBU安装螺丝,符合"
 
 This script merges:
   1) existing noise filter file (optional)
@@ -88,7 +88,7 @@ def main() -> None:
             continue
         text = " ".join(str(v) for v in per_image.values())
         # Unlearnable for Stage-B given current evidence vocabulary.
-        if ("BBU设备" in text) and ("BBU安装螺丝,符合要求" in text):
+        if ("BBU设备" in text) and ("BBU安装螺丝,符合" in text):
             unlearnable.add(ticket_key)
 
     excluded |= unlearnable
@@ -100,7 +100,7 @@ def main() -> None:
         if noise_file is not None:
             fh.write(f"# noise_file: {noise_file} (n={noise_count})\n")
         fh.write(
-            "# unlearnable_rule: label=fail AND contains 'BBU设备' AND contains 'BBU安装螺丝,符合要求'\n"
+            "# unlearnable_rule: label=fail AND contains 'BBU设备' AND contains 'BBU安装螺丝,符合'\n"
         )
         fh.write(f"# unlearnable_added: {len(unlearnable)}\n")
         fh.write(f"# total_excluded: {len(excluded)}\n")

@@ -1132,7 +1132,14 @@ class SmallObjectZoomPaste(PatchOp):
     def _class_allowed(self, desc: str) -> bool:
         if not self.class_whitelist:
             return True
-        head = desc.split("/", 1)[0].split(",", 1)[0].strip()
+        head = ""
+        for token in desc.split(","):
+            token = token.strip()
+            if token.startswith("类别="):
+                head = token.split("=", 1)[1].strip()
+                break
+        if not head:
+            head = desc.split("/", 1)[0].split(",", 1)[0].strip()
         return any(head.startswith(t) for t in self.class_whitelist)
 
     def _transform_geom(
@@ -1293,7 +1300,7 @@ class RandomCrop(PatchOp):
         scale: (min, max) tuple for crop size as fraction of original image (default: (0.6, 1.0))
         aspect_ratio: (min, max) tuple for aspect ratio variation (default: (0.8, 1.2))
         min_coverage: minimum coverage ratio to keep object (default: 0.3)
-        completeness_threshold: coverage threshold for marking "只显示部分" (default: 0.95)
+        completeness_threshold: coverage threshold for marking "部分" (default: 0.95)
         min_objects: skip crop if filtered objects < this value (default: 4)
         skip_if_line: skip crop if any filtered object is a line (default: True)
         prob: probability of applying crop (default: 1.0)

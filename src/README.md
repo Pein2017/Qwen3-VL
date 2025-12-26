@@ -197,12 +197,12 @@ Index → Epoch-seeded permutation
 {
   "object_1": {
     "poly": [x1,y1,...,x4,y4],
-    "desc": "BBU设备/华为/显示完整/..."
+    "desc": "BBU设备/华为/完整/..."
   },
   "object_2": {
     "line_points": 4,
     "line": [x1,y1,...,x4,y4],
-    "desc": "光纤/有保护措施/..."
+    "desc": "光纤/有保护/..."
   }
 }
 ```

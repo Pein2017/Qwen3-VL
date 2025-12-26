@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 
 from src.prompts.stage_b_verdict import build_stage_b_system_prompt
@@ -14,7 +15,78 @@ from ..utils.chinese import normalize_spaces, to_simplified
 _INDEX_RE = re.compile(r"(\d+)$")
 _NEED_REVIEW_MARKER_RE = re.compile(r"需复核\s*[，,]?\s*备注[:：]")
 _COUNT_RE = re.compile(r"×(\d+)")
-_STATION_DISTANCE_RE = re.compile(r"站点距离/(\d+)")
+_STATION_DISTANCE_RE = re.compile(r"站点距离[=/](\d+)")
+
+
+def _parse_summary_json(text: str) -> dict[str, object] | None:
+    if not text:
+        return None
+    stripped = text.strip()
+    if not (stripped.startswith("{") and stripped.endswith("}")):
+        return None
+    try:
+        obj = json.loads(stripped)
+    except Exception:
+        return None
+    if not isinstance(obj, dict):
+        return None
+    required = {"dataset", "统计", "objects_total"}
+    if not required.issubset(obj.keys()):
+        return None
+    return obj
+
+
+def _format_summary_json(obj: dict[str, object]) -> str:
+    preferred_order = ["dataset", "objects_total", "统计", "备注", "分组统计", "异常"]
+    ordered: dict[str, object] = {}
+    for key in preferred_order:
+        if key in obj:
+            ordered[key] = obj[key]
+    for key, value in obj.items():
+        if key == "format_version":
+            continue
+        if key not in ordered:
+            ordered[key] = value
+    return json.dumps(ordered, ensure_ascii=False, separators=(", ", ": "))
+
+
+def _summary_entries(obj: dict[str, object]) -> list[dict[str, object]]:
+    entries = obj.get("统计")
+    if isinstance(entries, list):
+        return [e for e in entries if isinstance(e, dict)]
+    return []
+
+
+def _entry_by_category(entries: list[dict[str, object]], category: str) -> dict[str, object] | None:
+    for entry in entries:
+        if entry.get("类别") == category:
+            return entry
+    return None
+
+
+def _summary_distances(obj: dict[str, object]) -> list[str]:
+    entry = _entry_by_category(_summary_entries(obj), "站点距离")
+    if not entry:
+        return []
+    distances = entry.get("站点距离")
+    if not isinstance(distances, dict):
+        distances = entry.get("距离")
+    if isinstance(distances, dict):
+        return [str(k) for k in distances.keys() if str(k).strip().isdigit()]
+    return []
+
+
+def _summary_has_label_text(obj: dict[str, object]) -> bool:
+    entry = _entry_by_category(_summary_entries(obj), "标签")
+    if not entry:
+        return False
+    texts = entry.get("文本")
+    if isinstance(texts, dict) and any(str(k).strip() for k in texts.keys()):
+        return True
+    readability = entry.get("可读性")
+    if isinstance(readability, dict):
+        return any(str(k).strip() and str(k) != "不可读" for k in readability.keys())
+    return False
 
 
 def _sanitize_stage_a_summary_for_prompt(text: str) -> str:
@@ -25,6 +97,10 @@ def _sanitize_stage_a_summary_for_prompt(text: str) -> str:
     We remove the marker while preserving the remark content so the model can
     still use the evidence without echoing forbidden tokens.
     """
+
+    summary_obj = _parse_summary_json(text)
+    if summary_obj is not None:
+        return _format_summary_json(summary_obj)
 
     simplified = to_simplified(text or "")
     simplified = normalize_spaces(simplified)
@@ -61,6 +137,10 @@ def _render_guidance_snippets(experiences: dict[str, str]) -> str:
 
 
 def _has_readable_label(text: str) -> bool:
+    summary_obj = _parse_summary_json(text)
+    if summary_obj is not None:
+        return _summary_has_label_text(summary_obj)
+
     simplified = to_simplified(text or "")
     simplified = normalize_spaces(simplified)
     if "标签/" not in simplified:
@@ -78,6 +158,21 @@ def _aggregate_rru_install_points(stage_a_summaries: dict[str, str]) -> str:
 
     stats: dict[str, dict[str, bool]] = {}
     for _, text in _sorted_summaries(stage_a_summaries):
+        summary_obj = _parse_summary_json(text)
+        if summary_obj is not None:
+            distances = _summary_distances(summary_obj)
+            if not distances:
+                continue
+            entries = _summary_entries(summary_obj)
+            categories = {entry.get("类别") for entry in entries}
+            has_rru = "RRU设备" in categories
+            has_fix = "紧固件" in categories or "固定件" in categories
+            for dist in distances:
+                entry = stats.setdefault(dist, {"rru": False, "fix": False})
+                entry["rru"] = entry["rru"] or has_rru
+                entry["fix"] = entry["fix"] or has_fix
+            continue
+
         simplified = _sanitize_stage_a_summary_for_prompt(text)
         distances = _STATION_DISTANCE_RE.findall(simplified)
         if not distances:
@@ -99,7 +194,7 @@ def _aggregate_rru_install_points(stage_a_summaries: dict[str, str]) -> str:
             return 0
 
     lines = [
-        f"- 距离={dist}: RRU={'有' if flags['rru'] else '无'}, 紧固件={'有' if flags['fix'] else '无'}"
+        f"- 站点距离={dist}: RRU={'有' if flags['rru'] else '无'}, 紧固件={'有' if flags['fix'] else '无'}"
         for dist, flags in sorted(stats.items(), key=lambda item: _dist_key(item[0]))
     ]
     return "安装点汇总（按站点距离合并）：\n" + "\n".join(lines)
@@ -113,6 +208,25 @@ def _aggregate_rru_position_points(stage_a_summaries: dict[str, str]) -> str:
 
     stats: dict[str, dict[str, bool]] = {}
     for _, text in _sorted_summaries(stage_a_summaries):
+        summary_obj = _parse_summary_json(text)
+        if summary_obj is not None:
+            distances = _summary_distances(summary_obj)
+            if not distances:
+                continue
+            entries = _summary_entries(summary_obj)
+            categories = {entry.get("类别") for entry in entries}
+            has_rru = "RRU设备" in categories
+            has_ground = "接地线" in categories
+            has_label = _summary_has_label_text(summary_obj)
+            has_ground_label = has_ground and has_label
+            if not (has_rru or has_ground_label):
+                continue
+            for dist in distances:
+                entry = stats.setdefault(dist, {"rru": False, "ground_label": False})
+                entry["rru"] = entry["rru"] or has_rru
+                entry["ground_label"] = entry["ground_label"] or has_ground_label
+            continue
+
         simplified = _sanitize_stage_a_summary_for_prompt(text)
         distances = _STATION_DISTANCE_RE.findall(simplified)
         if not distances:
@@ -141,7 +255,7 @@ def _aggregate_rru_position_points(stage_a_summaries: dict[str, str]) -> str:
             return 0
 
     lines = [
-        f"- 距离={dist}: RRU={'有' if flags['rru'] else '无'}, 接地线(可识别标签)={'有' if flags['ground_label'] else '无'}"
+        f"- 站点距离={dist}: RRU={'有' if flags['rru'] else '无'}, 接地线(可识别标签)={'有' if flags['ground_label'] else '无'}"
         for dist, flags in sorted(stats.items(), key=lambda item: _dist_key(item[0]))
     ]
     return "安装点汇总（按站点距离合并）：\n" + "\n".join(lines)
@@ -155,6 +269,31 @@ def _aggregate_rru_cable_points(stage_a_summaries: dict[str, str]) -> str:
 
     stats: dict[str, dict[str, bool]] = {}
     for _, text in _sorted_summaries(stage_a_summaries):
+        summary_obj = _parse_summary_json(text)
+        if summary_obj is not None:
+            distances = _summary_distances(summary_obj)
+            if not distances:
+                continue
+            entries = _summary_entries(summary_obj)
+            categories = {entry.get("类别") for entry in entries}
+            has_tail = "尾纤" in categories
+            tail_entry = _entry_by_category(entries, "尾纤")
+            has_tube = False
+            if tail_entry and isinstance(tail_entry.get("套管保护"), dict):
+                tube_map = tail_entry.get("套管保护")
+                if isinstance(tube_map, dict):
+                    has_tube = any(
+                        key not in {"没有保护", "无保护"} and count
+                        for key, count in tube_map.items()
+                    )
+            if not (has_tail or has_tube):
+                continue
+            for dist in distances:
+                entry = stats.setdefault(dist, {"tail": False, "tube": False})
+                entry["tail"] = entry["tail"] or has_tail
+                entry["tube"] = entry["tube"] or has_tube
+            continue
+
         simplified = _sanitize_stage_a_summary_for_prompt(text)
         distances = _STATION_DISTANCE_RE.findall(simplified)
         if not distances:
@@ -179,7 +318,7 @@ def _aggregate_rru_cable_points(stage_a_summaries: dict[str, str]) -> str:
             return 0
 
     lines = [
-        f"- 距离={dist}: 尾纤={'有' if flags['tail'] else '无'}, 套管={'有' if flags['tube'] else '无'}"
+        f"- 站点距离={dist}: 尾纤={'有' if flags['tail'] else '无'}, 套管={'有' if flags['tube'] else '无'}"
         for dist, flags in sorted(stats.items(), key=lambda item: _dist_key(item[0]))
     ]
     return "安装点汇总（按站点距离合并）：\n" + "\n".join(lines)
@@ -194,6 +333,14 @@ def _render_summaries(stage_a_summaries: dict[str, str]) -> str:
 
 
 def _estimate_object_count(text: str) -> int:
+    summary_obj = _parse_summary_json(text)
+    if summary_obj is not None:
+        count = summary_obj.get("objects_total")
+        if isinstance(count, int):
+            return count
+        if isinstance(count, str) and count.isdigit():
+            return int(count)
+
     simplified = to_simplified(text or "")
     simplified = normalize_spaces(simplified)
     matches = _COUNT_RE.findall(simplified)

@@ -18,6 +18,30 @@ _GROUP_PREFIX_RE = re.compile(r"^(组\d+[:：])+")
 _GROUP_PREFIX_OF_RE = re.compile(r"^组(\d+)的")
 _REMARK_RE = re.compile(r"(,)?备注:.*$")
 
+_BBU_CATEGORIES = {
+    "BBU设备",
+    "挡风板",
+    "光纤",
+    "电线",
+    "标签",
+    "BBU安装螺丝",
+    "机柜处接地螺丝",
+    "地排处接地螺丝",
+    "ODF端光纤插头",
+    "BBU端光纤插头",
+}
+
+_RRU_CATEGORIES = {
+    "RRU设备",
+    "紧固件",
+    "RRU接地端",
+    "地排接地端螺丝",
+    "尾纤",
+    "接地线",
+    "标签",
+    "站点距离",
+}
+
 
 def _strip_remark(item: str) -> str:
     return _REMARK_RE.sub("", item).strip(" ，")
@@ -32,6 +56,48 @@ def sanitize_summary_by_dataset(text: str, dataset: str) -> str:
     summary_text = text.strip()
     if not summary_text:
         return summary_text
+
+    if summary_text.startswith("{"):
+        try:
+            obj = json.loads(summary_text)
+        except Exception:
+            obj = None
+        if isinstance(obj, dict) and {
+            "dataset",
+            "统计",
+            "objects_total",
+        }.issubset(obj.keys()):
+            if "format_version" in obj:
+                obj = dict(obj)
+                obj.pop("format_version", None)
+                return json.dumps(obj, ensure_ascii=False, separators=(", ", ": "))
+            return summary_text
+
+    if summary_text.startswith("{") and summary_text.endswith("}"):
+        try:
+            obj = json.loads(summary_text)
+        except Exception:
+            obj = None
+        if isinstance(obj, dict) and "统计" in obj:
+            allowed = _RRU_CATEGORIES if dataset.lower() == "rru" else _BBU_CATEGORIES
+            entries = obj.get("统计")
+            if isinstance(entries, list):
+                filtered = [
+                    entry
+                    for entry in entries
+                    if isinstance(entry, dict) and entry.get("类别") in allowed
+                ]
+            else:
+                filtered = []
+            if not filtered:
+                return "无关图片"
+            obj["统计"] = filtered
+            if dataset.lower() == "rru":
+                obj.pop("备注", None)
+            else:
+                obj.pop("分组统计", None)
+            obj["dataset"] = dataset.upper()
+            return json.dumps(obj, ensure_ascii=False, separators=(", ", ": "))
 
     parts = [p.strip() for p in summary_text.split("，") if p.strip()]
     if not parts:

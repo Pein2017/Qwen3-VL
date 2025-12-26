@@ -6,12 +6,11 @@ from __future__ import annotations
 
 from typing import Optional
 
+from src.prompts.domain_packs import get_domain_pack
 from src.prompts.summary_core import (
     MISSION_SPECIFIC_PRIOR_RULES,
-    USER_PROMPT_SUMMARY,
     build_summary_system_prompt_minimal,
 )
-from src.prompts.domain_packs import get_domain_pack
 from src.prompts.summary_profiles import (
     DEFAULT_SUMMARY_PROFILE_RUNTIME,
     get_summary_profile,
@@ -23,19 +22,22 @@ _SUMMARY_GLOBAL_NON_SITE_RULES = (
 )
 
 _BBU_SCENARIO_RULES = (
-    "【BBU场景限定（强规则）】："
+    "【BBU场景限定】："
     "仅真实现场且可见BBU相关目标时输出摘要，否则输出“无关图片”。"
+    "\n【BBU输出范围】："
+    "类别仅包含：BBU设备、挡风板、BBU安装螺丝、机柜处接地螺丝、地排处接地螺丝、"
+    "BBU端光纤插头、ODF端光纤插头、光纤、电线、标签。"
+    "属性不确定留空，必要时写入 备注（BBU 专属）。"
 )
 
 _RRU_SCENARIO_RULES = (
-    "【RRU场景限定（强规则）】："
+    "【RRU场景限定】："
     "仅真实现场且可见RRU相关目标时输出摘要，否则输出“无关图片”。"
-    "\n【RRU重点（强规则）】："
-    "仅需强调物体之间的配对关系与站点距离；具体检查项以 guidance 为准，不在摘要中重复。"
-    "\n【站点距离（强规则）】："
-    "每张图片凡非“无关图片”，必须输出且只输出1个站点距离（左上角水印），格式：站点距离/<数字或无法识别>×1；建议作为第一项，不得遗漏。"
-    "\n【RRU禁用项（强规则）】："
-    "禁止BBU相关内容与品牌/机柜概念（如机柜/机房/挡风板/BBU端/ODF端）。"
+    "\n【RRU重点】："
+    "强调物体之间的配对关系与站点距离；具体检查项以 guidance 为准，不在摘要中重复。"
+    "\n【站点距离】："
+    "每张非“无关图片”必须输出且只输出1个站点距离（左上角水印），"
+    "统计中需包含 {类别: 站点距离, 站点距离: {<数字>: 1}}；建议作为第一项。"
 )
 
 
