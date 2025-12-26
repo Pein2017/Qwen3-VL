@@ -9,15 +9,15 @@ def _sample_dense_record():
         "objects": [
             {
                 "bbox_2d": [100, 200, 300, 400],
-                "desc": "BBU设备/华为/显示完整",
+                "desc": "类别=BBU设备,品牌=华为,可见性=完整",
             },
             {
                 "line": [10, 10, 20, 20, 30, 40, 50, 60],
-                "desc": "光纤/有保护",
+                "desc": "类别=光纤,保护措施=有保护",
             },
             {
                 "poly": [0, 0, 50, 0, 50, 30, 0, 30],
-                "desc": "天线/杆塔/完好",
+                "desc": "类别=天线,属性=杆塔,状态=完好",
             },
         ],
         "width": 800,
@@ -27,7 +27,11 @@ def _sample_dense_record():
 
 def _sample_summary_record():
     record = _sample_dense_record()
-    record["summary"] = "BBU设备×1，光纤×1"
+    record["summary"] = (
+        '{"dataset": "BBU", "objects_total": 2, '
+        '"统计": [{"类别": "BBU设备", "品牌": {"华为": 1}}, '
+        '{"类别": "光纤", "保护措施": {"有保护": 1}}]}'
+    )
     return record
 
 
@@ -56,12 +60,13 @@ def test_jsonlines_builder_normalises_desc_whitespace():
         json_format="standard",
     )
     record = _sample_dense_record()
-    record["objects"][0]["desc"] = "  BBU设备/华为/显示完整  "
+    record["objects"][0]["desc"] = "  类别=BBU设备,品牌=华为,可见性=完整  "
 
     merged = builder.build_many([record])
     payload = merged["assistant_payload"]
+    descs = [obj["desc"] for obj in payload.values()]
 
-    assert payload["object_1"]["desc"] == "BBU设备/华为/显示完整"
+    assert "类别=BBU设备,品牌=华为,可见性=完整" in descs
 
 
 def test_jsonlines_builder_rejects_desc_with_internal_spaces():
@@ -72,7 +77,7 @@ def test_jsonlines_builder_rejects_desc_with_internal_spaces():
         json_format="standard",
     )
     record = _sample_dense_record()
-    record["objects"][0]["desc"] = "BBU设备/华为, 显示完整"
+    record["objects"][0]["desc"] = "类别=BBU设备, 品牌=华为"
 
     with pytest.raises(ValueError):
         builder.build_many([record])
