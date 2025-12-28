@@ -1,9 +1,11 @@
-# Minimal Stage-B config template for quick local runs.
+# Minimal Stage-B rule-search config template for quick local runs.
 # For a no-model audit, prefer: `bash scripts/stage_b.sh smoke`
 
 stage_a_paths:
   - output_post/stage_a/挡风板安装检查_stage_a_tiny.jsonl
 seed: 17
+
+default_domain: bbu
 
 model:
   model_name_or_path: model_cache/models/Qwen/Qwen3-32B
@@ -18,18 +20,48 @@ guidance:
 output:
   root: output_post/stage_b
   run_name: smoke_tiny
-  group_report: true
 
-sampler:
-  samples_per_decode: 1
-  grid:
-    - temperature: 0.2
-      top_p: 0.9
-      max_new_tokens: 512
-      seed: 42
-      repetition_penalty: 1.05
-      stop: ["assistant", "<|im_end|>", "<|endoftext|>", "</s>"]
+rule_search:
+  proposer_prompt_path: configs/prompts/stage_b_rule_search_proposer_prompt.txt
+  reflect_size: 4
+  num_candidate_rules: 1
 
+  train_pool_size: 32
+  eval_pool_size: 6
+
+  gate:
+    min_relative_error_reduction: 0.0
+    max_changed_fraction: 1.0
+    max_fp_rate_increase: 1.0
+    bootstrap:
+      iterations: 50
+      min_prob: 0.0
+      seed: 17
+
+  early_stop:
+    patience: 2
+
+  train_sampler:
+    samples_per_decode: 1
+    grid:
+      - temperature: 0.3
+        top_p: 0.9
+        max_new_tokens: 512
+        seed: 42
+        repetition_penalty: 1.05
+        stop: ["assistant", "<|im_end|>", "<|endoftext|>", "</s>"]
+  eval_sampler:
+    samples_per_decode: 1
+    grid:
+      - temperature: 0.1
+        top_p: 0.9
+        max_new_tokens: 512
+        seed: 42
+        repetition_penalty: 1.05
+        stop: ["assistant", "<|im_end|>", "<|endoftext|>", "</s>"]
+
+# Reflection config required by schema (used for rule proposer in rule_search mode).
+# Note: decision_prompt_path and ops_prompt_path are not used in rule_search mode.
 reflection:
   decision_prompt_path: configs/prompts/stage_b_reflection_decision_prompt.txt
   ops_prompt_path: configs/prompts/stage_b_reflection_ops_prompt.txt
@@ -42,16 +74,10 @@ reflection:
   max_reflection_length: 12000
   token_budget: 12000
 
-selection:
-  policy: top_label
-  tie_break: temperature
-
-manual_review:
-  min_verdict_agreement: 0.8
-
 runner:
   epochs: 1
-  rollout_batch_size: 1
+  per_rank_rollout_batch_size: 1
+  logging_steps: 64
 
 stage_b_distillation:
   enabled: false

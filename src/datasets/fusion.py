@@ -5,9 +5,10 @@ from __future__ import annotations
 import copy
 import json
 import random
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, Mapping, Optional, Sequence, Tuple
+from typing import Any
 
 from src.utils import get_logger
 
@@ -18,8 +19,8 @@ from .utils import load_jsonl
 
 @dataclass(frozen=True)
 class FusionConfig:
-    targets: Tuple[TargetSpec, ...]
-    sources: Tuple[AuxiliarySpec, ...]
+    targets: tuple[TargetSpec, ...]
+    sources: tuple[AuxiliarySpec, ...]
 
     @property
     def target(self) -> TargetSpec:
@@ -83,19 +84,23 @@ class FusionConfig:
     @staticmethod
     def _parse_dataset_entry(
         entry: Any, *, require_ratio: bool, allow_ratio: bool = False
-    ) -> tuple[DatasetSpec, Optional[float]]:
+    ) -> tuple[DatasetSpec, float | None]:
         if not isinstance(entry, Mapping):
             raise ValueError("dataset entry must be a mapping")
 
-        dataset_key = entry.get("dataset")
-        name_override = entry.get("name") if dataset_key else None
-        if dataset_key is None:
-            dataset_key = entry.get("name")
-            if dataset_key is None:
+        dataset_key_raw = entry.get("dataset")
+        if dataset_key_raw is None:
+            dataset_key_raw = entry.get("name")
+            if dataset_key_raw is None:
                 raise ValueError("dataset entry must include 'dataset' or 'name'")
-            dataset_key = str(dataset_key)
-            name_override = str(entry.get("name")) if entry.get("name") else None
+        dataset_key = str(dataset_key_raw)
+        name_override_raw = entry.get("name")
+        name_override = str(name_override_raw) if name_override_raw is not None else None
         params = entry.get("params")
+        if "summary_label_grouping" in entry:
+            raise ValueError(
+                "summary_label_grouping has been removed; delete it from fusion configs."
+            )
         if params is None:
             params = {
                 "train_jsonl": entry.get("train_jsonl"),
@@ -130,14 +135,20 @@ class FusionConfig:
                 )
         elif not isinstance(params, Mapping):
             raise TypeError("dataset params must be a mapping if provided")
+        if "summary_label_grouping" in params:
+            raise ValueError(
+                "summary_label_grouping has been removed; delete it from fusion configs."
+            )
 
         spec = build_dataset_spec(dataset_key, name=name_override, params=params)
-        ratio_value: Optional[float] = None
+        ratio_value: float | None = None
         if require_ratio or allow_ratio:
             ratio = entry.get("ratio")
             if require_ratio and ratio is None:
                 raise ValueError("auxiliary spec must include 'ratio'")
             if ratio is not None:
+                if not isinstance(ratio, (int, float, str)):
+                    raise ValueError("ratio must be numeric")
                 try:
                     ratio_value = float(ratio)
                 except (TypeError, ValueError) as exc:  # pragma: no cover - defensive
@@ -169,7 +180,7 @@ class FusionConfig:
         )
 
     @staticmethod
-    def _as_target(spec: DatasetSpec, ratio: Optional[float]) -> TargetSpec:
+    def _as_target(spec: DatasetSpec, ratio: float | None) -> TargetSpec:
         return TargetSpec(
             key=spec.key,
             name=spec.name,
@@ -203,7 +214,7 @@ class FusionConfig:
 
 def _compute_target_quotas(
     targets: Sequence[TargetSpec], pool_sizes: Mapping[str, int]
-) -> tuple[dict[str, int], Optional[int]]:
+) -> tuple[dict[str, int], int | None]:
     """Compute per-target quotas using self-scaled ratios.
 
     Returns (quota_map, base). base is kept for legacy compatibility and is
@@ -224,8 +235,8 @@ def _compute_target_quotas(
     return quotas, None
 
 
-def _annotate_record(record: Mapping[str, Any], spec: DatasetSpec) -> Dict[str, Any]:
-    annotated = copy.deepcopy(record)
+def _annotate_record(record: Mapping[str, Any], spec: DatasetSpec) -> dict[str, Any]:
+    annotated = dict(copy.deepcopy(record))
     metadata = annotated.get("metadata") or {}
     if not isinstance(metadata, dict):
         metadata = {}
@@ -240,13 +251,13 @@ def _sample_with_replacement(
     records: Sequence[Mapping[str, Any]],
     count: int,
     rng: random.Random,
-) -> list[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     if not records or count <= 0:
         return []
-    samples: list[Dict[str, Any]] = []
+    samples: list[dict[str, Any]] = []
     for _ in range(count):
         choice = rng.choice(records)
-        samples.append(copy.deepcopy(choice))
+        samples.append(dict(copy.deepcopy(choice)))
     return samples
 
 
@@ -287,7 +298,7 @@ def build_fused_jsonl(
     logger = get_logger(__name__)
 
     # Load target records and compute quotas (respect ratios when provided).
-    target_pools: dict[str, list[Dict[str, Any]]] = {}
+    target_pools: dict[str, list[dict[str, Any]]] = {}
     pool_sizes: dict[str, int] = {}
     for target in config.targets:
         records = load_jsonl(str(target.train_jsonl), resolve_relative=True)
@@ -296,7 +307,7 @@ def build_fused_jsonl(
 
     target_quotas, _ = _compute_target_quotas(config.targets, pool_sizes)
 
-    fused: list[Dict[str, Any]] = []
+    fused: list[dict[str, Any]] = []
     for target in config.targets:
         pool = target_pools[target.name]
         quota = target_quotas.get(target.name, 0)
@@ -332,7 +343,7 @@ def build_fused_jsonl(
             rng_source,
             sample_without_replacement=bool(source.sample_without_replacement),
         )
-        sampled_records: list[Dict[str, Any]]
+        sampled_records: list[dict[str, Any]]
         if source.sample_without_replacement and not fell_back:
             sampled_records = [copy.deepcopy(source_records[i]) for i in sampled_indices]
         else:
@@ -368,7 +379,7 @@ def build_fused_jsonl(
 
 def prepare_record_for_dataset(
     record: Mapping[str, Any], spec: DatasetSpec
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     return _annotate_record(record, spec)
 
 

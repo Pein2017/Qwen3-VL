@@ -5,8 +5,10 @@ from __future__ import annotations
 import logging
 import os
 import weakref
-from typing import TYPE_CHECKING, Dict, Type, cast
+from typing import TYPE_CHECKING, Protocol, TypeVar, cast
+from typing_extensions import override
 
+from transformers import TrainingArguments
 from transformers.trainer_callback import TrainerCallback, TrainerControl, TrainerState
 from transformers.trainer_utils import PREFIX_CHECKPOINT_DIR, SaveStrategy
 
@@ -16,40 +18,56 @@ if TYPE_CHECKING:  # pragma: no cover
 
 logger = logging.getLogger(__name__)
 
+TrainerT = TypeVar("TrainerT", bound="_TrainerBase")
+
+
+class _TrainerLike(Protocol):
+    args: TrainingArguments
+    state: TrainerState
+    model: object
+    callback_handler: object
+
+    def add_callback(self, callback: TrainerCallback) -> None: ...
+
+    def _save_checkpoint(
+        self, model: object, trial: object | None, metrics: object | None = None
+    ) -> None: ...
+
 
 class _FinalCheckpointCallback(TrainerCallback):
     """Callback bound to a specific trainer instance to enforce the final save."""
 
     def __init__(self, owner: "FinalCheckpointMixin") -> None:
-        self._owner_ref = weakref.ref(owner)
+        self._owner_ref: weakref.ReferenceType[FinalCheckpointMixin] = weakref.ref(owner)
 
-    def on_train_end(  # type: ignore[override]
+    @override
+    def on_train_end(
         self,
-        args,
+        args: TrainingArguments,
         state: TrainerState,
         control: TrainerControl,
-        **kwargs,
-    ):
+        **kwargs: object,
+    ) -> None:
         owner = self._owner_ref()
         if owner is None:
-            return control
+            return
         owner._maybe_save_final_checkpoint(args, state, control)
-        return control
+        return None
 
 
 class FinalCheckpointMixin:
     """Adds a post-training checkpoint check without modifying upstream trainers."""
 
-    _final_checkpoint_callback_attr = "_final_checkpoint_callback"
-    _final_checkpoint_wrapper_cache: Dict[Type, Type] = {}
+    _final_checkpoint_callback_attr: str = "_final_checkpoint_callback"
+    _final_checkpoint_wrapper_cache: dict[type["_TrainerBase"], type["_TrainerBase"]] = {}
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args: object, **kwargs: object) -> None:
         super().__init__(*args, **kwargs)  # type: ignore[misc]
         if not hasattr(self, self._final_checkpoint_callback_attr):
             callback = _FinalCheckpointCallback(self)
             setattr(self, self._final_checkpoint_callback_attr, callback)
             try:
-                trainer = cast("_TrainerBase", self)
+                trainer = cast(_TrainerLike, cast(object, self))
                 trainer.add_callback(callback)
             except Exception as exc:  # pragma: no cover - defensive
                 logger.warning("Failed to register final-checkpoint callback: %s", exc)
@@ -59,13 +77,13 @@ class FinalCheckpointMixin:
     # ------------------------------------------------------------------
     def _maybe_save_final_checkpoint(  # noqa: PLR0912
         self,
-        args,
+        args: TrainingArguments,
         state: TrainerState,
         control: TrainerControl,
     ) -> None:
         """Persist the last checkpoint if the training loop skipped it."""
 
-        trainer = cast("_TrainerBase", self)
+        trainer = cast(_TrainerLike, cast(object, self))
 
         save_strategy = getattr(args, "save_strategy", SaveStrategy.NO)
         # Normalize loose string inputs such as "none" or "NO".
@@ -133,11 +151,14 @@ class FinalCheckpointMixin:
                 limit_suspended = False
 
         try:
+            save_checkpoint = getattr(trainer, "_save_checkpoint", None)
+            if not callable(save_checkpoint):
+                raise AttributeError("Trainer does not expose _save_checkpoint")
             try:
-                trainer._save_checkpoint(trainer.model, None)  # type: ignore[misc,arg-type]
+                _ = save_checkpoint(trainer.model, None)
             except TypeError:
-                # Some trainer overrides accept metrics; fall back to keyword form.
-                trainer._save_checkpoint(trainer.model, None, metrics=None)  # type: ignore[misc,call-arg]
+                # Some trainer overrides accept metrics in a third positional slot.
+                _ = save_checkpoint(trainer.model, None, None)
         finally:
             if limit_suspended:
                 try:
@@ -149,7 +170,9 @@ class FinalCheckpointMixin:
 
         # Mirror Trainer.train() behaviour so callbacks observe the save event.
         try:
-            trainer.callback_handler.on_save(args, state, control)
+            on_save = getattr(trainer.callback_handler, "on_save", None)
+            if callable(on_save):
+                _ = on_save(args, state, control)
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning(
                 "Final checkpoint save completed but on_save callbacks failed: %s", exc
@@ -158,14 +181,16 @@ class FinalCheckpointMixin:
     def _final_checkpoint_exists(self, output_dir: str, step: int) -> bool:
         """Return True if the checkpoint directory (or flash record) already exists."""
 
-        trainer = cast("_TrainerBase", self)
+        trainer = cast(_TrainerLike, cast(object, self))
 
-        if getattr(trainer.args, "use_flash_ckpt", False) and hasattr(
-            trainer, "_get_last_checkpoint_step"
-        ):
-            try:
-                last_step = trainer._get_last_checkpoint_step()  # type: ignore[attr-defined]
-            except Exception:  # pragma: no cover - defensive
+        if getattr(trainer.args, "use_flash_ckpt", False):
+            last_step_fn = getattr(trainer, "_get_last_checkpoint_step", None)
+            if callable(last_step_fn):
+                try:
+                    last_step = last_step_fn()
+                except Exception:  # pragma: no cover - defensive
+                    last_step = None
+            else:
                 last_step = None
             if isinstance(last_step, int) and last_step >= step:
                 return True
@@ -190,27 +215,28 @@ class FinalCheckpointMixin:
         return os.path.join(output_dir, f"{PREFIX_CHECKPOINT_DIR}-{step}")
 
 
-def with_final_checkpoint(trainer_cls: Type) -> Type:
+def with_final_checkpoint(trainer_cls: type[TrainerT] | object) -> type[TrainerT]:
     """Return a trainer subclass that includes :class:`FinalCheckpointMixin`."""
 
     if not isinstance(trainer_cls, type):
         raise TypeError("trainer_cls must be a class")
+    trainer_type = cast(type[TrainerT], trainer_cls)
 
-    if issubclass(trainer_cls, FinalCheckpointMixin):
-        return trainer_cls
+    if issubclass(trainer_type, FinalCheckpointMixin):
+        return trainer_type
 
     cache = FinalCheckpointMixin._final_checkpoint_wrapper_cache
-    if trainer_cls in cache:
-        return cache[trainer_cls]
+    if trainer_type in cache:
+        return cast(type[TrainerT], cache[trainer_type])
 
     wrapped = type(
-        f"{trainer_cls.__name__}WithFinalCheckpoint",
-        (FinalCheckpointMixin, trainer_cls),
+        f"{trainer_type.__name__}WithFinalCheckpoint",
+        (FinalCheckpointMixin, trainer_type),
         {},
     )
-    wrapped.__module__ = trainer_cls.__module__
-    cache[trainer_cls] = wrapped
-    return wrapped
+    wrapped.__module__ = trainer_type.__module__
+    cache[trainer_type] = wrapped
+    return cast(type[TrainerT], wrapped)
 
 
 __all__ = ["FinalCheckpointMixin", "with_final_checkpoint"]

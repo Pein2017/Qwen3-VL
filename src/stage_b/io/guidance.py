@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Mission guidance management for the reflection-centric Stage-B pipeline."""
+"""Mission guidance management for the Stage-B rule-search pipeline."""
 
 from __future__ import annotations
 
@@ -8,9 +8,10 @@ import json
 import logging
 import re
 import shutil
+from collections.abc import Mapping, MutableMapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Mapping, MutableMapping, Optional, Sequence, Union, cast
+from typing import TYPE_CHECKING, cast
 
 from ..types import (
     ExperienceMetadata,
@@ -54,7 +55,7 @@ def _parse_datetime(value: object) -> datetime:
 
 def _parse_experiences_dict(
     mission: str, payload: Mapping[str, object]
-) -> Dict[str, str]:
+) -> dict[str, str]:
     """Parse experiences dict from payload."""
 
     experiences_raw = payload.get("experiences")
@@ -84,7 +85,7 @@ def _parse_experiences_dict(
 
 def _parse_metadata_dict(
     mission: str, payload: Mapping[str, object]
-) -> Dict[str, ExperienceMetadata]:
+) -> dict[str, ExperienceMetadata]:
     metadata_raw = payload.get("metadata")
     if metadata_raw is None:
         return {}
@@ -92,7 +93,7 @@ def _parse_metadata_dict(
         raise MissionGuidanceError(
             f"Mission {mission} metadata must be a mapping if present"
         )
-    metadata: Dict[str, ExperienceMetadata] = {}
+    metadata: dict[str, ExperienceMetadata] = {}
     for key, value in metadata_raw.items():
         if not isinstance(value, Mapping):
             raise MissionGuidanceError(
@@ -122,7 +123,7 @@ def _parse_mission_section(
     if isinstance(step_raw, bool) or step_raw is None:
         raise MissionGuidanceError(f"Mission {mission} step must be an integer")
     try:
-        step = int(cast(Union[int, str, float], step_raw))
+        step = int(cast(int | str | float, step_raw))
     except (TypeError, ValueError) as exc:  # pragma: no cover - defensive
         raise MissionGuidanceError(
             f"Mission {mission} step must be an integer, got {step_raw!r}"
@@ -161,7 +162,7 @@ class GuidanceRepository:
 
     path: Path
     retention: int
-    _cache: Optional[Dict[str, MissionGuidance]]
+    _cache: dict[str, MissionGuidance] | None
 
     def __init__(
         self,
@@ -176,6 +177,10 @@ class GuidanceRepository:
         object.__setattr__(self, "path", Path(path))
         object.__setattr__(self, "retention", retention)
         object.__setattr__(self, "_cache", None)
+        if TYPE_CHECKING:
+            self.path = Path(path)
+            self.retention = retention
+            self._cache = None
 
     # ------------------------------------------------------------------
     # Lifecycle helpers
@@ -191,7 +196,7 @@ class GuidanceRepository:
     # ------------------------------------------------------------------
     # Accessors
     # ------------------------------------------------------------------
-    def load(self) -> Dict[str, MissionGuidance]:
+    def load(self) -> dict[str, MissionGuidance]:
         if self._cache is not None:
             return self._cache
 
@@ -229,7 +234,7 @@ class GuidanceRepository:
         self,
         mission: str,
         *,
-        experiences: Optional[Dict[str, str]] = None,
+        experiences: dict[str, str] | None = None,
     ) -> MissionGuidance:
         guidance_map = self.load()
         if mission not in guidance_map:
@@ -281,7 +286,7 @@ class GuidanceRepository:
             simplified = simplified.strip().rstrip("。.")
             return simplified
 
-        def _is_valid_key(key: Optional[str]) -> bool:
+        def _is_valid_key(key: str | None) -> bool:
             if key is None:
                 return True
             return bool(re.fullmatch(r"G\d+", key))
@@ -298,11 +303,11 @@ class GuidanceRepository:
 
         # Track removed keys to avoid duplicate remove operations in the same batch
         removed_keys_in_batch: set[str] = set()
-        forbidden_removals: List[str] = []
+        forbidden_removals: list[str] = []
 
         for op in operations:
             normalized_op = op.op
-            if normalized_op not in {"upsert", "remove", "merge"}:
+            if normalized_op not in {"upsert", "update", "remove", "merge"}:
                 raise MissionGuidanceError(
                     f"Unsupported experience operation '{normalized_op}'"
                 )
@@ -339,6 +344,21 @@ class GuidanceRepository:
                     )
                 continue
 
+            if normalized_op == "update":
+                if key is None:
+                    logger.warning(
+                        "Skipping update operation with missing key for mission %s",
+                        current.mission,
+                    )
+                    continue
+                if key not in experiences:
+                    logger.warning(
+                        "Skipping update operation for missing key '%s' in mission %s",
+                        key,
+                        current.mission,
+                    )
+                    continue
+
             text = (op.text or "").strip()
             if not text:
                 continue
@@ -349,7 +369,7 @@ class GuidanceRepository:
             # merge metadata instead of skipping the update. This allows new
             # reflection batches to contribute additional evidence group_ids
             # without duplicating experiences.
-            existing_key: Optional[str] = None
+            existing_key: str | None = None
             if norm_text in normalized_lookup:
                 existing_key = normalized_lookup[norm_text]
 
@@ -380,7 +400,7 @@ class GuidanceRepository:
             # prefer the new rationale when provided. When merging, also fold
             # metadata from merged_from keys before deleting them.
             existing_meta = metadata.get(target_key)
-            merged_metas: List[ExperienceMetadata] = []
+            merged_metas: list[ExperienceMetadata] = []
 
             if normalized_op == "merge" and op.merged_from:
                 for mkey in op.merged_from:
@@ -469,8 +489,8 @@ class GuidanceRepository:
         proposal: ReflectionProposal,
         reflection_id: str,
         source_group_ids: Sequence[str],
-        operations: Optional[Sequence[ExperienceOperation]],
-        parsed_experiences: Optional[Dict[str, str]],
+        operations: Sequence[ExperienceOperation] | None,
+        parsed_experiences: dict[str, str] | None,
     ) -> Sequence[ExperienceOperation]:
         if operations is not None:
             return operations
@@ -498,9 +518,9 @@ class GuidanceRepository:
         proposal: ReflectionProposal,
         reflection_id: str,
         source_group_ids: Sequence[str],
-        applied_epoch: Optional[int] = None,
-        operations: Optional[Sequence[ExperienceOperation]] = None,
-        parsed_experiences: Optional[Dict[str, str]] = None,
+        applied_epoch: int | None = None,
+        operations: Sequence[ExperienceOperation] | None = None,
+        parsed_experiences: dict[str, str] | None = None,
     ) -> MissionGuidance:
         """Apply reflection proposal by merging incremental experience edits."""
 
@@ -547,8 +567,8 @@ class GuidanceRepository:
         proposal: ReflectionProposal,
         reflection_id: str,
         source_group_ids: Sequence[str],
-        operations: Optional[Sequence[ExperienceOperation]] = None,
-        parsed_experiences: Optional[Dict[str, str]] = None,
+        operations: Sequence[ExperienceOperation] | None = None,
+        parsed_experiences: dict[str, str] | None = None,
     ) -> MissionGuidance:
         """Build a non-persistent mission guidance preview for a reflection."""
 
@@ -602,7 +622,7 @@ class GuidanceRepository:
             pass
 
     def _write(self, payload: Mapping[str, MissionGuidance]) -> None:
-        serializable: Dict[str, object] = {
+        serializable: dict[str, object] = {
             mission: guidance.to_payload() for mission, guidance in payload.items()
         }
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -645,7 +665,7 @@ class GuidanceRepository:
         *,
         confidence_threshold: float = 0.35,
         min_miss_before_drop: int = 3,
-    ) -> List[str]:
+    ) -> list[str]:
         """Remove low-confidence experiences from guidance.
 
         Args:
@@ -661,7 +681,7 @@ class GuidanceRepository:
         if current is None:
             return []
 
-        removed_keys: List[str] = []
+        removed_keys: list[str] = []
         experiences = dict(current.experiences)
         metadata = dict(current.metadata)
 

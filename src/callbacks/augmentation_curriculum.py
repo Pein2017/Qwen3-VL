@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from typing import Any, MutableMapping
+from collections.abc import MutableMapping
+from typing_extensions import override
 
 from transformers import TrainerCallback, TrainerControl, TrainerState, TrainingArguments
 
@@ -14,20 +15,23 @@ class AugmentationCurriculumCallback(TrainerCallback):
     def __init__(
         self,
         scheduler: AugmentationCurriculumScheduler,
-        curriculum_state: MutableMapping[str, Any],
+        curriculum_state: MutableMapping[str, object],
     ) -> None:
-        self.scheduler = scheduler
-        self.curriculum_state = curriculum_state
+        self.scheduler: AugmentationCurriculumScheduler = scheduler
+        self.curriculum_state: MutableMapping[str, object] = curriculum_state
         self._last_step: int | None = None
 
+    @override
     def on_step_begin(
         self,
         args: TrainingArguments,
         state: TrainerState,
         control: TrainerControl,
-        **kwargs: Any,
+        **kwargs: object,
     ) -> None:
-        if self.scheduler._requires_total_steps and self.scheduler._final_bypass is None:
+        requires_total_steps = bool(getattr(self.scheduler, "_requires_total_steps", False))
+        final_bypass = getattr(self.scheduler, "_final_bypass", None)
+        if requires_total_steps and final_bypass is None:
             total_steps = getattr(state, "max_steps", None)
             if not total_steps:
                 total_steps = getattr(args, "max_steps", None)

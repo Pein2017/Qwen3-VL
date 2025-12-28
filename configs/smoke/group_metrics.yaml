@@ -25,7 +25,7 @@ training:
 
 custom:
   # Keep tiny fusion mix and sample caps from debug base for fast turnaround
-  fusion_config: configs/fusion/bbu_rru_lvis_coig_tiny.yaml
+  fusion_config: configs/fusion/bbu_rru_dense_new_schema_1024.yaml
   train_sample_limit: 16
   val_sample_limit: 8
   token_type_metrics:

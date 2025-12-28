@@ -21,7 +21,7 @@ from src.stage_a.prompts import build_system_prompt, build_user_prompt  # noqa: 
 from src.utils import configure_logging, get_logger  # noqa: E402
 
 # Configuration matching stage_a.sh
-CHECKPOINT = "output/12-9/summary_merged/res_1024-last_6_with_irrelevant_summary"
+CHECKPOINT = "output/12-23/summary_merged/epoch_2-bbu_rru-more_irrelevant-ocr"
 MISSION = "挡风板安装检查"
 DEVICE = "cuda:0"
 MAX_PIXELS = 1048576

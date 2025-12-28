@@ -32,6 +32,78 @@ except (AttributeError, TypeError):
 logger = logging.getLogger(__name__)
 
 
+RRU_OBJECT_TYPES = {
+    "rru",
+    "fastener",
+    "rru_screw",
+    "ground_screw",
+    "fiber_rru",
+    "wire_rru",
+    "label",
+    "lable",
+    "station",
+}
+
+OBJECT_TYPE_CATEGORY = {
+    "bbu": "BBU设备",
+    "bbu_shield": "挡风板",
+    "connect_point": None,  # resolve from subtype
+    "fiber": "光纤",
+    "wire": "电线",
+    "label": "标签",
+    "rru": "RRU设备",
+    "fastener": "紧固件",
+    "rru_screw": "RRU接地端",
+    "ground_screw": "地排接地端螺丝",
+    "fiber_rru": "尾纤",
+    "wire_rru": "接地线",
+    "lable": "标签",
+    "station": "站点距离",
+}
+
+ATTR_NAME_TO_KEY = {
+    "brand": "品牌",
+    "completeness": "可见性",
+    "windshield_requirement": "挡风板需求",
+    "windshield_conformity": "挡风板符合性",
+    "direction": "安装方向",
+    "compliance": "符合性",
+    "specific_issues": "问题",
+    "protection": "保护措施",
+    "protection_details": "保护细节",
+    "bend_radius": "弯曲半径",
+    "organization": "捆扎",
+    "text_content": "文本",
+    "distance": "站点距离",
+    "rru_screw_tightness": "安装状态",
+    "fastener_tightness": "安装状态",
+    "ground_screw_tightness": "安装状态",
+    "fiber_label": "标签",
+    "fiber_protection": "套管保护",
+    "wire_label": "标签",
+    "special_circumstances": "备注",
+}
+
+KEY_ORDER = {
+    "bbu": ["品牌", "可见性", "挡风板需求", "挡风板符合性", "备注"],
+    "bbu_shield": ["品牌", "可见性", "安装方向", "备注"],
+    "connect_point": ["可见性", "符合性", "问题", "备注"],
+    "fiber": ["保护措施", "保护细节", "弯曲半径", "备注"],
+    "wire": ["捆扎", "备注"],
+    "label": ["文本", "可读性", "备注"],
+    "rru": [],
+    "fastener": ["安装状态"],
+    "rru_screw": ["安装状态"],
+    "ground_screw": ["安装状态"],
+    "fiber_rru": ["标签", "套管保护"],
+    "wire_rru": ["标签"],
+    "lable": ["文本", "可读性"],
+    "station": ["站点距离"],
+}
+
+NEGATIVE_MARKERS = ("不符合", "不合规", "不合格", "不合理", "错误", "不能")
+
+
 @dataclass
 class AnnotationSample:
     """Represents a processed annotation sample with hierarchical information."""
@@ -41,10 +113,10 @@ class AnnotationSample:
     coordinates: List[float]
     grouped_attributes: Dict[str, Dict[str, str]]  # group -> attribute -> value
     description: str
-    groups: Optional[List[Dict]] = None
-    original_geometry: Optional[Dict] = None
+    groups: Optional[List[Dict[str, Any]]] = None
+    original_geometry: Optional[Dict[str, Any]] = None
 
-    def to_training_format(self) -> Dict:
+    def to_training_format(self) -> Dict[str, Any]:
         """Convert to training format with native geometry type."""
         obj = {self.geometry_format: self.coordinates, "desc": self.description}
         if self.groups:
@@ -84,12 +156,14 @@ class FlexibleTaxonomyProcessor:
             f"Loaded hierarchical mapping for {len(self.hierarchical_object_types)} object types"
         )
 
-    def _load_taxonomy(self, taxonomy_path: str) -> Dict:
+    def _load_taxonomy(self, taxonomy_path: str) -> Dict[str, Any]:
         """Load the attribute taxonomy."""
         with open(taxonomy_path, "r", encoding="utf-8") as f:
             return json.load(f)
 
-    def process_v2_feature(self, feature: Dict, image_id: Optional[str] = None) -> Optional[AnnotationSample]:
+    def process_v2_feature(
+        self, feature: Dict[str, Any], image_id: Optional[str] = None
+    ) -> Optional[AnnotationSample]:
         """
         Process a single V2 feature into structured annotation sample.
 
@@ -144,29 +218,14 @@ class FlexibleTaxonomyProcessor:
         # Group attributes by taxonomy
         grouped_attributes = self._group_attributes(content, content_zh, object_type)
 
-        # Create hierarchical description using new method
+        # BBU ignores groups; RRU keeps groups for downstream integrity checks
+        if object_type not in RRU_OBJECT_TYPES:
+            groups = []
+
+        # Create key=value description
         description = self._create_hierarchical_description(
-            object_type, content_zh, content
+            object_type, content_zh, content, groups
         )
-        # Standardize 标签 descriptions
-        from data_conversion.utils.sanitizers import standardize_label_description
-
-        description = standardize_label_description(description) or description
-
-        # Station: 合并为“站点距离/<v>”
-        if object_type == "station":
-            description = description.replace("站点,距离/", "站点距离/")
-
-        # 将组信息紧凑写入 desc：用逗号分层级，形如 ",组/1"
-        if groups:
-            group_ids = []
-            for g in groups:
-                name = g.get("name")
-                if name and name not in group_ids:
-                    group_ids.append(name)
-            if group_ids:
-                prefix = ",".join(f"组{gid}" for gid in group_ids) + ": "
-                description = prefix + description
 
         return AnnotationSample(
             object_type=object_type,
@@ -178,7 +237,9 @@ class FlexibleTaxonomyProcessor:
             original_geometry=geometry,
         )
 
-    def _determine_object_type(self, content: Dict, content_zh: Dict) -> Optional[str]:
+    def _determine_object_type(
+        self, content: Dict[str, Any], content_zh: Dict[str, Any]
+    ) -> Optional[str]:
         """Determine object type from content fields."""
         # Check content.label first
         content_label = content.get("label", "").strip()
@@ -204,8 +265,12 @@ class FlexibleTaxonomyProcessor:
         return None
 
     def _process_geometry(
-        self, geometry: Dict, object_type: str, properties: Optional[Dict] = None,
-        image_id: Optional[str] = None, object_id: Optional[str] = None
+        self,
+        geometry: Dict[str, Any],
+        object_type: str,
+        properties: Optional[Dict[str, Any]] = None,
+        image_id: Optional[str] = None,
+        object_id: Optional[str] = None,
     ) -> Optional[Tuple[str, List[float]]]:
         """Process geometry based on object type and geometry structure.
         
@@ -379,7 +444,10 @@ class FlexibleTaxonomyProcessor:
         return None
 
     def _group_attributes(
-        self, content: Dict, content_zh: Dict, object_type: str
+        self,
+        content: Dict[str, Any],
+        content_zh: Dict[str, Any],
+        object_type: str,
     ) -> Dict[str, Dict[str, str]]:
         """Group attributes according to taxonomy."""
         grouped = {}
@@ -406,7 +474,11 @@ class FlexibleTaxonomyProcessor:
         return grouped
 
     def _extract_attribute_value(
-        self, content: Dict, content_zh: Dict, attr_info: Dict, object_type: str
+        self,
+        content: Dict[str, Any],
+        content_zh: Dict[str, Any],
+        attr_info: Dict[str, Any],
+        object_type: str,
     ) -> Optional[str]:
         """Extract attribute value from contentZh (Chinese) fields only."""
         # For Chinese mode, extract directly from contentZh using Chinese questions
@@ -433,228 +505,302 @@ class FlexibleTaxonomyProcessor:
                 return str(content_zh[content_mapping]).strip()
 
         return None
-
     def _create_hierarchical_description(
-        self, object_type: str, content_zh: Dict, content: Dict
+        self,
+        object_type: str,
+        content_zh: Dict[str, Any],
+        content: Dict[str, Any],
+        groups: Optional[List[Dict[str, Any]]] = None,
     ) -> str:
-        """Create hierarchical description with correct separators: comma for same-level, slash for different levels."""
+        """Create key=value description string (comma-separated, no spaces)."""
 
-        # Get hierarchical mapping for this object type
-        if object_type not in self.hierarchical_object_types:
+        obj_mapping = self.hierarchical_object_types.get(object_type, {})
+        if not obj_mapping:
             logger.warning(
                 f"No hierarchical mapping found for object type: {object_type}"
             )
-            return self.hierarchical_object_types.get(object_type, {}).get(
-                "chinese_label", object_type
+        attributes = obj_mapping.get("attributes", [])
+        attributes_by_level = sorted(attributes, key=lambda x: x.get("level", 0))
+
+        # Special handling for labels (OCR)
+        if object_type in {"label", "lable"}:
+            return self._build_label_desc(object_type, content_zh, content, groups)
+
+        category = OBJECT_TYPE_CATEGORY.get(object_type) or obj_mapping.get(
+            "chinese_label", object_type
+        )
+
+        extracted_values: Dict[str, str] = {}
+
+        # For connect points, resolve subtype as category (do not emit as a key)
+        if object_type == "connect_point":
+            type_attr = next(
+                (a for a in attributes_by_level if a.get("name") == "type"), None
             )
-
-        obj_mapping = self.hierarchical_object_types[object_type]
-
-        # Process attributes and group by level
-        attributes = obj_mapping["attributes"]
-        attributes_by_level = sorted(attributes, key=lambda x: x["level"])
-
-        # Track values for conditional logic and group by level
-        extracted_values = {}
-        values_by_level = {}  # level -> [values]
-
-        # Start with object type at level 0
-        values_by_level[0] = [obj_mapping["chinese_label"]]
+            if type_attr:
+                subtype = self._extract_hierarchical_attribute_value(
+                    type_attr, content_zh, content
+                )
+                if subtype:
+                    category = subtype
 
         for attr in attributes_by_level:
-            attr_name = attr["name"]
-            level = attr["level"]
+            attr_name = attr.get("name")
+            if not attr_name:
+                continue
+            if attr_name == "obstruction":
+                # Drop occlusion judgments entirely
+                continue
+            if attr_name == "type":
+                # Already used as category for connect points
+                continue
 
-            # Check if this is a conditional attribute
             if attr.get("conditional"):
                 condition = attr["conditional"]
-                parent_attr = condition["parent_attribute"]
-                required_parent_value = condition["parent_value"]
-
-                # Skip if parent condition not met
+                parent_attr = condition.get("parent_attribute")
+                required_parent_value = condition.get("parent_value")
                 if (
-                    parent_attr not in extracted_values
+                    not parent_attr
+                    or parent_attr not in extracted_values
                     or extracted_values[parent_attr] != required_parent_value
                 ):
                     continue
 
-            # Extract value for this attribute
             attr_value = self._extract_hierarchical_attribute_value(
                 attr, content_zh, content
             )
-
             if attr_value:
                 extracted_values[attr_name] = attr_value
-
-                # Group values by level
-                if level not in values_by_level:
-                    values_by_level[level] = []
-
-                # Handle multiple values with separator (for specific issues like "未拧紧,生锈")
-                if attr.get("multiple_values_separator") and "," in attr_value:
-                    values_by_level[level].append(attr_value)  # Keep internal commas
-                else:
-                    values_by_level[level].append(attr_value)
             elif attr.get("required", False):
-                # For required attributes, we might want to log missing values
                 logger.debug(
-                    f"Missing required attribute {attr_name} for {object_type}"
+                    "Missing required attribute %s for %s", attr_name, object_type
                 )
 
-        # Combine levels with proper separators
-        level_parts = []
-        for level in sorted(values_by_level.keys()):
-            level_values = values_by_level[level]
-            if level_values:
-                # Join same-level values with comma
-                level_part = ",".join(level_values)
-                level_parts.append(level_part)
+        pairs: List[Tuple[str, str]] = []
+        if category:
+            pairs.append(("类别", self._normalize_desc_value(str(category))))
 
-        # Join different levels with slash
-        return "/".join(level_parts)
+        for out_key in KEY_ORDER.get(object_type, []):
+            value = None
+            for attr_name, mapped_key in ATTR_NAME_TO_KEY.items():
+                if mapped_key != out_key:
+                    continue
+                if attr_name in extracted_values:
+                    value = extracted_values[attr_name]
+                    break
+            if value:
+                pairs.append((out_key, value))
+
+        group_value = self._format_group_value(groups)
+        if group_value:
+            pairs.append(("组", group_value))
+
+        return ",".join(f"{k}={v}" for k, v in pairs if v)
+
+    def _build_label_desc(
+        self,
+        object_type: str,
+        content_zh: Dict[str, Any],
+        content: Dict[str, Any],
+        groups: Optional[List[Dict[str, Any]]] = None,
+    ) -> str:
+        category = OBJECT_TYPE_CATEGORY.get(object_type, "标签")
+        text, readability = self._extract_label_text(content_zh, content)
+
+        pairs: List[Tuple[str, str]] = [("类别", self._normalize_desc_value(category))]
+        if text:
+            pairs.append(("文本", text))
+        if readability:
+            pairs.append(("可读性", readability))
+
+        group_value = self._format_group_value(groups)
+        if group_value:
+            pairs.append(("组", group_value))
+        return ",".join(f"{k}={v}" for k, v in pairs if v)
+
+    def _format_group_value(self, groups: Optional[List[Dict[str, Any]]]) -> str:
+        if not groups:
+            return ""
+        group_ids: List[str] = []
+        for g in groups:
+            name = g.get("name") or g.get("id")
+            if name is None:
+                continue
+            group_ids.append(str(name))
+        if not group_ids:
+            return ""
+        unique_ids: List[str] = []
+        for gid in group_ids:
+            if gid not in unique_ids:
+                unique_ids.append(gid)
+        try:
+            unique_ids = sorted(unique_ids, key=lambda x: int(x))
+        except ValueError:
+            unique_ids = sorted(unique_ids)
+        return "|".join(unique_ids)
+
+    def _extract_label_text(
+        self, content_zh: Dict[str, Any], content: Dict[str, Any]
+    ) -> Tuple[str, str]:
+        def _to_list(value: Any) -> List[str]:
+            if value is None:
+                return []
+            if isinstance(value, list):
+                return [str(v).strip() for v in value if str(v).strip()]
+            if isinstance(value, str):
+                return [value.strip()] if value.strip() else []
+            return []
+
+        text = ""
+        readability_raw = ""
+
+        for key in ("请输入标签上的文字内容", "标签内容"):
+            if key in content_zh:
+                vals = _to_list(content_zh.get(key))
+                if vals:
+                    text = vals[0]
+                    break
+
+        if not text:
+            for key in ("label_text_content", "label_text", "label_text_content_zh"):
+                if key in content_zh:
+                    vals = _to_list(content_zh.get(key))
+                    if vals:
+                        text = vals[0]
+                        break
+                if key in content:
+                    vals = _to_list(content.get(key))
+                    if vals:
+                        text = vals[0]
+                        break
+
+        if "能否阅读标签上的文字内容" in content_zh:
+            vals = _to_list(content_zh.get("能否阅读标签上的文字内容"))
+            if vals:
+                readability_raw = vals[0]
+
+        if readability_raw == "不能":
+            return "", "不可读"
+
+        if text:
+            from data_conversion.utils.sanitizers import sanitize_free_text_value
+
+            text = sanitize_free_text_value(text)
+        if not text:
+            return "", "不可读"
+        return text, ""
 
     def _extract_hierarchical_attribute_value(
-        self, attr: Dict, content_zh: Dict, content: Dict
+        self,
+        attr: Dict[str, Any],
+        content_zh: Dict[str, Any],
+        content: Dict[str, Any],
     ) -> Optional[str]:
-        """Extract attribute value according to hierarchical mapping."""
-        content_mapping = attr.get("content_mapping")
-        if not content_mapping:
+        """Extract attribute value according to hierarchical mapping (key=value mode)."""
+        raw_values = self._collect_raw_values(attr, content_zh, content)
+        if not raw_values:
             return None
 
-        # Generic free-text handler (covers distance、备注等)
-        if attr.get("is_free_text", False):
-            # 1) Chinese question keys
-            for question in attr.get("chinese_questions", []):
-                if question in content_zh:
-                    value = content_zh[question]
-                    if isinstance(value, list) and value:
-                        value = value[0]
-                    if value and str(value).strip():
-                        val = str(value).strip()
-                        if attr.get("name") == "distance":
-                            val = f"距离/{val}"
-                        return val
-            # 2) Direct mapping key in contentZh
-            if content_mapping in content_zh:
-                value = content_zh[content_mapping]
-                if isinstance(value, list) and value:
-                    value = value[0]
-                if value and str(value).strip():
-                    val = str(value).strip()
-                    if attr.get("name") == "distance":
-                        val = f"距离/{val}"
-                    return val
-            # 3) Fallback to content dict
-            if content_mapping in content:
-                value = content[content_mapping]
-                if isinstance(value, list) and value:
-                    value = value[0]
-                if value and str(value).strip():
-                    val = str(value).strip()
-                    if attr.get("name") == "distance":
-                        val = f"距离/{val}"
-                    return val
+        if attr.get("is_free_text", False) or attr.get("values") == "free_text":
+            value = raw_values[0]
+            if attr.get("name") == "distance":
+                from data_conversion.utils.sanitizers import (
+                    sanitize_station_distance_value,
+                )
 
-        # Handle free text attributes with special names
-        # Handle free text attributes
-        if attr.get("is_free_text", False):
-            # For labels, extract from multiple possible fields
-            if attr["name"] == "text_content":
-                # Try to get actual text content from label fields
-                for question in attr["chinese_questions"]:
-                    if question in content_zh:
-                        value = content_zh[question]
-                        if isinstance(value, list) and value:
-                            value = value[0]
-                        if (
-                            value
-                            and str(value).strip()
-                            and str(value).strip()
-                            not in ["能", "不能", " ", "  ", "   "]
-                        ):
-                            return str(value).strip()
+                value = sanitize_station_distance_value(value)
+                return value if value else None
+            mapped_key = ATTR_NAME_TO_KEY.get(attr.get("name", ""), "")
+            if mapped_key in {"备注", "文本"}:
+                from data_conversion.utils.sanitizers import sanitize_free_text_value
 
-                # Fallback to content mapping
-                if content_mapping in content_zh:
-                    value = content_zh[content_mapping]
-                    if isinstance(value, list) and value:
-                        value = value[0]
-                    if value and str(value).strip():
-                        return str(value).strip()
+                value = sanitize_free_text_value(value)
+                return value if value else None
+            return self._normalize_desc_value(value) if value else None
 
-            # For special circumstances
-            elif attr["name"] == "special_circumstances":
-                # 1) Try Chinese question key(s) directly
-                for question in attr.get("chinese_questions", []):
-                    if question in content_zh:
-                        value = content_zh[question]
-                        if isinstance(value, list) and value:
-                            value = value[0]
-                        if value and str(value).strip():
-                            return str(value).strip()
-
-                # 2) Try mapped key (e.g., special_situation)
-                content_mapping = attr.get("content_mapping")
-                if content_mapping and content_mapping in content_zh:
-                    value = content_zh[content_mapping]
-                    if isinstance(value, list) and value:
-                        value = value[0]
-                    if value and str(value).strip():
-                        return str(value).strip()
-
-                # 3) Legacy/fallback keys (ex_info) in Chinese and English content
-                for legacy_key in ("ex_info", "exInfo"):
-                    if legacy_key in content_zh:
-                        value = content_zh[legacy_key]
-                        if isinstance(value, list) and value:
-                            value = value[0]
-                        if value and str(value).strip():
-                            return str(value).strip()
-                    if legacy_key in content:
-                        value = content[legacy_key]
-                        if isinstance(value, list) and value:
-                            value = value[0]
-                        if value and str(value).strip():
-                            return str(value).strip()
-                return None
-            return None
-
-        # Handle structured attributes with defined values
-        attr_values = attr.get("values", {})
-
-        # Check in content_zh first
-        for question in attr["chinese_questions"]:
-            if question in content_zh:
-                raw_value = content_zh[question]
-                if isinstance(raw_value, list) and raw_value:
-                    raw_value = raw_value[0]
-
-                raw_value_str = str(raw_value).strip() if raw_value else ""
-
-                # Try exact match first
-                for key, mapped_value in attr_values.items():
-                    if raw_value_str == key:
-                        return mapped_value
-
-                # Try partial match for complex values
-                for key, mapped_value in attr_values.items():
-                    if key in raw_value_str or raw_value_str in key:
-                        return mapped_value
-
-        # Check content mapping directly
-        if content_mapping in content_zh:
-            raw_value = content_zh[content_mapping]
-            if isinstance(raw_value, list) and raw_value:
-                raw_value = raw_value[0]
-
-            raw_value_str = str(raw_value).strip() if raw_value else ""
-
-            # Try to map the value
+        attr_values = attr.get("values", {}) or {}
+        mapped_values: List[str] = []
+        for raw in raw_values:
+            raw_value_str = str(raw).strip()
+            if not raw_value_str:
+                continue
+            matched = False
             for key, mapped_value in attr_values.items():
                 if raw_value_str == key or key in raw_value_str or raw_value_str in key:
-                    return mapped_value
+                    mapped_values.append(mapped_value)
+                    matched = True
+                    break
+            if not matched and not attr_values:
+                mapped_values.append(raw_value_str)
 
-        return None
+        if not mapped_values:
+            return None
+
+        if any(self._is_negative_value(v) for v in mapped_values):
+            mapped_values = [v for v in mapped_values if self._is_negative_value(v)]
+
+        deduped: List[str] = []
+        for v in mapped_values:
+            if v not in deduped:
+                deduped.append(v)
+
+        if not deduped:
+            return None
+
+        normalized = [self._normalize_desc_value(v) for v in deduped if v]
+        return "|".join(normalized) if normalized else None
+
+    def _collect_raw_values(
+        self, attr: Dict[str, Any], content_zh: Dict[str, Any], content: Dict[str, Any]
+    ) -> List[str]:
+        def _to_list(value: Any) -> List[str]:
+            if value is None:
+                return []
+            if isinstance(value, list):
+                out = []
+                for v in value:
+                    if v is None:
+                        continue
+                    s = str(v).strip()
+                    if s:
+                        out.append(s)
+                return out
+            if isinstance(value, str):
+                return [value.strip()] if value.strip() else []
+            return []
+
+        values: List[str] = []
+        for question in attr.get("chinese_questions", []):
+            if question in content_zh:
+                values.extend(_to_list(content_zh.get(question)))
+
+        content_mapping = attr.get("content_mapping")
+        if content_mapping:
+            if content_mapping in content_zh:
+                values.extend(_to_list(content_zh.get(content_mapping)))
+            if content_mapping in content:
+                values.extend(_to_list(content.get(content_mapping)))
+
+        separator = attr.get("multiple_values_separator")
+        if separator:
+            split_values: List[str] = []
+            for v in values:
+                if separator in v or "，" in v:
+                    parts = [p.strip() for p in v.replace("，", separator).split(separator)]
+                    split_values.extend([p for p in parts if p])
+                else:
+                    split_values.append(v)
+            values = split_values
+
+        return values
+
+    def _normalize_desc_value(self, value: str) -> str:
+        from data_conversion.utils.sanitizers import sanitize_desc_value
+
+        return sanitize_desc_value(value)
+
+    def _is_negative_value(self, value: str) -> bool:
+        return any(marker in value for marker in NEGATIVE_MARKERS)
 
     def _create_description(
         self, object_type: str, grouped_attributes: Dict[str, Dict[str, str]]
@@ -740,11 +886,20 @@ class FlexibleTaxonomyProcessor:
 class HierarchicalProcessor:
     """Clean processor for V2 data with native geometry output and object type filtering."""
 
-    def __init__(self, object_types=None, label_hierarchy: Optional[Dict] = None):
+    def __init__(
+        self,
+        object_types: Optional[List[str]] = None,
+        label_hierarchy: Optional[Dict[str, List[str]]] = None,
+    ):
         """Initialize processor for Chinese-only processing with object type filtering."""
         # object_types and label_hierarchy are retained for backward compatibility
         # but no longer used to drop objects.
-        self.object_types = object_types or {"bbu", "label", "fiber", "connect_point"}
+        self.object_types = set(object_types) if object_types is not None else {
+            "bbu",
+            "label",
+            "fiber",
+            "connect_point",
+        }
         self.label_hierarchy = label_hierarchy or {}
 
         # Create flexible processor
@@ -754,7 +909,9 @@ class HierarchicalProcessor:
             f"Initialized HierarchicalProcessor for Chinese-only processing with object types: {self.object_types}"
         )
 
-    def extract_objects_from_markresult(self, features: List[Dict], image_id: Optional[str] = None) -> List[Dict]:
+    def extract_objects_from_markresult(
+        self, features: List[Dict[str, Any]], image_id: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         """
         Extract objects from markResult features with native geometry types.
         Filters by specified object types for training subject separation.

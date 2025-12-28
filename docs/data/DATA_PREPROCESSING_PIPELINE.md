@@ -26,9 +26,9 @@ Human annotations → data_conversion/convert_dataset.sh
 ## Processing Steps (Code Map)
 - **Orchestration**: `data_conversion/pipeline/unified_processor.py`
 - **Geometry pipeline**: `pipeline/coordinate_manager.py` (EXIF → rescale → smart-resize → clamp) keeps pixel↔geometry aligned.
-- **Taxonomy & text**: `pipeline/flexible_taxonomy_processor.py` builds hierarchical `desc` strings; normalizes rare/long-tail labels.
+- **Taxonomy & text**: `pipeline/flexible_taxonomy_processor.py` builds hierarchical `desc` strings; normalizes rare/long-tail labels and applies fixed‑value compression for BBU/RRU (e.g., `可见性=完整/部分`, `符合性=符合/不符合`, `挡风板需求=免装/空间充足需安装`).
 - **Validation**: `pipeline/validation_manager.py` + `pipeline/constants.py` enforce geometry bounds, size thresholds, required `desc`; invalid objects/samples are reported, not silently dropped.
-- **Summary builder**: `pipeline/summary_builder.py` aggregates per-image summaries by raw `desc`（不拆分备注），按字数升序+首次出现顺序排序并合并为 `desc×N`；若对象缺失或 `desc` 为空将直接 `ValueError`（fail-fast，与训练 prompt 保持一致）。
+- **Summary builder**: `pipeline/summary_builder.py` emits a JSON-string summary with per-category stats (`dataset`, `objects_total`, `统计`, optional `异常` when non-zero) and optional `备注` (BBU, non-empty) / `分组统计` (RRU, when present). Only observed values are counted. Missing objects/empty `desc` or any invalid/unknown/conflict markers raise `ValueError` so anomalies are handled upstream. Irrelevant-image streams keep `summary: 无关图片` and do not use this builder.
 - **QA artifacts**: `invalid_objects.jsonl`, `validation_results.json`, deterministic `train_tiny.jsonl` / `val_tiny.jsonl` for smoke tests.
 
 ## How to Run
@@ -62,7 +62,7 @@ Outputs land in `${OUTPUT_ROOT}/` with `train.jsonl`, `val.jsonl`, tiny subsets,
 
 ## Quality Checklist
 - Validate QA artifacts before promotion: zero invalid samples, expected class mix, polygon vertex counts within budget.
-- Confirm summary strings obey the standard (`×N` grouping, Chinese comma separators, no trailing punctuation).
+- Confirm summary JSON is parseable, single-line, and includes required keys (`dataset`, `objects_total`, `统计`), except for irrelevant-image samples which remain `summary: 无关图片`.
 - Keep taxonomy files and downstream prompts in sync when introducing new object types or attributes.
 
 ## Directory Pointers

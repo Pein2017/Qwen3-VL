@@ -1,0 +1,102 @@
+stage_a_paths:
+  # - output_post/stage_a/挡风板安装检查_stage_a.jsonl
+  - output_post/stage_a_bbu_rru_summary_12-22/RRU安装检查_stage_a.jsonl
+  # - output_post/stage_a/BBU安装方式检查（正装）_stage_a.jsonl
+
+ticket_filter:
+  # Exclude known-noisy tickets (including GT=pass with too few useful images after removing irrelevant ones).
+  exclude_ticket_keys_path: output_post/stage_b/filters/rru_install_exclude_ticket_keys.txt
+seed: 17
+max_token_length: 120000000
+default_domain: rru
+jump_reflection: true
+
+model:
+  model_name_or_path: model_cache/models/Qwen/Qwen3-VL-8B-Instruct
+  # model_name_or_path: output/12-23/summary_merged/epoch_2-bbu_rru-more_irrelevant-ocr
+  torch_dtype: bfloat16
+  device_map: auto
+  attn_implementation: flash_attention_2  # Enable Flash Attention 2 for faster inference (requires flash-attn package)
+
+
+guidance:
+  path: output_post/stage_b/initial_guidance.json
+  retention: 5
+  reset_on_rerun: true
+
+output:
+  root: output_post/stage_b
+  run_name: 12-23-rru-install-rule-search
+
+rule_search:
+  proposer_prompt_path: configs/prompts/stage_b_rule_search_proposer_prompt.txt
+  reflect_size: 16
+  num_candidate_rules: 3
+
+  train_pool_size: 512
+  eval_pool_size: 20
+
+  gate:
+    min_relative_error_reduction: 0.1
+    max_changed_fraction: 0.05
+    max_fp_rate_increase: 0.01
+    bootstrap:
+      iterations: 200
+      min_prob: 0.8
+      seed: 17
+
+  early_stop:
+    patience: 5
+
+  # Train pool uses decode-grid for rollout + gate.
+  train_sampler:
+    samples_per_decode: 1
+    max_prompt_tokens: 240000
+    grid:
+      - temperature: 0.3
+        top_p: 0.9
+        max_new_tokens: 4096
+        seed: 43
+        repetition_penalty: 1.05
+      - temperature: 0.5
+        top_p: 0.9
+        max_new_tokens: 4096
+        seed: 43
+        repetition_penalty: 1.05
+      - temperature: 0.7
+        top_p: 0.9
+        max_new_tokens: 4096
+        seed: 43
+        repetition_penalty: 1.05
+  # Eval pool uses low-temp single decode.
+  eval_sampler:
+    samples_per_decode: 1
+    max_prompt_tokens: 240000
+    grid:
+      - temperature: 0.1
+        top_p: 0.9
+        max_new_tokens: 4096
+        seed: 43
+        repetition_penalty: 1.05
+# Reflection config required by schema (used for rule proposer in rule_search mode).
+# Note: decision_prompt_path and ops_prompt_path are not used in rule_search mode.
+reflection:
+  decision_prompt_path: configs/prompts/stage_b_reflection_decision_prompt.txt
+  ops_prompt_path: configs/prompts/stage_b_reflection_ops_prompt.txt
+  batch_size: 32
+  max_operations: 2
+  temperature: 0.3
+  top_p: 0.9
+  repetition_penalty: 1.05
+  max_new_tokens: 1200000
+
+runner:
+  # rule_search iterations; early_stop will end earlier if no-gain.
+  epochs: 20
+  per_rank_rollout_batch_size: 32
+  logging_steps: 64
+
+stage_b_distillation:
+  enabled: true
+  distill_size: 2000
+  distill_temperature: 0.1

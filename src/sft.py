@@ -2,33 +2,36 @@
 
 import argparse
 import copy
+from dataclasses import asdict
 import logging
 import math
+from multiprocessing import Manager
 import os
 import re
-from dataclasses import asdict
-from multiprocessing import Manager
-from typing import Any, Callable, Mapping, Optional
+from typing import Any, MutableMapping, Optional, TypeVar, Union, cast
+from collections.abc import Iterable
 
-import torch
+T = TypeVar("T")
+
 from swift.llm.train.rlhf import SwiftRLHF
 from swift.llm.train.sft import SwiftSft
 from swift.trainers import TrainerFactory
 from swift.utils import get_dist_setting
+import torch
 from transformers.trainer_utils import SaveStrategy
 
 from .callbacks.fusion_epoch import FusionEpochCallback
 from .config import ConfigLoader, SaveDelayConfig
+from .data_collators.dataset_metrics import build_dataset_metrics_collator
 from .datasets import BaseCaptionDataset
 from .datasets.augmentation.curriculum import AugmentationCurriculumScheduler
 from .datasets.fusion import FusionConfig
-from .data_collators.dataset_metrics import build_dataset_metrics_collator
 from .metrics.dataset_metrics import DatasetMetricsMixin
 from .trainers import with_final_checkpoint
 from .utils import configure_logging, get_logger
 
 
-def resolve_trainer_cls(train_args):
+def resolve_trainer_cls(train_args: Any) -> type:
     trainer_variant = getattr(train_args, "trainer_variant", None)
     if (
         getattr(train_args, "rlhf_type", None) == "gkd"
@@ -36,7 +39,7 @@ def resolve_trainer_cls(train_args):
     ):
         from .trainers import GKDTrainerWithMetrics
 
-        trainer_cls = GKDTrainerWithMetrics
+        trainer_cls: type = GKDTrainerWithMetrics
     else:
         trainer_cls = TrainerFactory.get_trainer_cls(train_args)
 
@@ -44,7 +47,7 @@ def resolve_trainer_cls(train_args):
     save_strategy = getattr(train_args, "save_strategy", None)
     try:
         save_strategy_enum = (
-            SaveStrategy(save_strategy)
+            SaveStrategy(str(save_strategy))
             if save_strategy is not None
             else SaveStrategy.NO
         )
@@ -56,7 +59,7 @@ def resolve_trainer_cls(train_args):
             else SaveStrategy.STEPS
         )
 
-    save_last_epoch = getattr(train_args, "save_last_epoch", True)
+    save_last_epoch = bool(getattr(train_args, "save_last_epoch", True))
     if save_last_epoch and save_strategy_enum != SaveStrategy.NO:
         return with_final_checkpoint(trainer_cls)
     return trainer_cls
@@ -90,7 +93,7 @@ Examples:
     )
 
     # Required: config file path
-    parser.add_argument(
+    _ = parser.add_argument(
         "--config",
         type=str,
         required=True,
@@ -98,7 +101,7 @@ Examples:
     )
 
     # Optional: base config for inheritance
-    parser.add_argument(
+    _ = parser.add_argument(
         "--base_config",
         type=str,
         default=None,
@@ -106,14 +109,14 @@ Examples:
     )
 
     # Runtime: debug mode
-    parser.add_argument(
+    _ = parser.add_argument(
         "--debug",
         action="store_true",
         help="Enable debug logging and print full config",
     )
 
     # Runtime: verbose mode (all ranks log)
-    parser.add_argument(
+    _ = parser.add_argument(
         "--verbose",
         action="store_true",
         help="Enable logging from all ranks in distributed training",
@@ -178,13 +181,13 @@ def main():
         training_args = getattr(train_args, "training_args", None)
 
         # Resolve and update output_dir
-        base_output_dir = getattr(train_args, "output_dir", None)
+        base_output_dir: Any = getattr(train_args, "output_dir", None)
         if base_output_dir is None and training_args is not None:
             base_output_dir = getattr(training_args, "output_dir", None)
         if run_name and base_output_dir:
-            base_output_dir_norm = os.path.normpath(base_output_dir)
+            base_output_dir_norm = os.path.normpath(str(base_output_dir))
             if os.path.basename(base_output_dir_norm) != str(run_name):
-                final_output_dir = os.path.join(base_output_dir, str(run_name))
+                final_output_dir = os.path.join(str(base_output_dir), str(run_name))
                 try:
                     setattr(train_args, "output_dir", final_output_dir)
                 except Exception:
@@ -196,13 +199,13 @@ def main():
                         pass
 
         # Resolve and update logging_dir (tensorboard dir)
-        base_logging_dir = getattr(train_args, "logging_dir", None)
+        base_logging_dir: Any = getattr(train_args, "logging_dir", None)
         if base_logging_dir is None and training_args is not None:
             base_logging_dir = getattr(training_args, "logging_dir", None)
         if run_name and base_logging_dir:
-            base_logging_dir_norm = os.path.normpath(base_logging_dir)
+            base_logging_dir_norm = os.path.normpath(str(base_logging_dir))
             if os.path.basename(base_logging_dir_norm) != str(run_name):
-                final_logging_dir = os.path.join(base_logging_dir, str(run_name))
+                final_logging_dir = os.path.join(str(base_logging_dir), str(run_name))
                 try:
                     setattr(train_args, "logging_dir", final_logging_dir)
                 except Exception:
@@ -237,9 +240,10 @@ def main():
         logger.debug("=" * 70)
 
     # Auto-configure ROOT_IMAGE_DIR from JSONL directory
-    train_jsonl = custom_config.train_jsonl or custom_config.extra.get("jsonl")
-    if not train_jsonl:
+    train_jsonl_raw = custom_config.train_jsonl or custom_config.extra.get("jsonl")
+    if not train_jsonl_raw:
         raise ValueError("Config must specify 'custom.train_jsonl' or 'custom.jsonl'")
+    train_jsonl = str(train_jsonl_raw)
 
     if os.environ.get("ROOT_IMAGE_DIR") in (None, ""):
         root_dir = os.path.abspath(os.path.dirname(train_jsonl))
@@ -262,21 +266,22 @@ def main():
 
     # Early validation: ensure teacher/student vocabulary compatibility in GKD mode
     if rlhf_type == "gkd":
-        teacher_model = getattr(sft, "teacher_model", None)
+        teacher_model: Any = getattr(sft, "teacher_model", None)
         if teacher_model is None:
             raise ValueError(
                 "GKD mode requires a teacher_model. Set rlhf.teacher_model in the YAML and ensure it loads."
             )
-        student_vocab = getattr(getattr(sft.model, "config", None), "vocab_size", None)
-        teacher_vocab = getattr(
-            getattr(teacher_model, "config", None), "vocab_size", None
-        )
+        student_config = getattr(sft.model, "config", None)
+        student_vocab = getattr(student_config, "vocab_size", None) if student_config is not None else None
+        
+        teacher_config = getattr(teacher_model, "config", None)
+        teacher_vocab = getattr(teacher_config, "vocab_size", None) if teacher_config is not None else None
         if isinstance(student_vocab, int) and isinstance(teacher_vocab, int):
             if student_vocab != teacher_vocab:
                 raise ValueError(
                     "Teacher/student tokenizer vocabulary size mismatch detected: "
-                    f"expected {student_vocab}, got {teacher_vocab}. "
-                    "Use a teacher checkpoint with a matching tokenizer/vocabulary (e.g., the same Qwen3‑VL family)."
+                    + f"expected {student_vocab}, got {teacher_vocab}. "
+                    + "Use a teacher checkpoint with a matching tokenizer/vocabulary (e.g., the same Qwen3‑VL family)."
                 )
 
     # NOTE: Do NOT override processor normalization/rescale.
@@ -291,6 +296,9 @@ def main():
         try:
             # Ensure ops are registered by importing ops module
             from .datasets.augmentation import ops as _register_ops  # noqa: F401
+
+            # Use _register_ops to avoid "unused import" warning if linter ignores noqa
+            _ = _register_ops
             from .datasets.augmentation.builder import build_compose_from_config
 
             augmenter = build_compose_from_config(aug_cfg)
@@ -334,13 +342,14 @@ def main():
         if custom_config.val_sample_limit is not None
         else shared_sample_limit
     )
-    if train_sample_limit:
+    if train_sample_limit is not None:
         logger.info(f"Train sample limit: {train_sample_limit}")
-    if val_sample_limit:
+    if val_sample_limit is not None:
         logger.info(f"Val sample limit: {val_sample_limit}")
 
+
     # Build training dataset
-    logger.info(f"Loading training dataset: {train_jsonl}")
+    logger.info(f"Loading training dataset: {str(train_jsonl)}")
     # Require minimal explicit keys; others have sane defaults
     if not custom_config.user_prompt or not custom_config.emit_norm:
         raise ValueError("custom.user_prompt and custom.emit_norm must be provided")
@@ -348,21 +357,27 @@ def main():
     # Extract mode control parameters
     use_summary = bool(custom_config.use_summary)
     default_mode = "summary" if use_summary else "dense"
-    summary_label_grouping = bool(
-        getattr(custom_config, "summary_label_grouping", False)
-    )
 
     # Load fusion config early to detect per-dataset modes
     fusion_config_obj: FusionConfig | None = None
     if custom_config.fusion_config:
         fusion_config_obj = FusionConfig.from_file(custom_config.fusion_config)
+        if any(
+            getattr(spec, "key", "").lower() in {"bbu", "rru"}
+            for spec in fusion_config_obj.targets
+        ):
+            if not custom_config.assistant_prefix_format:
+                raise ValueError(
+                    "custom.assistant_prefix_format must be provided for BBU/RRU fusion training."
+                )
 
-    def _requires_summary(spec: Any) -> bool:
+    def _requires_summary(spec: object) -> bool:
         mode_val = getattr(spec, "mode", None)
         if mode_val not in {"dense", "summary", None}:
+            name = str(getattr(spec, "name", spec))
             raise ValueError(
-                f"Invalid fusion dataset mode '{mode_val}' for {getattr(spec, 'name', spec)}; "
-                "expected 'dense' or 'summary'."
+                f"Invalid fusion dataset mode '{mode_val}' for {name}; "
+                + "expected 'dense' or 'summary'."
             )
         resolved_mode = mode_val if mode_val is not None else default_mode
         return resolved_mode == "summary"
@@ -391,10 +406,10 @@ def main():
             system_prompt_summary = getattr(sft.template, "system", None)
         if system_prompt_summary is None:
             try:
-                from .config.prompts import SYSTEM_PROMPT_SUMMARY
+                from .prompts.stage_a_summary import build_stage_a_system_prompt
 
-                system_prompt_summary = SYSTEM_PROMPT_SUMMARY
-                logger.info("Loaded default SYSTEM_PROMPT_SUMMARY")
+                system_prompt_summary = build_stage_a_system_prompt()
+                logger.info("Loaded Stage-A summary system prompt for training")
             except ImportError as exc:
                 raise ValueError(
                     "Summary mode is enabled but no summary system prompt was provided."
@@ -411,28 +426,8 @@ def main():
             "Default dense mode (custom.use_summary=false); set per-dataset mode in fusion config to enable summary samples."
         )
 
-    summary_preprocessor = None
-    if summary_label_grouping:
-        if not needs_summary_mode:
-            logger.warning(
-                "custom.summary_label_grouping is true but no summary dataset is active; label grouping will be ignored."
-            )
-        else:
-            try:
-                from .datasets.preprocessors import SummaryLabelNormalizer
-
-                summary_preprocessor = SummaryLabelNormalizer()
-                logger.info(
-                    "Summary label grouping enabled: 标签/* (except 无法识别) → 标签/可以识别 with count aggregation."
-                )
-            except Exception as exc:
-                raise ValueError(
-                    "Failed to initialize SummaryLabelNormalizer "
-                    "(custom.summary_label_grouping=true)."
-                ) from exc
-
     dataset_seed = 42
-    dataset: Any
+    dataset: Union["FusionCaptionDataset", "BaseCaptionDataset"]
     fusion_callback: FusionEpochCallback | None = None
     if fusion_config_obj:
         from .datasets.unified_fusion_dataset import FusionCaptionDataset
@@ -443,13 +438,13 @@ def main():
             user_prompt=custom_config.user_prompt,
             emit_norm=custom_config.emit_norm,
             json_format=custom_config.json_format,
+            assistant_prefix_format=custom_config.assistant_prefix_format,
             augmenter=augmenter,
             bypass_prob=bypass_prob,
             curriculum_state=curriculum_state,
             use_summary=use_summary,
             system_prompt_dense=system_prompt_dense,
             system_prompt_summary=system_prompt_summary,
-            preprocessor=summary_preprocessor,
             seed=dataset_seed,
             sample_limit=train_sample_limit,
             split="train",
@@ -466,18 +461,19 @@ def main():
             augmenter=augmenter,
             bypass_prob=bypass_prob,
             curriculum_state=curriculum_state,
-            preprocessor=summary_preprocessor,
             sample_limit=train_sample_limit,
             use_summary=use_summary,
             system_prompt_dense=system_prompt_dense,
             system_prompt_summary=system_prompt_summary,
             seed=dataset_seed,
+            assistant_prefix_format=None,
         )
     logger.info(f"Training dataset size: {len(dataset)}")
 
     # Calculate total_steps and initialize curriculum_state if needed
     if curriculum_scheduler is not None:
-        if curriculum_scheduler._requires_total_steps:
+        requires_total_steps = bool(getattr(curriculum_scheduler, "_requires_total_steps", False))
+        if requires_total_steps:
             # Calculate total_steps from dataset length, epochs, batch size, etc.
             num_train_epochs = getattr(train_args, "num_train_epochs", None)
             per_device_train_batch_size = getattr(
@@ -488,8 +484,8 @@ def main():
             )
             max_steps = getattr(train_args, "max_steps", None)
 
-            if max_steps is not None and max_steps > 0:
-                total_steps = max_steps
+            if max_steps is not None and int(str(max_steps)) > 0:
+                total_steps = int(str(max_steps))
             elif (
                 num_train_epochs is not None
                 and per_device_train_batch_size is not None
@@ -500,18 +496,18 @@ def main():
                     world_size = 1
                 len_dataset = len(dataset)
                 total_train_batch_size = (
-                    per_device_train_batch_size
-                    * gradient_accumulation_steps
+                    int(str(per_device_train_batch_size))
+                    * int(str(gradient_accumulation_steps))
                     * world_size
                 )
                 num_update_steps_per_epoch = max(
                     len_dataset // total_train_batch_size, 1
                 )
-                total_steps = math.ceil(num_train_epochs * num_update_steps_per_epoch)
+                total_steps = math.ceil(float(str(num_train_epochs)) * num_update_steps_per_epoch)
             else:
                 raise ValueError(
                     "Cannot calculate total_steps for curriculum scheduler. "
-                    "Need either max_steps or (num_train_epochs, per_device_train_batch_size, gradient_accumulation_steps)"
+                    + "Need either max_steps or (num_train_epochs, per_device_train_batch_size, gradient_accumulation_steps)"
                 )
             curriculum_scheduler.set_total_steps(total_steps)
             logger.info(f"Curriculum scheduler: set total_steps={total_steps}")
@@ -519,18 +515,24 @@ def main():
         # Now get initial state and create curriculum_state
         initial_state = curriculum_scheduler.get_state(0)
         manager = Manager()
-        curriculum_state = manager.dict(
+        curriculum_state = cast(
+            MutableMapping[str, object],
+            manager.dict(
             {
                 "step": 0,
                 "bypass_prob": initial_state["bypass_prob"],
                 "ops": copy.deepcopy(initial_state["ops"]),
             }
+            ),
         )
         # Update dataset's curriculum_state
-        if hasattr(dataset, "set_curriculum_state"):
-            dataset.set_curriculum_state(curriculum_state)
-        elif hasattr(dataset, "preprocessor") and dataset.preprocessor is not None:
-            dataset.preprocessor.curriculum_state = curriculum_state
+        set_curriculum = getattr(dataset, "set_curriculum_state", None)
+        if callable(set_curriculum):
+            set_curriculum(curriculum_state)
+        else:
+            preprocessor = getattr(dataset, "preprocessor", None)
+            if preprocessor is not None:
+                setattr(preprocessor, "curriculum_state", curriculum_state)
 
     # Optional: multimodal health check (only in --debug mode)
     if args.debug:
@@ -589,10 +591,11 @@ def main():
     dump_conv = bool(custom_config.dump_conversation_text or args.debug)
     if dump_conv and len(dataset) > 0:
         try:
-            template = dataset.template
+            dataset_typed: Union["FusionCaptionDataset", "BaseCaptionDataset"] = dataset
+            template = dataset_typed.template
             template.set_mode("pt")
             try:
-                sample_encoded = dataset[0]
+                sample_encoded = dataset_typed[0]
             finally:
                 template.set_mode("train")
 
@@ -611,7 +614,7 @@ def main():
             raw_text = template.tokenizer.decode(input_ids, skip_special_tokens=False)
 
             def _compress_image_pad(text: str) -> str:
-                def repl(match: re.Match) -> str:
+                def repl(match: re.Match[str]) -> str:
                     count = match.group(0).count("<|image_pad|>")
                     return f"<|image_pad|>*{count}"
 
@@ -621,8 +624,10 @@ def main():
 
             assistant_gt = None
             try:
-                record_clone = copy.deepcopy(dataset.base_records[0])
-                builder = dataset._create_builder(dataset.mode)
+                # Re-assign to typed variable to help linter
+                dataset_for_dump: Union["FusionCaptionDataset", "BaseCaptionDataset"] = dataset
+                record_clone = copy.deepcopy(dataset_for_dump.base_records[0])
+                builder = dataset_for_dump._create_builder(dataset_for_dump.mode)
                 merged = builder.build_many([record_clone])
                 assistant_turn = next(
                     (
@@ -696,13 +701,13 @@ def main():
             user_prompt=custom_config.user_prompt,
             emit_norm=custom_config.emit_norm,
             json_format=custom_config.json_format,
+            assistant_prefix_format=custom_config.assistant_prefix_format,
             augmenter=None,  # No augmentation for validation
             bypass_prob=0.0,
             curriculum_state=None,
             use_summary=use_summary,
             system_prompt_dense=system_prompt_dense,
             system_prompt_summary=system_prompt_summary,
-            preprocessor=summary_preprocessor,
             seed=dataset_seed,
             shuffle=False,
             sample_limit=val_sample_limit,
@@ -727,8 +732,8 @@ def main():
                 use_summary=use_summary,
                 system_prompt_dense=system_prompt_dense,
                 system_prompt_summary=system_prompt_summary,
-                preprocessor=summary_preprocessor,
                 seed=dataset_seed,
+                assistant_prefix_format=None,
             )
             logger.info(f"Validation dataset size: {len(eval_dataset)}")
 
@@ -815,7 +820,8 @@ def main():
     )
     # trainer_cls is dynamically determined and accepts standard trainer parameters
     # Type checker can't infer the exact constructor signature, so we ignore these errors
-    trainer = trainer_cls(  # type: ignore[misc]
+    trainer_ctor = cast(Any, trainer_cls)
+    trainer = trainer_ctor(
         model=sft.model,  # type: ignore[arg-type]
         args=train_args.training_args,  # type: ignore[arg-type]
         data_collator=data_collator,  # type: ignore[arg-type]
@@ -827,7 +833,7 @@ def main():
     )
     if dataset_domains is not None:
         try:
-            trainer.dataset_domains = dict(dataset_domains)  # type: ignore[attr-defined]
+            setattr(trainer, "dataset_domains", dict(dataset_domains))
         except Exception:
             pass
 
@@ -835,8 +841,11 @@ def main():
     try:
         import deepspeed  # type: ignore
 
-        if hasattr(deepspeed.runtime.engine.DeepSpeedEngine, "__del__"):  # type: ignore[attr-defined]
-            _orig_ds_del = deepspeed.runtime.engine.DeepSpeedEngine.__del__  # type: ignore[attr-defined]
+        runtime_mod = getattr(deepspeed, "runtime", None)
+        engine_mod = getattr(runtime_mod, "engine", None)
+        ds_engine = getattr(engine_mod, "DeepSpeedEngine", None)
+        if ds_engine is not None and hasattr(ds_engine, "__del__"):
+            _orig_ds_del = ds_engine.__del__
 
             def _safe_ds_del(self):  # type: ignore[override]
                 try:
@@ -845,7 +854,7 @@ def main():
                     # Suppress non-fatal cleanup errors
                     pass
 
-            deepspeed.runtime.engine.DeepSpeedEngine.__del__ = _safe_ds_del  # type: ignore[assignment,attr-defined]
+            ds_engine.__del__ = _safe_ds_del
     except Exception:
         pass
 

@@ -1,9 +1,9 @@
-- [ ] Confirm configuration defaults (train_pool_size=512, eval_pool_fraction=0.2, eval_veto.max_acc_drop=0.01).
-- [ ] Update Stage‑B rule_search config schema to use train/eval names and add eval pool fields.
-- [ ] Implement train/eval pool sampling logic (fixed eval pool; rolling train pool).
-- [ ] Implement eval pool veto in rule_search acceptance logic.
-- [ ] Remove legacy/compat parsing for old keys (validate_*/eval_sampler).
-- [ ] Update `rule_search_hard_cases.jsonl` schema/doc to reflect train/eval naming.
-- [ ] Update docs: `docs/training/REFERENCE.md`, `docs/runtime/STAGE_A_STAGE_B.md`.
-- [ ] Add tests for pool sampling, eval veto, and config parsing.
-- [ ] Run: `pytest -q tests/stage_b` and `openspec validate update-stageb-rule-search-train-eval-pools --strict`.
+- [x] Confirm configuration defaults (train_pool_size=512, eval_pool_size=128, eval_veto.max_acc_drop=0.01).
+- [x] Update Stage‑B rule_search config schema to use train/eval names and add eval pool fields.
+- [x] Implement train/eval pool sampling logic (fixed eval pool; rolling train pool).
+- [x] Implement eval pool veto in rule_search acceptance logic.
+- [x] Remove legacy/compat parsing for old keys (validate_*/eval_sampler).
+- [x] Update `rule_search_hard_cases.jsonl` schema/doc to reflect train/eval naming.
+- [x] Update docs: `docs/training/REFERENCE.md`, `docs/runtime/STAGE_A_STAGE_B.md`.
+- [x] Add tests for pool sampling, eval veto, and config parsing.
+- [x] Run: `pytest -q tests/stage_b` and `openspec validate update-stageb-rule-search-train-eval-pools --strict`.

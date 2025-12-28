@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import math
 from collections import defaultdict
-from typing import Any, Dict, Mapping, Optional, Union
+from collections.abc import Mapping, Callable
+from typing import Any, cast
+from typing_extensions import override
 
 import torch
 import torch.distributed as dist
@@ -20,30 +22,36 @@ logger = transformers.utils.logging.get_logger(__name__)
 
 
 class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         # Ensure metrics dict exists even if parent implementation changes.
         if not hasattr(self, "_metrics"):
-            self._metrics = {"train": defaultdict(list), "eval": defaultdict(list)}
+            self._metrics: dict[str, defaultdict[str, list[torch.Tensor]]] = {
+                "train": defaultdict(list),
+                "eval": defaultdict(list),
+            }
 
-        self._visual_hooks = []
-        self._student_visual_cache: Dict[str, torch.Tensor] = {}
-        self._teacher_visual_cache: Dict[str, torch.Tensor] = {}
+        self._visual_hooks: list[torch.utils.hooks.RemovableHandle] = []
+        self._student_visual_cache: dict[str, torch.Tensor] = {}
+        self._teacher_visual_cache: dict[str, torch.Tensor] = {}
+        self._last_visual_kd_breakdown: dict[str, torch.Tensor] = {}
+        self._token_stats_file: str | bool | None = None
+        self._token_stats_logged: int = 0
 
         cfg_raw = getattr(self.args, "visual_kd_config", VisualKDConfig.disabled())
         if isinstance(cfg_raw, Mapping):
-            cfg = VisualKDConfig.from_mapping(cfg_raw)
+            cfg = VisualKDConfig.from_mapping(cast(Mapping[str, object], cfg_raw))
         elif isinstance(cfg_raw, VisualKDConfig):
             cfg = cfg_raw
         else:
             raise TypeError("visual_kd_config must be VisualKDConfig or mapping")
 
         self._visual_kd_config: VisualKDConfig = cfg
-        self._visual_kd_enabled = cfg.enabled
+        self._visual_kd_enabled: bool = cfg.enabled
         self._visual_kd_vit_cfg: VisualKDTargetConfig = cfg.vit
         self._visual_kd_aligner_cfg: VisualKDTargetConfig = cfg.aligner
         self._visual_kd_deepstack_cfg: VisualKDTargetConfig = cfg.deepstack
-        self._visual_kd_targets = [
+        self._visual_kd_targets: list[str] = [
             name
             for name, target_cfg in (
                 ("vit", cfg.vit),
@@ -68,12 +76,11 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
             raise ValueError(
                 f"llm_kd_weight must be non-negative; received {raw_llm_kd_weight!r}"
             )
-        self._llm_kd_weight = float(llm_kd_weight)
+        self._llm_kd_weight: float = float(llm_kd_weight)
 
         if self._visual_kd_enabled and not self._visual_kd_targets:
             raise ValueError(
-                "visual_kd enabled but no per-target configs are enabled; "
-                "enable at least one of vit/aligner/deepstack or disable visual_kd"
+                "visual_kd enabled but no per-target configs are enabled; enable at least one of vit/aligner/deepstack or disable visual_kd"
             )
 
         teacher_available = self._has_teacher_model()
@@ -93,8 +100,7 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
             except Exception as exc:
                 self._remove_visual_hooks()
                 raise RuntimeError(
-                    "visual_kd failed to register visual feature hooks. Ensure student and teacher expose the requested visual modules."
-                    f" Original error: {exc}"
+                    f"visual_kd failed to register visual feature hooks. Ensure student and teacher expose the requested visual modules. Original error: {exc}"
                 ) from exc
 
             if not self._visual_hooks:
@@ -103,13 +109,14 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
                     "visual_kd enabled but no hooks were registered. Verify the configured targets exist on both student and teacher models."
                 )
 
+    @override
     def compute_loss(
         self,
         model: nn.Module,
-        inputs: Dict[str, Union[torch.Tensor, Any]],
+        inputs: dict[str, torch.Tensor | object],
         return_outputs: bool = False,
-        num_items_in_batch: Optional[int] = None,
-    ):
+        num_items_in_batch: int | None = None,
+    ) -> torch.Tensor | tuple[torch.Tensor, object]:
         self._ensure_visual_kd_state()
 
         # Only clear caches if visual_kd is enabled (avoids unnecessary dict operations)
@@ -122,14 +129,16 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
         use_logits_to_keep = self.get_use_logits_to_keep(True)
         if use_logits_to_keep:
             self.prepare_logits_to_keep(inputs)
-            model_inputs["logits_to_keep"] = inputs["logits_to_keep"]
+            model_inputs["logits_to_keep"] = cast(
+                torch.Tensor, inputs["logits_to_keep"]
+            )
 
         # Always provide labels so CE/accuracy are available even when sft_alpha == 0.
-        model_inputs["labels"] = inputs["labels"]
+        model_inputs["labels"] = cast(torch.Tensor, inputs["labels"])
 
-        outputs_student = model(**model_inputs)
+        outputs_student = model(**cast(dict[str, torch.Tensor], model_inputs))
 
-        labels = inputs["labels"]
+        labels = cast(torch.Tensor, inputs["labels"])
         student_logits = outputs_student.logits
         dtype = student_logits.dtype
         student_logits_next = student_logits[:, :-1, :]
@@ -166,9 +175,8 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
                 masked_count = int((sample_indices == -100).sum().item())
                 unmasked_count = int((sample_indices != -100).sum().item())
                 logger.debug(
-                    f"🔍 UNMASKING DETECTED: valid_count={valid_count}, seq_len={seq_len}, "
-                    f"mask_ratio={mask_ratio:.4f}, sample_masked={masked_count}, sample_unmasked={unmasked_count}, "
-                    f"unique_label_values (sample)={unique_labels.tolist()[:20]}"
+                    f"🔍 UNMASKING DETECTED: valid_count={valid_count}, seq_len={seq_len}, mask_ratio={mask_ratio:.4f}, "
+                    f"sample_masked={masked_count}, sample_unmasked={unmasked_count}, unique_label_values (sample)={unique_labels.tolist()[:20]}"
                 )
 
         self._maybe_log_token_stats(
@@ -192,7 +200,7 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
         mode = "train" if model.training else "eval"
 
         teacher_outputs = None
-        weighted_llm_kd_loss: Optional[torch.Tensor] = None
+        weighted_llm_kd_loss: torch.Tensor | None = None
 
         teacher_available = self._has_teacher_model()
         llm_kd_requested = self._llm_kd_weight > 0.0
@@ -215,8 +223,7 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
 
             if teacher_vocab_size != vocab_size:
                 raise ValueError(
-                    "Teacher/student vocabulary size mismatch detected during loss computation: "
-                    f"student={vocab_size}, teacher={teacher_vocab_size}. "
+                    f"Teacher/student vocabulary size mismatch detected during loss computation: student={vocab_size}, teacher={teacher_vocab_size}. "
                     "Ensure both models share the same tokenizer and vocabulary."
                 )
 
@@ -316,11 +323,11 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
         valid_count: int,
         labels_next: torch.Tensor,
         mask: torch.Tensor,
-        inputs: Dict[str, Union[torch.Tensor, Any]],
+        inputs: dict[str, torch.Tensor | object],
     ) -> None:
         """Lightweight logging hook to trace token masking/sequence lengths."""
         # Lazily initialize debug file (stored outside checkpoints under /tmp by default)
-        file_path: Optional[str] = getattr(self, "_token_stats_file", None)
+        file_path: str | None = getattr(self, "_token_stats_file", None)
         if file_path is False:
             return
         if file_path is None:
@@ -389,18 +396,16 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
                 labels_non_neg100 = int((labels_next != -100).sum().item())
                 labels_total = int(labels_next.numel())
                 fout.write(
-                    f"{step if step is not None else 'NA'} "
-                    f"{valid_count} {seq_len} {mask_ratio:.4f} "
-                    f"{input_len if input_len is not None else 'NA'} "
-                    f"{attn_ratio if attn_ratio is not None else 'NA'} "
+                    f"{step if step is not None else 'NA'} {valid_count} {seq_len} {mask_ratio:.4f} "
+                    f"{input_len if input_len is not None else 'NA'} {attn_ratio if attn_ratio is not None else 'NA'} "
                     f"valid_ratio={valid_ratio:.4f} labels_valid={labels_non_neg100}/{labels_total}\n"
                 )
                 # Also log diagnostic at debug level if mask_ratio is suspiciously high
                 if mask_ratio > 0.5 or valid_count > 2000:
                     logger.debug(
-                        f"Step {step}: High mask ratio detected! valid_count={valid_count}, "
-                        f"seq_len={seq_len}, mask_ratio={mask_ratio:.4f}, valid_ratio={valid_ratio:.4f}. "
-                        f"This might indicate unmasking issue (loss_scale='all' or template_backend='jinja')."
+                        f"Step {step}: High mask ratio detected! valid_count={valid_count}, seq_len={seq_len}, "
+                        f"mask_ratio={mask_ratio:.4f}, valid_ratio={valid_ratio:.4f}. This might indicate unmasking issue "
+                        f"(loss_scale='all' or template_backend='jinja')."
                     )
             self._token_stats_logged = logged + 1
         except OSError:
@@ -409,11 +414,14 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
 
     def _run_teacher_forward(
         self,
-        model_inputs: Dict[str, Union[torch.Tensor, Any]],
+        model_inputs: dict[str, torch.Tensor | object],
         student_logits: torch.Tensor,
     ):
         # Remove labels for teacher forward.
         teacher_inputs = {k: v for k, v in model_inputs.items() if k != "labels"}
+        teacher_model = getattr(self, "teacher_model", None)
+        if not isinstance(teacher_model, nn.Module):
+            raise RuntimeError("Teacher model is missing or invalid")
 
         logits_device = student_logits.device
         device_type = logits_device.type
@@ -428,9 +436,9 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
         with torch.no_grad():
             if autocast_enabled:
                 with torch.autocast(device_type=device_type, dtype=dtype):
-                    outputs_teacher = self.teacher_model(**teacher_inputs)
+                    outputs_teacher = teacher_model(**teacher_inputs)
             else:
-                outputs_teacher = self.teacher_model(**teacher_inputs)
+                outputs_teacher = teacher_model(**teacher_inputs)
 
         return outputs_teacher
 
@@ -465,7 +473,11 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
 
             if vit_cfg.enabled:
 
-                def student_vit_hook(_module: nn.Module, inputs, _output):
+                def student_vit_hook(
+                    _module: nn.Module,
+                    inputs: tuple[object, ...],
+                    _output: object,
+                ) -> None:
                     if not inputs:
                         raise RuntimeError(
                             "ViT visual KD hook received no inputs for merger module"
@@ -473,12 +485,15 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
                     hidden_states = inputs[0]
                     if not isinstance(hidden_states, torch.Tensor):
                         raise TypeError(
-                            "Expected tensor input for ViT visual KD hook, "
-                            f"got {type(hidden_states)}"
+                            f"Expected tensor input for ViT visual KD hook, got {type(hidden_states)}"
                         )
                     self._student_visual_cache["vit"] = hidden_states
 
-                def teacher_vit_hook(_module: nn.Module, inputs, _output):
+                def teacher_vit_hook(
+                    _module: nn.Module,
+                    inputs: tuple[object, ...],
+                    _output: object,
+                ) -> None:
                     if not inputs:
                         raise RuntimeError(
                             "ViT visual KD hook received no inputs for merger module"
@@ -486,8 +501,7 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
                     hidden_states = inputs[0]
                     if not isinstance(hidden_states, torch.Tensor):
                         raise TypeError(
-                            "Expected tensor input for ViT visual KD hook, "
-                            f"got {type(hidden_states)}"
+                            f"Expected tensor input for ViT visual KD hook, got {type(hidden_states)}"
                         )
                     self._teacher_visual_cache["vit"] = hidden_states.detach()
 
@@ -530,7 +544,7 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
                     teacher_mod.register_forward_hook(self._make_teacher_hook(name))
                 )
 
-    def _resolve_visual_branch(self, module: nn.Module) -> Optional[nn.Module]:
+    def _resolve_visual_branch(self, module: nn.Module) -> nn.Module | None:
         visited = set()
         current = module
         while current is not None and id(current) not in visited:
@@ -555,8 +569,12 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
                 current = None
         return None
 
-    def _make_student_hook(self, name: str):
-        def hook(_module: nn.Module, _inputs, output):
+    def _make_student_hook(
+        self, name: str
+    ) -> Callable[[nn.Module, tuple[object, ...], object], None]:
+        def hook(
+            _module: nn.Module, _inputs: tuple[object, ...], output: object
+        ) -> None:
             if not isinstance(output, torch.Tensor):
                 raise TypeError(
                     f"Expected tensor output for visual hook '{name}', got {type(output)}"
@@ -568,8 +586,12 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
 
         return hook
 
-    def _make_teacher_hook(self, name: str):
-        def hook(_module: nn.Module, _inputs, output):
+    def _make_teacher_hook(
+        self, name: str
+    ) -> Callable[[nn.Module, tuple[object, ...], object], None]:
+        def hook(
+            _module: nn.Module, _inputs: tuple[object, ...], output: object
+        ) -> None:
             if not isinstance(output, torch.Tensor):
                 raise TypeError(
                     f"Expected tensor output for visual hook '{name}', got {type(output)}"
@@ -593,7 +615,7 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
                 pass
         hooks.clear()
 
-    def _compute_visual_kd_loss(self) -> Optional[torch.Tensor]:
+    def _compute_visual_kd_loss(self) -> torch.Tensor | None:
         # Early return if visual_kd is disabled (should not be called, but defensive)
         if not self._visual_kd_enabled:
             return None
@@ -609,8 +631,7 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
             teacher_feat = teacher_feat.to(student_feat.device, student_feat.dtype)
             if student_feat.shape != teacher_feat.shape:
                 raise ValueError(
-                    "Visual KD feature shape mismatch: "
-                    f"student={student_feat.shape}, teacher={teacher_feat.shape}"
+                    f"Visual KD feature shape mismatch: student={student_feat.shape}, teacher={teacher_feat.shape}"
                 )
             if distance == "mse":
                 return F.mse_loss(student_feat, teacher_feat)
@@ -629,7 +650,7 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
 
         contributions: list[torch.Tensor] = []
         missing_targets: list[str] = []
-        breakdown: Dict[str, torch.Tensor] = {}
+        breakdown: dict[str, torch.Tensor] = {}
 
         if vit_cfg.enabled:
             student_feat = self._student_visual_cache.get("vit")
@@ -696,11 +717,11 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
             missing_desc = (
                 ", ".join(missing_targets) if missing_targets else "all targets"
             )
-            raise RuntimeError(
-                "visual_kd did not receive any feature activations for the configured targets "
-                f"{tuple(self._visual_kd_targets)} (missing {missing_desc}). "
-                "Ensure the dataset yields image inputs and that both teacher and student expose the requested visual modules."
+            message = (
+                f"visual_kd did not receive any feature activations for the configured targets {tuple(self._visual_kd_targets)} "
+                f"(missing {missing_desc}). Ensure the dataset yields image inputs and that both teacher and student expose the requested visual modules."
             )
+            raise RuntimeError(message)
 
         self._last_visual_kd_breakdown = breakdown
 
@@ -759,14 +780,13 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
     def _has_teacher_model(self) -> bool:
         return hasattr(self, "teacher_model") and self.teacher_model is not None
 
-    def log(
-        self, logs: Optional[Dict[str, float]], start_time: Optional[float] = None
-    ) -> None:
+    @override
+    def log(self, logs: dict[str, float] | None, start_time: float | None = None) -> None:
         if logs is None:
             logs = {}
 
-        sanitized_logs: Dict[str, float] = dict(logs)
-        aggregated_logs: Dict[str, float] = {}
+        sanitized_logs: dict[str, float] = dict(logs)
+        aggregated_logs: dict[str, float] = {}
         keys_to_remove: set[str] = set()
 
         for mode in ("train", "eval"):
@@ -848,7 +868,7 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
         return metric_key
 
     @staticmethod
-    def _coalesce_accuracy_metrics(metrics: Dict[str, float]) -> None:
+    def _coalesce_accuracy_metrics(metrics: dict[str, float]) -> None:
         """Convert *_token_acc_{correct,total} into *_token_acc ratios."""
 
         for prefix in ("", "eval_"):
@@ -869,7 +889,11 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
             return value
 
         try:
-            device = next(self.model.parameters()).device
+            model = getattr(self, "model", None)
+            if isinstance(model, nn.Module):
+                device = next(model.parameters()).device
+            else:
+                device = torch.device("cpu")
         except Exception:
             device = torch.device("cpu")
 

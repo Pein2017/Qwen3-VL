@@ -1,0 +1,12 @@
+{
+  "hard_cases_path": "output_post/stage_b/挡风板安装检查/12-22-ocr/rule_search_hard_cases.jsonl",
+  "saveable_count": 86,
+  "noise_count": 17,
+  "uncertain_count": 0,
+  "missing_stage_a_count": 0,
+  "stats": {
+    "('pass', 'fail', 'learnable_false_block')": 86,
+    "('fail', 'pass', 'likely_noise_or_unobservable_fail')": 11,
+    "('pass', 'fail', 'likely_noise_or_unobservable_pass')": 6
+  }
+}

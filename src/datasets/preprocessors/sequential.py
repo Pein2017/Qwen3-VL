@@ -26,7 +26,7 @@ class SequentialPreprocessor(BasePreprocessor):
         for pre in self.preprocessors:
             if hasattr(pre, "curriculum_state"):
                 try:
-                    pre.curriculum_state = state
+                    setattr(pre, "curriculum_state", state)
                 except Exception:
                     pass
 
@@ -40,7 +40,7 @@ class SequentialPreprocessor(BasePreprocessor):
         for pre in self.preprocessors:
             if hasattr(pre, "rng"):
                 try:
-                    pre.rng = rng_obj
+                    setattr(pre, "rng", rng_obj)
                 except Exception:
                     pass
 

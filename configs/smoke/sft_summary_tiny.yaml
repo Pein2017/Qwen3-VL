@@ -3,5 +3,9 @@ extends: ../debug.yaml
 training:
   run_name: smoke_summary_tiny
 
+prompts:
+  profile: summary_runtime
+  domain: bbu
+
 custom:
   use_summary: true

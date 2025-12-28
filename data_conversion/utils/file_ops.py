@@ -11,7 +11,7 @@ import logging
 import shutil
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from PIL import Image, ImageOps
 
@@ -56,7 +56,7 @@ class FileOperations:
         raise FileNotFoundError(f"No image file found for {json_path}")
 
     @staticmethod
-    def load_json_data(json_path: Path) -> Dict:
+    def load_json_data(json_path: Path) -> Dict[str, Any]:
         """Load and validate JSON data structure."""
         try:
             with open(json_path, "r", encoding="utf-8") as f:
@@ -86,7 +86,7 @@ class FileOperations:
 
     @staticmethod
     def save_json_data(
-        data: Dict, json_path: Path, indent: Optional[int] = None
+        data: Dict[str, Any], json_path: Path, indent: Optional[int] = None
     ) -> None:
         """Save JSON data to file."""
         json_path.parent.mkdir(parents=True, exist_ok=True)
@@ -143,7 +143,9 @@ class FileOperations:
             logger.debug(f"Copied {src.name} to {dst}")
 
     @staticmethod
-    def write_jsonl(samples: List[Dict], output_path: Path) -> None:
+    def write_jsonl(
+        samples: List[Dict[str, Any]], output_path: Path
+    ) -> None:
         """Write samples to JSONL file."""
         output_path.parent.mkdir(parents=True, exist_ok=True)
 

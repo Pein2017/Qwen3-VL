@@ -8,9 +8,9 @@ can be unit-tested without running rollouts.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 import re
-from typing import Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from .utils.chinese import normalize_spaces, to_simplified
 
@@ -23,12 +23,12 @@ class TicketRolloutStats:
     fail_count: int
     invalid_count: int
     total_samples: int
-    majority_pred: Optional[str]
+    majority_pred: str | None
     majority_correct: bool
     agreement: float
     difficulty: float
     hard_wrong: float
-    verdict_samples: Tuple[Optional[str], ...]
+    verdict_samples: tuple[str | None, ...]
 
 
 @dataclass(frozen=True)
@@ -66,7 +66,7 @@ def normalize_rule_signature(text: str) -> str:
     return simplified.strip()
 
 
-def _majority_pred(pass_count: int, fail_count: int) -> Optional[str]:
+def _majority_pred(pass_count: int, fail_count: int) -> str | None:
     if pass_count <= 0 and fail_count <= 0:
         return None
     if pass_count > fail_count:
@@ -81,7 +81,7 @@ def build_ticket_stats(
     *,
     ticket_key: str,
     gt_label: str,
-    verdicts: Sequence[Optional[str]],
+    verdicts: Sequence[str | None],
 ) -> TicketRolloutStats:
     pass_count = 0
     fail_count = 0
@@ -243,22 +243,30 @@ def pick_reflection_ticket_keys(
     stats_by_ticket: Mapping[str, TicketRolloutStats],
     *,
     reflect_size: int,
-) -> List[str]:
+    reflect_order: str = "hard_first",
+) -> list[str]:
     """Pick high-value mismatches for the proposer.
 
-    Priority:
+    Priority (reflect_order=hard_first):
     1) high-confidence wrong (hard_wrong high, majority_pred != gt)
     2) then most ambiguous wrong (difficulty high)
+
+    Priority (reflect_order=easy_first):
+    1) lower difficulty (agreement high)
+    2) then higher hard_wrong (more confident mistakes)
     """
 
-    mismatches: List[TicketRolloutStats] = []
+    mismatches: list[TicketRolloutStats] = []
     for entry in stats_by_ticket.values():
         if entry.majority_pred is None:
             continue
         if entry.majority_pred != entry.gt_label:
             mismatches.append(entry)
 
-    mismatches.sort(key=lambda x: (x.hard_wrong, x.difficulty), reverse=True)
+    if reflect_order == "easy_first":
+        mismatches.sort(key=lambda x: (x.difficulty, -x.hard_wrong))
+    else:
+        mismatches.sort(key=lambda x: (x.hard_wrong, x.difficulty), reverse=True)
     return [m.ticket_key for m in mismatches[: max(0, int(reflect_size))]]
 
 
@@ -270,8 +278,8 @@ def build_gate_stats(
     bootstrap_iterations: int,
     bootstrap_min_prob: float,
     bootstrap_seed: int,
-    min_changed_fraction: float,
-) -> Tuple[GateStats, bool]:
+    max_changed_fraction: float,
+) -> tuple[GateStats, bool]:
     """Compute gate stats and return (stats, passed)."""
 
     base_metrics = compute_metrics(base_stats.values())
@@ -298,7 +306,7 @@ def build_gate_stats(
     )
     passed = bool(
         rer >= rer_threshold
-        and changed >= min_changed_fraction
+        and changed <= max_changed_fraction
         and bootstrap_prob >= bootstrap_min_prob
     )
     return stats, passed

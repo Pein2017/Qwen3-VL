@@ -5,7 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
-from src.config.prompts import build_summary_system_prompt_minimal, MISSION_SPECIFIC_PRIOR_RULES
+from src.prompts.summary_core import (
+    build_summary_system_prompt_minimal,
+    MISSION_SPECIFIC_PRIOR_RULES,
+)
 
 from .domain_packs import get_domain_pack
 
@@ -16,8 +19,15 @@ class SummaryPromptProfile:
     include_domain_pack: bool
     include_mission_rules: bool
 
-    def build(self, *, domain: Optional[str] = None, mission: Optional[str] = None) -> str:
-        parts = [build_summary_system_prompt_minimal().strip()]
+    def build(
+        self,
+        *,
+        domain: Optional[str] = None,
+        mission: Optional[str] = None,
+    ) -> str:
+        parts = [
+            build_summary_system_prompt_minimal().strip()
+        ]
 
         if self.include_domain_pack:
             pack = get_domain_pack(domain)
@@ -37,11 +47,6 @@ class SummaryPromptProfile:
 
 
 SUMMARY_PROMPT_PROFILES = {
-    "summary_train_min": SummaryPromptProfile(
-        name="summary_train_min",
-        include_domain_pack=False,
-        include_mission_rules=False,
-    ),
     "summary_runtime": SummaryPromptProfile(
         name="summary_runtime",
         include_domain_pack=True,
@@ -50,7 +55,7 @@ SUMMARY_PROMPT_PROFILES = {
 }
 
 
-DEFAULT_SUMMARY_PROFILE_TRAIN = "summary_train_min"
+DEFAULT_SUMMARY_PROFILE_TRAIN = "summary_runtime"
 DEFAULT_SUMMARY_PROFILE_RUNTIME = "summary_runtime"
 
 
@@ -73,7 +78,10 @@ def build_summary_system_prompt(
 ) -> str:
     """Compose the summary system prompt based on profile and domain."""
     profile = get_summary_profile(profile_name)
-    return profile.build(domain=domain, mission=mission)
+    return profile.build(
+        domain=domain,
+        mission=mission,
+    )
 
 
 __all__ = [

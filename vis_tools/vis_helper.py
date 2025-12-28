@@ -14,6 +14,40 @@ from data_conversion.pipeline.coordinate_manager import CoordinateManager
 logger = logging.getLogger(__name__)
 
 
+def extract_desc_head(desc: object) -> str:
+    """Return a stable head label for visualization.
+
+    - New schema (target-domain): prefers the value in `类别=...` (usually first key).
+    - Legacy schema: falls back to the token before the first `/`.
+    - Source-domain / plain labels: returns the stripped string as-is.
+    """
+    if not isinstance(desc, str):
+        return ""
+
+    text = desc.strip()
+    if not text:
+        return ""
+
+    # New schema: key=value, prefer 类别=...
+    idx = text.find("类别=")
+    if idx != -1:
+        start = idx + len("类别=")
+        end = text.find(",", start)
+        if end == -1:
+            end = len(text)
+        value = text[start:end].strip()
+        if value:
+            return value
+
+    # Legacy schema: type/...
+    if "/" in text:
+        head = text.split("/", 1)[0].strip()
+        if head:
+            return head
+
+    return text
+
+
 def canonicalize_poly(points: List[int | float]) -> List[int]:
     """
     Canonicalize polygon ordering to match prompts.py (top-left start, clockwise traversal).

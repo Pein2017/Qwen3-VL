@@ -3,7 +3,7 @@ from __future__ import annotations
 import io
 import os
 import random
-from typing import Any, Dict, List, Optional, Tuple
+from typing import cast
 
 from PIL import Image
 
@@ -21,12 +21,12 @@ def _image_to_bytes(img: Image.Image) -> bytes:
 
 
 def apply_augmentations(
-    images: List[str | Image.Image],
-    per_object_geoms: List[Dict[str, Any]],
-    pipeline: AugmentationPipeline,
+    images: list[str | Image.Image],
+    per_object_geoms: list[dict[str, object]],
+    pipeline: AugmentationPipeline | None,
     *,
-    rng: Optional[random.Random] = None,
-) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    rng: random.Random | None = None,
+) -> tuple[list[dict[str, bytes]], list[dict[str, object]]]:
     """Plugin-based augmentation wrapper (back-compatible images-bytes output).
 
     Args:
@@ -44,7 +44,7 @@ def apply_augmentations(
     if rng is None:
         rng = random.Random(42)
 
-    pil_images: List[Image.Image] = []
+    pil_images: list[Image.Image] = []
     for p in images:
         if isinstance(p, str):
             path = p
@@ -53,15 +53,13 @@ def apply_augmentations(
                 if not base:
                     raise FileNotFoundError(
                         f"Relative image path '{p}' cannot be resolved: ROOT_IMAGE_DIR is not set. "
-                        f"Set ROOT_IMAGE_DIR to the directory of your JSONL (auto-set by sft.py) or use absolute paths."
+                        + "Set ROOT_IMAGE_DIR to the directory of your JSONL (auto-set by sft.py) or use absolute paths."
                     )
                 path = os.path.join(base, path)
             im = Image.open(path)
             im = apply_exif_orientation(im)
         else:
             im = p
-        if not isinstance(im, Image.Image):
-            raise TypeError("images must be file paths or PIL.Image instances")
         if im.mode != "RGB":
             im = im.convert("RGB")
         pil_images.append(im)
@@ -73,7 +71,7 @@ def apply_augmentations(
             raise ValueError(
                 f"All images in a sample must share identical size; expected {base_w}x{base_h}, found image[{i}]={im.width}x{im.height}"
             )
-    validate_geometry_sequence(per_object_geoms)
+    _ = validate_geometry_sequence(per_object_geoms)
 
     out_imgs, geoms = pipeline.apply(
         pil_images,
@@ -82,12 +80,10 @@ def apply_augmentations(
         height=base_h,
         rng=rng,
     )
-    if not isinstance(out_imgs, list) or not all(
-        isinstance(i, Image.Image) for i in out_imgs
-    ):
+    if not all(isinstance(i, Image.Image) for i in out_imgs):
         raise TypeError("pipeline.apply must return list[Image.Image] as first element")
-    if not isinstance(geoms, list):
-        raise TypeError("pipeline.apply must return list[dict] as second element")
+    out_imgs = cast(list[Image.Image], out_imgs)
+    geoms = cast(list[dict[str, object]], geoms)
     if len(out_imgs) != len(pil_images):
         raise ValueError(
             f"pipeline.apply returned {len(out_imgs)} images, expected {len(pil_images)}"
@@ -110,12 +106,14 @@ def apply_augmentations(
             raise ValueError(
                 f"augmentation pipeline must produce images with identical size; image[0]={out_w}x{out_h}, image[{i}]={im.width}x{im.height}"
             )
-    images_bytes = [{"bytes": _image_to_bytes(img)} for img in out_imgs]
+    images_bytes: list[dict[str, bytes]] = [
+        {"bytes": _image_to_bytes(img)} for img in out_imgs
+    ]
 
     # Attach telemetry for downstream debug consumers
-    validate_geometry_sequence(geoms)
+    _ = validate_geometry_sequence(geoms)
 
-    telemetry: Optional[AugmentationTelemetry] = getattr(pipeline, "last_summary", None)
+    telemetry: AugmentationTelemetry | None = getattr(pipeline, "last_summary", None)
     if telemetry is not None:
         logger = get_logger("augmentation.telemetry")
         logger.debug(

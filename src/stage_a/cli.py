@@ -37,7 +37,6 @@ class StageAConfig:
     temperature: float = 0.3
     top_p: float = 0.9
     repetition_penalty: float = 1.05
-    include_mission_focus: bool = True
     verify_inputs: bool = False
     log_level: str = "INFO"
     pass_group_number: Optional[int] = None
@@ -62,7 +61,6 @@ class StageAConfig:
             temperature=float(args.temperature),
             top_p=float(args.top_p),
             repetition_penalty=float(args.repetition_penalty),
-            include_mission_focus=not args.no_mission_focus,
             verify_inputs=bool(args.verify_inputs),
             pass_group_number=args.pass_group_number,
             fail_group_number=args.fail_group_number,
@@ -184,7 +182,7 @@ Examples:
         type=str,
         default=DEFAULT_SUMMARY_PROFILE_RUNTIME,
         choices=sorted(SUMMARY_PROMPT_PROFILES.keys()),
-        help="Summary prompt profile: summary_runtime or summary_train_min (default: summary_runtime).",
+        help="Summary prompt profile: summary_runtime (default: summary_runtime).",
     )
 
     # Optional runtime parameters
@@ -231,11 +229,6 @@ Examples:
         type=float,
         default=1.05,
         help="Repetition penalty. Default: 1.05",
-    )
-    parser.add_argument(
-        "--no_mission_focus",
-        action="store_true",
-        help="Disable mission-specific focus in the user prompt to match training prompts.",
     )
     parser.add_argument(
         "--verify_inputs",
@@ -358,7 +351,6 @@ def main() -> None:
             gen_params=gen_params,
             batch_size=cfg.batch_size,
             max_pixels=cfg.max_pixels,
-            include_mission_focus=cfg.include_mission_focus,
             verify_inputs=cfg.verify_inputs,
             pass_group_number=cfg.pass_group_number,
             fail_group_number=cfg.fail_group_number,

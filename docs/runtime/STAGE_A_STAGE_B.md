@@ -58,7 +58,7 @@ Note: The same `group_id` may appear in both label folders for resubmitted batch
 - Image catalog must stay synchronized with mission focus; onboarding checklists ensure a representative sample per verdict.
 - Data Ops spot-checks Stage-A JSONL outputs before releasing batches to Stage-B.
   - Throughput note: Stage-A supports a `sharding_mode=per_image` runtime mode to improve load balancing and batch utilization across GPUs; see `./STAGE_A_RUNTIME.md` for details and determinism notes.
-- Prompt profile note: Stage‑A runtime composes the **summary_runtime** profile (base summary prompt + concise domain glossary for `bbu|rru`). Summary SFT training stays on the **summary_train_min** profile (format + task criterion only).
+- Prompt profile note: Stage‑A runtime and summary SFT training both use **summary_runtime** (system prompt = summary task base + 全局“非现场/图纸”规则；user prompt = 摘要指令 + BBU/RRU 场景提示块 + 任务重点).
 
 ---
 
@@ -67,13 +67,13 @@ Note: The same `group_id` may appear in both label folders for resubmitted batch
 | What | Business Interpretation |
 | ---- | ---------------------- |
 | Input | Stage-A summaries + ground-truth labels + current mission guidance. |
-| Process | Prompt-only rollouts（提示=guidance+Stage-A 摘要，不含 GT；**领域提示以只读块追加在 system prompt**，由 Stage‑B config 的 `domain_map/default_domain` 决定；S* 为只读结构不变量，G0+ 为可学习规则）；推理输出必须严格两行二分类：`Verdict: 通过|不通过` + `Reason: ...`，且最终输出禁止任何第三状态词面。多数表决 selection + **mission-scoped fail-first** 确定性护栏：仅当负项与当前 mission 的 `G0` 相关时才触发整组不通过（含 pattern-first `不符合要求/<issue>`）；若护栏覆盖采样 verdict，则必须重写 `Reason` 以与最终 `Verdict` 一致。Stage‑B 支持两种模式（YAML `mode`）：`legacy_reflection` 为 two-pass 反思（decision pass 判定 stop-gradient `no_evidence_group_ids`，ops pass 产出严格 JSON ops + hypotheses，系统对未覆盖 learnable groups 做 bounded retry；耗尽预算者进入 `need_review_queue.jsonl`；ops pass 额外鼓励“关键物体数量/比例/配对关系”的可验证规则以降低 `gt=不通过` 但 `pred=通过` 的误判）。`rule_search` 为 tree-growth：reflection 只在少量错例上提出 2–3 条候选规则，随后用大量工单 rollouts 做 A/B 验证并以“相对错误率下降 + bootstrap + changed_fraction” gate 决定是否纳入 guidance（不走 need-review 学习闭环）。两行协议解析失败/无可用候选/selection 报错等硬故障仅写入 `failure_malformed.jsonl`。重跑同一 run_name 时重建 per-run artifacts 与 reflection_cache，指导沿用上次快照（除非显式 reset）。 |
-| Output | Final binary verdicts (`pass` / `fail`) in JSONL, trajectories for audit, step-wise + epoch summary metrics (`metrics.jsonl`, 含 `acc/fn/fp/fn_rate/fp_rate/n`), optional step-wise group snapshot deltas (`group_report_delta.jsonl`), `failure_malformed.jsonl`（硬故障调试）, updated mission-specific guidance repository. `legacy_reflection` 还会写入 reflection log、hypothesis pool、`need_review_queue.jsonl` + `need_review.json`（人工复核）；`rule_search` 会额外写入 `rule_candidates.jsonl` / `benchmarks.jsonl`（候选规则评估与增益轨迹）以及 `rule_search_hard_cases.jsonl` / `rule_search_candidate_regressions.jsonl`（错例与回归溯源）。 |
+| Process | Prompt-only rollouts（system prompt 固定为两行判决契约 + 规则/软硬信号；user prompt 仅包含 guidance（S*/G0/G*）+ Stage‑A 摘要，不含 GT；领域提示已上移到 Stage‑A user prompt；S* 为只读结构不变量，G0+ 为可学习规则，**默认 AND 关系**；仅当规则明确写“或/例外条件”时允许 OR；缺证据即判不通过）；推理输出必须严格两行二分类：`Verdict: 通过|不通过` + `Reason: ...`，且最终输出禁止任何第三状态词面。rollout/proposer/reflection 超长提示不截断，直接 drop。Stage‑B 仅支持 `rule_search`：reflection 在少量错例上提出 1–N 条候选操作，随后在 **train pool** 上做 A/B gate（相对错误率下降 + bootstrap + max_changed_fraction），并对 update/merge/remove 施加 fp/acc 改善与 `max_fp_rate_increase` 约束；eval pool 指标仅用于审计记录，通过者才纳入 guidance。重跑同一 run_name 时重建 per-run artifacts 与 reflection_cache，指导沿用上次快照（除非显式 reset）。 |
+| Output | `rule_candidates.jsonl` / `benchmarks.jsonl`（候选规则 train/eval 评估与增益轨迹）、`rule_search_hard_cases.jsonl` / `rule_search_candidate_regressions.jsonl`（错例与回归溯源）、mission guidance snapshots；可选 `distill_chatml.jsonl`（rule-search 早停后导出）。 |
 
 **Experiences = living policy**
 - Guidance entries (`[G0]`, `[G1]`, …) are policy snippets the model reads before making a decision.
-- Reflection analyzes recent wins/losses and requests incremental edits (add, revise, retire rules).
-- Each applied change records rationale, evidence ticket_keys, and reflection id for traceability; `need_review_queue.jsonl` is reserved for **stop-gradient** tickets: after seeing `gt_label`, decision pass still cannot propose any auditable hypothesis for that group (`no_evidence_group_ids`), so the sample is excluded from learning and queued for human investigation. Hard failures stay in `failure_malformed.jsonl`.
+- Rule-search proposer analyzes recent mismatches and requests incremental edits (add, revise, retire rules).
+- Each applied change records rationale, evidence ticket_keys, and candidate_id for traceability; rule-search gating metrics are logged for audit.
 - Guidance updates are applied to mission-specific files; promotion to global guidance requires manual review and deployment.
 
 **Business value**
@@ -92,18 +92,18 @@ Note: The same `group_id` may appear in both label folders for resubmitted batch
    - Schedule nightly or on-demand summarization; publish Stage-A JSONL with completion report.
 3. **Pre-Flight Checks (Quality PM)**
    - Review Stage-A quality spot-check, confirm guidance file is populated, sign off on batch release.
-4. **Stage-B Loop (Reflection Steward)**
+4. **Stage-B Loop (Rule-Search Steward)**
    - Start run, monitor per-batch dashboards (label match, semantic consistency).
-   - 在 legacy LLM 模式下，可对“uncertain” 反思提案进行人工审批；确定性模式无需审批（自动保守处理）。
+   - 审核 rule_search 产出（候选规则与 gate 指标），必要时对规则接入进行人工复核。
 5. **Verdict Handoff (Business Owner)**
-   - Consume selections feed; annotate exceptions needing human escalation.
+   - Review rule-search artifacts and guidance updates; annotate exceptions needing human escalation.
    - Update downstream systems (MES, supplier notifications, billing adjustments).
 6. **Guidance Governance (Compliance)**
-   - Archive reflection logs, compare against policy baseline, prepare weekly review deck.
+   - Archive rule-search artifacts and guidance snapshots, compare against policy baseline, prepare weekly review deck.
 
 **Cadence suggestions**
-- High-volume missions: run Stage-A continuously, Stage-B hourly with 32-record reflection batches.
-- Low-volume missions: Stage-A weekly, Stage-B on demand with manual approval of guidance edits.
+- High-volume missions: run Stage-A continuously, Stage-B hourly with 32-record proposer batches.
+- Low-volume missions: Stage-A weekly, Stage-B on demand with approval of guidance edits.
 
 > Run commands and config details live in `./STAGE_B_RUNTIME.md` to keep this page focused on business operations.
 
@@ -111,14 +111,14 @@ Note: The same `group_id` may appear in both label folders for resubmitted batch
 
 ## 6. Decision Metrics & Business KPIs
 
-- **Label Match Rate**: Primary accuracy KPI; tracked overall and by mission, with pre/post reflection uplift.
-- **Escalation Rate**: Percentage of groups routed to manual review; target <5% for stable missions.
+- **Label Match Rate**: Primary accuracy KPI; tracked overall and by mission, with pre/post rule-search uplift.
+- **Hard-case Rate**: Percentage of groups appearing in rule-search hard cases; target <5% for stable missions.
 - **Time to Verdict**: Intake to final verdict SLA (hours). Stage-B automation keeps this <4h on average.
-- **Guidance Churn**: Count of applied reflections per week; spikes trigger policy review.
+- **Guidance Churn**: Count of applied rule-search operations per week; spikes trigger policy review.
 - **Verdict/Reason Drift**: Monitor verdict分布与 Reason 关键要素是否异常；持续偏移时检查 prompt 和数据。
 - **Supplier Impact**: Number of adverse decisions per supplier; feed into commercial scorecards.
 
-Each KPI is reported via `reflection.jsonl`, `selections.jsonl`, and step-wise telemetry in `metrics.jsonl`（包含/排除人工复核两套 acc/fn/fp/fn_rate/fp_rate/n，同时包含 `logging_steps` 窗口与 epoch 汇总）. For “why did verdict/reason change”, use `group_report_delta.jsonl` (windowed deltas) + the end-of-run `group_report.jsonl`. Analytics teams tie these into Tableau/Looker dashboards.
+Each KPI is reported via `rule_candidates.jsonl`, `benchmarks.jsonl`, and `rule_search_hard_cases.jsonl`/`rule_search_candidate_regressions.jsonl` for audit. Analytics teams tie these into Tableau/Looker dashboards.
 
 ---
 
@@ -131,7 +131,7 @@ Each KPI is reported via `reflection.jsonl`, `selections.jsonl`, and step-wise t
 - Dry run on historical data; review 50-sample audit before go-live.
 
 ### Change Management
-- Reflection proposals tagged with `uncertainty_note` require human approval before merging.
+- Rule candidates with ambiguous rationale should require human approval before merging.
 - Guidance repository snapshots retained per retention policy (default 10) for rollback audits.
 - Weekly governance meeting reviews: (1) applied operations, (2) KPI deltas, (3) outstanding risks.
 
@@ -159,9 +159,9 @@ Each KPI is reported via `reflection.jsonl`, `selections.jsonl`, and step-wise t
 
 ## 9. Integration Touchpoints
 
-- **MES / Production Systems**: Consume `selections.jsonl` for automated stop/go decisions.
+- **MES / Production Systems**: Consume guidance updates and rule-search benchmarks for automated stop/go decisions.
 - **Supplier Portals**: Render Stage-A summaries and final verdict reasons in dispute workflows.
-- **Audit Archive**: Store guidance snapshots + trajectories for quarterly compliance testing.
+- **Audit Archive**: Store guidance snapshots + rule-search artifacts (rule_candidates/benchmarks/hard_cases/regressions) for quarterly compliance testing.
 - **Analytics Warehouse**: Load JSONL outputs into structured tables for KPI dashboards.
 
 Ensure downstream teams understand schema stability commitments; breaking changes require OpenSpec review.
@@ -171,7 +171,7 @@ Ensure downstream teams understand schema stability commitments; breaking change
 ## 10. Support & Further Reading
 
 - Technical operations guide: `./STAGE_B_RUNTIME.md`
-- Prompt templates & schema: `configs/prompts/`, `src/prompts/summary_profiles.py`, `src/prompts/domain_packs.py`, `src/stage_b/sampling/prompts.py`
+- Prompt templates & schema: `configs/prompts/`, `src/prompts/summary_profiles.py`, `src/prompts/domain_packs.py`, `src/prompts/stage_a_summary.py`, `src/prompts/stage_b_verdict.py`, `src/stage_b/sampling/prompts.py`
 - Reflection change log & rationale: `openspec/changes/2025-11-03-adopt-training-free-stage-b/`
 - Visualization utilities for QA spot checks: `vis_tools/`
 

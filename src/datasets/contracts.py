@@ -27,9 +27,35 @@ class MessageDict(TypedDict, total=False):
     content: Sequence[MessageContent]
 
 
+class DatasetImage(TypedDict, total=False):
+    type: str
+    image: str
+
+
+class DatasetObject(TypedDict, total=False):
+    bbox_2d: Sequence[float]
+    poly: Sequence[float]
+    line: Sequence[float]
+    desc: str
+    ref: str
+    label: str
+    score: float
+    object_id: str
+    image_id: int | str
+    attributes: Mapping[str, Any]
+    poly_points: int
+    line_points: int
+    metadata: Mapping[str, Any]
+
+
 class ConversationRecord(TypedDict, total=False):
     messages: Sequence[MessageDict]
     metadata: Mapping[str, Any]
+    summary: str
+    width: float
+    height: float
+    images: Sequence[str | DatasetImage]
+    objects: Sequence[DatasetObject]
 
 
 class GeometryDict(TypedDict, total=False):

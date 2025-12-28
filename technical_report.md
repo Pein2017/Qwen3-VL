@@ -2,14 +2,11 @@
 
 This report documents the end-to-end “group quality inspection” system in this repository: offline data preprocessing → supervised fine-tuning (SFT) training → two-stage inference (Stage‑A/Stage‑B) for mission-scoped group-level pass/fail verdicts. It focuses on **processes, stages, and workflows**; configuration syntax and CLI flags are intentionally de-emphasized.
 
-Primary references:
-- Documentation index and mapping: `docs/README.md`
-- Training architecture: `docs/training/REFERENCE.md`
-- Data preprocessing: `docs/data/DATA_PREPROCESSING_PIPELINE.md`
-- JSONL contract: `docs/data/DATA_JSONL_CONTRACT.md`
-- Stage‑A runtime: `docs/runtime/STAGE_A_RUNTIME.md`
-- Stage‑B runtime: `docs/runtime/STAGE_B_RUNTIME.md`
-- Two-stage business context: `docs/runtime/STAGE_A_STAGE_B.md`, `docs/stage-B-knowledge-Chinese.md`
+Scope emphasis:
+- Stage‑B rule-search (tree‑growth / decision‑tree‑like exploration) as the primary training‑free optimization path.
+- Data contracts that bind the pipeline end‑to‑end: dense-caption JSONL, per-image summaries, Stage‑A evidence JSONL, and Stage‑B guidance/artifacts.
+
+This report is **self‑contained**: assumptions, interfaces, and behaviors are described in place without relying on external documents.
 
 ---
 
@@ -24,9 +21,11 @@ The system reviews **missions** (inspection programs) for telecom equipment inst
 - **Stage‑B verdicts**: group-level binary decisions; the underlying *model output* is enforced to follow a strict two-line protocol:
   - `Verdict: 通过 / 不通过`
   - `Reason: ...` (single-line Chinese; no third-state wording)
-  - Stage‑B exports the normalized verdict as `pass|fail` in JSONL artifacts (e.g., `selections.jsonl`).
+  - Stage‑B records rule‑search artifacts (`rule_candidates.jsonl`, `benchmarks.jsonl`, `rule_search_*`), run‑local `guidance.json` + snapshots, and optional `distill_chatml.jsonl`.
 
-Stage‑B is **training-free**: instead of fine-tuning per mission, it iteratively refines **mission guidance** (a structured “experience” file) via prompt-only rollouts and an in-process reflection loop (`src/stage_b/`).
+Stage‑B is **training‑free**: instead of fine‑tuning per mission, it refines **mission guidance** via rule‑search (proposer‑generated candidates + metric gates) rather than unconstrained self‑reflection.
+
+> Update (2025‑12): Stage‑B executes rule_search only. Legacy selection/need‑review loops are inactive; compatibility types (e.g., deterministic signals) remain but are not used for selection.
 
 Canonical mission names and focus definitions (used across Stage‑A and Stage‑B) live in `src/config/missions.py`:
 - `BBU安装方式检查（正装）`
@@ -39,32 +38,36 @@ Canonical mission names and focus definitions (used across Stage‑A and Stage�
 ```mermaid
 flowchart LR
   A[Raw annotations + images] --> B[data_conversion/ (optional offline conversion)]
-  B --> C[Training JSONL (docs/data/DATA_JSONL_CONTRACT.md)]
+  B --> C[Training JSONL (dense + summary contract)]
   C --> D[SFT training (src/sft.py)]
   D --> E[Qwen3‑VL checkpoint (+ optional LoRA)]
   E --> F[Stage‑A per-image summarization (src/stage_a/)]
   F --> G[Stage‑A evidence JSONL]
-  G --> H[Stage‑B verdict loop + reflection (src/stage_b/)]
-  H --> I[selections.jsonl (final verdicts)]
+  G --> H[Stage‑B rule-search loop (src/stage_b/)]
+  H --> I[rule_candidates.jsonl / benchmarks.jsonl]
   H --> J[guidance.json + snapshots (auditable)]
-  H --> K[manual_review_queue / need_review_queue]
 ```
 
 Key entrypoints (orchestration wrappers):
-- Training: `scripts/train.sh` → `src/sft.py` (`docs/training/TRAINING_PLAYBOOK.md`, `docs/training/REFERENCE.md`)
-- Stage‑A: `scripts/stage_a.sh` → `src/stage_a/cli.py` (`docs/runtime/STAGE_A_RUNTIME.md`)
-- Stage‑B: `scripts/stage_b.sh` → `src/stage_b/runner.py` (`docs/runtime/STAGE_B_RUNTIME.md`)
-- Dataset fusion (optional): `scripts/fuse_datasets.py` and runtime fusion loader (`docs/data/UNIFIED_FUSION_DATASET.md`)
+- Training: `scripts/train.sh` → `src/sft.py`
+- Stage‑A: `scripts/stage_a.sh` → `src/stage_a/cli.py`
+- Stage‑B: `scripts/stage_b.sh` → `src/stage_b/runner.py`
+- Dataset fusion (optional): `scripts/fuse_datasets.py` → `src/datasets/unified_fusion_dataset.py`
+
+### 1.3 Data contracts at a glance
+
+- **Dense‑caption training JSONL**: `images`, `width`, `height`, and `objects[]` with `desc` + one geometry (`bbox_2d|poly|line`). Used for geometry‑grounded captioning.
+- **Summary‑mode training JSONL**: requires a non‑empty `summary` JSON string (single‑line). Irrelevant-image pools use the literal `无关图片`. Objects may be present but are not required for summary‑only training.
+- **Stage‑A evidence JSONL**: `mission`, `group_id`, `label` (`pass|fail`), `images[]`, `per_image{image_i: summary}`. This is the sole input to Stage‑B.
+- **Stage‑B guidance + artifacts**: `guidance.json` (per‑mission experiences + metadata) plus rule‑search artifacts (`rule_candidates.jsonl`, `benchmarks.jsonl`, `rule_search_*`, optional `distill_chatml.jsonl`).
 
 ---
 
 ## 2. Data Preprocessing Pipeline (Annotation → Training JSONL)
 
-This stage is **optional** but recommended when upstream annotations change, new domains are added, or you need offline QA artifacts before training. The offline converter produces JSONL that matches the shared training contract consumed by `src/datasets/`.
+This stage is **optional** but recommended when upstream annotations change, new domains are added, or offline QA artifacts are needed before training. The converter produces JSONL that matches the shared training contract consumed by `src/datasets/`.
 
-References:
-- Workflow: `docs/data/DATA_PREPROCESSING_PIPELINE.md`
-- Contract: `docs/data/DATA_JSONL_CONTRACT.md`
+Core components:
 - Orchestrator: `data_conversion/convert_dataset.sh`
 - Main pipeline: `data_conversion/pipeline/unified_processor.py`
 
@@ -74,7 +77,7 @@ Inputs are labeling-platform exports (JSON + images). The converter maintains ta
 - Attribute taxonomy: `data_conversion/attribute_taxonomy.json`
 - Hierarchical attribute mapping: `data_conversion/hierarchical_attribute_mapping.json`
 
-The output `desc` strings are **hierarchical** and mission/domain-specific (Chinese for BBU/RRU). Stage‑A summaries and Stage‑B reasoning depend on this consistency.
+The output `desc` strings are **hierarchical key=value pairs** and mission/domain-specific (Chinese for BBU/RRU). Stage‑A summaries and Stage‑B reasoning depend on this consistency.
 
 ### 2.2 Processing stages (module responsibilities)
 
@@ -100,11 +103,12 @@ The pipeline is organized around `UnifiedProcessor` (`data_conversion/pipeline/u
    - `data_conversion/pipeline/validation_manager.py` enforces core invariants (bounds, size thresholds, required `desc` when strict, etc.) and emits reports. The pipeline is designed to **report** issues explicitly rather than silently re-writing data.
 
 6. **Summary generation**
-   - `data_conversion/pipeline/summary_builder.py` produces the per-image `summary` field used in summary-mode SFT. The active implementation is **raw-desc grouping**:
-     - group by *raw* `desc` (no canonicalization)
-     - merge identical entries into `desc×N`
-     - sort by `len(desc)` ascending with first-appearance tie-break
-     - fail-fast if objects are missing or `desc` is empty
+   - `data_conversion/pipeline/summary_builder.py` produces a **JSON-string** `summary` with per-category stats:
+     - required keys: `dataset`, `objects_total`, `统计`
+     - `异常` is included only when non-zero; BBU includes `备注` only when non-empty; RRU may include `分组统计`
+   - Only observed values are counted (no missing/需复核/遮挡 placeholders).
+   - OCR/备注 are free text: whitespace removed only; punctuation preserved; unreadable → `可读性=不可读`.
+   - Fail-fast if objects are missing or any `desc` is empty; irrelevant-image samples keep `summary: 无关图片` and bypass the builder.
 
 7. **Deterministic splitting and tiny subsets**
    - `data_conversion/pipeline/data_splitter.py` produces train/val splits using a fixed seed and can also emit `*_tiny.jsonl` for smoke testing.
@@ -114,7 +118,7 @@ The pipeline is organized around `UnifiedProcessor` (`data_conversion/pipeline/u
 This project treats geometry as a **first-class, preserved signal** (for training-time grounding and augmentation). Canonicalization ensures consistent polygon interpretation across converters, visualization tools, and augmentation.
 
 Core behaviors:
-- Canonical geometry keys are `bbox_2d`, `poly`, `line` (one per object), as specified in `docs/data/DATA_JSONL_CONTRACT.md`.
+- Canonical geometry keys are `bbox_2d`, `poly`, `line` (one per object).
 - Polygon vertex ordering is canonicalized offline in `data_conversion/pipeline/coordinate_manager.py` via `CoordinateManager.canonical_poly_ordering(...)`:
   - remove duplicate closing points
   - sort vertices clockwise around the centroid
@@ -125,24 +129,24 @@ This canonicalization prevents downstream issues like self-crossing polygons and
 
 ### 2.4 Output format: the shared JSONL contract
 
-The converter emits JSONL records that follow `docs/data/DATA_JSONL_CONTRACT.md` and are validated by `scripts/validate_dense_jsonl_contract.py`.
+The converter emits JSONL records that follow the shared training contract described in this report and can be validated by `scripts/validate_dense_jsonl_contract.py`.
 
 Key invariants (contract-level):
 - Top-level keys: `images`, `objects`, `width`, `height`, optional `summary`, optional `metadata`.
-- Each object has **exactly one** geometry key among `bbox_2d`, `poly`, `line` and must have a non-empty `desc`.
-- Group membership for RRU/BBU is encoded in `desc` using a prefix like `组1:`. There is **no top-level** `groups` field (`docs/data/DATA_JSONL_CONTRACT.md`).
+- Dense mode requires a non-empty `objects` list; each object must include `desc` and **exactly one** geometry key among `bbox_2d`, `poly`, `line` (flat even-length list of x/y values). `quad` is rejected in favor of `poly`.
+- Summary mode requires a non-empty `summary` JSON string (single line) or the literal `无关图片`; `objects` may be present but is not required for summary-only training.
+- `desc` must be a non-empty string with no control newlines/tabs. For BBU/RRU it uses comma‑separated `key=value` pairs with **no spaces** and `类别` first. `文本`/`备注` are free text: whitespace removed only; punctuation (including `,|=`) is preserved; unreadable → `可读性=不可读`. `需复核/遮挡` are not emitted.
+- **Groups (RRU only)**: group membership is encoded directly in `desc` as `组=<id>` (multiple groups joined with `|` if present). BBU MUST NOT include `组`. There is **no top‑level** `groups` field.
+- **Station distance (RRU only)**: represented as `类别=站点距离,站点距离=<int>` and carried through to summary stats as `站点距离`.
+- Assistant outputs are serialized with separators `", "` and `": "` to retain spaces in coordinate lists and JSON summaries (tokenizer stability).
 
 #### Example: minimal (demo) record
 
-From `demo/data/train_tiny.jsonl`:
-
 ```json
-{"images":["../images/QC-20230106-0000211_16517.jpeg"],"objects":[{"bbox_2d":[48,76,312,428],"desc":"设备/示例"},{"poly":[360,120,480,120,480,260,360,260],"poly_points":4,"desc":"标签/示例"}],"summary":"设备×1，标签×1","width":532,"height":728}
+{"images":["../images/QC-20230106-0000211_16517.jpeg"],"objects":[{"bbox_2d":[48, 76, 312, 428],"desc":"类别=BBU设备,品牌=示例,可见性=部分,挡风板需求=免装"},{"poly":[360, 120, 480, 120, 480, 260, 360, 260],"poly_points":4,"desc":"类别=标签,文本=NR900-BBU"}],"summary":"{\"dataset\": \"BBU\", \"objects_total\": 2, \"统计\": [{\"类别\": \"BBU设备\", \"品牌\": {\"示例\": 1}, \"可见性\": {\"部分\": 1}, \"挡风板需求\": {\"免装\": 1}}, {\"类别\": \"标签\", \"文本\": {\"NR900-BBU\": 1}}]}","width":532,"height":728}
 ```
 
 #### Example: BBU record with mixed geometry + summary
-
-From `data/bbu_full_768_poly/train_tiny.jsonl` (first line):
 
 ```json
 {
@@ -152,50 +156,28 @@ From `data/bbu_full_768_poly/train_tiny.jsonl` (first line):
   "objects": [
     {
       "poly": [0, 190, 438, 230, 401, 622, 0, 614],
-      "desc": "BBU设备/华为,只显示部分,机柜空间充足需要安装/这个BBU设备按要求配备了挡风板,备注:无法判断品牌"
+      "desc": "类别=BBU设备,品牌=华为,可见性=部分,挡风板需求=免装,备注=无法判断品牌"
     },
     {
       "bbox_2d": [443, 226, 491, 286],
-      "desc": "螺丝、光纤插头/BBU安装螺丝,符合要求"
-    },
-    {
-      "bbox_2d": [429, 426, 460, 458],
-      "desc": "螺丝、光纤插头/机柜处接地螺丝,符合要求"
+      "desc": "类别=BBU安装螺丝,符合性=符合"
     },
     {
       "line": [453, 469, 470, 572, 501, 630, 529, 670, 611, 726],
-      "desc": "电线/捆扎整齐"
-    },
-    {
-      "bbox_2d": [411, 544, 450, 587],
-      "desc": "螺丝、光纤插头/BBU安装螺丝,符合要求"
+      "desc": "类别=电线,捆扎=整齐"
     },
     {
       "poly": [481, 553, 661, 544, 644, 618, 507, 624],
-      "desc": "标签/5GBBU接地线"
-    },
-    {
-      "poly": [0, 615, 385, 630, 377, 793, 0, 801],
-      "desc": "挡风板/华为,只显示部分,安装方向正确,备注:无法判断品牌和安装方向是否正确"
-    },
-    {
-      "poly": [157, 898, 252, 895, 260, 1023, 163, 1023],
-      "desc": "标签/无法识别"
-    },
-    {
-      "poly": [307, 1021, 354, 956, 414, 1023, 309, 1023],
-      "desc": "标签/无法识别"
+      "desc": "类别=标签,文本=5GBBU接地线"
     }
   ],
-  "summary": "BBU设备/华为/只显示部分×1，螺丝、光纤插头/BBU安装螺丝/符合要求×2，螺丝、光纤插头/机柜处接地螺丝/符合要求×1，电线/捆扎整齐×1，标签/可以识别×1，标签/无法识别×2，挡风板/只显示部分/安装方向正确×1，备注: 无法判断品牌；无法判断品牌和安装方向是否正确",
+  "summary": "{\"dataset\": \"BBU\", \"objects_total\": 4, \"统计\": [{\"类别\": \"BBU设备\", \"品牌\": {\"华为\": 1}, \"可见性\": {\"部分\": 1}, \"挡风板需求\": {\"免装\": 1}}, {\"类别\": \"BBU安装螺丝\", \"符合性\": {\"符合\": 1}}, {\"类别\": \"电线\", \"捆扎\": {\"整齐\": 1}}, {\"类别\": \"标签\", \"文本\": {\"5GBBU接地线\": 1}}], \"备注\": [\"无法判断品牌\"]}",
   "width": 768,
   "height": 1024
 }
 ```
 
-#### Example: RRU record with group-encoded membership (`组<id>:`)
-
-From `data/rru_full_1024_poly/train_tiny.jsonl` (second line):
+#### Example: RRU record with group-encoded membership (`组=<id>`)
 
 ```json
 {
@@ -203,13 +185,12 @@ From `data/rru_full_1024_poly/train_tiny.jsonl` (second line):
     "images/审核通过/QC-20240424-0028974/QC-20240424-0028974_3119298.jpeg"
   ],
   "objects": [
-    { "bbox_2d": [37, 269, 79, 298], "desc": "站点距离/98" },
-    { "line": [122, 1173, 105, 799, 245, 703, 235, 269], "desc": "组2:接地线/有标签" },
-    { "line": [40, 1111, 16, 833, 165, 540, 138, 118], "desc": "组1:尾纤/有标签,有套管保护" },
-    { "poly": [128, 840, 86, 852, 104, 954, 149, 941], "desc": "组2:标签/900M-RRU2-接地" },
-    { "poly": [53, 843, 5, 862, 53, 966, 94, 945], "desc": "组1:标签/900M-RRU2-光纤" }
+    { "bbox_2d": [37, 269, 79, 298], "desc": "类别=站点距离,站点距离=98" },
+    { "line": [122, 1173, 105, 799, 245, 703, 235, 269], "desc": "类别=接地线,标签=有标签,组=2" },
+    { "line": [40, 1111, 16, 833, 165, 540, 138, 118], "desc": "类别=尾纤,标签=有标签,套管保护=有套管,组=1" },
+    { "poly": [128, 840, 86, 852, 104, 954, 149, 941], "desc": "类别=标签,文本=900M-RRU2-接地,组=2" }
   ],
-  "summary": "站点距离/98，组2:接地线/有标签，组1:尾纤/有标签,有套管保护，组2:标签/900M-RRU2-接地，组1:标签/900M-RRU2-光纤",
+  "summary": "{\"dataset\": \"RRU\", \"objects_total\": 4, \"统计\": [{\"类别\": \"站点距离\", \"站点距离\": {\"98\": 1}}, {\"类别\": \"接地线\", \"标签\": {\"有标签\": 1}}, {\"类别\": \"尾纤\", \"标签\": {\"有标签\": 1}, \"套管保护\": {\"有套管\": 1}}, {\"类别\": \"标签\", \"文本\": {\"900M-RRU2-接地\": 1}}], \"分组统计\": [{\"组\": 1, \"objects_total\": 1}, {\"组\": 2, \"objects_total\": 2}]}",
   "width": 672,
   "height": 1504
 }
@@ -223,11 +204,7 @@ Training is a **config-first** SFT pipeline designed to learn:
 - **Dense captioning**: geometry-grounded object descriptions (bbox/poly/line + hierarchical `desc`).
 - **Summary mode**: single-line per-image summaries consistent with production formatting rules.
 
-References:
-- Implementation entrypoint: `src/sft.py`
-- Config loading and validation: `src/config/loader.py`, `src/config/schema.py`
-- Dataset builders: `src/datasets/`
-- Training documentation: `docs/training/REFERENCE.md`, `docs/training/TRAINING_PLAYBOOK.md`
+Implementation anchors: `src/sft.py`, `src/config/loader.py`, `src/config/schema.py`, `src/datasets/`
 
 ### 3.1 Config-first training lifecycle
 
@@ -239,7 +216,7 @@ The training runner (`src/sft.py`) intentionally minimizes runtime CLI surface a
 
 2. **Build datasets (direct or fused)**
    - Direct JSONL: `src/datasets/dense_caption.py::BaseCaptionDataset.from_jsonl(...)`
-   - Fusion (target + auxiliary sources): `src/datasets/unified_fusion_dataset.py::FusionCaptionDataset` with config types in `src/datasets/fusion.py` and design notes in `docs/data/UNIFIED_FUSION_DATASET.md`.
+   - Fusion (target + auxiliary sources): `src/datasets/unified_fusion_dataset.py::FusionCaptionDataset` with config types in `src/datasets/fusion.py`.
 
    #### Fusion dataset: target vs source domains (and why it exists)
 
@@ -261,10 +238,10 @@ The training runner (`src/sft.py`) intentionally minimizes runtime CLI surface a
    - **Telemetry and metrics**: the training collator attaches `dataset_labels` derived from `_fusion_source` (`src/data_collators/dataset_metrics.py`), enabling per-dataset/per-domain metrics and debugging (useful to confirm sources are doing their “anti-forgetting” job without dominating training).
 
 3. **Prepare the model (LoRA/adapters) before trainer construction**
-   - `src/sft.py` calls `SwiftSft.prepare_model(...)` before creating the trainer, ensuring adapter state is correct for optimization and checkpointing (`docs/training/REFERENCE.md`).
+   - `src/sft.py` calls `SwiftSft.prepare_model(...)` before creating the trainer, ensuring adapter state is correct for optimization and checkpointing.
 
 4. **Train with padded batches**
-   - Packing is removed from this runtime; the system uses padded batches only and enforces this by validation in `src/sft.py` (and in docs).
+   - Packing is removed from this runtime; the system uses padded batches only and enforces this by validation in `src/sft.py`.
 
 ### 3.2 Dataset builders and message formatting (dense vs summary)
 
@@ -280,18 +257,18 @@ Core components:
 2. Sort objects deterministically (`data_conversion/utils/sorting.py`, `sort_objects_tlbr`).
 3. Build a single-turn conversation:
    - user: `[image, prompt]`
-   - assistant: JSON mapping `object_1`, `object_2`, … to `{desc, geometry...}` (`JSONLinesBuilder._build_group_entry`).
+   - assistant: JSON mapping `object_1`, `object_2`, … to `{desc, geometry...}` (`JSONLinesBuilder._build_group_entry`), optionally prefixed with `<DOMAIN=...>, <TASK=DETECTION>` + newline when `assistant_prefix_format` is enabled (required for BBU/RRU).
 4. Attach top-level `objects` metadata (pixel-space points) for template-side normalization and downstream tooling.
 
 **Summary mode workflow**
 1. Load a JSONL record with a non-empty `summary`.
 2. Build a single-turn conversation:
    - user: `[image, summary_prompt]`
-   - assistant: the summary string (single line; no coordinates)
+   - assistant: the summary JSON string (single line; no coordinates), optionally prefixed with `<DOMAIN=...>, <TASK=SUMMARY>` + newline when `assistant_prefix_format` is enabled (required for BBU/RRU). Irrelevant-image samples use the literal `无关图片` as the summary line.
 
 ### 3.3 Template encoding and token flow (vision placeholders)
 
-This project relies on the model’s native chat template (ms-swift + HF tokenizer) for vision token insertion and masking. Key behaviors (see `docs/training/REFERENCE.md` and `docs/README.md`):
+This project relies on the model’s native chat template (ms-swift + HF tokenizer) for vision token insertion and masking. Key behaviors:
 - Templates automatically insert image placeholders; do not hand-craft `<|image_pad|>` tokens.
 - Geometry stays in pixel space on disk; templates and builders handle normalization (e.g., norm1000) at encoding time.
 
@@ -300,7 +277,6 @@ This project relies on the model’s native chat template (ms-swift + HF tokeniz
 Augmentation is applied as a **preprocessor** that transforms both the image and its geometry in sync:
 - Augmentation ops and Compose pipeline: `src/datasets/augmentation/` (`builder.py`, `base.py`, `ops.py`)
 - Core geometry transforms and clipping utilities: `src/datasets/geometry.py`
-- Augmentation guide: `docs/data/DATA_AUGMENTATION.md`
 
 Design goals:
 - Preserve pixel↔geometry alignment through affine transforms (rotate/flip/scale) and size-changing ops (crop/resize).
@@ -331,10 +307,7 @@ Rank-aware logging is standardized via `src/utils/logger.py`:
 
 Stage‑A generates **per-image evidence summaries** from raw images, producing an evidence JSONL that Stage‑B consumes.
 
-References:
-- Code: `src/stage_a/inference.py`, `src/stage_a/prompts.py`, `src/stage_a/cli.py`
-- Runtime doc: `docs/runtime/STAGE_A_RUNTIME.md`
-- Mission definitions: `src/config/missions.py`
+Implementation anchors: `src/stage_a/inference.py`, `src/stage_a/prompts.py`, `src/stage_a/cli.py`, `src/config/missions.py`
 
 ### 4.1 Input discovery and ticket semantics
 
@@ -364,10 +337,11 @@ Stage‑A writes streaming JSONL records (one per group) with strict coverage va
 - `group_id` (string)
 - `mission` (string)
 - `label` (`pass|fail`)
-- `images` (list of filenames)
+- `images` (list of filenames; traceability only)
 - `per_image` (object mapping `image_1`, `image_2`, … to summary strings)
+- Optional: `label_source`, `label_timestamp` (if upstream adds provenance)
 
-Example record from `output_post/stage_a/挡风板安装检查_stage_a.jsonl`:
+Example record:
 
 ```json
 {
@@ -380,15 +354,15 @@ Example record from `output_post/stage_a/挡风板安装检查_stage_a.jsonl`:
     "QC-20231218-0025165_4127784.jpeg"
   ],
   "per_image": {
-    "image_1": "BBU设备/需复核,备注:无法判断品牌,从空间角度看,无法判断是否足够空间安装挡风板×1，螺丝、光纤插头/BBU安装螺丝,符合要求×1，BBU设备/华为,备注:只显示部分,拍摄角度原因无法框选完整×1",
-    "image_2": "电线/捆扎整齐×1，标签/5G-BBU-接地线×1，螺丝、光纤插头/机柜处接地螺丝,符合要求×1",
-    "image_3": "标签/无法识别×3，BBU设备/华为,只显示部分,无需安装×1，螺丝、光纤插头/BBU安装螺丝,符合要求×2，螺丝、光纤插头/BBU端光纤插头,符合要求×3，挡风板/华为,显示完整,安装方向正确×1，BBU设备/华为,显示完整,机柜空间充足需要安装/这个BBU设备按要求配备了挡风板×1"
+    "image_1": "<DOMAIN=BBU>, <TASK=SUMMARY>\\n{\"dataset\": \"BBU\", \"objects_total\": 3, \"统计\": [{\"类别\": \"BBU设备\", \"品牌\": {\"华为\": 1}, \"可见性\": {\"部分\": 1}}, {\"类别\": \"BBU安装螺丝\", \"符合性\": {\"符合\": 1}}, {\"类别\": \"标签\", \"文本\": {\"5GBBU接地线\": 1}}]}",
+    "image_2": "<DOMAIN=BBU>, <TASK=SUMMARY>\\n{\"dataset\": \"BBU\", \"objects_total\": 2, \"统计\": [{\"类别\": \"电线\", \"捆扎\": {\"整齐\": 1}}, {\"类别\": \"标签\", \"文本\": {\"NR900-BBU\": 1}}]}",
+    "image_3": "<DOMAIN=BBU>, <TASK=SUMMARY>\\n{\"dataset\": \"BBU\", \"objects_total\": 1, \"统计\": [{\"类别\": \"挡风板\", \"安装方向\": {\"方向正确\": 1}}]}"
   }
 }
 ```
 
 Notes:
-- Stage‑A attempts to sanitize model outputs that accidentally return JSON objects (it extracts `image_1`/`图片_1` or joins string values) while otherwise preserving raw content (`sanitize_single_image_summary` in `src/stage_a/inference.py`).
+- Stage‑A attempts to sanitize model outputs that accidentally return JSON objects (it extracts `image_1`/`图片_1` or joins string values) while otherwise preserving raw content, including the optional `<DOMAIN=...>, <TASK=...>` prefix line (`sanitize_single_image_summary` in `src/stage_a/inference.py`).
 - Stage‑A applies EXIF orientation fixes (`data_conversion/utils/exif_utils.py`, `apply_exif_orientation`) before encoding images.
 
 ### 4.4 Operational verification hooks
@@ -400,148 +374,108 @@ Stage‑A supports optional verification logging to debug token/grid alignment a
 
 ---
 
-## 5. Stage‑B Inference (Group Verdicts + Training-Free Reflection)
+## 5. Stage‑B Inference (Rule‑Search, Training‑Free)
 
-Stage‑B consumes Stage‑A evidence summaries and generates mission-scoped group verdicts. It is “training-free”: learning happens by refining a **guidance file** rather than updating weights.
+Stage‑B consumes Stage‑A evidence summaries and produces mission‑scoped group verdicts. It is **training‑free**: the model weights remain fixed, while **mission guidance** is evolved via **rule‑search** (tree‑growth / decision‑tree‑like exploration). Rule‑search is the only active Stage‑B mode in the current implementation; legacy selection/need‑review loops are not executed, though compatibility types remain.
 
-References:
-- Orchestrator: `src/stage_b/runner.py`
-- Config schema: `src/stage_b/config.py`
-- Ingestion: `src/stage_b/ingest/stage_a.py`
-- Prompt construction: `src/stage_b/sampling/prompts.py`
-- Rollout sampler + parser: `src/stage_b/rollout.py`
-- Selection policy + deterministic guardrails: `src/stage_b/scoring/selection.py`, `src/stage_b/signals.py`
-- Reflection engine: `src/stage_b/reflection/engine.py`
-- Guidance repository + snapshots: `src/stage_b/io/guidance.py`
-- Runtime doc: `docs/runtime/STAGE_B_RUNTIME.md`
+### 5.1 Input contract: Stage‑A JSONL → `GroupTicket`
 
-### 5.1 Ingest: Stage‑A JSONL → tickets
+Stage‑B ingests Stage‑A JSONL and normalizes each record into a `GroupTicket`:
+- Required fields: `mission` (string), `group_id` (string), `label` (`pass|fail`), `per_image` (object).
+- Optional fields: `label_source` (string; default `human`), `label_timestamp` (ISO string; parsed if present).
+- `per_image` must be a non‑empty mapping. Keys are normalized to `image_<index>` based on numeric suffix; ordering is normalized to ascending `image_1, image_2, ...`.
+- Ticket identity is `ticket_key = "{group_id}::{label}"`, allowing the same `group_id` to appear under different labels.
+- `images` is retained for traceability but is not used by Stage‑B inference.
 
-Stage‑B loads Stage‑A JSONL files and normalizes per-image keys (`image_1`, `image_2`, …) to build `GroupTicket` objects:
-- `src/stage_b/ingest/stage_a.py::ingest_stage_a(...)`
-- Tickets are uniquely keyed by `uid = "{group_id}::{label}"` to allow resubmissions under different labels.
+Optional filtering is supported before rule‑search via `ticket_filter` (explicit ticket keys or a file listing ticket keys) to exclude known‑noisy labels.
 
-### 5.2 Prompting: guidance + summaries + strict output protocol
+### 5.2 Guidance contract (`guidance.json`)
 
-Stage‑B prompts are assembled as a system+user message pair:
-- `src/stage_b/sampling/prompts.py::build_system_prompt(...)`
-  - embeds the mission’s `G0` focus (the *only* “task points” the model should use)
-  - states “fail-first” and soft-signal policies
-  - enforces the strict two-line output protocol
-- `src/stage_b/sampling/prompts.py::build_user_prompt(...)`
-  - includes per-image summaries and a derived `ImageN(obj=...)` statistic (computed from `×N` counts or fallback heuristics)
-  - includes additional experiences (`G1`, `G2`, …) as “补充提示”
+Guidance is a mission‑scoped JSON file stored under the run directory and versioned with snapshots. The file is a mapping of `mission → section` where each section contains:
+- `step` (int): monotonic guidance step counter.
+- `updated_at` (ISO string): last update timestamp.
+- `experiences` (mapping `key → text`):
+  - `G0` is required and represents the mission focus (immutable anchor for prompting).
+  - `S*` keys are scaffolds (immutable, structural invariants).
+  - `G*` keys are mutable, learnable rules updated by rule‑search.
+- `metadata` (optional mapping `key → object`), per‑experience provenance:
+  - `updated_at`, `reflection_id`, `sources`, optional `rationale`.
+  - lifecycle counters: `hit_count`, `miss_count`, `confidence` (float).
 
-Important compatibility detail:
-- Stage‑A summaries may contain a soft marker like `需复核,备注:`. Stage‑B sanitizes this marker out of the prompt to avoid forbidden third-state tokens appearing in model outputs (`_sanitize_stage_a_summary_for_prompt` in `src/stage_b/sampling/prompts.py`), while preserving the remark content (`备注:`).
+Guidance updates are written only to the run‑local `guidance.json` under `{output.root}/{mission}/{run_name}/` and are **not** merged back into the global seed automatically.
 
-### 5.3 Rollout: prompt-only candidate generation + parsing
+### 5.3 Prompting + strict output protocol
 
-Stage‑B generates multiple candidate responses per ticket:
-- `src/stage_b/rollout.py::RolloutSampler.generate_for_batch(...)`
-- It renders prompts with the tokenizer’s chat template and explicitly disables “thinking” blocks (`enable_thinking=False`) to keep outputs stable.
-- Each candidate is parsed by `src/stage_b/rollout.py::_parse_two_line_response(...)`:
-  - must be exactly two non-empty lines: `Verdict: ...` and `Reason: ...`
-  - verdict must be binary (`通过`/`不通过` → `pass|fail`)
-  - reason must be non-empty and **must not** contain third-state phrases (e.g., `需复核`, `证据不足`, `待定`, etc.)
-  - parsing failures are recorded as `format_ok = false` and will be excluded from selection
+Each ticket is prompted with a system+user pair:
+- **System prompt**: mission/domain policy scaffold (binary verdict, no third‑state language).
+- **User prompt** includes:
+  - mission name and focus (`G0`),
+  - scaffold experiences (`S*`) and learnable rules (`G*`) rendered as numbered bullets,
+  - per‑image summaries (sanitized), plus a derived `ImageN(obj=...)` statistic,
+  - optional aggregation blocks for RRU missions (installation/position/cable summaries by station distance).
 
-### 5.4 Selection: majority vote + mission-scoped fail-first guardrail
+Stage‑A summaries are expected to contain **no third‑state markers** (e.g., 需复核/遮挡). Any stray forbidden tokens are stripped before Stage‑B prompting to avoid third‑state leakage.
 
-Selection chooses a final verdict for each ticket:
-- Majority vote across `format_ok` candidates (`src/stage_b/scoring/selection.py::select_for_group(...)`)
-- Tie-break prefers `fail` when tied (risk-control bias)
+**Output contract (strict two lines):**
+- `Verdict: 通过|不通过` (binary only)
+- `Reason: <single line>` (non‑empty, no forbidden “need‑review” phrasing)
 
-Then a deterministic guardrail is applied:
-- Mission evidence extraction: `src/stage_b/signals.py::extract_mission_evidence(...)`
-  - splits Stage‑A summaries into object-level clauses (by Chinese commas)
-  - identifies explicit negative triggers and pattern-first negatives like `不符合要求/<issue>`
-  - checks mission relevance using keywords derived from the mission’s `G0` (no global noun glossary)
-  - ignores negatives in uncertain contexts (e.g., `是否缺失`) and inside “soft signal” entries (`无法判断/只显示部分/需复核`)
-- If any **mission-relevant** explicit negative evidence exists, Stage‑B **overrides** the final verdict to `fail` and rewrites the reason to cite the evidence (`select_for_group`).
+### 5.4 Rollouts and parsing
 
-This implements “mission-scoped fail-first”: only negatives relevant to the current mission’s `G0` can deterministically force a fail.
+Stage‑B generates multiple candidate responses per ticket using a decode grid (temperature/top‑p/seed). Prompts are rendered with the tokenizer chat template and “thinking” blocks are disabled for stability. Each response is parsed by a strict two‑line parser; failures are marked `format_ok = false` and excluded from rule‑search metrics.
 
-### 5.5 Reflection: guidance refinement (training-free “learning”)
+### 5.5 Rule‑search loop (tree‑growth / decision‑tree‑like exploration)
 
-Reflection is an optional but central loop that proposes and applies small guidance edits:
-- Engine: `src/stage_b/reflection/engine.py::ReflectionEngine`
-- Persistence: `src/stage_b/io/guidance.py::GuidanceRepository`
+Rule‑search grows guidance in iterations (one iteration per `runner.epochs`). Conceptually, each accepted candidate is a **branch** added to the guidance tree; metric gates act as pruning criteria.
 
-High-level workflow (runner-managed, see `src/stage_b/runner.py`):
-1. Collect “interesting” tickets into a reflection batch (mismatches, mixed outcomes, low agreement, etc.).
-2. Build a bundle that includes:
-   - current guidance snapshot
-   - Stage‑A summaries
-   - selected candidates and signals
-3. Run a reflection prompt that outputs structured JSON operations (upsert/remove/merge), with caps on operations and optional per-epoch change caps for governance.
-4. Apply operations to the mission guidance file and write an auditable log.
+Core loop:
+1. **Pool setup**: tickets are split into train/eval pools (stratified by label). Over‑length prompts (exceeding `max_prompt_tokens`) are dropped per pool to keep comparisons consistent.
+2. **Baseline rollout** on the train pool produces per‑ticket majority stats (`pass_count`, `fail_count`, `agreement`, `hard_wrong`). Hard cases are logged for analysis.
+3. **Candidate proposal**:
+   - A proposer LLM receives hard cases and current guidance and emits candidate operations.
+   - Candidate operations include `upsert`, `update`, `merge`, `remove` with normalized rule signatures.
+   - If the proposer yields too few candidates, ablation candidates are generated from low‑confidence existing rules.
+4. **Candidate evaluation**:
+   - Each candidate runs paired rollouts on the same train pool to compute ticket‑level stats.
+   - **Gate metrics** are computed on the overlap between baseline and candidate tickets:
+     - **Relative error reduction (RER)** on accuracy.
+     - **Changed‑fraction**: fraction of tickets whose majority prediction flips.
+     - **Bootstrap probability** that RER ≥ threshold.
+   - For lifecycle ops (`update|merge|remove`), additional constraints apply: accuracy must improve, false‑release (FP) rate must improve, and FP rate increase must not exceed `max_fp_rate_increase`.
+   - Optional **eval‑pool** rollouts verify that gated candidates do not regress on held‑out tickets.
+5. **Selection + application**:
+   - The best gated candidate (highest RER) is applied to guidance and recorded in `benchmarks.jsonl`.
+   - If no candidate passes for `early_stop.patience` iterations, rule‑search stops early.
 
-Human review routing (need-review):
-- Stage‑B no longer quarantines “label vs Stage‑A evidence contradictions” inside the reflection engine.
-- Instead, **human review is unified as need‑review = unexplainable-after-reflection**:
-  - after the runner provides `gt_label` to reflection, if reflection produces **no learnable operations** (`operations=[]`, `applied=false`)
-  - and the rollout candidates contain **no candidate that supports GT** (no `label_match=True`)
-  - then the runner appends the ticket to `need_review_queue.jsonl`.
-- This is implemented in `src/stage_b/runner.py` (post-reflection routing), and reflection must not write `need_review_queue.jsonl` (`src/stage_b/reflection/engine.py` keeps `_need_review_path=None`).
+A baseline‑only mode (`jump_reflection`) runs the baseline rollout and exports diagnostics without proposing or gating rules.
 
-Guidance repository behavior:
-- Guidance is stored as JSON with per-mission sections containing:
-  - `step` (monotonic version counter)
-  - `experiences` (`G0`, `G1`, …)
-  - `metadata` (per-experience provenance, hit/miss counts, confidence)
-- The runner copies a startup guidance file into the run directory so experiments remain isolated until manually promoted (`GuidanceRepository` usage in `src/stage_b/runner.py` and `docs/runtime/STAGE_B_RUNTIME.md`).
-- Snapshots are retained for rollback audits (`guidance.retention` in `src/stage_b/config.py`).
+### 5.6 Stage‑B artifacts and contracts
 
-### 5.6 Artifacts emitted by Stage‑B
+Run directory layout: `{output.root}/{mission}/{run_name}/`
 
-Per mission, Stage‑B writes a run directory layout (see `docs/runtime/STAGE_B_RUNTIME.md` and `src/stage_b/runner.py`):
-- `trajectories.jsonl`: all rollout candidates with decode params and parse flags (`src/stage_b/io/export.py::serialize_trajectory`)
-- `selections.jsonl`: final verdict per ticket with metadata (`src/stage_b/io/export.py::serialize_selection`)
-- `need_review_queue.jsonl`: human review queue (only for *unexplainable-after-reflection*)
-- `need_review.json`: run-end deterministic aggregate of `need_review_queue.jsonl`
-- `manual_review_queue.jsonl`: legacy placeholder for backward compatibility (kept empty by design; do not use as review entrance)
-- `failure_malformed.jsonl`: raw malformed outputs / no-candidate / selection errors for prompt debugging
-- `reflection.jsonl`: reflection outcomes and applied operations
-- `guidance.json` + `snapshots/`: evolving, auditable mission guidance state
+Core artifacts (rule‑search runs):
+- `guidance.json` + `snapshots/`: evolving guidance state with step counters and provenance.
+- `rule_candidates.jsonl`: every candidate with decision and metrics. Key fields include:
+  - `candidate_id`, `op`, `signature`, `target_signature(s)`, `text`, `rationale`, `source`.
+  - train/eval metrics before/after (accuracy, false‑release rate, false‑block rate).
+  - gate stats and final `decision` (`promoted|rejected`).
+- `benchmarks.jsonl`: accepted candidates only, with before/after metrics and gate stats.
+- `rule_search_hard_cases.jsonl`: hard or high‑confidence wrong tickets mined each iteration.
+- `rule_search_candidate_regressions.jsonl`: tickets that regress under candidate guidance.
 
-Example selection record (from `output_post/stage_b/new_stage_a/挡风板安装检查/selections.jsonl`):
+Baseline diagnostics (jump_reflection or baseline export):
+- `baseline_metrics.json`: summary metrics (acc/fn/fp + derived np/ng).
+- `baseline_ticket_stats.jsonl`: per‑ticket counts and agreement.
+- `baseline_wrong_cases.jsonl`, `baseline_np_cases.jsonl`, `baseline_ng_cases.jsonl`: joined evidence for false‑block/false‑release analysis.
+- `baseline_metrics_steps.jsonl`: progress snapshots during rollout.
 
-```json
-{
-  "group_id": "QC-20241204-0034880",
-  "mission": "挡风板安装检查",
-  "result": {
-    "verdict": "pass",
-    "reason": "Image1: BBU设备显示完整且机柜空间充足需要安装挡风板，挡风板显示完整且安装方向正确；总结: 符合挡风板安装要求。",
-    "vote_strength": 1.0,
-    "label_match": true,
-    "selected_candidate": 0,
-    "guidance_step": 1,
-    "reflection_change": null,
-    "reflection_cycle": 0,
-    "manual_review_recommended": false,
-    "eligible": true,
-    "ineligible_reason": null,
-    "warnings": [],
-    "conflict_flag": false,
-    "needs_manual_review": false,
-    "low_agreement": false
-  },
-  "epoch": 1,
-  "ticket_key": "QC-20241204-0034880::pass",
-  "gt_label": "pass"
-}
-```
+Optional distillation:
+- `distill_chatml.jsonl`: ChatML prompt/response pairs emitted under the current guidance for post‑training.
 
-### 5.7 Distributed execution model (single node)
+### 5.7 Distributed execution model
 
-Stage‑B supports “ticket-parallel rollout” using distributed execution (see `docs/runtime/STAGE_B_RUNTIME.md` and `src/stage_b/runner.py`):
-- Each rank runs rollouts on a shard of tickets; the model is replicated per rank.
-- Selection and reflection are centralized on rank 0; only rank 0 writes the final artifacts.
-- In distributed mode, device placement is forced to per-rank single-GPU to avoid accidental model-parallel sharding (`_load_model` in `src/stage_b/runner.py`).
+Stage‑B is ticket‑parallel: each rank processes a shard of tickets with a replicated model, while rank 0 aggregates stats, gates candidates, and writes artifacts. In distributed mode, device placement is forced to single‑GPU per rank to prevent unintended model‑parallel sharding.
 
----
 
 ## 6. End-to-End Workflow (Raw Data → Final Verdict)
 
@@ -550,29 +484,22 @@ This section ties the stages together as an operational workflow.
 ### 6.1 Pipeline walk-through
 
 1. **Ingest raw annotations (optional offline conversion)**
-   - Run the offline pipeline under `data_conversion/` to generate train/val JSONL and QA reports.
-   - Validate outputs against `docs/data/DATA_JSONL_CONTRACT.md` (use `scripts/validate_dense_jsonl_contract.py`).
+   - The offline pipeline under `data_conversion/` produces train/val JSONL and QA reports.
+   - Outputs can be validated with `scripts/validate_dense_jsonl_contract.py`.
 
 2. **Train / update the shared Qwen3‑VL checkpoint**
-   - Run SFT training via `src/sft.py` (wrapped by `scripts/train.sh`).
-   - Training may be direct JSONL or fusion-based; augmentation is applied only where configured and is geometry-aware (`docs/data/DATA_AUGMENTATION.md`).
+   - SFT training is executed via `src/sft.py` (wrapped by `scripts/train.sh`).
+   - Training may be direct JSONL or fusion-based; augmentation is applied only when configured and preserves geometry.
 
-3. **Run Stage‑A to generate evidence JSONL**
-   - Organize incoming ticket images in mission folders (pass/fail splits).
-   - Run Stage‑A (`src/stage_a/`) to emit per-image summaries as JSONL.
+3. **Stage‑A evidence generation**
+   - Stage‑A reads mission folder splits (pass/fail) and emits per‑image summaries as JSONL.
 
-4. **Run Stage‑B to produce group verdicts and refine guidance**
-   - Ingest Stage‑A JSONL into Stage‑B.
-   - For each ticket:
-     - rollout N candidates under guidance
-     - parse strict two-line outputs
-     - select via majority vote + fail-first override
-   - Periodically run reflection to update guidance for recurring mismatches while quarantining noisy contradictions.
+4. **Stage‑B verdicts + guidance refinement**
+   - Stage‑B ingests Stage‑A JSONL, performs rule‑search rollouts, and applies gated guidance updates.
 
-5. **Human-in-the-loop review and governance**
-   - Review `failure_malformed.jsonl` for format failures / missing candidates / selection errors.
-   - Review `need_review_queue.jsonl` (or `need_review.json`) for tickets that remain unexplainable-after-reflection.
-   - Promote guidance changes from run-local `guidance.json` back to the shared guidance seed only after approval (auditable via snapshots).
+5. **Audit and promote guidance**
+   - Rule‑search artifacts (`rule_search_*`) and `benchmarks.jsonl` are inspected for regressions.
+   - Run‑local guidance snapshots are reviewed before promotion to the shared guidance seed.
 
 ### 6.2 Artifact handoffs (what feeds what)
 
@@ -591,9 +518,9 @@ flowchart TD
     B3 --> C1[Stage‑A: src/stage_a]
     C1 --> C2[Stage‑A evidence JSONL]
     C2 --> D1[Stage‑B: src/stage_b]
-    D1 --> D2[selections.jsonl (verdicts)]
+    D1 --> D2[rule_candidates.jsonl + benchmarks.jsonl]
     D1 --> D3[guidance.json + snapshots]
-    D1 --> D4[manual_review / need_review queues]
+    D1 --> D4[rule_search_hard_cases.jsonl + candidate_regressions]
   end
 ```
 
@@ -604,7 +531,7 @@ flowchart TD
 ### 7.1 Config-first architecture + typed validation
 - Training configs are loaded and validated early as frozen dataclasses (`src/config/schema.py`, `src/config/loader.py`).
 - Stage‑B configs are similarly loaded into frozen dataclasses (`src/stage_b/config.py`).
-- Scripts in `scripts/` exist to standardize environment/logging and reduce ad-hoc divergence (`scripts/README.md`).
+- Scripts in `scripts/` exist to standardize environment/logging and reduce ad-hoc divergence.
 
 ### 7.2 Determinism and reproducibility
 - Offline conversion uses deterministic splitting seeds (`data_conversion/pipeline/data_splitter.py`).
@@ -615,34 +542,17 @@ flowchart TD
 ### 7.3 Fail-fast validation and safe fallbacks
 - Data conversion validates structure, bounds, and required fields and emits explicit invalid-object/sample reports (`data_conversion/pipeline/validation_manager.py`).
 - Training fails fast on unsupported runtime features (e.g., packing) and on schema violations (missing summary in summary mode, missing geometry in dense mode).
-- Stage‑B enforces strict output formatting; malformed candidates are excluded and written to failure queues (`src/stage_b/rollout.py`, `docs/runtime/STAGE_B_RUNTIME.md`).
+- Stage‑B enforces strict output formatting; malformed candidates are excluded from rule‑search metrics (`src/stage_b/rollout.py`).
 
 ### 7.4 Geometry-preserving augmentation (no silent geometry loss)
 - Augmentation is designed to transform geometry and pixels together (`src/datasets/geometry.py`, `src/datasets/augmentation/ops.py`).
-- Crop/rotate/truncation logic is built to maintain correctness of polygons and lines (see `docs/data/DATA_AUGMENTATION.md`).
+- Crop/rotate/truncation logic is built to maintain correctness of polygons and lines.
 - Offline polygon ordering canonicalization prevents downstream ambiguity (`data_conversion/pipeline/coordinate_manager.py`).
 
 ### 7.5 Training-free Stage‑B refinement with governance hooks
 - Stage‑B’s “learning” happens by updating a guidance file (experiences), not weights (`src/stage_b/io/guidance.py`).
-- Changes are auditable via step counters and snapshot retention.
-- Human review is unified as `need_review_queue.jsonl` / `need_review.json` (runner-routed, post-reflection); hard failures are logged to `failure_malformed.jsonl`. Reflection must not quarantine samples into need-review (`src/stage_b/reflection/engine.py`).
+- Rule-search candidates are gated by deterministic metrics and bootstrap probability before application (`src/stage_b/rule_search.py`).
+- Changes are auditable via step counters and snapshot retention; hard cases and regressions are recorded for review (`rule_search_hard_cases.jsonl`, `rule_search_candidate_regressions.jsonl`).
 
 ### 7.6 Rank-aware logging (distributed-safe)
 - All core pipelines use `src/utils/logger.py` (`get_logger(...)`) to keep logs readable in distributed runs and to avoid global logging side effects.
-
-### 7.7 Change management (OpenSpec, optional but recommended)
-
-For major behavior/contract changes (schema shifts, Stage‑B policy changes, augmentation refactors), the repository uses OpenSpec governance under `openspec/`:
-- Instructions and conventions: `openspec/AGENTS.md`
-- Historical changes (including Stage‑B evolution) are tracked under `openspec/changes/` and `openspec/changes/archive/`.
-
----
-
-## Appendix: “Where to look” quick map
-
-- Data conversion: `data_conversion/pipeline/unified_processor.py`, `docs/data/DATA_PREPROCESSING_PIPELINE.md`
-- JSONL contract and validators: `docs/data/DATA_JSONL_CONTRACT.md`, `scripts/validate_dense_jsonl_contract.py`
-- Training pipeline: `src/sft.py`, `src/config/`, `src/datasets/`, `docs/training/REFERENCE.md`
-- Augmentation and geometry: `src/datasets/augmentation/`, `src/datasets/geometry.py`, `docs/data/DATA_AUGMENTATION.md`
-- Stage‑A: `src/stage_a/`, `docs/runtime/STAGE_A_RUNTIME.md`
-- Stage‑B: `src/stage_b/`, `docs/runtime/STAGE_B_RUNTIME.md`, `docs/runtime/STAGE_A_STAGE_B.md`, `docs/stage-B-knowledge-Chinese.md`

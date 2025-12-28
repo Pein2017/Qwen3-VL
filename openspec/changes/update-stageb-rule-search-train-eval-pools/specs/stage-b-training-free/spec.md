@@ -1,6 +1,7 @@
 ## MODIFIED Requirements
 
-### Rule-Search Pools and Naming
+### Requirement: Rule-Search Pools and Naming
+Rule-search SHALL distinguish train pools (proposal + gate) from eval pools (monitor/veto) and expose unambiguous train/eval configuration keys.
 #### Scenario: Train/Eval pool semantics
 - WHEN rule_search is configured,
 - THEN it SHALL distinguish **train pools** (proposal + gate) from **eval pools** (monitor/veto only),

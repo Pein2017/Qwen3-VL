@@ -1,0 +1,62 @@
+{
+  "BBU安装方式检查（正装）": {
+    "stage_a_path": "output_post/stage_a_bbu_rru_summary_12-22/BBU安装方式检查（正装）_stage_a.jsonl",
+    "thresholds": {
+      "0.5": {
+        "count": 10,
+        "path_ticket_keys": "analysis/stageb_guidance_audit_2025-12-24/BBU安装方式检查（正装）_pass_irrel_ge_0.500_ticket_keys.txt",
+        "path_examples_jsonl": "analysis/stageb_guidance_audit_2025-12-24/BBU安装方式检查（正装）_pass_irrel_ge_0.500_examples.jsonl"
+      },
+      "0.6666666666666666": {
+        "count": 0,
+        "path_ticket_keys": "analysis/stageb_guidance_audit_2025-12-24/BBU安装方式检查（正装）_pass_irrel_ge_0.667_ticket_keys.txt",
+        "path_examples_jsonl": "analysis/stageb_guidance_audit_2025-12-24/BBU安装方式检查（正装）_pass_irrel_ge_0.667_examples.jsonl"
+      }
+    }
+  },
+  "BBU接地线检查": {
+    "stage_a_path": "output_post/stage_a_bbu_rru_summary_12-22/BBU接地线检查_stage_a.jsonl",
+    "thresholds": {
+      "0.5": {
+        "count": 5,
+        "path_ticket_keys": "analysis/stageb_guidance_audit_2025-12-24/BBU接地线检查_pass_irrel_ge_0.500_ticket_keys.txt",
+        "path_examples_jsonl": "analysis/stageb_guidance_audit_2025-12-24/BBU接地线检查_pass_irrel_ge_0.500_examples.jsonl"
+      },
+      "0.6666666666666666": {
+        "count": 1,
+        "path_ticket_keys": "analysis/stageb_guidance_audit_2025-12-24/BBU接地线检查_pass_irrel_ge_0.667_ticket_keys.txt",
+        "path_examples_jsonl": "analysis/stageb_guidance_audit_2025-12-24/BBU接地线检查_pass_irrel_ge_0.667_examples.jsonl"
+      }
+    }
+  },
+  "BBU线缆布放要求": {
+    "stage_a_path": "output_post/stage_a_bbu_rru_summary_12-22/BBU线缆布放要求_stage_a.jsonl",
+    "thresholds": {
+      "0.5": {
+        "count": 1,
+        "path_ticket_keys": "analysis/stageb_guidance_audit_2025-12-24/BBU线缆布放要求_pass_irrel_ge_0.500_ticket_keys.txt",
+        "path_examples_jsonl": "analysis/stageb_guidance_audit_2025-12-24/BBU线缆布放要求_pass_irrel_ge_0.500_examples.jsonl"
+      },
+      "0.6666666666666666": {
+        "count": 0,
+        "path_ticket_keys": "analysis/stageb_guidance_audit_2025-12-24/BBU线缆布放要求_pass_irrel_ge_0.667_ticket_keys.txt",
+        "path_examples_jsonl": "analysis/stageb_guidance_audit_2025-12-24/BBU线缆布放要求_pass_irrel_ge_0.667_examples.jsonl"
+      }
+    }
+  },
+  "挡风板安装检查": {
+    "stage_a_path": "output_post/stage_a_bbu_rru_summary_12-22/挡风板安装检查_stage_a.jsonl",
+    "thresholds": {
+      "0.5": {
+        "count": 1,
+        "path_ticket_keys": "analysis/stageb_guidance_audit_2025-12-24/挡风板安装检查_pass_irrel_ge_0.500_ticket_keys.txt",
+        "path_examples_jsonl": "analysis/stageb_guidance_audit_2025-12-24/挡风板安装检查_pass_irrel_ge_0.500_examples.jsonl"
+      },
+      "0.6666666666666666": {
+        "count": 0,
+        "path_ticket_keys": "analysis/stageb_guidance_audit_2025-12-24/挡风板安装检查_pass_irrel_ge_0.667_ticket_keys.txt",
+        "path_examples_jsonl": "analysis/stageb_guidance_audit_2025-12-24/挡风板安装检查_pass_irrel_ge_0.667_examples.jsonl"
+      }
+    }
+  }
+}

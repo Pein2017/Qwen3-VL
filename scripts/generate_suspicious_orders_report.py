@@ -45,7 +45,7 @@ def main():
             f.write("\n")
         
         f.write("-" * 80 + "\n")
-        f.write(f"总计:\n")
+        f.write("总计:\n")
         f.write(f"  总重复工单数: {total_duplicate}\n")
         f.write(f"  总可疑工单数: {total_suspicious}\n")
         f.write(f"  总可疑比例: {total_suspicious/total_duplicate*100:.1f}%\n" if total_duplicate > 0 else "  总可疑比例: N/A\n")

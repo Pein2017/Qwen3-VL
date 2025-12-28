@@ -5,14 +5,13 @@ This helps generate the correct modules_to_save list for different model variant
 """
 
 import torch.nn as nn
-from typing import List
 
 from . import get_logger
 
 logger = get_logger(__name__)
 
 
-def detect_aligner_modules(model: nn.Module) -> List[str]:
+def detect_aligner_modules(model: nn.Module) -> list[str]:
     """
     Auto-detect aligner module names from a Qwen3-VL model.
 
@@ -35,10 +34,13 @@ def detect_aligner_modules(model: nn.Module) -> List[str]:
 
     try:
         # Check if model has visual component
-        if not hasattr(model, "model") or not hasattr(model.model, "visual"):
+        model_root = getattr(model, "model", None)
+        if not isinstance(model_root, nn.Module):
             return []
 
-        visual = model.model.visual
+        visual = getattr(model_root, "visual", None)
+        if not isinstance(visual, nn.Module):
+            return []
 
         # Detect merger (single module)
         if hasattr(visual, "merger"):
@@ -51,8 +53,8 @@ def detect_aligner_modules(model: nn.Module) -> List[str]:
                 for i in range(len(merger_list)):
                     aligner_modules.append(f"model.visual.deepstack_merger_list.{i}")
 
-    except Exception as e:
-        logger.warning(f"Could not auto-detect aligners: {e}")
+    except Exception as exc:
+        logger.warning("Could not auto-detect aligners: %s", exc)
 
     return aligner_modules
 
@@ -66,7 +68,7 @@ def print_model_structure(model: nn.Module, max_depth: int = 2) -> None:
         max_depth: Maximum depth to print (default 2)
     """
 
-    def _print_recursive(module, prefix="", depth=0):
+    def _print_recursive(module: nn.Module, prefix: str = "", depth: int = 0) -> None:
         if depth > max_depth:
             return
 
@@ -76,8 +78,7 @@ def print_model_structure(model: nn.Module, max_depth: int = 2) -> None:
             total_params = sum(p.numel() for p in child.parameters(recurse=True))
 
             logger.info(
-                f"{'  ' * depth}{name:30s} | {type(child).__name__:20s} | "
-                f"Direct: {num_params:>12,d} | Total: {total_params:>12,d}"
+                f"{'  ' * depth}{name:30s} | {type(child).__name__:20s} | Direct: {num_params:>12,d} | Total: {total_params:>12,d}"
             )
 
             _print_recursive(child, full_name, depth + 1)

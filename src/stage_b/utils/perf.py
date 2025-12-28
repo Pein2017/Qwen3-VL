@@ -32,7 +32,7 @@ def maybe_empty_cache(reason: str = "") -> None:
         return
     if not _truthy_env("STAGE_B_EMPTY_CACHE", "0"):
         return
-    # "reason" is intentionally unused (kept for potential logging hook).
+    _ = reason  # kept for potential logging hook
     torch.cuda.empty_cache()
 
 
@@ -46,4 +46,3 @@ def enable_tf32() -> None:
         return
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
-

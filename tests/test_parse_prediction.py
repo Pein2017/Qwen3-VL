@@ -11,13 +11,13 @@ def test_parse_prediction_valid_bbox_2d():
     """Test parsing valid bbox_2d object with flat coordinates."""
     json_text = json.dumps({
         "object_1": {
-            "desc": "BBU设备/华为/显示完整",
+            "desc": "BBU设备/华为/完整",
             "bbox_2d": [100, 200, 300, 400]
         }
     })
     result = parse_prediction(json_text)
     assert len(result) == 1
-    assert result[0]["desc"] == "BBU设备/华为/显示完整"
+    assert result[0]["desc"] == "BBU设备/华为/完整"
     assert result[0]["type"] == "bbox_2d"
     assert result[0]["points"] == [100, 200, 300, 400]
 

@@ -8,9 +8,12 @@ Canonical entrypoints for training, inference, and inspection runs. Prefer these
 | `fuse_datasets.py` | Builds fused JSONL from fusion YAML (deterministic mixing of target+aux sources). | `docs/data/UNIFIED_FUSION_DATASET.md` |
 | `download.py` | Downloads raw/public corpora per instructions. | `docs/data/DATA_AND_DATASETS.md`, `docs/data/PUBLIC_DATA.md` |
 | `stage_a.sh` | Stage‑1 basic object recognition; emits per-image summaries JSONL. | `docs/runtime/STAGE_A_RUNTIME.md`, `docs/runtime/STAGE_A_STAGE_B.md` |
-| `stage_b.sh` | Stage‑2 verdict loop (ingest → rollout → selection → reflection) returning `pass|fail` per ticket. | `docs/runtime/STAGE_B_RUNTIME.md`, `docs/runtime/STAGE_A_STAGE_B.md` |
+| `stage_b.sh` | Stage‑2 rule-search loop (ingest → rollout → propose rules → gate/eval → apply) returning per-ticket verdicts + rule-search artifacts. | `docs/runtime/STAGE_B_RUNTIME.md`, `docs/runtime/STAGE_A_STAGE_B.md` |
 | `stage_b_smoke.py` | No-model Stage‑B smoke/audit (config+ingest+guidance+prompt+parse+export). | `docs/runtime/STAGE_B_RUNTIME.md` |
 | `merge_stage2_lora.sh` | Merges Stage‑2 LoRA checkpoints for deployment. | `docs/runtime/STAGE_B_RUNTIME.md` |
+| `stage_b_split_distill.py` | Splits `distill_chatml.jsonl` into train/val JSONL files. | `docs/runtime/STAGE_B_RUNTIME.md` |
+| `postprocess_rule_search_hard_cases.py` | Extracts GT-fail & pred-pass hard cases and attaches GT fail reasons from Excel. | `docs/runtime/STAGE_B_RUNTIME.md` |
+| `run_rule_search_postprocess.sh` | Wrapper for rule-search hard-case postprocess with local paths. | `docs/runtime/STAGE_B_RUNTIME.md` |
 | `debug_fusion_template_clone.py` | Regression probe for fusion template reuse (mask ratio / template cloning). | `docs/data/UNIFIED_FUSION_DATASET.md` |
 | `validate_sft_config.py` | Fast YAML validation for SFT configs (no model weights). | `docs/training/REFERENCE.md` |
 | `validate_dense_jsonl_contract.py` | Fast JSONL contract validation for dense-caption records. | `docs/data/DATA_JSONL_CONTRACT.md` |

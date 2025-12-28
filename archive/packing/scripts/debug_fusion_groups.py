@@ -48,7 +48,6 @@ train_ds = FusionCaptionDataset(
     augmenter=None,
     bypass_prob=float(custom.get("bypass_prob", 0.0)),
     curriculum_state=None,
-    preprocessor=None,
     use_summary=bool(custom.get("use_summary", False)),
     system_prompt_dense=None,
     system_prompt_summary=None,

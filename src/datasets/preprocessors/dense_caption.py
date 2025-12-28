@@ -1,8 +1,9 @@
 """Dense caption preprocessing"""
 
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 from .base import BasePreprocessor
+from ..contracts import ConversationRecord
 
 
 class DenseCaptionPreprocessor(BasePreprocessor):
@@ -25,7 +26,7 @@ class DenseCaptionPreprocessor(BasePreprocessor):
         self.require_objects = require_objects
         self.require_summary = require_summary
 
-    def preprocess(self, row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def preprocess(self, row: ConversationRecord) -> Optional[ConversationRecord]:
         """Preprocess a dense caption record.
 
         Args:

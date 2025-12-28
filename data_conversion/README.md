@@ -42,9 +42,25 @@ ordering for stable learning signals.
 | --- | --- | --- |
 | Geometry encoding | Mix of `dataList` rectangles, `markResult` quads/lines, inconsistent vertex order | Pure `bbox_2d` / `poly` / `line`, canonicalized：bbox TL→BR，poly 起点为最上最左顶点并按质心顺时针排序 |
 | Image orientation | EXIF metadata may rotate pixels without updating annotations | Pixel data normalized (EXIF applied), annotations adjusted to match |
-| Description text | Annotator-provided Chinese strings with optional “显示完整/只显示部分” tokens and occlusion notes | Hierarchical `desc` with sanitized tokens (completeness stripped only from screw attribute slot, remarks preserved) |
+| Description text | Annotator-provided Chinese strings with optional “完整/部分” tokens and occlusion notes | Key=value `desc` with sanitized tokens (`可见性=完整/可见性=部分`), remarks preserved (BBU-only) |
 | Object ordering | Whatever the annotation platform emitted | Strict “top-to-bottom then left-to-right” ordering for reproducible prompts |
 | File format | One JSON per image, nested feature structure | Flat JSONL, one line per sample, ready for training splits |
+
+**Fixed value compression (BBU/RRU)**  
+Non‑free‑text attributes are normalized to compact values during conversion (OCR/备注 are untouched):
+
+- **可见性**: `完整` / `部分`
+- **挡风板需求**: `免装` / `空间充足需安装`
+- **挡风板符合性**: `按要求配备` / `未按要求配备`
+- **安装方向**: `方向正确` / `方向错误`
+- **符合性**: `符合` / `不符合`
+- **保护措施**: `有保护` / `无保护`
+- **保护细节**: `蛇形管` / `铠装` / `蛇形管+铠装`
+- **弯曲半径**: `半径合理` / `半径不合理<4cm或成环`
+- **捆扎**: `整齐` / `散乱`
+- **安装状态**（RRU紧固类）: `合格` / `不合格`
+- **标签**（RRU尾纤/接地线）: `有标签` / `无标签`
+- **套管保护**（RRU尾纤）: `有套管` / `无套管`
 
 Typical workflow:
 1. Drop the raw export (e.g., `raw_ds/bbu_scene_2.0/...`) under the repo.
@@ -122,13 +138,10 @@ NUM_WORKERS="8"  # Number of parallel workers (1=sequential, >1=parallel)
   - Determines `object_type` using Chinese keys and taxonomy mapping
   - Filters to the supported set (unknown types are dropped)
 
-- Hierarchical description construction:
+- Description construction (key=value):
   - Uses exact Chinese keys and a strict mapping
-  - Separator rules: comma (`,`) for same-level attributes, slash (`/`) for levels/conditionals
-- Review / 需复核标记:
-  - 对含“备注”的对象，若备注出现不确定/缺失关键词（如 无法判断/疑似/未拍全/无品牌/缺少 等），重写为 `<类型>/需复核[,备注:...]`
-  - 去除噪声备注（如 “请参考学习”“建议看下操作手册中螺丝、插头的标注规范”）
-  - Summary 基于改写后的 desc 聚合，保持检测与摘要一致
+  - Separator rules: comma (`,`) between key=value pairs; multi-values joined with `|`
+  - BBU keeps `备注` when present; RRU omits `备注` and may include `组`
 
 - Geometry normalization and canonicalization:
   - Converts V2 geometries to native formats: `bbox_2d`, `poly`, `line`
@@ -145,7 +158,7 @@ NUM_WORKERS="8"  # Number of parallel workers (1=sequential, >1=parallel)
   - Minimum object size checks (square/bbox)
   - Requires non-empty `desc`
   - Strips occlusion tokens containing “遮挡” by default (configurable). This property is deprecated and shown to be unhelpful for training, so occlusion words like “有遮挡/无遮挡/挡风板有遮挡” are removed from `desc` during conversion.
-  - Standardizes label descriptions (configurable): any `标签/*` with empty-like or non-informative content (e.g., `空格`, `看不清`, `、`, or missing) is normalized to `标签/无法识别`.
+  - Normalizes label OCR: whitespace removed, commas/pipes/equals escaped; unreadable labels emit `可读性=不可读` (no “可以识别/无法识别” rewrite).
   - Records invalid objects/samples for reporting
 
 - Object ordering and image processing:
@@ -296,7 +309,7 @@ Minimal examples of the two accepted raw schemas.
       "coordinates": [[264, 144], [326, 201]],
       "properties": {
         "contentZh": {
-          "标签": "螺丝、光纤插头/BBU安装螺丝,显示完整,符合要求"
+          "标签": "螺丝、光纤插头/BBU安装螺丝,完整,符合"
         }
       }
     }
@@ -328,7 +341,7 @@ Minimal examples of the two accepted raw schemas.
           "coordinates": [[614, 1271], [498, 1179], [419, 1216], [280, 1280]]
         },
         "properties": {
-          "contentZh": {"标签": "光纤/有遮挡,有保护措施,弯曲半径合理/蛇形管"}
+          "contentZh": {"标签": "光纤/有遮挡,有保护,半径合理/蛇形管"}
         }
       }
     ]
@@ -340,7 +353,7 @@ Minimal examples of the two accepted raw schemas.
 
 ## Output Sample
 
-Training samples use native multi-geometry with hierarchical descriptions:
+Training samples use native multi-geometry with key=value descriptions:
 
 ```json
 {
@@ -348,15 +361,15 @@ Training samples use native multi-geometry with hierarchical descriptions:
   "objects": [
     {
       "bbox_2d": [264, 144, 326, 201],
-      "desc": "螺丝、光纤插头/BBU安装螺丝,显示完整,符合要求"
+      "desc": "类别=BBU安装螺丝,可见性=完整,符合性=符合"
     },
     {
       "poly": [704, 487, 670, 554, 973, 644, 993, 590],
-      "desc": "标签/4G-RRU3-光纤"
+      "desc": "类别=标签,文本=4G-RRU3-光纤"
     },
     {
       "line": [614, 1271, 498, 1179, 419, 1216, 280, 1280, 117, 1456, 3, 1721],
-      "desc": "光纤/有保护措施,弯曲半径合理/蛇形管"
+      "desc": "类别=光纤,保护措施=有保护,保护细节=蛇形管,弯曲半径=半径合理"
     }
   ],
   "width": 532,

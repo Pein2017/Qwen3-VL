@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, Iterable, List, Sequence, Tuple
+from collections.abc import Iterable, Sequence
 
 import torch
 from transformers import PreTrainedTokenizerBase
@@ -13,20 +13,20 @@ logger = get_logger(__name__)
 
 
 class TokenType:
-    IGNORE = -1
-    DESC = 1
-    COORD = 2
-    FORMAT = 3
+    IGNORE: int = -1
+    DESC: int = 1
+    COORD: int = 2
+    FORMAT: int = 3
 
 
-def _dumps_with_types(payload: Any) -> Tuple[str, List[Tuple[int, int, int]]]:
+def _dumps_with_types(payload: object) -> tuple[str, list[tuple[int, int, int]]]:
     """Serialize payload to JSON text and collect typed character spans.
 
     Span tuple: (start, end, type_id) in character offsets.
     """
 
-    spans: List[Tuple[int, int, int]] = []
-    parts: List[str] = []
+    spans: list[tuple[int, int, int]] = []
+    parts: list[str] = []
 
     def write(text: str, typ: int) -> None:
         start = sum(len(p) for p in parts)
@@ -35,7 +35,7 @@ def _dumps_with_types(payload: Any) -> Tuple[str, List[Tuple[int, int, int]]]:
         if end > start:
             spans.append((start, end, typ))
 
-    def emit_value(value: Any, context: str) -> None:
+    def emit_value(value: object, context: str) -> None:
         if isinstance(value, (int, float)) and not isinstance(value, bool):
             text = json.dumps(value, ensure_ascii=False)
             write(text, TokenType.COORD if context == "coord" else TokenType.FORMAT)
@@ -70,7 +70,9 @@ def _dumps_with_types(payload: Any) -> Tuple[str, List[Tuple[int, int, int]]]:
     return text_out, spans
 
 
-def _apply_suffix(text: str, suffix: Iterable[str] | None) -> Tuple[str, List[Tuple[int, int, int]]]:
+def _apply_suffix(
+    text: str, suffix: Iterable[str] | None
+) -> tuple[str, list[tuple[int, int, int]]]:
     if not suffix:
         return text, []
     suffix_text = "".join(suffix)
@@ -81,7 +83,9 @@ def _apply_suffix(text: str, suffix: Iterable[str] | None) -> Tuple[str, List[Tu
     return text + suffix_text, [(start, end, TokenType.FORMAT)]
 
 
-def _char_types_from_spans(length: int, spans: Sequence[Tuple[int, int, int]]) -> List[int]:
+def _char_types_from_spans(
+    length: int, spans: Sequence[tuple[int, int, int]]
+) -> list[int]:
     arr = [TokenType.FORMAT] * length
     for start, end, typ in spans:
         for i in range(start, min(end, length)):
@@ -92,7 +96,7 @@ def _char_types_from_spans(length: int, spans: Sequence[Tuple[int, int, int]]) -
 def compute_token_types(
     *,
     tokenizer: PreTrainedTokenizerBase,
-    payload: Any,
+    payload: object,
     labels: torch.Tensor,
     attention_mask: torch.Tensor | None,
     suffix_tokens: Iterable[str] | None = None,
@@ -104,6 +108,7 @@ def compute_token_types(
 
     if labels.dim() != 1:
         raise ValueError("labels must be 1D for a single sample")
+    _ = attention_mask
 
     text, spans = _dumps_with_types(payload)
     text, suffix_spans = _apply_suffix(text, suffix_tokens)
@@ -119,7 +124,7 @@ def compute_token_types(
         return None
 
     char_types = _char_types_from_spans(len(text), spans)
-    token_types: List[int] = []
+    token_types: list[int] = []
     for start, end in offsets:
         if start is None or end is None:
             token_types.append(TokenType.FORMAT)
@@ -131,7 +136,7 @@ def compute_token_types(
         # Majority vote; fallback to first if empty
         if slice_types:
             counts = {t: slice_types.count(t) for t in set(slice_types)}
-            token_types.append(max(counts, key=counts.get))
+            token_types.append(max(counts, key=lambda t: counts[t]))
         else:
             token_types.append(TokenType.FORMAT)
 

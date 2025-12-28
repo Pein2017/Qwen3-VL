@@ -10,133 +10,107 @@ from typing import Optional
 
 def strip_occlusion_tokens(desc: Optional[str]) -> Optional[str]:
     """
-    Remove tokens containing '遮挡' per level/token while preserving separators.
+    Remove tokens containing '遮挡' while preserving key=value pairs.
 
-    - Split by '/' into levels, by ',' within levels
-    - Drop any token containing '遮挡'
-    - Rejoin; drop empty levels
+    - Split by ',' into tokens
+    - Drop any token/value containing '遮挡'
     """
     if not desc or not isinstance(desc, str):
         return desc
-    levels = [lvl.strip() for lvl in desc.split("/")]
-    kept_levels = []
-    for lvl in levels:
-        if not lvl:
+    tokens = [t.strip() for t in desc.split(",") if t.strip()]
+    kept = []
+    for token in tokens:
+        if "遮挡" in token:
             continue
-        tokens = [t.strip() for t in lvl.split(",")]
-        kept_tokens = [t for t in tokens if t and ("遮挡" not in t)]
-        if kept_tokens:
-            kept_levels.append(",".join(kept_tokens))
-    return "/".join(kept_levels)
+        if "=" in token:
+            _, value = token.split("=", 1)
+            if "遮挡" in value:
+                continue
+        kept.append(token)
+    return ",".join(kept)
 
 
 def strip_annotator_notes(desc: Optional[str]) -> Optional[str]:
     """
     Remove annotator guidance tokens containing '框选范围'.
-    Preserves separators and drops empty levels.
+    Preserves key=value separators and drops empty tokens.
     """
     if not desc or not isinstance(desc, str):
         return desc
-    levels = [lvl.strip() for lvl in desc.split("/")]
-    kept_levels = []
-    for lvl in levels:
-        if not lvl:
+    tokens = [t.strip() for t in desc.split(",") if t.strip()]
+    kept = []
+    for token in tokens:
+        if "框选范围" in token:
             continue
-        tokens = [t.strip() for t in lvl.split(",")]
-        kept_tokens = [t for t in tokens if t and ("框选范围" not in t)]
-        if kept_tokens:
-            kept_levels.append(",".join(kept_tokens))
-    return "/".join(kept_levels)
+        if "=" in token:
+            _, value = token.split("=", 1)
+            if "框选范围" in value:
+                continue
+        kept.append(token)
+    return ",".join(kept)
 
 
 def sanitize_text(desc: Optional[str]) -> Optional[str]:
     """
-    Normalize and sanitize description text.
+    Normalize and sanitize description text (whitespace only).
 
     Rules:
     - Remove all ASCII and fullwidth spaces
-    - Collapse repeated hyphens: "--" → "-" (also for 3+)
-    - Remove trailing hyphens at token boundaries (end of whole string and after '/',' ,')
-    - Convert fullwidth digits to ASCII (e.g., ９００ → 900)
-    - Normalize circled/parenthesized digits (e.g., ①②… → 1 2 …)
-    - Normalize dash-like characters to ASCII hyphen '-'
     """
     if not desc or not isinstance(desc, str):
         return desc
 
-    s = desc
-
-    # Unicode compatibility normalization (handles many fullwidth forms)
-    s = unicodedata.normalize("NFKC", s)
-
-    # Normalize dash-like characters to '-' (covers hyphen/minus/en/em dashes, etc.)
-    dash_like_chars = "‐‑‒–—−﹣－"
-    s = s.translate({ord(c): "-" for c in dash_like_chars})
-
-    # Convert circled/parenthesized digits to plain ASCII digits
-    circled_map = {ord("\u24ea"): "0"}  # ⓪
-    for i in range(1, 21):
-        circled_map[ord(chr(0x2460 + i - 1))] = str(i)  # ①..⑳
-        circled_map[ord(chr(0x2474 + i - 1))] = str(i)  # ⑴..⒇
-    for i in range(1, 11):
-        circled_map[ord(chr(0x2776 + i - 1))] = str(i)  # ❶..❿
-    s = s.translate(circled_map)
-
-    # Remove ASCII space and fullwidth space
-    s = s.replace("\u3000", "").replace(" ", "")
-
-    # Collapse multiple hyphens
-    s = re.sub(r"-{2,}", "-", s)
-
-    # Remove dangling trailing '-' at end and at token boundaries
-    # First handle per '/'-separated tokens
-    parts = s.split("/")
-    parts = [p.rstrip("-") for p in parts]
-    s = "/".join(parts)
-
-    # Also handle any ','-separated remnants just in case
-    comma_parts = [p.rstrip("-") for p in s.split(",")]
-    s = ",".join(comma_parts)
-
-    # Finally, strip any trailing hyphen at end of string
-    s = s.rstrip("-")
+    s = re.sub(r"\s+", "", desc.replace("\u3000", ""))
 
     return s
+
+
+def sanitize_desc_value(value: Optional[str]) -> Optional[str]:
+    """Normalize a single key=value value for structured fields (escape separators)."""
+    if value is None or not isinstance(value, str):
+        return value
+    s = unicodedata.normalize("NFKC", value)
+    s = re.sub(r"\s+", "", s.replace("\u3000", ""))
+    s = s.replace(",", "，").replace("|", "｜").replace("=", "＝")
+    return s
+
+
+_LEARNING_NOTE_PATTERN = re.compile(
+    r"(?:[，,])?这里已经帮助修改,请注意参考学习(?:[，,])?"
+)
+
+
+def sanitize_free_text_value(value: Optional[str]) -> Optional[str]:
+    """Preserve free text (OCR/备注) while removing whitespace and known notes."""
+    if value is None or not isinstance(value, str):
+        return value
+    s = re.sub(r"\s+", "", value.replace("\u3000", ""))
+    s = _LEARNING_NOTE_PATTERN.sub(",", s)
+    s = re.sub(r"[，,]{2,}", ",", s)
+    s = s.strip("，,")
+    return s
+
+
+_DISTANCE_RE = re.compile(r"(\d+)")
+
+
+def sanitize_station_distance_value(value: Optional[str]) -> Optional[str]:
+    """Normalize station distance to an integer token (digits only)."""
+    if value is None or not isinstance(value, str):
+        return None
+    s = unicodedata.normalize("NFKC", value)
+    s = re.sub(r"\s+", "", s.replace("\u3000", ""))
+    if not s:
+        return None
+    match = _DISTANCE_RE.search(s)
+    if match:
+        return match.group(1)
+    return None
 
 
 def standardize_label_description(desc: Optional[str]) -> Optional[str]:
-    """
-    Standardize descriptions for 标签 objects.
-
-    - If description is exactly '标签' or '标签/' (empty content), normalize to '标签/无法识别'
-    - If second-level content is one of {'空格', '看不清', '、'} (non-informative), normalize to '标签/无法识别'
-    - Otherwise, return the original description unchanged
-    """
-    if not desc or not isinstance(desc, str):
-        return desc
-
-    s = desc.strip()
-    if not s:
-        return s
-
-    parts = [p.strip() for p in s.split("/")]
-    if not parts:
-        return s
-
-    # Only standardize 标签 objects
-    if parts[0] != "标签":
-        return s
-
-    # Determine property/content part (second level)
-    prop = parts[1] if len(parts) >= 2 else ""
-
-    # Treat explicitly non-informative values as unrecognizable
-    invalid_tokens = {"空格", "看不清", "、"}
-
-    if (prop is None) or (prop == "") or (prop in invalid_tokens):
-        return "标签/无法识别"
-
-    return s
+    """Legacy no-op for key=value label descriptions."""
+    return desc
 
 
 def remove_screw_completeness_attributes(desc: Optional[str]) -> Optional[str]:
@@ -145,7 +119,7 @@ def remove_screw_completeness_attributes(desc: Optional[str]) -> Optional[str]:
 
     We expect descriptions of the form:
         螺丝、光纤插头/{type},{completeness},...
-    Completeness tokens ('只显示部分', '显示完整') should only be dropped from the comma
+    Completeness tokens ('部分', '完整') should only be dropped from the comma
     list immediately after the object type. Text appearing in later sections such as
     '备注' must remain untouched.
     """
@@ -167,7 +141,9 @@ def remove_screw_completeness_attributes(desc: Optional[str]) -> Optional[str]:
     remainder = parts[2] if len(parts) > 2 else None
 
     tokens = [tok.strip() for tok in attribute_segment.split(",")]
-    filtered = [tok for tok in tokens if tok and tok not in {"只显示部分", "显示完整"}]
+    filtered = [
+        tok for tok in tokens if tok and tok not in {"只显示部分", "显示完整", "部分", "完整"}
+    ]
     cleaned_segment = ",".join(filtered)
 
     rebuilt = [parts[0]]
@@ -184,10 +160,6 @@ def remove_specific_annotation_remark(desc: Optional[str]) -> Optional[str]:
 
     This function removes the remark pattern ',备注:这里已经帮助修改,请注意参考学习'
     from the description string.
-
-    Example:
-        Input:  'BBU安装螺丝,符合要求,备注:这里已经帮助修改,请注意参考学习'
-        Output: 'BBU安装螺丝,符合要求'
     """
     if not desc or not isinstance(desc, str):
         return desc
@@ -196,9 +168,72 @@ def remove_specific_annotation_remark(desc: Optional[str]) -> Optional[str]:
     if not s:
         return s
 
-    # Pattern to match: ,备注:这里已经帮助修改,请注意参考学习
-    # Also handle variations with fullwidth colon
-    pattern = r",备注[:：]这里已经帮助修改,请注意参考学习$"
+    pattern = r"(?:[，,]备注[:=：])?这里已经帮助修改,请注意参考学习"
     s = re.sub(pattern, "", s)
 
     return s
+
+
+def fold_free_text_into_remark(desc: Optional[str]) -> Optional[str]:
+    """Fold stray comma tokens into 备注, preserving OCR/备注 free text."""
+    if not desc or not isinstance(desc, str):
+        return desc
+
+    tokens = [t.strip() for t in desc.split(",") if t.strip()]
+    if not tokens:
+        return desc
+
+    pairs = []
+    current_key = None
+    current_value = ""
+    stray_tokens = []
+
+    for token in tokens:
+        if "=" in token:
+            if current_key is not None:
+                pairs.append((current_key, current_value))
+            key, value = token.split("=", 1)
+            key = key.strip()
+            value = value.strip()
+            if not key:
+                stray_tokens.append(token)
+                current_key = None
+                current_value = ""
+                continue
+            current_key = key
+            current_value = value
+        else:
+            if current_key in {"备注", "文本"}:
+                current_value = f"{current_value},{token}" if current_value else token
+            else:
+                stray_tokens.append(token)
+
+    if current_key is not None:
+        pairs.append((current_key, current_value))
+
+    if stray_tokens:
+        remark_value = ",".join(stray_tokens)
+        appended = False
+        for idx in range(len(pairs) - 1, -1, -1):
+            if pairs[idx][0] == "备注":
+                existing = pairs[idx][1] or ""
+                pairs[idx] = (
+                    pairs[idx][0],
+                    f"{existing},{remark_value}" if existing else remark_value,
+                )
+                appended = True
+                break
+        if not appended:
+            pairs.append(("备注", remark_value))
+
+    cleaned = []
+    for key, value in pairs:
+        if value is None:
+            continue
+        if key in {"备注", "文本"}:
+            value = sanitize_free_text_value(value)
+            if not value:
+                continue
+        cleaned.append((key, value))
+
+    return ",".join(f"{k}={v}" for k, v in cleaned if v)

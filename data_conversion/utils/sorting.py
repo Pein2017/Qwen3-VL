@@ -3,10 +3,10 @@
 Sorting utilities for objects in the data conversion pipeline.
 """
 
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 
-def _first_xy(obj: Dict) -> Tuple[int, int]:
+def _first_xy(obj: Dict[str, Any]) -> Tuple[int, int]:
     """
     Get sorting reference point according to prompt specification:
     - bbox_2d: top-left corner (x1, y1)
@@ -30,7 +30,7 @@ def _first_xy(obj: Dict) -> Tuple[int, int]:
     return 0, 0
 
 
-def sort_objects_tlbr(objects: List[Dict]) -> List[Dict]:
+def sort_objects_tlbr(objects: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
     Sort objects top-to-bottom, then left-to-right.
     

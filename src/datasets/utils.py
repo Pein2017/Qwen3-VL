@@ -2,10 +2,10 @@
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 
-def load_jsonl(jsonl_path: str, *, resolve_relative: bool = False) -> List[Dict[str, Any]]:
+def load_jsonl(jsonl_path: str, *, resolve_relative: bool = False) -> list[dict[str, Any]]:
     """Load records from a JSONL file.
 
     Args:
@@ -17,7 +17,7 @@ def load_jsonl(jsonl_path: str, *, resolve_relative: bool = False) -> List[Dict[
         List of dictionaries, one per line
     """
     base_dir = Path(jsonl_path).resolve().parent
-    records: List[Dict[str, Any]] = []
+    records: list[dict[str, Any]] = []
     with open(jsonl_path, "r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
@@ -39,7 +39,7 @@ def load_jsonl(jsonl_path: str, *, resolve_relative: bool = False) -> List[Dict[
     return records
 
 
-def extract_object_points(obj: Dict[str, Any]) -> Tuple[str, List[float]]:
+def extract_object_points(obj: dict[str, Any]) -> tuple[str, list[float]]:
     """Extract geometry type and points from an object.
 
     Args:
@@ -61,7 +61,7 @@ def extract_object_points(obj: Dict[str, Any]) -> Tuple[str, List[float]]:
     return "", []
 
 
-def extract_geometry(obj: Dict[str, Any]) -> Dict[str, List[float]]:
+def extract_geometry(obj: dict[str, Any]) -> dict[str, list[float]]:
     """Extract geometry dictionary from object.
 
     Useful for augmentation and processing pipelines.
@@ -72,7 +72,7 @@ def extract_geometry(obj: Dict[str, Any]) -> Dict[str, List[float]]:
     Returns:
         Dictionary with geometry key and points
     """
-    geom: Dict[str, List[float]] = {}
+    geom: dict[str, list[float]] = {}
     if obj.get("bbox_2d") is not None:
         geom["bbox_2d"] = obj["bbox_2d"]
     if obj.get("poly") is not None:
@@ -82,7 +82,7 @@ def extract_geometry(obj: Dict[str, Any]) -> Dict[str, List[float]]:
     return geom
 
 
-def is_same_record(record_a: Dict[str, Any], record_b: Dict[str, Any]) -> bool:
+def is_same_record(record_a: dict[str, Any], record_b: dict[str, Any]) -> bool:
     """Check if two records are the same (identity check).
 
     Args:

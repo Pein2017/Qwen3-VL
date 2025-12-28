@@ -3,11 +3,17 @@ stage_a_paths:
   # - output_post/stage_a/BBU接地线检查_stage_a.jsonl
   - output_post/stage_a/BBU安装方式检查（正装）_stage_a.jsonl
 seed: 17
+max_token_length: 12000
 default_domain: bbu
+jump_reflection: false
+domain_map:
+  "RRU安装检查": rru
+  "RRU位置检查": rru
+  "RRU线缆": rru
 
 model:
   model_name_or_path: model_cache/models/Qwen/Qwen3-32B
-  # model_name_or_path: output/12-9/summary_merged/res_1024-last_6_with_irrelevant_summary
+  # model_name_or_path: output/12-23/summary_merged/epoch_2-bbu_rru-more_irrelevant-ocr
   torch_dtype: bfloat16
   device_map: auto
   attn_implementation: flash_attention_2  # Enable Flash Attention 2 for faster inference (requires flash-attn package)
@@ -19,34 +25,51 @@ guidance:
 
 output:
   root: output_post/stage_b
-  run_name: new_stage  # Distill run name; artifacts under {root}/{mission_name}/{run_name}/
-  group_report: true
+  run_name: debug_rule_search  # Artifacts under {root}/{mission_name}/{run_name}/
 
-sampler:
-  samples_per_decode: 1
-  grid:
-    - temperature: 0.4
-      top_p: 0.9
-      max_new_tokens: 1024
-      seed: 43
-      repetition_penalty: 1.05
-      stop:
-        - "assistant"
-        - "<|im_end|>"
-        - "<|endoftext|>"
-        - "</s>"
-    - temperature: 0.7
-      top_p: 0.9
-      max_new_tokens: 1024
-      seed: null
-      repetition_penalty: 1.05
-      stop:
-        - "assistant"
-        - "<|im_end|>"
-        - "<|endoftext|>"
-        - "</s>"
+rule_search:
+  proposer_prompt_path: configs/prompts/stage_b_rule_search_proposer_prompt.txt
+  reflect_size: 8
+  num_candidate_rules: 2
 
+  train_pool_size: 128
+  eval_pool_size: 26
 
+  gate:
+    min_relative_error_reduction: 0.05
+    max_changed_fraction: 0.05
+    max_fp_rate_increase: 0.01
+    bootstrap:
+      iterations: 100
+      min_prob: 0.4
+      seed: 17
+
+  early_stop:
+    patience: 3
+
+  # Train pool uses decode-grid for rollout + gate.
+  train_sampler:
+    samples_per_decode: 1
+    max_prompt_tokens: 4096
+    grid:
+      - temperature: 0.3
+        top_p: 0.9
+        max_new_tokens: 1024
+        seed: 43
+        repetition_penalty: 1.05
+  # Eval pool uses low-temp single decode.
+  eval_sampler:
+    samples_per_decode: 1
+    max_prompt_tokens: 4096
+    grid:
+      - temperature: 0.1
+        top_p: 0.9
+        max_new_tokens: 1024
+        seed: 43
+        repetition_penalty: 1.05
+
+# Reflection config required by schema (used for rule proposer in rule_search mode).
+# Note: decision_prompt_path and ops_prompt_path are not used in rule_search mode.
 reflection:
   decision_prompt_path: configs/prompts/stage_b_reflection_decision_prompt.txt
   ops_prompt_path: configs/prompts/stage_b_reflection_ops_prompt.txt
@@ -57,19 +80,9 @@ reflection:
   top_p: 0.9  # Higher top_p for more diverse sampling
   repetition_penalty: 1.05
   max_new_tokens: 12000  # Allow longer responses to avoid truncation (G1 case)
-  max_reflection_length: 24000  # Larger packed context
-  token_budget: 24000  # Allow larger packed context to avoid dropping records
-
-selection:
-  policy: top_label
-  tie_break: temperature
-
-
-manual_review:
-  min_verdict_agreement: 0.67 # fraction of candidates sharing the same verdict
 
 runner:
-  epochs: 6 # Tiny smoke: 单轮
+  epochs: 6  # Tiny smoke: 单轮
   # per_rank_rollout_batch_size: per-rank (per-device) batch size.
   # With 8 GPUs and per_rank_rollout_batch_size: 2, each global step processes up to 16 tickets (2 per rank).
   per_rank_rollout_batch_size: 4
@@ -77,9 +90,5 @@ runner:
 
 stage_b_distillation:
   enabled: true
-
-# Guidance lifecycle management (optional)
-guidance_lifecycle:
-  confidence_drop_threshold: 0.35  # Remove experiences below this confidence
-  min_miss_before_drop: 3          # Require at least this many misses before removal
-  enable_auto_cleanup: true        # Auto-cleanup at each epoch end
+  distill_size: 2000
+  distill_temperature: 0.1

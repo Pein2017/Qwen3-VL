@@ -11,6 +11,7 @@ from data_conversion.utils.exif_utils import apply_exif_orientation  # noqa: E40
 from vis_tools.vis_helper import (  # noqa: E402
     canonicalize_poly,
     draw_objects,
+    extract_desc_head,
     generate_colors,
 )
 
@@ -25,7 +26,7 @@ except Exception:  # pragma: no cover
 # ============================================================================
 # Configuration
 # ============================================================================
-input_path = "data/bbu_full_768_poly-need_review/all_samples.jsonl"  # Path to JSONL (e.g., data/bbu_full_768/all_samples.jsonl)
+input_path = "data_new_schema/bbu_full_1024_poly_new_schema/all_samples.jsonl"  # Path to JSONL (e.g., data_new_schema/bbu_full_1024_poly_new_schema/all_samples.jsonl)
 output_dir = "vis_out/debug"  # Directory to save visualizations
 limit = 20  # Max number of samples to visualize (0 means all)
 dpi = 120  # Matplotlib savefig DPI
@@ -68,7 +69,8 @@ def to_vis_objects(
         # Derive a friendly label for coloring
         desc_full = obj.get("desc", "")
         if color_by == "type":
-            label = desc_full.split("/")[0] if desc_full else gtype
+            head = extract_desc_head(desc_full)
+            label = head or gtype
         else:
             label = desc_full or gtype
 

@@ -27,7 +27,7 @@ def seed_everything(seed: int) -> None:
     try:
         import torch  # type: ignore
 
-        torch.manual_seed(seed)
+        _ = torch.manual_seed(seed)
         if torch.cuda.is_available():  # pragma: no cover - device dependent
             torch.cuda.manual_seed_all(seed)
     except Exception:  # pragma: no cover - torch may be unavailable

@@ -814,8 +814,8 @@ class StructureValidator:
 
     @staticmethod
     def validate_pipeline_output(
-        train_samples: List[Dict],
-        val_samples: List[Dict],
+        train_samples: List[Dict[str, Any]],
+        val_samples: List[Dict[str, Any]],
     ) -> bool:
         if not train_samples:
             raise ValueError("Training samples cannot be empty")

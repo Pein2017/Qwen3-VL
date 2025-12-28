@@ -1,3 +1,5 @@
+> Note (2025-12): Stage‑B now runs rule-search only. Reflection/selection references below are legacy and kept for historical context.
+
 # Design Optimal Distributed Training Architecture for Stage-B
 
 ## Problem Statement

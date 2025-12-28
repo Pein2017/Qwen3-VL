@@ -3,23 +3,23 @@
 Review flagger: rewrite contradictory labels to a unified “需复核” marker.
 
 Heuristic:
-- Base描述含正向词（符合要求/安装方向正确/按要求配备挡风板/弯曲半径合理/无需安装/显示完整）
+- Base描述含正向词（符合/方向正确/按要求配备挡风板/半径合理/免装/完整）
 - 备注含不确定或缺失信息（无法判断/不确定/疑似/未拍全/无品牌/缺少/角度问题等）
 => 将 desc 改写为 `<原类型>/需复核[,备注:... ]`
 """
 
 from __future__ import annotations
 
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 
 POSITIVE_TOKENS = [
-    "符合要求",
-    "安装方向正确",
-    "这个BBU设备按要求配备了挡风板",
-    "弯曲半径合理",
-    "无需安装",
-    "显示完整",
+    "符合",
+    "方向正确",
+    "按要求配备",
+    "半径合理",
+    "免装",
+    "完整",
 ]
 
 UNCERTAIN_OR_NEG = [
@@ -42,7 +42,7 @@ UNCERTAIN_OR_NEG = [
     "未体现品牌",
     "无显示品牌",
     "显示小部分",
-    "只显示部分",
+    "部分",
     "不完整",
     "空间有限",
     "位置错误",
@@ -115,9 +115,9 @@ def is_contradictory_desc(desc: str) -> bool:
     return any(tok in remark for tok in UNCERTAIN_OR_NEG)
 
 
-def flag_objects_for_review(objects: List[Dict]) -> List[Dict]:
+def flag_objects_for_review(objects: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Rewrite contradictory desc to '<type>/需复核[,备注:...]'."""
-    flagged: List[Dict] = []
+    flagged: List[Dict[str, Any]] = []
     for obj in objects:
         desc = obj.get("desc", "")
         if not desc:

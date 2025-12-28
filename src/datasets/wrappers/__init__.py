@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import abc
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Dict, Literal, Mapping, Optional, Type
+from typing import Any, Literal, cast
 
 from ..fusion_types import FALLBACK_OPTIONS, DatasetSpec
 
@@ -39,7 +40,7 @@ def _as_mapping(value: Any, *, field_name: str) -> Mapping[str, Any]:
     raise TypeError(f"{field_name} must be a mapping")
 
 
-def _parse_poly_max_points(value: Any, *, field_name: str) -> Optional[int]:
+def _parse_poly_max_points(value: Any, *, field_name: str) -> int | None:
     if value is None:
         return None
     try:
@@ -51,7 +52,7 @@ def _parse_poly_max_points(value: Any, *, field_name: str) -> Optional[int]:
     return parsed
 
 
-def _parse_max_objects(value: Any, *, field_name: str) -> Optional[int]:
+def _parse_max_objects(value: Any, *, field_name: str) -> int | None:
     if value is None:
         return None
     try:
@@ -63,7 +64,7 @@ def _parse_max_objects(value: Any, *, field_name: str) -> Optional[int]:
     return parsed
 
 
-def _parse_seed(value: Any, *, field_name: str) -> Optional[int]:
+def _parse_seed(value: Any, *, field_name: str) -> int | None:
     if value is None:
         return None
     try:
@@ -73,7 +74,7 @@ def _parse_seed(value: Any, *, field_name: str) -> Optional[int]:
     return parsed
 
 
-def _parse_prompt(value: Any, *, field_name: str) -> Optional[str]:
+def _parse_prompt(value: Any, *, field_name: str) -> str | None:
     if value is None:
         return None
     if isinstance(value, str):
@@ -84,7 +85,7 @@ def _parse_prompt(value: Any, *, field_name: str) -> Optional[str]:
 
 def _parse_mode(
     value: Any, *, field_name: str
-) -> Optional[Literal["dense", "summary"]]:
+) -> Literal["dense", "summary"] | None:
     if value is None:
         return None
     if isinstance(value, bool):
@@ -92,7 +93,7 @@ def _parse_mode(
     if isinstance(value, str):
         normalized = value.strip().lower()
         if normalized in {"dense", "summary"}:
-            return normalized  # type: ignore[return-value]
+            return cast(Literal["dense", "summary"], normalized)
         if normalized in {"true", "1", "yes", "on"}:
             return "summary"
         if normalized in {"false", "0", "no", "off"}:
@@ -107,17 +108,17 @@ class DatasetWrapper(abc.ABC):
     default_name: str = "dataset"
     domain: DatasetDomain = "target"
     template_id: str = "target_dense"
-    summary_template_id: Optional[str] = None
+    summary_template_id: str | None = None
     supports_augmentation: bool = True
     supports_curriculum: bool = True
     default_poly_fallback: Literal["off", "bbox_2d"] = "off"
-    default_max_objects_per_image: Optional[int] = None
+    default_max_objects_per_image: int | None = None
 
     @classmethod
     def build_spec(
         cls,
         *,
-        name: Optional[str],
+        name: str | None,
         params: Mapping[str, Any],
     ) -> DatasetSpec:
         mapping = _as_mapping(params, field_name=f"{cls.__name__}.params")
@@ -206,13 +207,13 @@ class DatasetWrapper(abc.ABC):
         )
 
 
-_WRAPPERS: Dict[str, Type[DatasetWrapper]] = {}
+_WRAPPERS: dict[str, type[DatasetWrapper]] = {}
 
 
 def register_dataset_wrapper(name: str):
     """Decorator to register wrapper classes by config key."""
 
-    def decorator(cls: Type[DatasetWrapper]) -> Type[DatasetWrapper]:
+    def decorator(cls: type[DatasetWrapper]) -> type[DatasetWrapper]:
         key = str(name).strip().lower()
         if not key:
             raise ValueError("Wrapper name must be a non-empty string")
@@ -223,7 +224,7 @@ def register_dataset_wrapper(name: str):
     return decorator
 
 
-def resolve_dataset_wrapper(dataset_key: str) -> Type[DatasetWrapper]:
+def resolve_dataset_wrapper(dataset_key: str) -> type[DatasetWrapper]:
     key = str(dataset_key).strip().lower()
     if not key:
         raise ValueError("dataset key must be provided")
@@ -236,7 +237,7 @@ def resolve_dataset_wrapper(dataset_key: str) -> Type[DatasetWrapper]:
 def build_dataset_spec(
     dataset_key: str,
     *,
-    name: Optional[str],
+    name: str | None,
     params: Mapping[str, Any],
 ) -> DatasetSpec:
     wrapper_cls = resolve_dataset_wrapper(dataset_key)

@@ -1,13 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, Mapping, Sequence, Tuple
-from collections.abc import Mapping as MappingABC, Sequence as SequenceABC
+from typing import Any, cast
 
 _NUMERIC_TYPES = (int, float)
 
 
-def _is_sequence_of_numbers(value: SequenceABC) -> bool:
+def _is_sequence_of_numbers(value: Sequence[object]) -> bool:
     return len(value) == 2 and all(isinstance(item, _NUMERIC_TYPES) for item in value)
 
 
@@ -18,7 +18,7 @@ def _is_prob_field(name: str) -> bool:
 
 @dataclass(frozen=True)
 class NumericParam:
-    values: Tuple[float, ...]
+    values: tuple[float, ...]
 
     @staticmethod
     def from_raw(value: Any) -> 'NumericParam':
@@ -26,10 +26,12 @@ class NumericParam:
             raise ValueError('Boolean is not accepted for numeric parameters')
         if isinstance(value, _NUMERIC_TYPES):
             return NumericParam((float(value),))
-        if isinstance(value, SequenceABC) and not isinstance(value, (str, bytes)):
+        if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
             if _is_sequence_of_numbers(value):
                 first, second = value
-                return NumericParam((float(first), float(second)))
+                return NumericParam(
+                    (float(cast(float, first)), float(cast(float, second)))
+                )
         raise ValueError(
             "Numeric parameters must be scalars or 2-element numeric ranges"
         )
@@ -56,7 +58,7 @@ class CurriculumPhase:
     until_step: int | None
     until_percent: float | None
     bypass_prob: NumericParam | None
-    op_overrides: Dict[str, Dict[str, NumericParam]]
+    op_overrides: dict[str, dict[str, NumericParam]]
 
 
 @dataclass(frozen=True)
@@ -64,9 +66,9 @@ class _PhaseDescriptor:
     start_step: int
     end_step: int
     prev_bypass: NumericParam
-    prev_ops: Dict[str, Dict[str, NumericParam]]
+    prev_ops: dict[str, dict[str, NumericParam]]
     target_bypass: NumericParam
-    target_ops: Dict[str, Dict[str, NumericParam]]
+    target_ops: dict[str, dict[str, NumericParam]]
 
 
 class AugmentationCurriculumScheduler:
@@ -82,7 +84,7 @@ class AugmentationCurriculumScheduler:
         self._base_ops = base_ops
         self._raw_phases = list(phases)
         self._phases: list[_PhaseDescriptor] = []
-        self._final_ops: Dict[str, Dict[str, NumericParam]] = {}
+        self._final_ops: dict[str, dict[str, NumericParam]] = {}
         self._final_bypass: NumericParam | None = None
         self._requires_total_steps = any(
             phase.until_percent is not None for phase in self._raw_phases
@@ -103,14 +105,14 @@ class AugmentationCurriculumScheduler:
         if 'phases' not in curriculum_raw:
             raise ValueError("Curriculum config requires 'phases' list")
         phases_raw = curriculum_raw['phases']
-        if not isinstance(phases_raw, SequenceABC):
+        if not isinstance(phases_raw, Sequence):
             raise TypeError("curriculum.phases must be a sequence")
         base_bypass_param = NumericParam.from_raw(base_bypass)
         base_ops = _build_base_ops(op_meta)
         phases: list[CurriculumPhase] = []
         prev_boundary = 0.0
         for idx, raw_phase in enumerate(phases_raw):
-            if not isinstance(raw_phase, MappingABC):
+            if not isinstance(raw_phase, Mapping):
                 raise TypeError(f"phase[{idx}] must be a mapping")
             until_step_raw = raw_phase.get('until_step')
             until_percent_raw = raw_phase.get('until_percent')
@@ -121,6 +123,10 @@ class AugmentationCurriculumScheduler:
             until_step: int | None = None
             until_percent: float | None = None
             if until_percent_raw is not None:
+                if not isinstance(until_percent_raw, (int, float, str)):
+                    raise ValueError(
+                        f"phase[{idx}].until_percent must be a number in (0, 100]"
+                    )
                 try:
                     up = float(until_percent_raw)
                 except (TypeError, ValueError):
@@ -138,6 +144,10 @@ class AugmentationCurriculumScheduler:
                     )
                 prev_boundary = until_percent
             else:
+                if until_step_raw is None:
+                    raise ValueError(f"phase[{idx}].until_step must be an integer")
+                if not isinstance(until_step_raw, (int, float, str)):
+                    raise ValueError(f"phase[{idx}].until_step must be an integer")
                 try:
                     until_step = int(until_step_raw)
                 except (TypeError, ValueError):
@@ -156,19 +166,19 @@ class AugmentationCurriculumScheduler:
                         f"phase[{idx}].bypass_prob must be between 0 and 1"
                     )
             ops_raw = raw_phase.get('ops', {})
-            if not isinstance(ops_raw, MappingABC):
+            if not isinstance(ops_raw, Mapping):
                 raise TypeError(f"phase[{idx}].ops must be a mapping")
-            op_overrides: Dict[str, Dict[str, NumericParam]] = {}
+            op_overrides: dict[str, dict[str, NumericParam]] = {}
             for op_name, params in ops_raw.items():
                 if op_name not in base_ops:
                     raise ValueError(
                         f"phase[{idx}] references unknown op '{op_name}'"
                     )
-                if not isinstance(params, MappingABC):
+                if not isinstance(params, Mapping):
                     raise TypeError(
                         f"phase[{idx}].ops['{op_name}'] must be a mapping"
                     )
-                field_overrides: Dict[str, NumericParam] = {}
+                field_overrides: dict[str, NumericParam] = {}
                 for param_name, value in params.items():
                     numeric_value = NumericParam.from_raw(value)
                     base_param = base_ops[op_name].get(param_name)
@@ -217,9 +227,12 @@ class AugmentationCurriculumScheduler:
             for op_name, overrides in phase.op_overrides.items():
                 op_target = target_ops.setdefault(op_name, {})
                 op_target.update(overrides)
+            if phase.until_step is None:
+                raise ValueError("Curriculum phase missing until_step")
+            end_step = int(phase.until_step)
             descriptor = _PhaseDescriptor(
                 start_step=start_step,
-                end_step=int(phase.until_step) if phase.until_step is not None else start_step,
+                end_step=end_step,
                 prev_bypass=prev_bypass,
                 prev_ops=_deepcopy_ops(prev_ops),
                 target_bypass=target_bypass,
@@ -228,11 +241,11 @@ class AugmentationCurriculumScheduler:
             self._phases.append(descriptor)
             prev_bypass = target_bypass
             prev_ops = target_ops
-            start_step = phase.until_step
+            start_step = end_step
         self._final_ops = {name: dict(params) for name, params in prev_ops.items()}
         self._final_bypass = prev_bypass
 
-    def get_state(self, global_step: int) -> Dict[str, Any]:
+    def get_state(self, global_step: int) -> dict[str, Any]:
         if self._requires_total_steps and self._final_bypass is None:
             raise ValueError(
                 "Curriculum with until_percent requires total_steps; call set_total_steps() first"
@@ -242,12 +255,14 @@ class AugmentationCurriculumScheduler:
         for descriptor in self._phases:
             if global_step <= descriptor.end_step:
                 return self._interpolate(descriptor, global_step)
+        if self._final_bypass is None:
+            raise ValueError("Curriculum final state is unavailable")
         return {
             'bypass_prob': self._final_bypass.to_python_value(),
             'ops': _numeric_ops_to_python(self._final_ops),
         }
 
-    def _interpolate(self, descriptor: _PhaseDescriptor, step: int) -> Dict[str, Any]:
+    def _interpolate(self, descriptor: _PhaseDescriptor, step: int) -> dict[str, Any]:
         span = descriptor.end_step - descriptor.start_step
         progress = 1.0
         if span > 0:
@@ -255,10 +270,10 @@ class AugmentationCurriculumScheduler:
         effective_bypass = descriptor.prev_bypass.interpolate(
             descriptor.target_bypass, progress
         )
-        effective_ops: Dict[str, Dict[str, NumericParam]] = {}
+        effective_ops: dict[str, dict[str, NumericParam]] = {}
         for op_name, target_params in descriptor.target_ops.items():
             prev_params = descriptor.prev_ops.get(op_name, {})
-            entry: Dict[str, NumericParam] = {}
+            entry: dict[str, NumericParam] = {}
             for param_name, target_value in target_params.items():
                 prev_value = prev_params.get(param_name, target_value)
                 entry[param_name] = prev_value.interpolate(target_value, progress)
@@ -306,7 +321,7 @@ class AugmentationCurriculumScheduler:
 
 def _numeric_ops_to_python(
     ops: Mapping[str, Mapping[str, NumericParam]]
-) -> Dict[str, Dict[str, float | list[float]]]:
+) -> dict[str, dict[str, float | list[float]]]:
     return {
         name: {param: numeric.to_python_value() for param, numeric in params.items()}
         for name, params in ops.items()
@@ -315,22 +330,22 @@ def _numeric_ops_to_python(
 
 def _deepcopy_ops(
     ops: Mapping[str, Mapping[str, NumericParam]]
-) -> Dict[str, Dict[str, NumericParam]]:
+) -> dict[str, dict[str, NumericParam]]:
     return {name: dict(params) for name, params in ops.items()}
 
 
 def _build_base_ops(
     op_meta: Iterable[Mapping[str, Any]]
-) -> Dict[str, Dict[str, NumericParam]]:
-    base_ops: Dict[str, Dict[str, NumericParam]] = {}
+) -> dict[str, dict[str, NumericParam]]:
+    base_ops: dict[str, dict[str, NumericParam]] = {}
     for entry in op_meta:
-        if not isinstance(entry, MappingABC):
+        if not isinstance(entry, Mapping):
             continue
         name = entry.get('name')
         params = entry.get('curriculum_params') or entry.get('params', {})
-        if not name or not isinstance(params, MappingABC):
+        if not name or not isinstance(params, Mapping):
             continue
-        numeric_params: Dict[str, NumericParam] = {}
+        numeric_params: dict[str, NumericParam] = {}
         for param_name, value in params.items():
             if isinstance(value, NumericParam):
                 numeric_param = value

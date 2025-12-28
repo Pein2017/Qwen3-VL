@@ -803,12 +803,12 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--config-yaml",
-        default="configs/dlora/sft_base.yaml",
+        default="configs/1024/sft_base.yaml",
         help="Training YAML with custom.augmentation config.",
     )
     parser.add_argument(
         "--jsonl",
-        default="data/bbu_full_768_poly-need_review/train.jsonl",
+        default="data_new_schema/bbu_full_1024_poly_new_schema/train.jsonl",
         help="Input train JSONL with images/objects.",
     )
     parser.add_argument(

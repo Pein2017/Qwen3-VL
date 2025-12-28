@@ -1120,8 +1120,9 @@ class CoordinateManager:
 
     @staticmethod
     def _reconstruct_geometry_from_points(
-        original_geometry: Dict, transformed_points: List[Tuple[float, float]]
-    ) -> Dict:
+        original_geometry: Dict[str, Any],
+        transformed_points: List[Tuple[float, float]],
+    ) -> Dict[str, Any]:
         """
         Reconstruct geometry object with transformed coordinate points.
 
@@ -1157,7 +1158,9 @@ class CoordinateManager:
     # ============================================================================
 
     @staticmethod
-    def extract_bbox_from_geometry(geometry_input: Union[List, Dict]) -> List[float]:
+    def extract_bbox_from_geometry(
+        geometry_input: Union[List[float], Dict[str, Any]]
+    ) -> List[float]:
         """
         Extract bounding box from any geometry type.
 
@@ -1213,7 +1216,7 @@ class CoordinateManager:
 
     @staticmethod
     def get_all_coordinate_points(
-        geometry_input: Union[List, Dict],
+        geometry_input: Union[List[float], Dict[str, Any]],
     ) -> List[Tuple[float, float]]:
         """
         Extract all coordinate points from any geometry type.
@@ -1245,7 +1248,7 @@ class CoordinateManager:
 
     @staticmethod
     def _extract_points_from_coordinates(
-        coordinates: List, geometry_type: str
+        coordinates: List[Any], geometry_type: str
     ) -> List[Tuple[float, float]]:
         """
         Extract coordinate points from GeoJSON coordinates array.
@@ -1301,8 +1304,10 @@ class CoordinateManager:
 
     @staticmethod
     def scale_all_coordinates(
-        geometry_input: Union[List, Dict], scale_x: float, scale_y: float
-    ) -> Union[List, Dict]:
+        geometry_input: Union[List[float], Dict[str, Any]],
+        scale_x: float,
+        scale_y: float,
+    ) -> Union[List[float], Dict[str, Any]]:
         """
         Scale all coordinate points in any geometry type.
 
@@ -1364,7 +1369,7 @@ class CoordinateManager:
 
     @staticmethod
     def validate_geometry_bounds(
-        geometry_input: Union[List, Dict],
+        geometry_input: Union[List[float], Dict[str, Any]],
         width: int,
         height: int,
         tolerance: float = 0.1,

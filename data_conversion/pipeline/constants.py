@@ -62,72 +62,70 @@ QUAD_BBOX_OBJECT_TYPES: Set[str] = {"bbu", "bbu_shield", "connect_point", "label
 DEFAULT_LABEL_HIERARCHY: Dict[str, List[str]] = {
     # connect_point
     # - type: BBU安装螺丝, 机柜处接地螺丝, 地排处接地螺丝, ODF端光纤插头, BBU端光纤插头
-    # - completeness: 显示完整, 只显示部分
-    # - compliance: 符合要求, 不符合要求
+    # - completeness: 完整, 部分
+    # - compliance: 符合, 不符合
     "螺丝、光纤插头": [
         "BBU安装螺丝",
         "机柜处接地螺丝",
         "地排处接地螺丝",
         "ODF端光纤插头",
         "BBU端光纤插头",
-        "显示完整",
-        "只显示部分",
-        "符合要求",
-        "不符合要求",
+        "完整",
+        "部分",
+        "符合",
+        "不符合",
     ],
     # label (free text in mapping) — keep empty to avoid constraining values
     # Note: when using a hierarchy file, prefer a rule that does not restrict label free text
     "标签": [],
     # bbu
     # - brand: 华为, 中兴, 爱立信
-    # - completeness: 显示完整, 只显示部分
+    # - completeness: 完整, 部分
     # - windshield requirement/conformity (combined forms appear in labels):
-    #   无需安装, 机柜空间充足，需要安装/这个BBU设备按要求配备了挡风板,
-    #   机柜空间充足，需要安装/这个BBU设备未按要求配备挡风板
+    #   免装, 空间充足需安装
     "BBU设备": [
         "华为",
         "中兴",
         "爱立信",
-        "显示完整",
-        "只显示部分",
-        "无需安装",
-        "机柜空间充足，需要安装/这个BBU设备按要求配备了挡风板",
-        "机柜空间充足，需要安装/这个BBU设备未按要求配备挡风板",
+        "完整",
+        "部分",
+        "免装",
+        "空间充足需安装",
     ],
     # fiber
     # - obstruction: 无遮挡, 有遮挡
-    # - protection: 无保护措施, 有保护措施（细化: 蛇形管/铠装/同时有蛇形管和铠装）
-    # - bend_radius: 弯曲半径合理, 弯曲半径不合理（弯曲半径<4cm或者成环）
+    # - protection: 无保护, 有保护（细化: 蛇形管/铠装/蛇形管+铠装）
+    # - bend_radius: 半径合理, 半径不合理<4cm或成环
     "光纤": [
         # occlusion tokens removed (低价值): "无遮挡", "有遮挡"
-        "无保护措施",
-        "有保护措施",
+        "无保护",
+        "有保护",
         "蛇形管",
         "铠装",
-        "同时有蛇形管和铠装",
-        "弯曲半径合理",
-        "弯曲半径不合理（弯曲半径<4cm或者成环）",
+        "蛇形管+铠装",
+        "半径合理",
+        "半径不合理<4cm或成环",
     ],
     # wire
     # - obstruction: 无遮挡, 有遮挡
-    # - organization: 捆扎整齐, 分布散乱
+    # - organization: 整齐, 散乱
     "电线": [
         # occlusion tokens removed (低价值): "无遮挡", "有遮挡"
-        "捆扎整齐",
-        "分布散乱",
+        "整齐",
+        "散乱",
     ],
     # bbu_shield
     # - brand: 华为, 中兴
-    # - completeness: 显示完整, 只显示部分
+    # - completeness: 完整, 部分
     # - obstruction: 挡风板无遮挡, 挡风板有遮挡
-    # - direction: 安装方向正确, 安装方向错误
+    # - direction: 方向正确, 方向错误
     "挡风板": [
         "华为",
         "中兴",
-        "显示完整",
-        "只显示部分",
+        "完整",
+        "部分",
         # occlusion tokens removed (低价值): "挡风板无遮挡", "挡风板有遮挡"
-        "安装方向正确",
-        "安装方向错误",
+        "方向正确",
+        "方向错误",
     ],
 }

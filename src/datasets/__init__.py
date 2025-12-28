@@ -22,6 +22,8 @@ from .contracts import (
     MessageContent,
     MessageDict,
     ConversationRecord,
+    DatasetImage,
+    DatasetObject,
     GeometryDict,
     AugmentationTelemetry,
     validate_conversation_record,
@@ -43,7 +45,6 @@ from .preprocessors import (
     BasePreprocessor,
     DenseCaptionPreprocessor,
     AugmentationPreprocessor,
-    SummaryLabelNormalizer,
 )
 
 __all__ = [
@@ -60,6 +61,8 @@ __all__ = [
     "MessageContent",
     "MessageDict",
     "ConversationRecord",
+    "DatasetImage",
+    "DatasetObject",
     "GeometryDict",
     "AugmentationTelemetry",
     "validate_conversation_record",
@@ -78,5 +81,4 @@ __all__ = [
     "BasePreprocessor",
     "DenseCaptionPreprocessor",
     "AugmentationPreprocessor",
-    "SummaryLabelNormalizer",
 ]

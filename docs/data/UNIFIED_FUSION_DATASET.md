@@ -80,6 +80,7 @@ dataset_template = self._clone_template(template)  # ❌ Cloning!
 2. **Dynamic Prompt Selection**: Select prompts (Chinese/English) based on record metadata
 3. **Concatenated Records**: All records from all sources in one list
 4. **Metadata Tagging**: Tag each record with its source dataset name
+5. **Record-Style Compatibility**: Chat-only records (`messages` only) pass through unchanged; dense-caption records are built from `images`/`objects`. Mixing is supported as long as the base template can encode both formats (ChatML family recommended).
 
 ### Architecture
 

@@ -7,7 +7,7 @@ Naming is unified to make sampling intent explicit (`train_*` vs `eval_*`).
 ## Pooling
 1. **Eval pool (fixed)**:
    - Sample once at run start from full dataset.
-   - Size controlled by `rule_search.eval_pool_fraction` (default 0.2).
+   - Size controlled by `rule_search.eval_pool_size` (default 128).
    - Excluded from train pools.
 2. **Train pool (rolling)**:
    - Remaining tickets are shuffled once using seed.
@@ -33,7 +33,7 @@ Candidate accepted iff:
 - `rule_search.train_pool_fraction` (replaces `validate_fraction`)
 - `rule_search.train_with_replacement` (replaces `validate_with_replacement`)
 - `rule_search.train_sampler` (replaces `eval_sampler` for train/gate sampling)
-- `rule_search.eval_pool_fraction` (new)
+- `rule_search.eval_pool_size` (new)
 - `rule_search.eval_sampler` (new; used only for holdout evaluation)
 
 ## Compatibility

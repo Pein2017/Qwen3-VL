@@ -16,12 +16,12 @@ REMARK_MARK = "备注"
 
 # Heuristics: main label looks positive/definitive, remark is uncertain or negative.
 POSITIVE_TOKENS = [
-    "符合要求",
-    "安装方向正确",
-    "这个BBU设备按要求配备了挡风板",
-    "弯曲半径合理",
-    "无需安装",
-    "显示完整",
+    "符合",
+    "方向正确",
+    "按要求配备",
+    "半径合理",
+    "免装",
+    "完整",
 ]
 UNCERTAIN_OR_NEG = [
     "无法判断",

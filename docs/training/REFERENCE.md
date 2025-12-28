@@ -20,7 +20,7 @@ Comprehensive guide for training, inference, deployment, and advanced topics.
 
 ### Inspection Pipeline (Stage‑1 → Stage‑2)
 - **Stage‑1 / Stage‑A (Basic Object Recognition)**: `src/stage_a/` emits per-image evidence/rare-object summaries used as inputs to Stage‑2. Runbook: `docs/runtime/STAGE_A_RUNTIME.md`.
-- **Stage‑2 / Stage‑B (Group Ticket Verification)**: `src/stage_b/` ingests Stage‑A JSONL + labels and returns group verdicts with **prompt-only rollouts** under a strict two-line binary contract (`Verdict: 通过|不通过` + `Reason: ...`; no third-state wording). Inference is guarded by deterministic, **mission‑scoped fail‑first** signals (mission‑agnostic negative triggers + generalized patterns like `不符合要求/<issue>`, gated by the current mission `G0`). Stage‑B supports two execution modes: `legacy_reflection` (two-pass reflection ops + stop-gradient need-review routing) and `rule_search` (reflection as rule proposer + large-scale rollout metric gating; produces `rule_candidates.jsonl`/`benchmarks.jsonl`). Hard failures are logged to `failure_malformed.jsonl` and do not enter the review queue. No CriticEngine. Runbook: `docs/runtime/STAGE_B_RUNTIME.md` and business context in `docs/runtime/STAGE_A_STAGE_B.md`.
+- **Stage‑2 / Stage‑B (Group Ticket Verification)**: `src/stage_b/` ingests Stage‑A JSONL + labels and runs **prompt-only rollouts** under a strict two-line binary contract (`Verdict: 通过|不通过` + `Reason: ...`; no third-state wording). Stage‑B only supports **rule_search** (reflection as rule proposer + large-scale rollout metric gating; produces `rule_candidates.jsonl`/`benchmarks.jsonl` + audit trails). No CriticEngine. Runbook: `docs/runtime/STAGE_B_RUNTIME.md` and business context in `docs/runtime/STAGE_A_STAGE_B.md`.
 - **Offline preprocessing (optional)**: `data_conversion/` normalizes annotation exports into train/val/tiny JSONL and QA reports. Guide: `docs/data/DATA_PREPROCESSING_PIPELINE.md`.
 
 ### Source Code Layout
@@ -58,11 +58,11 @@ Comprehensive guide for training, inference, deployment, and advanced topics.
 
 **ConfigLoader** (`src/config/loader.py`):
 - Loads YAML and materializes frozen dataclasses (`TrainingConfig`, `CustomConfig`, `SaveDelayConfig`, `VisualKDConfig`)
-- Resolves `global_max_length` → `model.max_model_len` + `template.max_length`
+- Resolves `global_max_length` → `model.max_model_len` + `template.max_length` and forces `template.truncation_strategy: raise`
 - Attaches typed runtime toggles to `TrainArguments` (e.g., `save_delay_config`, `visual_kd_config`)
 - Fails fast with informative errors when schemas or inheritance are invalid
 - Source of truth for all configuration behavior
-- Over-length policy: when `template.truncation_strategy` is set to `raise`, downstream datasets catch `MaxLengthError` and drop the offending sample instead of truncating, then retry another record (see `DenseCaptionDataset`).
+- Over-length policy: when `template.truncation_strategy` is `raise`, downstream datasets surface `MaxLengthError` as a hard failure so training stops rather than truncating or skipping samples (see `DenseCaptionDataset`).
 
 **DenseCaptionDataset** (`src/datasets/dense_caption.py`):
 ```python
@@ -128,6 +128,14 @@ Image (PIL)
 - Placeholder count = `image_grid_thw.prod()` per image
 - Do NOT manually insert placeholders in text
 - Template handles vision token expansion automatically
+
+**Template + Record Compatibility**:
+- `scripts/train.sh` launches SFT with a **single base template** (from config), even when `custom.fusion_config` mixes datasets. Per-dataset `template` strings select **prompt presets** only.
+- Supported record styles in fusion:
+  - **ChatML text-only** (`messages` only; no `images/objects/summary`) for chat corpora.
+  - **Generic detection** (LVIS/COCO, etc.) with simple `desc` tokens and no summary.
+  - **Target domain** (BBU/RRU) with `key=value` `desc` and JSON-string `summary`.
+- When mixing chat + dense-caption sources, choose a base template that can encode both formats (ChatML family recommended).
 
 ### Logging & Callbacks
 
@@ -230,11 +238,13 @@ Core SFT/LoRA recipes, KL anchoring overlays, augmentation telemetry, and troubl
 Keep configs under `configs/` in sync with the playbook when making behavioral changes.
 
 ### Summary Prompt Profiles (Training vs Inference)
-- **Training default**: `summary_train_min` (format + task criterion only, evidence-only/no-hallucination constraints).
+- **Training default**: `summary_runtime`.
 - **Config knobs** (summary mode only):
-  - `prompts.profile`: `summary_train_min` | `summary_runtime`
-  - `prompts.domain`: `bbu` | `rru` (required only when using runtime profile)
+  - `prompts.profile`: `summary_runtime`
+  - `prompts.domain`: `bbu` | `rru` (required for runtime profile)
   - `prompts.system` / `prompts.user` remain authoritative overrides and bypass profile composition.
+  - `custom.assistant_prefix_format`: required for BBU/RRU targets to prepend `<DOMAIN=...>, <TASK=...>` + newline before assistant payloads (dense + summary). Source datasets remain unchanged.
+- **Stage-A runtime composition**: system prompt = summary task base + 全局“非现场/图纸”规则；user prompt = summary instruction + BBU/RRU 场景提示块 + 可选任务重点。
 
 ## Inference
 
@@ -244,9 +254,8 @@ Runtime/deployment instructions for Stage-A summaries and the Stage-B verdict lo
 - Adapter vs merged checkpoints, export commands, and decoding tips
 - Dense captioning usage examples
 - Stage-A CLI guardrails and output schemas
-- Stage-B has two modes controlled by `mode` in the YAML: `legacy_reflection` (sampler/selection/two-pass reflection ops + stop-gradient need-review routing) and `rule_search` (tree-growth loop: baseline rollout → proposer outputs 2–3 rules → A/B validate on a large ticket set → accept only via metric gate). In both modes, rollout 提示=guidance+Stage-A 摘要（不含 GT；S* 为结构不变量，G0+ 可学习），推理输出严格两行二分类（`Verdict: 通过|不通过` + `Reason: ...`）且禁止任何第三状态词面；若确定性护栏覆盖模型采样 verdict，则必须重写 `Reason` 以与最终 `Verdict` 一致。护栏包含 **mission‑scoped fail‑first**（仅当负项与当前 mission 的 `G0` 相关时触发，含 pattern-first `不符合要求/<issue>`）；Stage‑A summary 中的 `需复核,备注:` 视为软信号，需读取备注综合判断，不能把 `需复核` 硬等价为 fail。`legacy_reflection` 的 ops pass 会优先鼓励“关键物体数量/比例/配对关系”的可验证规则，以降低 `gt=不通过` 但 `pred=通过` 的误判。`rule_search` 会额外写入 `rule_candidates.jsonl`（候选规则 A/B 指标 + gate 结论）、`benchmarks.jsonl`（每次 accept 的基线/after 指标）、`rule_search_hard_cases.jsonl`（错例溯源）、`rule_search_candidate_regressions.jsonl`（回归样本）。`legacy_reflection` 仍输出 `reflection.jsonl`/`need_review_queue.jsonl` 并执行 bounded retry；两行协议解析失败/无可用候选/selection 报错等硬故障仅写入 `failure_malformed.jsonl` 与日志。重跑同一 run_name 重建 per-run artifacts，指导沿用上次快照。
-- Stage-B 生成 `metrics.jsonl`（step-wise `logging_steps` 窗口 + 每个 epoch 的汇总行），包含/排除人工复核两套 acc/fn/fp/fn_rate/fp_rate/n 计数，与 trajectories/selections 并列用于快速健康检查。
-- Stage-B 可选生成 `group_report_delta.jsonl`（轻量、step-wise，仅包含最近一个 `logging_steps` 窗口内处理过的 group 的“增量快照”，便于监控 verdict/reason 变化）；仍会在 run 结束生成完整 `group_report.jsonl`（或通过 `scripts/stage_b_group_report.py` 离线重建）。
+- Stage-B 仅支持 `rule_search`（baseline rollout → proposer 产出 1–N 条候选操作 → **train pool** A/B gate → 通过者更新 guidance；eval pool 指标仅用于审计）。system prompt 固定为两行判决契约 + 规则/软硬信号；user prompt 仅包含 guidance（S*/G0/G*）+ Stage-A 摘要（不含 GT）。领域提示已上移到 Stage‑A user prompt。**规则默认 AND 关系**（未显式写“或/例外”的规则必须全部满足；缺证据即不通过），推理输出严格两行二分类（`Verdict: 通过|不通过` + `Reason: ...`）且禁止任何第三状态词面。rollout/proposer/reflection 超长提示不截断，直接 drop；全局配置建议：rollout `max_prompt_tokens=4096`，proposer/reflection `max_token_length=12000`。`rule_search` 会写入 `rule_candidates.jsonl`、`benchmarks.jsonl`、`rule_search_hard_cases.jsonl`、`rule_search_candidate_regressions.jsonl`。重跑同一 run_name 重建 per-run artifacts，指导沿用上次快照。另：可用 `jump_reflection=true`（或 `--jump-reflection` / YAML `jump_reflection: true`）跳过 proposer/reflection，仅跑 baseline rollout 并导出 `baseline_metrics.json` / `baseline_ticket_stats.jsonl` 以便人工分析后再手动修改 `initial_guidance.json`。
+- Stage-B 可选导出 `distill_chatml.jsonl` 供后训练使用（低温采样、随机抽样 `distill_size`）。
 - 生产约束：Stage‑A 与 Stage‑B 在最终环境中共用同一个 Qwen3‑VL 模型（同一组权重 / LoRA 组合），通过不同 prompt 和 config 切换任务；训练 summary‑mode 或添加新 LoRA 时，需要显式评估对 Stage‑B rollout/verdict 行为的影响。
 
 ## Advanced Topics & FAQ

@@ -4,9 +4,10 @@ import base64
 import copy
 import json
 import os
-from typing import Any, Dict, Iterable, List, Literal, Mapping, Optional, Tuple
+from collections.abc import Iterable, Mapping
+from typing import Literal, Sequence
 
-from ..contracts import ConversationRecord, validate_conversation_record
+from ..contracts import ConversationRecord, DatasetObject, validate_conversation_record
 from ..geometry import normalize_points
 from ..utils import extract_object_points
 from .base import BaseBuilder
@@ -23,6 +24,7 @@ class JSONLinesBuilder(BaseBuilder):
     - ``dense``: assistant returns a JSON object mapping ``object_{n}`` keys to
       geometry/description payloads.
     - ``summary``: assistant returns the summary string stored in the record.
+    - Optional ``assistant_prefix`` prepends a single line before the assistant payload.
     """
 
     def __init__(
@@ -32,6 +34,7 @@ class JSONLinesBuilder(BaseBuilder):
         emit_norm: Literal["none", "norm100", "norm1000"],
         mode: Literal["dense", "summary"] = "dense",
         json_format: Literal["standard"] = "standard",
+        assistant_prefix: str | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -39,6 +42,7 @@ class JSONLinesBuilder(BaseBuilder):
         self.emit_norm = emit_norm
         self.mode = mode
         self.json_format = json_format
+        self.assistant_prefix = assistant_prefix.strip() if assistant_prefix else None
 
     def _get_summary_text(self, record: ConversationRecord, record_index: int) -> str:
         """Extract and validate summary from record.
@@ -62,11 +66,11 @@ class JSONLinesBuilder(BaseBuilder):
             )
         return summary
 
-    def build(self, record: ConversationRecord) -> Dict[str, Any]:
+    def build(self, record: ConversationRecord) -> dict[str, object]:
         """Build a single-record conversation payload."""
         return self.build_many([record])
 
-    def build_many(self, records: Iterable[Mapping[str, Any]]) -> Dict[str, Any]:
+    def build_many(self, records: Iterable[Mapping[str, object]]) -> dict[str, object]:
         """Build conversation messages from one record.
 
         Dynamic pairing is no longer supported; this method fails if more than one
@@ -82,29 +86,28 @@ class JSONLinesBuilder(BaseBuilder):
         record = validate_conversation_record(records_list[0])
 
         # Pass-through for pre-authored chat records (text-only fusion sources).
-        if record.get("messages"):
-            return {
-                "messages": copy.deepcopy(record["messages"]),
-                **(
-                    {"metadata": copy.deepcopy(record["metadata"])}
-                    if "metadata" in record
-                    else {}
-                ),
-            }
+        messages = record.get("messages")
+        if messages:
+            payload: dict[str, object] = {"messages": copy.deepcopy(messages)}
+            metadata = record.get("metadata")
+            if metadata is not None:
+                payload["metadata"] = copy.deepcopy(metadata)
+            return payload
 
-        user_contents: List[Dict[str, Any]] = []
-        objects_out: Dict[str, List[Any]] = {"ref": [], "bbox": [], "image_id": []}
-        objects_payload: Dict[str, Any] = {}
+        user_contents: list[dict[str, object]] = []
+        objects_out: dict[str, list[object]] = {"ref": [], "bbox": [], "image_id": []}
+        objects_payload: dict[str, object] = {}
 
         images = record.get("images", []) or []
-        objects = record.get("objects", []) or []
-        sorted_objects = sort_objects_tlbr(list(objects))
+        objects_seq: Sequence[DatasetObject] = record.get("objects") or []
+        objects = list(objects_seq)
+        sorted_objects = sort_objects_tlbr(objects)
 
         for image in images:
             user_contents.append({"type": "image", "image": self._to_url(image)})
 
         if self.mode == "summary":
-            assistant_payload: Any = self._get_summary_text(record, 0)
+            assistant_payload: object = self._get_summary_text(record, 0)
         else:
             assistant_payload = self._build_group_entry(sorted_objects, record)
             self._update_objects_metadata(objects_out, sorted_objects, 0)
@@ -121,6 +124,9 @@ class JSONLinesBuilder(BaseBuilder):
         else:
             assistant_text = self._render_json_text(assistant_payload)
 
+        if self.assistant_prefix:
+            assistant_text = f"{self.assistant_prefix}\n{assistant_text}"
+
         messages = [
             {"role": "user", "content": user_contents},
             {
@@ -129,7 +135,7 @@ class JSONLinesBuilder(BaseBuilder):
             },
         ]
 
-        merged: Dict[str, Any] = {"messages": messages}
+        merged: dict[str, object] = {"messages": messages}
         if objects_payload:
             merged["assistant_payload"] = objects_payload
         if objects_out["bbox"]:
@@ -140,15 +146,15 @@ class JSONLinesBuilder(BaseBuilder):
         return merged
 
     def _build_group_entry(
-        self, objects: List[Dict[str, Any]], record: ConversationRecord
-    ) -> Dict[str, Any]:
+        self, objects: list[DatasetObject], record: ConversationRecord
+    ) -> dict[str, object]:
         width = float(record.get("width") or 1)
         height = float(record.get("height") or 1)
 
-        grouped_objects: Dict[str, Any] = {}
+        grouped_objects: dict[str, object] = {}
         for idx, obj in enumerate(objects, start=1):
             geom_type, points = extract_object_points(obj)
-            payload: Dict[str, Any] = {
+            payload: dict[str, object] = {
                 "desc": self._sanitize_desc(obj.get("desc"), idx)
             }
             if geom_type and points:
@@ -161,7 +167,7 @@ class JSONLinesBuilder(BaseBuilder):
             grouped_objects[f"object_{idx}"] = payload
         return grouped_objects
 
-    def _sanitize_desc(self, value: Any, object_index: int) -> str:
+    def _sanitize_desc(self, value: object, object_index: int) -> str:
         if not isinstance(value, str):
             raise ValueError(
                 f"Object object_{object_index} must provide a string 'desc'; got {type(value)!r}"
@@ -191,8 +197,8 @@ class JSONLinesBuilder(BaseBuilder):
 
     def _update_objects_metadata(
         self,
-        objects_out: Dict[str, List[Any]],
-        objects: List[Dict[str, Any]],
+        objects_out: dict[str, list[object]],
+        objects: list[DatasetObject],
         image_id: int,
     ) -> None:
         for obj in objects:
@@ -203,17 +209,25 @@ class JSONLinesBuilder(BaseBuilder):
             objects_out["image_id"].append(image_id)
             desc = obj.get("desc")
             if desc:
-                objects_out["ref"].append(desc.split("/")[0])
+                head = ""
+                for token in str(desc).split(","):
+                    token = token.strip()
+                    if token.startswith("类别="):
+                        head = token.split("=", 1)[1]
+                        break
+                if not head:
+                    head = str(desc).split("/", 1)[0]
+                objects_out["ref"].append(head)
 
     def _format_points(
-        self, points: List[float], width: float, height: float
-    ) -> List[int | float]:
+        self, points: list[float], width: float, height: float
+    ) -> list[int | float]:
         if self.emit_norm == "none":
             return [float(v) for v in points]
         normalized = normalize_points(points, width, height, self.emit_norm)
         return [int(v) for v in normalized]
 
-    def _render_json_text(self, payload: Mapping[str, Any]) -> str:
+    def _render_json_text(self, payload: Mapping[str, object]) -> str:
         text_payload = self._prepare_text_payload(payload)
         indent, separators = self._json_style()
         assistant_text = json.dumps(
@@ -224,8 +238,8 @@ class JSONLinesBuilder(BaseBuilder):
         )
         return assistant_text
 
-    def _prepare_text_payload(self, payload: Mapping[str, Any]) -> Dict[str, Any]:
-        formatted: Dict[str, Any] = {}
+    def _prepare_text_payload(self, payload: Mapping[str, object]) -> dict[str, object]:
+        formatted: dict[str, object] = {}
         for key, entry in payload.items():
             if isinstance(entry, Mapping):
                 formatted[key] = self._format_object_entry(entry)
@@ -233,8 +247,8 @@ class JSONLinesBuilder(BaseBuilder):
                 formatted[key] = entry
         return formatted
 
-    def _format_object_entry(self, entry: Mapping[str, Any]) -> Dict[str, Any]:
-        formatted_entry: Dict[str, Any] = {}
+    def _format_object_entry(self, entry: Mapping[str, object]) -> dict[str, object]:
+        formatted_entry: dict[str, object] = {}
         for field, value in entry.items():
             if field in {"poly", "line"} and isinstance(value, list):
                 formatted_entry[field] = self._format_geometry_sequence(value)
@@ -244,22 +258,22 @@ class JSONLinesBuilder(BaseBuilder):
                 formatted_entry[field] = value
         return formatted_entry
 
-    def _format_geometry_sequence(self, values: List[int | float]) -> List[Any]:
+    def _format_geometry_sequence(self, values: list[int | float]) -> list[object]:
         if not values:
             return []
         if len(values) % 2 != 0:
             return list(values)
-        grouped: List[Any] = []
+        grouped: list[object] = []
         for idx in range(0, len(values), 2):
             x = values[idx]
             y = values[idx + 1]
             grouped.append([x, y])
         return grouped
 
-    def _json_style(self) -> Tuple[Optional[int], Tuple[str, str]]:
+    def _json_style(self) -> tuple[int | None, tuple[str, str]]:
         return None, (", ", ": ")
 
-    def _to_url(self, image: Any) -> str:
+    def _to_url(self, image: object) -> str:
         """Canonicalize an image entry to a URL string for the template.
 
         - If dict with bytes: produce a data URL (PNG)

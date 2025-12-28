@@ -41,11 +41,22 @@ NUM_GPUS="${#gpu_array[@]}"
 # ============================================================================
 
 ## Resolve CONFIG_RAW to absolute path or repo-relative
+## Supports:
+##   - Absolute paths: /path/to/config.yaml
+##   - Repo-relative paths: configs/fused_data/bbu_rru_summary.yaml
+##   - Configs subdirectory paths: fused_data/bbu_rru_summary.yaml (auto-adds configs/ prefix)
+##   - Config names: bbu_rru_summary (auto-adds configs/ prefix and .yaml suffix)
 if [[ "${CONFIG_RAW}" = /* ]]; then
+  # Absolute path - use as-is
   CONFIG_PATH="${CONFIG_RAW}"
-elif [[ "${CONFIG_RAW}" == *.yaml ]]; then
+elif [[ "${CONFIG_RAW}" == configs/* ]]; then
+  # Already starts with configs/ - prepend repo root
   CONFIG_PATH="${REPO_DIR}/${CONFIG_RAW}"
+elif [[ "${CONFIG_RAW}" == *.yaml ]]; then
+  # Ends with .yaml but doesn't start with configs/ - assume it's in configs/
+  CONFIG_PATH="${REPO_DIR}/configs/${CONFIG_RAW}"
 else
+  # Config name without extension - add configs/ prefix and .yaml suffix
   CONFIG_PATH="${REPO_DIR}/configs/${CONFIG_RAW}.yaml"
 fi
 

@@ -257,7 +257,7 @@ def test_poly_cap_functionality():
             )
             all_passed = False
 
-        return all_passed
+        assert all_passed, "Polygon cap functionality test failed"
 
 
 def test_data_contract_compliance():
@@ -377,10 +377,9 @@ def test_data_contract_compliance():
                 print(f"      • {err}")
             if len(errors) > 10:
                 print(f"      ... and {len(errors) - 10} more")
-            return False
+            raise AssertionError(f"Data contract compliance failed with {len(errors)} errors")
         else:
             print("  ✓ All records comply with DATA_JSONL_CONTRACT.md")
-            return True
 
 
 def main():

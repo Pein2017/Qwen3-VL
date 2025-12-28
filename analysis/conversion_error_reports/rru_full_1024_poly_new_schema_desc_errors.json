@@ -1,0 +1,11 @@
+{
+  "dataset": "rru_full_1024_poly_new_schema",
+  "bad_desc_total": 0,
+  "bad_desc_unique": 0,
+  "summary_abnormal_counts": {
+    "无法解析": 0,
+    "未知类别": 0,
+    "冲突值": 0
+  },
+  "bad_desc_items": []
+}

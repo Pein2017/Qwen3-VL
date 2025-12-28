@@ -22,6 +22,8 @@ CONFIG_RAW="${config:-debug}"
 CONDA_ENV="ms"
 LOG_LEVEL="${log_level:-debug}"
 DEBUG_FLAG="${debug:-false}"
+# Convenience flag: skip proposer/reflection and only run baseline rollouts + dumps.
+JUMP_REFLECTION="${jump_reflection:-false}"
 # Launch mode controls how we use multiple GPUs:
 # - auto (default): 1 GPU → single-process; >1 GPU → torchrun ticket-parallel
 # - model_parallel: always single-process Python, even if multiple GPUs are visible
@@ -84,6 +86,11 @@ case "${DEBUG_FLAG,,}" in
     ARGS+=("--debug")
     ;;
 esac
+case "${JUMP_REFLECTION,,}" in
+  1|true|yes)
+    ARGS+=("--jump-reflection")
+    ;;
+esac
 
 # Print configuration
 echo "=================================="
@@ -94,6 +101,7 @@ echo "GPUs:         ${CUDA_VISIBLE_DEVICES} (num=${NUM_GPUS})"
 echo "Conda env:    ${CONDA_ENV}"
 echo "Log level:    ${LOG_LEVEL}"
 echo "Debug mode:   ${DEBUG_FLAG}"
+echo "Jump reflect: ${JUMP_REFLECTION}  # env override; can also be set in YAML via jump_reflection: true"
 echo "Stage-B mode: ${STAGE_B_MODE}  # auto | model_parallel"
 echo "=================================="
 echo ""
@@ -127,9 +135,3 @@ STATUS=$?
 if [[ ${STATUS} -ne 0 ]]; then
   exit ${STATUS}
 fi
-
-echo ""
-echo "=================================="
-echo "Stage-B Postprocess: Review Checklist"
-echo "=================================="
-conda run -n "${CONDA_ENV}" --no-capture-output python -u scripts/stage_b_postprocess_review_checklist.py --config "${CONFIG_PATH}"

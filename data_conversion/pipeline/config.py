@@ -10,7 +10,7 @@ import logging
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 
 # Configure UTF-8 encoding for stdout/stderr if supported
@@ -69,7 +69,7 @@ class DataConversionConfig:
     # Filtering options - OPTIONAL WITH DEFAULTS
     remove_occlusion_tokens: bool = False  # Drop tokens containing "遮挡" from desc
     sanitize_text: bool = True  # Apply text normalization/sanitization on descriptions
-    standardize_label_desc: bool = True  # Standardize 标签/* to 标签/无法识别 when empty-like
+    standardize_label_desc: bool = True  # Legacy flag (no-op in key=value mode)
     
     # Ordering options - OPTIONAL WITH DEFAULTS
     preserve_annotation_order: bool = False  # Keep original object ordering when True
@@ -150,7 +150,7 @@ class DataConversionConfig:
         return self.get_dataset_output_dir() / "images"
     
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> Dict[str, Any]:
         """Convert config to dictionary for compatibility."""
         return {
             "input_dir": self.input_dir,

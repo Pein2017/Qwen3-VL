@@ -14,8 +14,7 @@ import argparse
 import json
 import os
 import sys
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List
 
 
 class ValidationError:
@@ -279,7 +278,7 @@ class JSONLValidator:
         print("="*60)
         
         # Statistics
-        print(f"\n✓ Statistics:")
+        print("\n✓ Statistics:")
         print(f"  Total lines: {self.stats['total_lines']}")
         print(f"  Valid samples: {self.stats['valid_samples']}")
         print(f"  Total objects: {self.stats['total_objects']}")

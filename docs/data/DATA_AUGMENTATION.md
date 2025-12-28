@@ -33,7 +33,7 @@ The augmentation pipeline handles 3 geometry types (bbox, poly, polyline) with p
 - Automatic object filtering based on visibility (min_coverage threshold)
 - Geometry truncation at crop boundaries (bbox/poly/line)
 - Polygon-aware coverage for polygons (Sutherland–Hodgman clipping plus shoelace area computation) to avoid elongated false positives
-- Completeness field updates: `显示完整` → `只显示部分` for partially visible objects (structured metadata supported)
+- Completeness field updates: `可见性=完整` → `可见性=部分` for partially visible objects (structured metadata supported)
 - Skip conditions: preserves dense scenes (<4 objects) and line objects (cables/fibers)
 - Perfect visual-label alignment for dense detection captioning
 
@@ -76,7 +76,7 @@ The augmentation pipeline handles 3 geometry types (bbox, poly, polyline) with p
 **Key Capabilities**:
 1. **Coverage-based filtering**: Objects <30% visible are dropped from GT
 2. **Geometry truncation**: Bbox/poly/line clipped to crop boundaries
-3. **Completeness tracking**: Automatic `显示完整` ↔ `只显示部分` updates based on coverage (including `attributes.completeness` when present)
+3. **Completeness tracking**: Automatic `可见性=完整` ↔ `可见性=部分` updates based on coverage (including `attributes.completeness` when present)
 4. **Smart skip conditions**: Preserves dense scenes (<4 objects) and line objects; emits telemetry on skip reasons
 
 **Configuration Example**:
@@ -269,13 +269,13 @@ No additional logging is emitted by default; the training loop applies the share
 - Crop image to random or center region
 - **Filter objects** based on visibility (drop if <30% visible by default)
 - **Truncate geometries** of partially visible objects to crop boundary
-- **Update completeness field**: `"显示完整"` → `"只显示部分"` for objects <95% visible
+- **Update completeness field**: `"可见性=完整"` → `"可见性=部分"` for objects <95% visible
 - **Skip crop** if <4 objects remain or line objects present (preserves cable/fiber integrity)
 - Translate retained geometries to crop-relative coordinates
 
 **Business Rules**:
 - `min_coverage` (default: 0.3): Drop objects with <30% area inside crop
-- `completeness_threshold` (default: 0.95): Mark "只显示部分" if <95% visible
+- `completeness_threshold` (default: 0.95): Mark `可见性=部分` if <95% visible
 - `min_objects` (default: 4): Skip crop if <4 objects would remain (dense scenes requirement)
 - `skip_if_line` (default: true): Skip crop if any line object present (preserve cable/fiber paths)
 
@@ -300,7 +300,7 @@ No additional logging is emitted by default; the training loop applies the share
 - ✅ Dense captioning with object descriptions
 - ✅ Need to focus on small objects via zooming
 - ✅ Want perfect visual-label alignment (no hallucinated objects)
-- ✅ Have `显示完整`/`只显示部分` completeness fields in your data
+- ✅ Have `可见性=完整`/`可见性=部分` completeness fields in your data
 - ❌ Single-object detection (use `min_objects=1`)
 - ❌ Images with <4 objects total (crop will always skip)
 
@@ -628,7 +628,7 @@ Outputs to `vis_out/augment_stage3_exact/` showing original vs augmented with ov
 **Cause**: Field name mismatch or coverage above threshold
 
 **Check**:
-1. Verify your data uses exact field names: `"显示完整"` and `"只显示部分"`
+1. Verify your data uses exact field names: `"可见性=完整"` and `"可见性=部分"`
 2. Coverage may be ≥95% (above completeness_threshold):
    ```yaml
    - name: random_crop
@@ -849,7 +849,7 @@ python vis_tools/vis_augment_compare.py
 ### What's Fixed
 
 ✅ **Labels filtered**: GT only describes visible objects  
-✅ **Completeness updated**: "显示完整" → "只显示部分" for partial objects  
+✅ **Completeness updated**: "可见性=完整" → "可见性=部分" for partial objects  
 ✅ **Geometry truncated**: Coordinates clipped to crop boundaries  
 ✅ **No hallucination**: Model trained on aligned data
 
