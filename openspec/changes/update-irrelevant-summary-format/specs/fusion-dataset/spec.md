@@ -21,3 +21,12 @@ Irrelevant-summary samples SHALL be identified by `metadata._fusion_source` (e.g
 - **WHEN** target quotas are computed
 - **THEN** the loader schedules the full irrelevant pool (subject to rounding) like other targets
 - **AND** each record still carries `metadata._fusion_source=irrelevant_summary` so downstream handling can treat it as source-like.
+
+### Requirement: Irrelevant summary prompts alternate between BBU and RRU
+For samples where `metadata._fusion_source` equals `irrelevant_summary`, the prompt resolver SHALL randomize between `summary_bbu` and `summary_rru` prompts (~50/50 over the pool) while keeping `_fusion_source` unchanged. During training, the assignment SHALL be randomized per sample; evaluation MAY use a deterministic mapping.
+
+#### Scenario: Per-sample randomized prompt alternation for irrelevant samples
+- **GIVEN** two irrelevant records with distinct stable identifiers (e.g., image paths)
+- **WHEN** prompts are resolved during training
+- **THEN** each record selects either `summary_bbu` or `summary_rru` using randomized assignment
+- **AND** repeated epochs may assign a different prompt for the same record identifier.

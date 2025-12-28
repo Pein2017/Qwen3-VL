@@ -221,7 +221,7 @@ Fusion can mix multiple record styles as long as the base template is compatible
 
 ### Irrelevant Summary Target (Negative Stream)
 
-For summary-mode SFT regularization (reduce hallucinations on out-of-domain images), you can add a small **irrelevant** target stream whose samples always have `summary: 无关图片`.
+For summary-mode SFT regularization (reduce hallucinations on out-of-domain images), you can add a small **irrelevant** target stream whose samples always have `summary: 无关图片`. The loader keeps `_fusion_source=irrelevant_summary` and randomizes prompts per sample during training between `summary_bbu` and `summary_rru` (~50/50) without changing the dataset identity (eval uses a deterministic mapping).
 
 - Generate the JSONL from a folder of JPEGs (EXIF-aware width/height) and keep the global contract by emitting a single dummy full-frame bbox per image:
   - `conda run -n ms python scripts/build_irrelevant_summary_jsonl.py --images-dir data/irrelevant_summary/images --output-jsonl data/irrelevant_summary/train.jsonl`

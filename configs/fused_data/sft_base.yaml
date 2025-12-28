@@ -28,8 +28,8 @@ training:
   output_dir: ./output/12-27/new_schema-4B-dense
   run_name: epoch_30-2_1_6
   num_train_epochs: 30
-  per_device_train_batch_size: 2
-  per_device_eval_batch_size: 4
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 2
   effective_batch_size: 32
   optimizer: multimodal
   # LR groups (LLM/ViT/aligner) — tune per experiment as needed.

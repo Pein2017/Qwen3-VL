@@ -7,6 +7,7 @@ Records are tagged with their source dataset for prompt selection.
 from __future__ import annotations
 
 import copy
+import hashlib
 import random
 from collections.abc import Mapping, MutableMapping
 from dataclasses import dataclass
@@ -59,6 +60,8 @@ class FusionCaptionDataset(BaseCaptionDataset):
     """Fusion dataset that concatenates multiple JSONL sources with a unified template."""
 
     _logger: object = get_logger(__name__)
+    _IRRELEVANT_SOURCE = "irrelevant_summary"
+    _IRRELEVANT_ALT_TEMPLATES = ("summary_bbu", "summary_rru")
     _fusion_config: FusionConfig
     _augmenter: object | None
     bypass_prob: float
@@ -427,6 +430,25 @@ class FusionCaptionDataset(BaseCaptionDataset):
                     f"Fusion dataset '{dataset_name}' dense mode requires geometry; object_{idx} is missing bbox_2d/poly/line points."
                 )
 
+    @classmethod
+    def _pick_irrelevant_template(
+        cls,
+        record: Mapping[str, object],
+        *,
+        dataset_name: str,
+        base_idx: int,
+    ) -> str:
+        images = record.get("images")
+        key = None
+        if isinstance(images, list) and images:
+            first = images[0]
+            if isinstance(first, str) and first:
+                key = first
+        if key is None:
+            key = f"{dataset_name}:{base_idx}"
+        digest = hashlib.md5(key.encode("utf-8")).digest()
+        return cls._IRRELEVANT_ALT_TEMPLATES[digest[0] & 1]
+
     def _build_train_schedule(self) -> None:
         target_pool_sizes = {
             name: len(self._record_pools.get(name, [])) for name in self._target_names
@@ -678,6 +700,9 @@ class FusionCaptionDataset(BaseCaptionDataset):
                 task=resolve_task_token(mode),
             )
         prompts = policy.prompts
+        prompt_source = prompts.source
+        prompt_template = policy.spec.template
+        user_prompt = prompts.user
         system_prompt = prompts.system
         if system_prompt is None:
             system_prompt = (
@@ -685,8 +710,32 @@ class FusionCaptionDataset(BaseCaptionDataset):
                 if mode == "summary"
                 else self.system_prompt_dense
             )
+        if mode == "summary":
+            metadata = record.get("metadata")
+            if not isinstance(metadata, dict):
+                metadata = {}
+                record["metadata"] = metadata
+            if metadata.get("_fusion_source") == self._IRRELEVANT_SOURCE:
+                if self._split == "train":
+                    alt_template = self._IRRELEVANT_ALT_TEMPLATES[
+                        rng_local.randrange(len(self._IRRELEVANT_ALT_TEMPLATES))
+                    ]
+                else:
+                    alt_template = self._pick_irrelevant_template(
+                        record,
+                        dataset_name=dataset_name,
+                        base_idx=base_idx,
+                    )
+                alt_system, alt_user = get_template_prompts(alt_template)
+                if alt_user:
+                    user_prompt = alt_user
+                if alt_system is not None:
+                    system_prompt = alt_system
+                prompt_source = "domain"
+                prompt_template = alt_template
+                metadata["_fusion_template"] = alt_template
         builder = JSONLinesBuilder(
-            user_prompt=prompts.user,
+            user_prompt=user_prompt,
             emit_norm=self.emit_norm,
             mode=mode,
             json_format=self.json_format,
@@ -737,7 +786,8 @@ class FusionCaptionDataset(BaseCaptionDataset):
             "width": record.get("width"),
             "height": record.get("height"),
             "mode": mode,
-            "prompt_source": prompts.source,
+            "prompt_source": prompt_source,
+            "prompt_template": prompt_template,
             "augmentation_enabled": was_augmented,
             "object_cap_applied": cap_applied,
             "object_cap_limit": policy.max_objects_per_image,
