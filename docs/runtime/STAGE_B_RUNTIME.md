@@ -69,13 +69,15 @@ Stage‑B currently expects **exactly one mission per run**. Artifacts are writt
 - `rule_search_hard_cases.jsonl` — per-iteration hardest mismatches for manual tracing.
 - `rule_search_candidate_regressions.jsonl` — per-candidate regressions (base-correct → candidate-wrong) to audit harmful rules.
 - `distill_chatml.jsonl` — optional ChatML export for post-training when distillation is enabled (samples `distill_size` tickets with low temperature).
+- Use `scripts/stage_b_split_distill.py` to split `distill_chatml.jsonl` into train/val JSONL files for SFT.
 - `baseline_metrics.json` + `baseline_ticket_stats.jsonl` — written in `jump_reflection` mode (baseline-only audit).
 - `baseline_wrong_cases.jsonl` — written in `jump_reflection` mode; wrong tickets joined with Stage‑A `per_image` for fast diagnosis.
 - `baseline_metrics_steps.jsonl` — written in `jump_reflection` mode; rank0 appends progress snapshots every `runner.logging_steps` tickets (also printed to logs).
 - `baseline_np_cases.jsonl` / `baseline_ng_cases.jsonl` — written in `jump_reflection` mode; split wrong tickets into NP (GT pass → pred fail) and NG (GT fail → pred pass) with `group_id` + verdict samples.
 
 ##### Offline Audit
-- `scripts/postprocess_rule_search_hard_cases.py --path <run_dir>`：汇总 `rule_search_hard_cases.jsonl`，便于人工复核与规则追踪。
+- `scripts/postprocess_rule_search_hard_cases.py --hard-cases <run_dir_or_jsonl> --excel <excel_path> [--recursive] [--output <out_dir>] [--overwrite]`：汇总 `rule_search_hard_cases.jsonl`，补充 GT fail 原因用于人工复核与规则追踪。
+- Convenience wrapper: `scripts/run_rule_search_postprocess.sh`（编辑脚本内路径/mission 后直接运行）。
 
 ##### Manual Review & Failures
 

@@ -15,6 +15,11 @@ Single-image summarization runbook for generating the evidence JSONL that Stage-
 mission=挡风板安装检查 gpus=0 verify_inputs=true \
   bash scripts/stage_a.sh
 
+# Override defaults (checkpoint/input/output) + optional postprocess
+checkpoint=/path/to/ckpt input_dir=/path/to/groups output_dir=/path/to/out \
+  mission=挡风板安装检查 postprocess=true gpus=0 \
+  bash scripts/stage_a.sh
+
 # Multi-GPU mode (ticket-parallel via torchrun)
 mission=BBU安装方式检查（正装） gpus=0,1,2,3 \
   bash scripts/stage_a.sh
@@ -54,10 +59,10 @@ Troubleshooting symptom:
 ## Key Flags / Env Vars
 - `mission` (required) — must match `SUPPORTED_MISSIONS`.
 - `dataset` — `bbu|rru`; controls which domain knowledge pack is appended to the runtime summary prompt.
-- `prompt_profile` — summary prompt profile (`summary_runtime` default; `summary_train_min` for smoke/debug).
+- `prompt_profile` — summary prompt profile (`summary_runtime` default).
   - `summary_runtime` 组合方式：system prompt = summary 任务基座 + 全局“非现场/图纸”规则；user prompt = 摘要指令 + BBU/RRU 场景提示块 + 任务重点。
+- `checkpoint` / `input_dir` / `output_dir` — overrides the defaults inside `scripts/stage_a.sh`.
 - `verify_inputs` — logs first-chunk hashes and grid/token counts; optional.
-- `no_mission` — skip mission focus text for smoke tests.
 - `gpus` — GPU device selection (comma-separated list, e.g., `gpus=0` or `gpus=0,1,2,3`). Use `gpus=cpu` for CPU mode.
   - Single GPU: `gpus=0` → single-process execution
   - Multiple GPUs: `gpus=0,1,2,3` → auto-launches `torchrun` with ticket-parallel sharding across ranks
@@ -66,11 +71,18 @@ Troubleshooting symptom:
 - `pass_group_number` — Optional cap on the number of `pass` groups to keep. When the mission contains more than this number, Stage-A samples down to the value using the `sample_seed`.
 - `fail_group_number` — Optional cap on the number of `fail` groups to keep; sampling is done independently for the fail subset.
 - `sample_seed` — Random seed controlling pass/fail sampling (default: 42). Use the same seed to reproduce the same sampled split across runs.
+- `batch_size_per_rank` — per-rank batch size (`--batch_size` in CLI). Default is 32 in `scripts/stage_a.sh`.
+- `max_pixels` — image resizing budget (e.g., `1048576` = 1024×1024). Default is higher for `dataset=rru` unless overridden.
+- `max_new_tokens` — generation cap for summaries (default: 1024 in `scripts/stage_a.sh`).
+- `temperature` / `top_p` / `repetition_penalty` — decoding parameters (defaults in `scripts/stage_a.sh`).
+- `log_level` / `debug` — logging controls for Stage-A CLI.
 - `sharding_mode` — Distributed sharding strategy (default: `per_group`):
   - `per_group`: shard work at group granularity; batching stays within each group (no cross-group mixing).
   - `per_image`: shard work at image granularity; batches are per-rank; rank 0 merges per-image intermediates into group-level JSONL.
     - Note: per-image text outputs may differ under stochastic decoding (e.g., `temperature>0`); use `temperature=0.0` for regression comparisons.
 - `keep_intermediate_outputs` — Keep intermediate per-rank per-image JSONL outputs in `per_image` mode (default: delete after successful merge).
+- `postprocess` — run `python -m src.stage_a.postprocess --inplace` after inference (RRU/BBU cleanup).
+- `add_gt_fail_reason` / `excel_path` — optionally attach `gt_fail_reason_text` from Excel (BBU-only; uses `scripts/add_gt_fail_reason_to_stage_a.py`, default Excel path `output_post/BBU_scene_latest.xlsx`).
 
 ```bash
 # Image-level sharding (single GPU)

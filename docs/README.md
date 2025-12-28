@@ -8,7 +8,7 @@ Status: Active — Internal Engineering
 - **Fusion & public data** → `data/UNIFIED_FUSION_DATASET.md`, `data/PUBLIC_DATA.md`
 - **Training & reference** → `training/TRAINING_PLAYBOOK.md`, `training/REFERENCE.md`
 - **Stage‑1 runtime** → `runtime/STAGE_A_RUNTIME.md`
-- **Stage‑2 runtime** → `runtime/STAGE_B_RUNTIME.md`
+- **Stage‑2 runtime** → `runtime/STAGE_B_RUNTIME.md`, `stage_b/DIAGNOSIS_AND_REVIEW.md`
 - **Business pipeline & guidance** → `runtime/STAGE_A_STAGE_B.md`, `stage-B-knowledge-Chinese.md`
 - **Upstream dependencies** → `platform/UPSTREAM_DEPENDENCIES.md`
 - **Specs & governance** → `openspec/AGENTS.md`, `openspec/project.md`
@@ -46,6 +46,9 @@ Whenever you add or modify code in the directories above, update the associated 
 | `stage_a.sh` | `scripts/` | Mission-aware wrapper around `src.stage_a.cli` with guardrails for checkpoint/input directories. |
 | `stage_b.sh` | `scripts/` | Stage-B rule-search launcher; wires configs to `src.stage_b.runner` (supports `smoke` no-model audit). |
 | `stage_b_smoke.py` | `scripts/` | No-model Stage-B smoke/audit (config+ingest+guidance+prompt+parse+export). |
+| `stage_b_split_distill.py` | `scripts/` | Split `distill_chatml.jsonl` into train/val JSONL files (post rule-search distillation). |
+| `postprocess_rule_search_hard_cases.py` | `scripts/` | Extract hard cases (GT fail + pred pass) and attach GT fail reasons from Excel. |
+| `run_rule_search_postprocess.sh` | `scripts/` | Convenience wrapper for `postprocess_rule_search_hard_cases.py` with local paths. |
 | `validate_sft_config.py` | `scripts/` | Fast YAML validation for SFT configs (no model weights). |
 | `validate_dense_jsonl_contract.py` | `scripts/` | Fast JSONL contract validation for dense-caption records. |
 | `build_irrelevant_summary_jsonl.py` | `scripts/` | Builds `data/irrelevant_summary/train.jsonl` from `data/irrelevant_summary/images/*.jpg|*.jpeg` with `summary: 无关图片` (dummy full-frame bbox for contract compatibility). |
@@ -57,7 +60,7 @@ Use these scripts instead of ad-hoc commands so telemetry, logging, and environm
 ## Recent Updates
 
 ### v1.1.3 - RRU Support & Canonical Polygons (Nov 2025) 🛰️
-- Unified converter now handles RRU raw annotations: taxonomy additions (`ground_screw`, 尾纤/接地线标签与套管保护, 站点距离=数字), group membership encoded in `desc` via `组=<id>` (no `groups` field). Summaries are JSON strings with per-category stats (no ×N aggregation).
+- Unified converter now handles RRU raw annotations: taxonomy additions (`ground_screw`, 尾纤/接地线标签与套管保护, 站点距离=数字), group membership encoded in `desc` via `组=<id>` (no `groups` field). Summaries are JSON strings with per-category stats.
 - Polygon vertices are canonicalized offline (clockwise, top-most then left-most first) and `vis_tools` mirrors the ordering to avoid self-crossing during visualization.
 
 ### v1.1.2 - Config & Telemetry Contracts (Oct 2025) 📐
@@ -146,4 +149,4 @@ Vision Encoder (ViT) → Aligner (Projector) → LLM
 
 ---
 
-**Last Updated**: 2025-11-21 (Doc ownership refresh)
+**Last Updated**: 2025-12-28 (Doc sync to current scripts/runtime)

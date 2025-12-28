@@ -58,7 +58,7 @@ Note: The same `group_id` may appear in both label folders for resubmitted batch
 - Image catalog must stay synchronized with mission focus; onboarding checklists ensure a representative sample per verdict.
 - Data Ops spot-checks Stage-A JSONL outputs before releasing batches to Stage-B.
   - Throughput note: Stage-A supports a `sharding_mode=per_image` runtime mode to improve load balancing and batch utilization across GPUs; see `./STAGE_A_RUNTIME.md` for details and determinism notes.
-- Prompt profile note: Stage‑A runtime uses **summary_runtime** (system prompt = summary task base + 全局“非现场/图纸”规则；user prompt = 摘要指令 + BBU/RRU 场景提示块 + 任务重点). Summary SFT training stays on the **summary_train_min** profile (format + task criterion only).
+- Prompt profile note: Stage‑A runtime and summary SFT training both use **summary_runtime** (system prompt = summary task base + 全局“非现场/图纸”规则；user prompt = 摘要指令 + BBU/RRU 场景提示块 + 任务重点).
 
 ---
 
@@ -161,7 +161,7 @@ Each KPI is reported via `rule_candidates.jsonl`, `benchmarks.jsonl`, and `rule_
 
 - **MES / Production Systems**: Consume guidance updates and rule-search benchmarks for automated stop/go decisions.
 - **Supplier Portals**: Render Stage-A summaries and final verdict reasons in dispute workflows.
-- **Audit Archive**: Store guidance snapshots + trajectories for quarterly compliance testing.
+- **Audit Archive**: Store guidance snapshots + rule-search artifacts (rule_candidates/benchmarks/hard_cases/regressions) for quarterly compliance testing.
 - **Analytics Warehouse**: Load JSONL outputs into structured tables for KPI dashboards.
 
 Ensure downstream teams understand schema stability commitments; breaking changes require OpenSpec review.

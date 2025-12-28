@@ -89,7 +89,7 @@ Stage-B 现为“prompt-only”流程：推理输出**严格两行二分类**（
 - 使用“summary”能力对每张图片进行事实性归纳，输出每图单行摘要
 - 产出一份组级 JSONL：包含 `group_id / mission / label（历史人工）/ images / per_image` 的摘要字典
 - 作为 Stage-B 的唯一上游输入（事实来源），也是审核可追溯的依据
-- Prompt profiles：训练使用 **summary_train_min**（仅格式与任务准则，证据优先/反幻觉），推理使用 **summary_runtime**（system prompt = summary 任务基座 + 全局“非现场/图纸”规则；user prompt = 摘要指令 + BBU/RRU 场景提示块 + 任务重点）。
+- Prompt profiles：训练与推理均使用 **summary_runtime**（system prompt = summary 任务基座 + 全局“非现场/图纸”规则；user prompt = 摘要指令 + BBU/RRU 场景提示块 + 任务重点）。
 
 质量注意点：
 - 摘要存在识别偏差（漏检/误检/幻觉），但统一格式与词表可显著降低 Stage-B 的解释难度

@@ -95,7 +95,6 @@ Format requirements (aligned with training/inference prompts):
 - OCR/备注 are free text: remove whitespace only (preserve `,|=` and other symbols); unreadable → `可读性=不可读` (no “可以识别/无法识别”). Any stray comma tokens without `key=` are folded into `备注`, and `这里已经帮助修改,请注意参考学习` is stripped if present.
 - Conversion is fail-fast: if a sample has no objects or all `desc` are空/缺失，`build_summary_from_objects` raises `ValueError` and the sample is rejected.
 - Conversion also raises when invalid/unknown/conflict markers are detected in desc; fix raw annotations rather than emitting placeholder `异常` fields.
-- `custom.summary_label_grouping` is legacy for desc×N summaries; it has no effect on JSON summaries.
 
 #### Fixed Value Compression (BBU/RRU)
 
@@ -188,7 +187,7 @@ If your source is a human-annotation export, start with the intake guide (`./DAT
   - Validation artifacts (`invalid_objects.jsonl`, `validation_results.json`) allow offline QA before a dataset ever reaches `src/datasets/`.
   - Coordinate sanity is centralized in `pipeline/coordinate_manager.py` (EXIF + smart-resize + clamp) and `pipeline/vision_process.py`.
   - RRU now reuses the same pipeline: new classes/attributes (`ground_screw`, 尾纤/接地线标签与套管保护等) are defined in the taxonomy JSONs; station distance is represented as `类别=站点距离,站点距离=<int>` (digits extracted from raw text); group info is encoded in `desc` via `组=<id>` (no top-level `groups`). Records fail fast if any group has only one member.
-  - RRU summaries are JSON strings with per-category stats (no `×N` aggregation); `备注` is omitted and `分组统计` may appear when group counts exist.
+  - RRU summaries are JSON strings with per-category stats; `备注` is omitted and `分组统计` may appear when group counts exist.
   - Polygon vertices are canonicalized offline (clockwise, top-most vertex first, closing-duplicate removed) to prevent self-crossing; `vis_tools/` applies the same ordering when overlaying samples.
 - **Public datasets (`public_data/`)**:
   - See `PUBLIC_DATA.md` + `public_data/README.md` for LVIS download, conversion, sampling, visualization, and pytest coverage.

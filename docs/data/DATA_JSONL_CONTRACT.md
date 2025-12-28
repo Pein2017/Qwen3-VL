@@ -50,6 +50,6 @@ Each object MUST contain exactly one geometry field plus a non-empty `desc`.
 ## Current Sources (checked)
 - `data/bbu_full_768_poly/train.jsonl`: includes `summary`; objects use `poly` or `bbox_2d`.
 - `public_data/lvis/rescale_32_768_poly_max_12/train.jsonl`: same structure, no `summary`; objects may include `poly_points` metadata.
-- `data/rru_full_768_poly/all_samples.jsonl`: RRU domain; uses `bbox_2d`/`poly`/`line`, `desc` carries group membership via `组=<id>` and station distance as `类别=站点距离,站点距离=<int>` (current exports yield digits); `summary` is a JSON string with per-category stats (no `×N` aggregation).
+- `data/rru_full_768_poly/all_samples.jsonl`: RRU domain; uses `bbox_2d`/`poly`/`line`, `desc` carries group membership via `组=<id>` and station distance as `类别=站点距离,站点距离=<int>` (current exports yield digits); `summary` is a JSON string with per-category stats.
 
 All future domains MUST emit this contract to remain compatible with the shared chat template pipeline.

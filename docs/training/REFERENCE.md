@@ -238,13 +238,12 @@ Core SFT/LoRA recipes, KL anchoring overlays, augmentation telemetry, and troubl
 Keep configs under `configs/` in sync with the playbook when making behavioral changes.
 
 ### Summary Prompt Profiles (Training vs Inference)
-- **Training default**: `summary_train_min` (format + task criterion only, evidence-only/no-hallucination constraints).
+- **Training default**: `summary_runtime`.
 - **Config knobs** (summary mode only):
-  - `prompts.profile`: `summary_train_min` | `summary_runtime`
-  - `prompts.domain`: `bbu` | `rru` (required only when using runtime profile)
+  - `prompts.profile`: `summary_runtime`
+  - `prompts.domain`: `bbu` | `rru` (required for runtime profile)
   - `prompts.system` / `prompts.user` remain authoritative overrides and bypass profile composition.
   - `custom.assistant_prefix_format`: required for BBU/RRU targets to prepend `<DOMAIN=...>, <TASK=...>` + newline before assistant payloads (dense + summary). Source datasets remain unchanged.
-  - `custom.summary_label_grouping` is legacy for desc×N summaries and has no effect on JSON-summary prompts (OCR text is preserved by default).
 - **Stage-A runtime composition**: system prompt = summary task base + 全局“非现场/图纸”规则；user prompt = summary instruction + BBU/RRU 场景提示块 + 可选任务重点。
 
 ## Inference
