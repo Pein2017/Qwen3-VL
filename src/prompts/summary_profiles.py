@@ -24,12 +24,9 @@ class SummaryPromptProfile:
         *,
         domain: Optional[str] = None,
         mission: Optional[str] = None,
-        summary_label_grouping: Optional[bool] = None,
     ) -> str:
         parts = [
-            build_summary_system_prompt_minimal(
-                summary_label_grouping=summary_label_grouping
-            ).strip()
+            build_summary_system_prompt_minimal().strip()
         ]
 
         if self.include_domain_pack:
@@ -50,11 +47,6 @@ class SummaryPromptProfile:
 
 
 SUMMARY_PROMPT_PROFILES = {
-    "summary_train_min": SummaryPromptProfile(
-        name="summary_train_min",
-        include_domain_pack=False,
-        include_mission_rules=False,
-    ),
     "summary_runtime": SummaryPromptProfile(
         name="summary_runtime",
         include_domain_pack=True,
@@ -63,7 +55,7 @@ SUMMARY_PROMPT_PROFILES = {
 }
 
 
-DEFAULT_SUMMARY_PROFILE_TRAIN = "summary_train_min"
+DEFAULT_SUMMARY_PROFILE_TRAIN = "summary_runtime"
 DEFAULT_SUMMARY_PROFILE_RUNTIME = "summary_runtime"
 
 
@@ -83,14 +75,12 @@ def build_summary_system_prompt(
     *,
     domain: Optional[str] = None,
     mission: Optional[str] = None,
-    summary_label_grouping: Optional[bool] = None,
 ) -> str:
     """Compose the summary system prompt based on profile and domain."""
     profile = get_summary_profile(profile_name)
     return profile.build(
         domain=domain,
         mission=mission,
-        summary_label_grouping=summary_label_grouping,
     )
 
 

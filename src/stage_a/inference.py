@@ -315,12 +315,6 @@ def sanitize_summary_by_dataset(text: str, dataset: str) -> str:
             group_prefix = match.group(0)
             core = normalized[len(group_prefix) :]
 
-        count = ""
-        mcount = re.search(r"(×\d+)$", core)
-        if mcount:
-            count = mcount.group(1)
-            core = core[: -len(count)]
-
         if not core.startswith("标签/"):
             core = re.sub(r"备注[:：].*$", "", core).strip()
             core = re.sub(r"[，,、;；]+$", "", core).strip()
@@ -328,14 +322,11 @@ def sanitize_summary_by_dataset(text: str, dataset: str) -> str:
                 continue
 
         if core.startswith("RRU设备/"):
-            normalized_core = f"RRU设备{count}"
+            normalized_core = "RRU设备"
             cleaned.append(
                 f"{group_prefix}{normalized_core}" if group_prefix else normalized_core
             )
             continue
-
-        if count and core:
-            core = f"{core}{count}"
 
         if core.startswith(allowed_prefixes):
             cleaned.append(f"{group_prefix}{core}" if group_prefix else core)

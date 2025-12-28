@@ -877,15 +877,6 @@ class ReflectionEngine:
 
         simplified = to_simplified(text or "")
         simplified = normalize_spaces(simplified)
-        matches = re.findall(r"×(\d+)", simplified)
-        if matches:
-            total = 0
-            for m in matches:
-                try:
-                    total += int(m)
-                except ValueError:  # pragma: no cover - defensive
-                    continue
-            return total
         entries = [seg.strip() for seg in simplified.split("，") if seg.strip()]
         return len(entries) if entries else (1 if simplified else 0)
 
@@ -925,7 +916,6 @@ class ReflectionEngine:
         has_summary_markers = any(
             marker in text
             for marker in (
-                "×",
                 "image_",
                 "备注:",
                 "标签/",
@@ -953,8 +943,6 @@ class ReflectionEngine:
         if "标签/" in text or "image_" in lowered or re.search(r"image\\d", lowered):
             return True
         if slash_count >= 2 and has_object_chain_vocab:
-            return True
-        if slash_count >= 1 and "×" in text:
             return True
         if has_summary_markers and slash_count >= 1 and has_object_chain_vocab:
             return True

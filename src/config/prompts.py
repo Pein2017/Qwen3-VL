@@ -6,7 +6,6 @@ schema hints and prior rules (BBU/RRU) for consistent domain grounding.
 
 from src.prompts.summary_core import (
     MISSION_SPECIFIC_PRIOR_RULES,
-    SUMMARY_LABEL_GROUPING_DISABLED_RULE,
     SYSTEM_PROMPT_SUMMARY,
     SYSTEM_PROMPT_SUMMARY_RUNTIME,
     SYSTEM_PROMPT_SUMMARY_TRAIN,
@@ -59,14 +58,14 @@ DATASET_PRIOR_RULES = {
             [
                 "- 场景聚焦 RRU 侧设备与接地/尾纤组件，忽略与任务无关的杂物/背景。\n",
                 "- 站点距离仅保留数字，不推断单位。\n",
-                "- RRU接地端、地排接地端螺丝、紧固件仅标**合格/不合格**，不补充品牌。\n",
+                "- RRU接地端、地排接地端螺丝、紧固件仅标 `安装状态=合格/不合格`，不补充品牌。\n",
                 "- 尾纤需判断**是否带标签**与**是否有套管**；任一片段有保护即算有保护。\n",
                 "- 接地线只判断是否带标签。\n",
                 "- 分组：标签/尾纤/接地线按组出现；每组至少 2 个对象；分组号写入 desc 的 `组=<id>`。\n",
             ]
         ),
-        "检测RRU设备、紧固件、线缆尾纤，RRU接地端、RRU接地线",
-        "尾纤的保护方式有两种，黑色的防水胶带或者白色的尼龙套管；若是白色的尼龙套管，标签会贴在白色尼龙管上",
+        "- 重点：检测 RRU设备、紧固件、线缆尾纤、RRU接地端、RRU接地线。\n",
+        "- 尾纤保护：黑色防水胶带或白色尼龙套管；若为白色尼龙套管，标签通常贴在白色尼龙管上。\n",
     ),
 }
 
@@ -99,7 +98,7 @@ def _get_dataset(key: str | None) -> str:
 
 DENSE_SYSTEM_PROMPT_CORE = (
     '你是图像密集标注助手。输出两行：第1行 `<DOMAIN={domain}>, <TASK={task}>`；第2行输出 JSON 对象 {"object_1":{...}}。\n'
-    "- 对象按**自上到下 → 左到右**排序（线以最左端点为起点），编号从 1 递增。\n"
+    "- 对象按**自上到下 → 左到右**排序，编号从 1 递增。\n"
     "  * 排序规则详解：首先按 Y 坐标（纵向）从小到大排列（图像上方优先），Y 坐标相同时按 X 坐标（横向）从小到大排列（图像左方优先）。\n"
     "  * bbox_2d 排序参考点：使用左上角坐标 (x1, y1) 作为该对象的排序位置。\n"
     "  * poly 排序参考点：顶点按质心顺时针排序，起点为最上最左的顶点；使用首顶点 (x1, y1) 作为排序位置。\n"
@@ -110,8 +109,8 @@ DENSE_SYSTEM_PROMPT_CORE = (
     "- 标签 OCR：可读写 `文本=原文`；不可读写 `可读性=不可读`；去空格，保留 `-` `/` `,` `|` `=`。\n"
     "- 坐标使用 norm1000 整数（0..1000）：\n"
     "  * bbox_2d：扁平数组 [x1,y1,x2,y2]（左上、右下）。\n"
-    "  * poly：二维数组对 [[x1,y1], [x2,y2], ...]（至少四个顶点，当前使用 4 个点表示四边形，未来可处理更多点）。\n"
-    "  * line：二维数组对 [[x1,y1], [x2,y2], ...]（线段端点）；必须包含整数 line_points（≥2），其值等于点对个数。\n"
+    "  * poly：二维数组对 [[x1,y1], [x2,y2], ...]（多边形；点数可变，至少 3 个点）。\n"
+    "  * line：二维数组对 [[x1,y1], [x2,y2], ...]（折线/线段点序列）；必须包含整数 line_points（≥2），其值等于点对个数。\n"
 )
 
 
@@ -138,7 +137,6 @@ def build_summary_system_prompt(
     *,
     dataset: str | None = None,
     mission: str | None = None,
-    summary_label_grouping: bool | None = None,
 ) -> str:
     ds = _get_dataset(dataset)
     schema_raw = DATASET_SCHEMA_HINT.get(ds, "")
@@ -161,9 +159,7 @@ def build_summary_system_prompt(
             mission_prior = f"\n【{mission}任务特定规则】\n{mission_prior}"
 
     prompt = (
-        build_summary_system_prompt_minimal(
-            summary_label_grouping=summary_label_grouping
-        ).strip()
+        build_summary_system_prompt_minimal().strip()
         + "\n\n"
         + schema
         + "先验规则（与密集标注共享的业务知识）：\n"
@@ -224,17 +220,24 @@ def get_template_prompts(name: str | None) -> tuple[str, str]:
 
     registry = {
         # Target datasets (BBU, RRU) - unified dense template
+        # NOTE: keep legacy alias for backward compatibility (defaults to BBU-flavored dense prompt).
         "target_dense": (
-            build_dense_system_prompt(_DEFAULT_JSON_FORMAT, dataset=None),
+            build_dense_system_prompt(_DEFAULT_JSON_FORMAT, dataset="bbu"),
+            USER_PROMPT_JSON,
+        ),
+        # Target datasets (domain-specific dense prompts)
+        "target_dense_bbu": (
+            build_dense_system_prompt(_DEFAULT_JSON_FORMAT, dataset="bbu"),
+            USER_PROMPT_JSON,
+        ),
+        "target_dense_rru": (
+            build_dense_system_prompt(_DEFAULT_JSON_FORMAT, dataset="rru"),
             USER_PROMPT_JSON,
         ),
         # Source datasets (LVIS, COCO, etc.) - unified dense template
         "source_dense": (SYSTEM_PROMPT_AUX, USER_PROMPT_AUX),
-        # Summary mode (generic)
-        "summary": (
-            SYSTEM_PROMPT_SUMMARY_TRAIN,
-            USER_PROMPT_SUMMARY,
-        ),
+        # Summary mode (legacy alias -> runtime-style BBU prompt)
+        "summary": _build_stage_a_summary_prompts("bbu"),
         # Summary mode (domain-focused, aligned with Stage-A inference)
         "summary_bbu": _build_stage_a_summary_prompts("bbu"),
         "summary_rru": _build_stage_a_summary_prompts("rru"),

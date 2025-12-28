@@ -182,7 +182,7 @@ Examples:
         type=str,
         default=DEFAULT_SUMMARY_PROFILE_RUNTIME,
         choices=sorted(SUMMARY_PROMPT_PROFILES.keys()),
-        help="Summary prompt profile: summary_runtime or summary_train_min (default: summary_runtime).",
+        help="Summary prompt profile: summary_runtime (default: summary_runtime).",
     )
 
     # Optional runtime parameters

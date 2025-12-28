@@ -69,15 +69,12 @@ def build_stage_a_system_prompt(
     domain: str = "bbu",
     mission: Optional[str] = None,
     profile_name: str = DEFAULT_SUMMARY_PROFILE_RUNTIME,
-    summary_label_grouping: Optional[bool] = None,
 ) -> str:
     """Compose Stage-A system prompt = summary task base + scenario block."""
 
     profile = get_summary_profile(profile_name)
     parts = [
-        build_summary_system_prompt_minimal(
-            summary_label_grouping=summary_label_grouping
-        ).strip()
+        build_summary_system_prompt_minimal().strip()
     ]
 
     parts.append(_SUMMARY_GLOBAL_NON_SITE_RULES)

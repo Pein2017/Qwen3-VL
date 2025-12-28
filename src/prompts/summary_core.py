@@ -11,14 +11,10 @@ SUMMARY_LABEL_GROUPING_DISABLED_RULE = (
 )
 
 
-def build_summary_system_prompt_minimal(
-    *, summary_label_grouping: bool | None = None
-) -> str:
+def build_summary_system_prompt_minimal() -> str:
     """Minimal summary-mode system prompt with strict output contract."""
 
-    content_rules = ""
-    if summary_label_grouping is False:
-        content_rules = SUMMARY_LABEL_GROUPING_DISABLED_RULE
+    content_rules = SUMMARY_LABEL_GROUPING_DISABLED_RULE
     return "".join(
         [
             "你是图像摘要助手。输出两行：第1行 `<DOMAIN={domain}>, <TASK={task}>`；第2行输出 JSON 字符串或“无关图片”。不要解释。\n\n",
@@ -27,6 +23,9 @@ def build_summary_system_prompt_minimal(
             "- 无关/非现场/无目标：第2行只输出“无关图片”。\n",
             "- 否则：第2行输出单行 JSON 字符串（不可换行、不加句号）。\n",
             "- 逗号和冒号后各保留一个空格。\n\n",
+            "【JSON 约束】\n",
+            "- JSON 必须严格有效（双引号键值、无尾逗号），以 `}` 结束。\n",
+            "- JSON 之后不得追加任何字符（例如：`×1`、`份`、`次`）。\n\n",
             "【JSON 结构】\n",
             "- 顶层键：dataset, objects_total, 统计。\n",
             "- BBU 额外包含 备注（字符串列表，去重）；RRU 不包含 备注，可包含 分组统计。\n",
@@ -103,10 +102,10 @@ USER_PROMPT_SUMMARY = (
     "BBU 需要 备注 列表；RRU 不包含 备注，可包含 分组统计。"
     "OCR 文本保留原文（去空格，保留- / , | =）；不可读写 可读性=不可读。"
     "无关或非现场图片第2行仅输出“无关图片”。"
+    "JSON 必须严格有效（双引号、无尾逗号），并以 `}` 结束；禁止追加×N等后缀。"
 )
 
 __all__ = [
-    "SUMMARY_LABEL_GROUPING_DISABLED_RULE",
     "build_summary_system_prompt_minimal",
     "MISSION_SPECIFIC_PRIOR_RULES",
     "SYSTEM_PROMPT_SUMMARY",

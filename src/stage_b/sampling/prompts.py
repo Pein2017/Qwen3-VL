@@ -14,7 +14,6 @@ from ..utils.chinese import normalize_spaces, to_simplified
 
 _INDEX_RE = re.compile(r"(\d+)$")
 _NEED_REVIEW_MARKER_RE = re.compile(r"需复核\s*[，,]?\s*备注[:：]")
-_COUNT_RE = re.compile(r"×(\d+)")
 _STATION_DISTANCE_RE = re.compile(r"站点距离[=/](\d+)")
 
 
@@ -343,15 +342,6 @@ def _estimate_object_count(text: str) -> int:
 
     simplified = to_simplified(text or "")
     simplified = normalize_spaces(simplified)
-    matches = _COUNT_RE.findall(simplified)
-    if matches:
-        total = 0
-        for match in matches:
-            try:
-                total += int(match)
-            except ValueError:  # pragma: no cover - defensive
-                continue
-        return total
     # Fallback: count coarse entries separated by Chinese comma.
     entries = [seg.strip() for seg in simplified.split("，") if seg.strip()]
     return len(entries) if entries else (1 if simplified else 0)

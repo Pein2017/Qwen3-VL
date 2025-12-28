@@ -255,7 +255,6 @@ class CustomConfig:
     json_format: AllowedJsonFormat
     assistant_prefix_format: str | None = None
     use_summary: bool = False
-    summary_label_grouping: bool = False
     system_prompt_summary: str | None = None
     augmentation: Mapping[str, Any] | None = None
     augmentation_curriculum: Mapping[str, Any] | None = None
@@ -356,10 +355,10 @@ class CustomConfig:
             if use_summary_raw is None
             else _parse_bool(use_summary_raw, "custom.use_summary")
         )
-        summary_label_grouping_raw = data.pop("summary_label_grouping", False)
-        summary_label_grouping = _parse_bool(
-            summary_label_grouping_raw, "custom.summary_label_grouping"
-        )
+        if "summary_label_grouping" in data:
+            raise ValueError(
+                "custom.summary_label_grouping has been removed; delete the field to continue."
+            )
         system_prompt_summary = data.pop("system_prompt_summary", None)
         if "images_per_user_turn" in data:
             raise ValueError(
@@ -445,7 +444,6 @@ class CustomConfig:
             json_format=json_format,
             assistant_prefix_format=assistant_prefix_format,
             use_summary=use_summary,
-            summary_label_grouping=summary_label_grouping,
             system_prompt_summary=system_prompt_summary,
             augmentation=augmentation
             if isinstance(augmentation, Mapping)

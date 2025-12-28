@@ -146,11 +146,7 @@ def sanitize_summary_by_dataset(text: str, dataset: str) -> str:
             continue
 
         if core.startswith("RRU设备/"):
-            count = ""
-            mcount = re.search(r"(×\d+)$", core)
-            if mcount:
-                count = mcount.group(1)
-            normalized_core = f"RRU设备{count}"
+            normalized_core = "RRU设备"
             cleaned.append(
                 f"{group_prefix}{normalized_core}" if group_prefix else normalized_core
             )
