@@ -1,22 +1,239 @@
-extends: ../dlora/sft_base.yaml
+extends: ../base.yaml
+
+global_max_length: 12000
+
+# Common Stage 1.5 recipe: DoRA on all LLM layers (q_proj & v_proj only),
+# DoRA on last-6 Vision blocks (21-26, qkv only), DoRA on all aligner MLP layers.
+
+model:
+  model: model_cache/models/Qwen/Qwen3-VL-4B-Instruct  # Stage 2 checkpoint (base + LLM LoRA)
 
 tuner:
+  train_type: lora
+  use_swift_lora: false
+  use_dora: true
+  freeze_llm: false
+  freeze_vit: false
+  freeze_aligner: false
+  target_modules: [all-linear]
+  target_regex: null
+  modules_to_save: []
   lora_rank: 32
   lora_alpha: 64
+  lora_dropout: 0.1
+  lora_bias: none
 
-# Fused-data variant: enable the fusion mix while inheriting all training/hparam defaults.
-custom:
-  fusion_config: configs/fusion/bbu_rru_lvis_coig.yaml
-
-# Experiment-facing knobs: safe to tune per fusion run.
 training:
-  per_device_train_batch_size: 5
-  per_device_eval_batch_size: 8
-  effective_batch_size: 30
-  output_dir: ./output/12-9/fusion_dlora
-  logging_dir: ./tb/12-9/fusion_dlora
-  run_name: epoch_30-dlora_32_64-lrs_2_1_6-eff_bs_30
+  # Override per experiment; baseline single-target values provided here.
+  output_dir: ./output/12-27/new_schema-4B-dense
+  run_name: epoch_30-2_1_6
+  num_train_epochs: 30
+  per_device_train_batch_size: 2
+  per_device_eval_batch_size: 4
+  effective_batch_size: 32
+  optimizer: multimodal
+  # LR groups (LLM/ViT/aligner) — tune per experiment as needed.
   learning_rate: 2.0e-4
   vit_lr: 1.0e-4
   aligner_lr: 6.0e-4
+  lr_scheduler_type: cosine_warmup_with_min_lr
+  lr_scheduler_kwargs:
+    min_lr: 1.0e-6
+  warmup_ratio: 0.1
+  gradient_checkpointing: true
+  bf16: true
+  report_to: [tensorboard]
+  seed: 17
+  max_grad_norm: 0.5
   weight_decay: 0.0
+  packing: false
+  add_version: true
+  save_safetensors: true
+  eval_strategy: steps
+  eval_steps: 40
+  save_strategy: best
+  save_steps: 40
+  save_total_limit: 2
+  save_last_epoch: true
+  save_only_model: true
+  metric_for_best_model: eval_token_acc
+  greater_is_better: true
+  save_delay_steps: 1800
+  logging_dir: ./tb/12-27/new_schema-4B
+  logging_steps: 10
+  logging_first_step: true
+
+data:
+  # Required by ms-swift TrainArguments validation (actual datasets loaded via custom.*jsonl or fusion config)
+  dataset: ["dummy"]
+  val_dataset: ["dummy"]  # Prevent eval_strategy from being overridden to 'no'
+  dataset_num_proc: 8
+  dataloader_num_workers: 4
+  dataloader_pin_memory: true
+  dataloader_prefetch_factor: 2
+  dataloader_persistent_workers: true
+
+deepspeed:
+  enabled: true
+  config: zero2
+
+custom:
+  # Defaults; per-run configs under `configs/fused_data/` should override fusion_config.
+  json_format: standard
+  emit_norm: norm1000
+  # Dummy base paths for ROOT_IMAGE_DIR auto-derivation; fusion datasets resolve their own JSONLs.
+  train_jsonl: data/bbu_full_768_poly-need_review/train.jsonl
+  val_jsonl: data/bbu_full_768_poly-need_review/val.jsonl
+  dump_conversation_path: output/conversation_text.txt
+  fusion_config: null
+  token_type_metrics:
+    enabled: true
+    include: [bbu, rru, lvis]
+    exclude: [lang_chat]
+
+  # Dense-caption augmentation defaults (summary configs should override to avoid label mismatch).
+  augmentation:
+    enabled: true
+    bypass_prob: 0.12
+    ops:
+      - name: hflip
+        params: { prob: 0.25 }
+      - name: vflip
+        params: { prob: 0.06 }
+      - name: rotate
+        params: { max_deg: 14.0, prob: 0.24 }
+      - name: random_crop
+        params:
+          scale: [0.82, 1.0]
+          aspect_ratio: [0.93, 1.07]
+          min_coverage: 0.35
+          completeness_threshold: 0.95
+          min_objects: 4
+          skip_if_line: true
+          prob: 0.16
+      - name: small_object_zoom_paste  # fixed strength across training
+        params:
+          prob: 0.18
+          max_targets: 4
+          max_attempts: 20
+          scale: [1.15, 1.6]
+          max_size: 96
+          max_line_length: 128
+          overlap_threshold: 0.1
+          context: 4
+          line_buffer: 4
+          class_whitelist: ["螺丝、光纤插头", "光纤", "标签", "电线"]
+      - name: resize_by_scale
+        params: { lo: 0.92, hi: 1.10, align_multiple: 32, prob: 0.40 }
+      - name: color_jitter
+        params: { brightness: [0.90, 1.10], contrast: [0.90, 1.10], saturation: [0.90, 1.10], prob: 0.20 }
+      - name: gamma
+        params: { gamma: [0.90, 1.10], prob: 0.12 }
+      - name: hsv
+        params: { hue_delta_deg: [-5, 5], sat: [0.95, 1.05], val: [0.95, 1.05], prob: 0.12 }
+      - name: clahe
+        params: { clip_limit: 1.5, tile_grid_size: [8, 8], prob: 0.07 }
+      - name: auto_contrast
+        params: { cutoff: 0, prob: 0.06 }
+      - name: sharpness
+        params: { factor: [0.90, 1.12], prob: 0.12 }
+      - name: expand_to_fit_affine
+        params: { multiple: 32 }
+
+  augmentation_curriculum:
+    phases:
+      - until_percent: 5
+        bypass_prob: 1.0
+        ops: {}
+      - until_percent: 12
+        # Very light augment: gradual introduction after warmup
+        bypass_prob: 0.60
+        ops:
+          hflip: { prob: 0.15 }
+          resize_by_scale: { prob: 0.20, lo: 0.96, hi: 1.04 }
+          color_jitter: { prob: 0.08, brightness: [0.95, 1.05], contrast: [0.95, 1.05], saturation: [0.95, 1.05] }
+      - until_percent: 20
+        # Light augment: start gently after warmup
+        bypass_prob: 0.32
+        ops:
+          hflip: { prob: 0.20 }
+          vflip: { prob: 0.03 }
+          rotate: { prob: 0.15, max_deg: 10.0 }
+          random_crop: { prob: 0.10, scale: [0.88, 1.00] }
+          resize_by_scale: { prob: 0.30, lo: 0.94, hi: 1.08 }
+          color_jitter: { prob: 0.14, brightness: [0.92, 1.08], contrast: [0.92, 1.08], saturation: [0.92, 1.08] }
+          auto_contrast: { prob: 0.03 }
+      - until_percent: 30
+        # Light-medium augment: introduce more spatial transforms gradually
+        bypass_prob: 0.28
+        ops:
+          hflip: { prob: 0.22 }
+          vflip: { prob: 0.04 }
+          rotate: { prob: 0.18, max_deg: 12.0 }
+          random_crop: { prob: 0.12, scale: [0.87, 1.00] }
+          resize_by_scale: { prob: 0.34, lo: 0.94, hi: 1.08 }
+          color_jitter: { prob: 0.16, brightness: [0.92, 1.08], contrast: [0.92, 1.08], saturation: [0.92, 1.08] }
+          hsv: { prob: 0.05, hue_delta_deg: [-3, 3], sat: [0.97, 1.03], val: [0.97, 1.03] }
+          auto_contrast: { prob: 0.04 }
+          clahe: { prob: 0.04 }
+      - until_percent: 40
+        # Medium augment: stronger spatial + mild color
+        bypass_prob: 0.22
+        ops:
+          hflip: { prob: 0.23 }
+          vflip: { prob: 0.05 }
+          rotate: { prob: 0.20, max_deg: 13.0 }
+          random_crop: { prob: 0.14, scale: [0.86, 0.99] }
+          resize_by_scale: { prob: 0.36, lo: 0.93, hi: 1.09 }
+          color_jitter: { prob: 0.18, brightness: [0.91, 1.09], contrast: [0.91, 1.09], saturation: [0.91, 1.09] }
+          hsv: { prob: 0.08, hue_delta_deg: [-4, 4], sat: [0.96, 1.04], val: [0.96, 1.04] }
+          small_object_zoom_paste: { prob: 0.15, scale: [1.15, 1.50] }
+          auto_contrast: { prob: 0.05 }
+          clahe: { prob: 0.05 }
+      - until_percent: 50
+        # Medium-strong augment: ramp up spatial transforms
+        bypass_prob: 0.19
+        ops:
+          hflip: { prob: 0.24 }
+          vflip: { prob: 0.05 }
+          rotate: { prob: 0.22, max_deg: 14.0 }
+          random_crop: { prob: 0.15, scale: [0.85, 0.98] }
+          resize_by_scale: { prob: 0.38, lo: 0.93, hi: 1.09 }
+          color_jitter: { prob: 0.19, brightness: [0.91, 1.09], contrast: [0.91, 1.09], saturation: [0.91, 1.09] }
+          hsv: { prob: 0.09, hue_delta_deg: [-5, 5], sat: [0.95, 1.05], val: [0.95, 1.05] }
+          small_object_zoom_paste: { prob: 0.19, scale: [1.15, 1.55] }
+          gamma: { prob: 0.10, gamma: [0.92, 1.08] }
+          auto_contrast: { prob: 0.05 }
+          clahe: { prob: 0.06 }
+      - until_percent: 65
+        # Strong augment: more frequent crops/zooms to fight overfit
+        bypass_prob: 0.16
+        ops:
+          hflip: { prob: 0.25 }
+          vflip: { prob: 0.06 }
+          rotate: { prob: 0.24, max_deg: 15.0 }
+          random_crop: { prob: 0.17, scale: [0.84, 0.97] }
+          resize_by_scale: { prob: 0.40, lo: 0.92, hi: 1.10 }
+          color_jitter: { prob: 0.21, brightness: [0.90, 1.10], contrast: [0.90, 1.10], saturation: [0.90, 1.10] }
+          hsv: { prob: 0.10, hue_delta_deg: [-5, 5], sat: [0.94, 1.06], val: [0.94, 1.06] }
+          gamma: { prob: 0.13, gamma: [0.90, 1.10] }
+          sharpness: { prob: 0.10, factor: [0.92, 1.10] }
+          small_object_zoom_paste: { prob: 0.22, scale: [1.18, 1.60] }
+          auto_contrast: { prob: 0.06 }
+          clahe: { prob: 0.07 }
+      - until_percent: 100
+        # Strongest but still smooth vs previous phase
+        bypass_prob: 0.12
+        ops:
+          hflip: { prob: 0.25 }
+          vflip: { prob: 0.06 }
+          rotate: { prob: 0.28, max_deg: 17.0 }
+          random_crop: { prob: 0.20, scale: [0.81, 0.96] }
+          resize_by_scale: { prob: 0.45, lo: 0.92, hi: 1.10 }
+          color_jitter: { prob: 0.24, brightness: [0.90, 1.10], contrast: [0.90, 1.10], saturation: [0.90, 1.10] }
+          hsv: { prob: 0.13, hue_delta_deg: [-6, 6], sat: [0.94, 1.06], val: [0.94, 1.06] }
+          gamma: { prob: 0.16, gamma: [0.90, 1.10] }
+          sharpness: { prob: 0.15, factor: [0.90, 1.12] }
+          small_object_zoom_paste: { prob: 0.25, scale: [1.20, 1.65] }
+          auto_contrast: { prob: 0.06 }
+          clahe: { prob: 0.07 }

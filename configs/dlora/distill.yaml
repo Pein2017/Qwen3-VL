@@ -1,4 +1,4 @@
-extends: ./sft_base.yaml
+extends: ../fused_data/sft_base.yaml
 
 # Stage-B verdict distillation SFT (text-only ChatML).
 #
