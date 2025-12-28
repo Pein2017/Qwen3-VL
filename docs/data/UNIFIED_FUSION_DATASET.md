@@ -102,6 +102,7 @@ FusionCaptionDataset
 
 - Prompt priority: `default < domain < dataset-specific` for both user/system prompts; template.system is restored after each sample.
 - Per-epoch schedule: per-target coverage scales by `quota_i = round(len_i * ratio_i)` (ratio defaults to 1.0; <1 downsample, >1 upsample with replacement); each source draws `round(ratio * N_target_total)` with optional `sample_without_replacement` (unique draws when quota ≤ pool, otherwise deterministic fallback to replacement); deterministic shuffling using fusion seed + optional per-dataset seed; raises on empty source pool when ratio > 0.
+- Irrelevant summary pools may be listed under targets to consume all samples, but remain identifiable via `metadata._fusion_source` (e.g., `irrelevant_summary`) and should be treated as source-like for analytics/handling.
 - Per-dataset policies: sources default to clean (no augmentation/curriculum) and cap objects (default 64); targets inherit global augmentation/curriculum and can opt into a cap.
 - Object caps: applied after augmentation and before encoding; deterministic with the dataset/epoch/worker seed.
 - Evaluation: target eval by default; optional source `val_jsonl` included (no shuffle) when present and prepared offline (no splitting inside the loader).

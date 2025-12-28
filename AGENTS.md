@@ -36,3 +36,6 @@ Keep this managed block so 'openspec update' can refresh the instructions.
 
 ## Environment (minimal)
 - Use conda env `ms`; launch Python scripts with `conda run -n ms python ...`.
+
+## Serena MCP Usage (for efficiency)
+Use Serena MCP for semantic navigation and symbol-level edits (`get_symbols_overview`, `find_symbol`, `find_referencing_symbols`, `replace_symbol_body`). Avoid for simple file reads, bulk searches, or shell commands—use standard tools instead.

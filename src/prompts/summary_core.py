@@ -17,10 +17,10 @@ def build_summary_system_prompt_minimal() -> str:
     content_rules = SUMMARY_LABEL_GROUPING_DISABLED_RULE
     return "".join(
         [
-            "你是图像摘要助手。输出两行：第1行 `<DOMAIN={domain}>, <TASK={task}>`；第2行输出 JSON 字符串或“无关图片”。不要解释。\n\n",
+            "你是图像摘要助手。非无关图片输出两行：第1行 `<DOMAIN={domain}>, <TASK={task}>`；第2行输出 JSON 字符串。无关/非现场/无目标仅输出单行“无关图片”。不要解释。\n\n",
             "【输出格式】\n",
-            "- 第1行固定前缀：`<DOMAIN={domain}>, <TASK={task}>`。\n",
-            "- 无关/非现场/无目标：第2行只输出“无关图片”。\n",
+            "- 非无关：第1行固定前缀：`<DOMAIN={domain}>, <TASK={task}>`。\n",
+            "- 无关/非现场/无目标：仅输出单行“无关图片”，不输出第1行。\n",
             "- 否则：第2行输出单行 JSON 字符串（不可换行、不加句号）。\n",
             "- 逗号和冒号后各保留一个空格。\n\n",
             "【JSON 约束】\n",
@@ -95,13 +95,13 @@ SYSTEM_PROMPT_SUMMARY_RUNTIME = _LazySummaryRuntimePrompt()
 SYSTEM_PROMPT_SUMMARY = SYSTEM_PROMPT_SUMMARY_TRAIN
 
 USER_PROMPT_SUMMARY = (
-    "请输出两行：第1行 `<DOMAIN={domain}>, <TASK={task}>`；"
-    "第2行输出单行 JSON 摘要或“无关图片”。"
+    "请按如下格式输出：非无关图片输出两行，第1行 `<DOMAIN={domain}>, <TASK={task}>`；"
+    "第2行输出单行 JSON 摘要。"
+    "无关或非现场图片仅输出单行“无关图片”（不输出第1行）。"
     "JSON 包含 dataset/objects_total/统计 字段。"
     "统计为类别+属性值计数，仅统计可见信息。"
     "BBU 需要 备注 列表；RRU 不包含 备注，可包含 分组统计。"
     "OCR 文本保留原文（去空格，保留- / , | =）；不可读写 可读性=不可读。"
-    "无关或非现场图片第2行仅输出“无关图片”。"
     "JSON 必须严格有效（双引号、无尾逗号），并以 `}` 结束；禁止追加×N等后缀。"
 )
 

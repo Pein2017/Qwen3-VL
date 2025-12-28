@@ -36,13 +36,13 @@ def _parse_summary_json(text: str) -> dict[str, object] | None:
 
 
 def _format_summary_json(obj: dict[str, object]) -> str:
-    preferred_order = ["dataset", "objects_total", "统计", "备注", "分组统计", "异常"]
+    preferred_order = ["objects_total", "统计", "备注", "分组统计"]
     ordered: dict[str, object] = {}
     for key in preferred_order:
         if key in obj:
             ordered[key] = obj[key]
     for key, value in obj.items():
-        if key == "format_version":
+        if key == "format_version" or key == "dataset":
             continue
         if key not in ordered:
             ordered[key] = value
@@ -56,7 +56,9 @@ def _summary_entries(obj: dict[str, object]) -> list[dict[str, object]]:
     return []
 
 
-def _entry_by_category(entries: list[dict[str, object]], category: str) -> dict[str, object] | None:
+def _entry_by_category(
+    entries: list[dict[str, object]], category: str
+) -> dict[str, object] | None:
     for entry in entries:
         if entry.get("类别") == category:
             return entry

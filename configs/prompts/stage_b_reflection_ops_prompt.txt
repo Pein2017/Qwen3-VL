@@ -31,7 +31,7 @@
 关键约束（防止把摘要抄进 guidance）：
 - 你输出的规则 text 必须是“可泛化经验规则”，不是对某个样本的复述。
 - 严禁提出与 `S*` 相矛盾的规则；若发现冲突，请改写为与 `S*` 一致的补充规则，或放弃该规则。
-- 严禁把 Stage-A 摘要 JSON 直接粘贴进 text（常见特征：`format_version`/`dataset`/`objects_total`/`统计`/`异常`/`备注` 等字段）。
+- 严禁把 Stage-A 摘要 JSON 直接粘贴进 text（常见特征：`objects_total`/`统计`/`备注` 等字段）。
 - text 必须用自然语言写成“条件→结论”，推荐句式：`若...则...；否则...` 或 `当...时...`。
 - text 只描述**判断逻辑**与**证据取舍**，不要描述具体图片内容细节（例如某张图里有哪些线缆/标签/端口数量）。
 
@@ -66,7 +66,7 @@
 - merge 操作：merged_from 中的 key 必须与目标 key 不同，且必须都在 EXPERIENCES 中存在；禁止将 key 合并到自己
 - 禁止第三状态词面（需复核/need-review/证据不足/待定等）出现在 text/rationale/falsifier 中
 - 禁止写站点名/型号/路径/group_id/时间戳/图片编号等具体细节
-- 禁止在 text 中出现 `image_`、`objects_total`、`format_version`、`统计`、`异常`、`备注` 等字段名；避免粘贴 JSON 片段
+- 禁止在 text 中出现 `image_`、`objects_total`、`统计`、`备注` 等字段名；避免粘贴 JSON 片段
 - evidence 必须填 `ticket_key`（如 "QC-xxx::fail"），不要填图片编号
 - `hypotheses` 文本必须是二值结论（包含“通过/不通过”之一），且不得与 `S*` 冲突；`dimension` 若出现，禁止使用 brand/品牌
 - `coverage` 为可选字段；若填写，需尽量与 `operations[*].evidence` 一致（不一致也会被系统侧计算纠正）
