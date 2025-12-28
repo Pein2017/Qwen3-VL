@@ -45,7 +45,6 @@ from .preprocessors import (
     BasePreprocessor,
     DenseCaptionPreprocessor,
     AugmentationPreprocessor,
-    SummaryLabelNormalizer,
 )
 
 __all__ = [
@@ -82,5 +81,4 @@ __all__ = [
     "BasePreprocessor",
     "DenseCaptionPreprocessor",
     "AugmentationPreprocessor",
-    "SummaryLabelNormalizer",
 ]

@@ -3,7 +3,7 @@
 Summary builder for BBU/RRU datasets (key=value desc mode).
 
 Outputs a JSON-string summary with per-category statistics and optional
-remarks/group breakdowns. This replaces the legacy desc×N aggregation.
+remarks/group breakdowns.
 """
 
 from __future__ import annotations

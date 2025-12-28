@@ -32,12 +32,6 @@ def _normalize_bool(value: Any, *, field_name: str, default: bool) -> bool:
     raise ValueError(f"{field_name} must be a boolean value")
 
 
-def _parse_optional_bool(value: Any, *, field_name: str) -> bool | None:
-    if value is None:
-        return None
-    return _normalize_bool(value, field_name=field_name, default=False)
-
-
 def _as_mapping(value: Any, *, field_name: str) -> Mapping[str, Any]:
     if value is None:
         return {}
@@ -184,10 +178,6 @@ class DatasetWrapper(abc.ABC):
             mapping.get("system_prompt"),
             field_name=f"{cls.__name__}.system_prompt",
         )
-        summary_label_grouping = _parse_optional_bool(
-            mapping.get("summary_label_grouping"),
-            field_name=f"{cls.__name__}.summary_label_grouping",
-        )
         dataset_seed = _parse_seed(
             mapping.get("seed"), field_name=f"{cls.__name__}.seed"
         )
@@ -211,7 +201,6 @@ class DatasetWrapper(abc.ABC):
             val_jsonl=Path(str(val_jsonl)) if val_jsonl else None,
             prompt_user=user_prompt,
             prompt_system=system_prompt,
-            summary_label_grouping=summary_label_grouping,
             seed=dataset_seed,
             sample_without_replacement=sample_without_replacement,
             mode=mode_declared,

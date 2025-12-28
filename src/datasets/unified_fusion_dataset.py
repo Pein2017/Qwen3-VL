@@ -51,7 +51,6 @@ class _DatasetPolicy:
     augmentation_enabled: bool
     curriculum_enabled: bool
     max_objects_per_image: int | None
-    summary_label_grouping: bool
     seed: int | None
     sample_without_replacement: bool
 
@@ -86,12 +85,10 @@ class FusionCaptionDataset(BaseCaptionDataset):
         augmenter: object | None,
         bypass_prob: float,
         curriculum_state: MutableMapping[str, object] | None,
-        preprocessor: object | None = None,
         use_summary: bool,
         system_prompt_dense: str | None,
         system_prompt_summary: str | None,
         assistant_prefix_format: str | None = None,
-        summary_label_grouping_default: bool = False,
         seed: int = 42,
         shuffle: bool = True,
         sample_limit: int | None = None,
@@ -154,16 +151,6 @@ class FusionCaptionDataset(BaseCaptionDataset):
                 "Summary mode requested but no summary system prompt was provided."
             )
 
-        def _resolve_summary_label_grouping(
-            spec: DatasetSpec, *, mode: Literal["dense", "summary"]
-        ) -> bool:
-            if mode != "summary":
-                return False
-            override = getattr(spec, "summary_label_grouping", None)
-            if override is None:
-                return bool(summary_label_grouping_default)
-            return bool(override)
-
         # Load pools for the selected split
         if split == "eval" and target_eval_jsonl is not None:
             override_target_path = Path(target_eval_jsonl)
@@ -205,9 +192,6 @@ class FusionCaptionDataset(BaseCaptionDataset):
                 augmentation_enabled=target.supports_augmentation,
                 curriculum_enabled=target.supports_curriculum,
                 max_objects_per_image=None,  # targets stay uncapped
-                summary_label_grouping=_resolve_summary_label_grouping(
-                    target, mode=mode
-                ),
                 seed=target.seed,
                 sample_without_replacement=bool(
                     getattr(target, "sample_without_replacement", False)
@@ -231,9 +215,6 @@ class FusionCaptionDataset(BaseCaptionDataset):
                 augmentation_enabled=False,  # sources remain clean
                 curriculum_enabled=False,
                 max_objects_per_image=source.max_objects_per_image,
-                summary_label_grouping=_resolve_summary_label_grouping(
-                    source, mode=mode
-                ),
                 seed=source.seed,
                 sample_without_replacement=bool(
                     getattr(source, "sample_without_replacement", False)
@@ -264,15 +245,6 @@ class FusionCaptionDataset(BaseCaptionDataset):
                 self._annotate_record(rec, source, mode) for rec in source_records
             ]
 
-        if (
-            any(policy.summary_label_grouping for policy in self._policies.values())
-            and preprocessor is None
-        ):
-            raise ValueError(
-                "Summary label grouping is enabled for at least one dataset but no "
-                "summary label preprocessor was provided."
-            )
-
         # Initialize parent BaseCaptionDataset with a single template instance.
         all_records = [rec for pool in self._record_pools.values() for rec in pool]
         super().__init__(
@@ -283,7 +255,6 @@ class FusionCaptionDataset(BaseCaptionDataset):
             emit_norm=emit_norm,
             json_format=json_format,
             augmenter=None,
-            preprocessor=preprocessor,
             bypass_prob=bypass_prob,
             curriculum_state=curriculum_state,
             use_summary=default_mode == "summary",
@@ -688,20 +659,6 @@ class FusionCaptionDataset(BaseCaptionDataset):
             objects_after = (
                 len(objects_raw_else) if isinstance(objects_raw_else, list) else 0
             )
-
-        if (
-            policy.mode == "summary"
-            and policy.summary_label_grouping
-            and self.preprocessor is not None
-        ):
-            if hasattr(self.preprocessor, "rng"):
-                self.preprocessor.rng = rng_local
-            processed_summary = self.preprocessor(record)
-            if processed_summary is None:
-                raise ValueError(
-                    "Summary preprocessor removed the record; dataset does not duplicate samples"
-                )
-            record = processed_summary
 
         # Mode-aware validation after preprocessors
         self._validate_record_for_mode(record, policy.mode, dataset_name)

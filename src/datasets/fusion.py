@@ -97,6 +97,10 @@ class FusionConfig:
         name_override_raw = entry.get("name")
         name_override = str(name_override_raw) if name_override_raw is not None else None
         params = entry.get("params")
+        if "summary_label_grouping" in entry:
+            raise ValueError(
+                "summary_label_grouping has been removed; delete it from fusion configs."
+            )
         if params is None:
             params = {
                 "train_jsonl": entry.get("train_jsonl"),
@@ -113,8 +117,6 @@ class FusionConfig:
                 params["poly_fallback"] = entry.get("poly_fallback")
             if "poly_max_points" in entry:
                 params["poly_max_points"] = entry.get("poly_max_points")
-            if "summary_label_grouping" in entry:
-                params["summary_label_grouping"] = entry.get("summary_label_grouping")
             if "augmentation_enabled" in entry:
                 params["augmentation_enabled"] = entry.get("augmentation_enabled")
             if "curriculum_enabled" in entry:
@@ -133,6 +135,10 @@ class FusionConfig:
                 )
         elif not isinstance(params, Mapping):
             raise TypeError("dataset params must be a mapping if provided")
+        if "summary_label_grouping" in params:
+            raise ValueError(
+                "summary_label_grouping has been removed; delete it from fusion configs."
+            )
 
         spec = build_dataset_spec(dataset_key, name=name_override, params=params)
         ratio_value: float | None = None
@@ -160,7 +166,6 @@ class FusionConfig:
             template=spec.template,
             domain=spec.domain,
             mode=spec.mode,
-            summary_label_grouping=spec.summary_label_grouping,
             supports_augmentation=spec.supports_augmentation,
             supports_curriculum=spec.supports_curriculum,
             poly_fallback=spec.poly_fallback,
@@ -183,7 +188,6 @@ class FusionConfig:
             template=spec.template,
             domain=spec.domain,
             mode=spec.mode,
-            summary_label_grouping=spec.summary_label_grouping,
             supports_augmentation=spec.supports_augmentation,
             supports_curriculum=spec.supports_curriculum,
             poly_fallback=spec.poly_fallback,
