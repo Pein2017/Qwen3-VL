@@ -38,7 +38,6 @@ def _build_augmenter(custom_cfg: Any) -> tuple[Optional[Any], float]:
 def _build_datasets(train_args, training_cfg, template):
     custom_cfg = training_cfg.custom
     use_summary = bool(custom_cfg.use_summary)
-    summary_label_grouping = bool(getattr(custom_cfg, "summary_label_grouping", False))
 
     # Auto ROOT_IMAGE_DIR
     train_jsonl = custom_cfg.train_jsonl or custom_cfg.extra.get("jsonl")
@@ -54,14 +53,7 @@ def _build_datasets(train_args, training_cfg, template):
     curriculum_cfg = custom_cfg.augmentation_curriculum
     curriculum_state = curriculum_cfg if curriculum_cfg else None
 
-    summary_preprocessor = None
-    if summary_label_grouping and use_summary:
-        try:
-            from src.datasets.preprocessors import SummaryLabelNormalizer
 
-            summary_preprocessor = SummaryLabelNormalizer()
-        except Exception as exc:
-            raise ValueError("Failed to initialize SummaryLabelNormalizer") from exc
 
     system_prompt_dense = getattr(train_args, "system_prompt", None)
     system_prompt_summary = getattr(custom_cfg, "system_prompt_summary", None)
@@ -81,7 +73,6 @@ def _build_datasets(train_args, training_cfg, template):
             use_summary=use_summary,
             system_prompt_dense=system_prompt_dense,
             system_prompt_summary=system_prompt_summary,
-            preprocessor=summary_preprocessor,
             seed=dataset_seed,
             sample_limit=custom_cfg.train_sample_limit or custom_cfg.sample_limit,
             split="train",
@@ -96,7 +87,6 @@ def _build_datasets(train_args, training_cfg, template):
             augmenter=augmenter,
             bypass_prob=bypass_prob,
             curriculum_state=curriculum_state,
-            preprocessor=summary_preprocessor,
             sample_limit=custom_cfg.train_sample_limit or custom_cfg.sample_limit,
             use_summary=use_summary,
             system_prompt_dense=system_prompt_dense,
@@ -115,7 +105,6 @@ def _compute_lengths(dataset) -> dict[int, int]:
     pbar = tqdm(
         range(dataset_len), desc="Computing lengths", mininterval=0.5, file=sys.stdout
     )
-    try:
         for idx in pbar:
             if hasattr(dataset, "_schedule") and hasattr(dataset, "_record_pools"):
                 dataset_name, base_idx = dataset._schedule[idx]

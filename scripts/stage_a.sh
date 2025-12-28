@@ -11,16 +11,22 @@ set -euo pipefail
 # CHECKPOINT="output/11-30/summary_merged/epoch_10-lr_2e-4-bs_32-res_1024"
 CHECKPOINT="output/12-25/summary_merged/bbu_only-more_irrelevant-ocr"
 BASE_INPUT_DIR="group_data/scene_2.0_order"
-OUTPUT_DIR="output_post/stage_a_bbu_only-12-25"
+BASE_OUTPUT_DIR="output_post/stage_a_bbu_only-12-25"
 
 # Environment variable overrides (lowercase)
 # BBU接地线检查
 # BBU线缆布放要求
 # 挡风板安装检查
 # BBU安装方式检查（正装）
+# prompt_profile=summary_runtime (explicit profile override)
+# output_dir=... (override output directory)
+# checkpoint=... (override checkpoint path)
 
 DATASET="${dataset:-}"
 MISSION="${mission:-}"
+if [[ -n "${checkpoint:-}" ]]; then
+  CHECKPOINT="${checkpoint}"
+fi
 
 
 if [[ -n "${input_dir:-}" ]]; then
@@ -33,12 +39,18 @@ if [[ "${INPUT_DIR}" == */"${MISSION}" ]]; then
   echo "[WARN] input_dir points to mission subdir; using parent instead: ${INPUT_DIR}"
   INPUT_DIR="$(dirname "${INPUT_DIR}")"
 fi
+
+if [[ -n "${output_dir:-}" ]]; then
+  OUTPUT_DIR="${output_dir}"
+else
+  OUTPUT_DIR="${BASE_OUTPUT_DIR}"
+fi
 PROMPT_PROFILE="${prompt_profile:-summary_runtime}"
 CUDA_VISIBLE_DEVICES="${gpus:-0}"
 verify_flag="${verify_inputs:-true}"
 DEBUG_FLAG="${debug:-false}"
-PASS_GROUP_NUMBER="${pass_group_number:-2000}"
-FAIL_GROUP_NUMBER="${fail_group_number:-500}"
+PASS_GROUP_NUMBER="${pass_group_number:-100}"
+FAIL_GROUP_NUMBER="${fail_group_number:-20}"
 SAMPLE_SEED="${sample_seed:-42}"
 
 # Derive number of GPUs (ignore empty/whitespace tokens)
@@ -75,7 +87,6 @@ REP_PENALTY="1.05"
 LOG_LEVEL="INFO"
 SHARDING_MODE="${sharding_mode:-per_group}"  # per_group | per_image
 KEEP_INTERMEDIATE_OUTPUTS="${keep_intermediate_outputs:-false}"
-DEDUPLICATE="${deduplicate:-true}"  # Enable deduplication by default
 POSTPROCESS="${postprocess:-false}"  # Optional: postprocess Stage-A JSONL
 ADD_GT_FAIL_REASON="${add_gt_fail_reason:-false}"  # Optional: add gt_fail_reason_text from Excel
 EXCEL_PATH="${excel_path:-output_post/BBU_scene_latest.xlsx}"  # Excel file path for gt_fail_reason_text
@@ -196,44 +207,6 @@ fi
 STATUS=$?
 if [[ ${STATUS} -ne 0 ]]; then
   exit ${STATUS}
-fi
-
-# Run deduplication if enabled
-if [[ "${DEDUPLICATE,,}" == "true" ]] || [[ "${DEDUPLICATE}" == "1" ]]; then
-  echo ""
-  echo "=================================="
-  echo "Running Deduplication"
-  echo "=================================="
-  
-  # Determine output file path
-  OUTPUT_FILE="${OUTPUT_DIR}/${MISSION}_stage_a.jsonl"
-  
-  if [[ ! -f "${OUTPUT_FILE}" ]]; then
-    echo "[WARNING] Output file not found: ${OUTPUT_FILE}"
-    echo "Skipping deduplication."
-  else
-    echo "Processing: ${OUTPUT_FILE}"
-    echo "Mode: In-place (overwriting original file)"
-    # Run deduplication (summary will be printed to stderr by the script)
-    # --in-place flag overwrites the original file, no separate .deduplicated.jsonl is created
-    conda run -n "${CONDA_ENV}" --no-capture-output python -u \
-      "${REPO_DIR}/scripts/deduplicate_stage_a.py" \
-      "${OUTPUT_FILE}" \
-      --in-place 2>&1
-    
-    DEDUP_STATUS=$?
-    if [[ ${DEDUP_STATUS} -eq 0 ]]; then
-      echo ""
-      echo "[SUCCESS] Deduplication completed successfully"
-      echo "Original file overwritten: ${OUTPUT_FILE}"
-    else
-      echo ""
-      echo "[ERROR] Deduplication failed with status ${DEDUP_STATUS}"
-      echo "Original file preserved: ${OUTPUT_FILE}"
-      # Don't fail the entire script if deduplication fails
-    fi
-  fi
-  echo "=================================="
 fi
 
 # Optional postprocess cleanup (RRU/BBU-specific)
