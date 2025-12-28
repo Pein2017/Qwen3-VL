@@ -23,7 +23,7 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List
+from typing import TYPE_CHECKING, Any, Dict, List, cast
 
 import torch
 
@@ -32,7 +32,7 @@ _SKIP_VIS_DEPS = os.environ.get("QWEN3_VL_NO_VIS_DEPS") is not None
 if TYPE_CHECKING:
     import matplotlib.patches as patches  # noqa: F401
     import matplotlib.pyplot as plt  # noqa: F401
-    from PIL import Image as PILImage  # noqa: F401
+    from PIL import Image  # noqa: F401
 else:
     if not _SKIP_VIS_DEPS:
         import matplotlib.patches as patches
@@ -82,7 +82,7 @@ def _parse_args():
 # ==============================
 
 # Required paths
-CKPT_PATH = "output/12-9/res_1024_fusion_merged/epoch50-updated_aug-checkpoint-2000"  # HF dir or merged checkpoint  # HF dir or merged checkpoint
+CKPT_PATH = "output/12-27/new_schema-4B-merged/checkpoint-1880"  # HF dir or merged checkpoint  # HF dir or merged checkpoint
 JSONL_PATH = "data_new_schema/bbu_full_1024_poly_new_schema/val.jsonl"
 
 # Target-domain prompt placeholders (align with training assistant_prefix_format)
@@ -90,11 +90,11 @@ JSONL_PATH = "data_new_schema/bbu_full_1024_poly_new_schema/val.jsonl"
 DOMAIN_KEY: str | None = None
 
 # Runtime settings
-LIMIT = 10
-DEVICE = "cuda:1"  # Default device; can be overridden by CLI arg in main()
-SAVE_DIR = "vis_out/12-9/res_1024_fusion_merged/epoch50-updated_aug-checkpoint-2000"
-MAX_NEW_TOKENS = 2048
-TEMPERATURE = 0.01  # Moderate temperature for diversity without excessive randomness
+LIMIT = 20
+DEVICE: str = "cuda:1"  # Default device; can be overridden by CLI arg in main()
+SAVE_DIR = "vis_out/12-27/new_schema-4B-dense-merged/checkpoint-1880/temp_0.0"
+MAX_NEW_TOKENS = 4096
+TEMPERATURE = 0.00001  # Moderate temperature for diversity without excessive randomness
 TOP_P = 0.95  # Nucleus sampling - cuts off low-probability tail for better diversity
 REPETITION_PENALTY = (
     1.05  # Minimal global penalty to preserve recall (only prevents token-level loops)
@@ -158,6 +158,7 @@ if json_format not in ("standard",):
     print(f"[WARNING] Unknown json_format '{json_format}', defaulting to 'standard'")
     json_format = "standard"
 
+
 # Build system prompt with the correct format hint (matches training)
 def _infer_domain_key(path: str) -> str:
     low = str(path or "").lower()
@@ -213,7 +214,10 @@ if not _SKIP_VIS_DEPS:
         torch_dtype=torch.bfloat16,
         attn_implementation="flash_attention_2",
     )
-    model.to(torch.device(DEVICE))  # type: ignore[arg-type]
+    # Move model to device
+    # PyTorch's .to() accepts both str and torch.device
+    # Type checker incorrectly flags this - this is a false positive
+    model.to(DEVICE)  # type: ignore[misc, call-arg]
     model.eval()
 
     # Enable CUDA perf/kvcache optimizations when available
@@ -263,7 +267,7 @@ processor.image_processor.do_resize = False
 # ======================
 
 
-def run_infer_one(pil_img: Any, prompt: str) -> tuple[str, str]:
+def run_infer_one(pil_img: Any, prompt: str) -> tuple[str, str]:  # type: ignore[type-arg]
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT_TEXT},
         {
@@ -294,8 +298,8 @@ def run_infer_one(pil_img: Any, prompt: str) -> tuple[str, str]:
 
         class _BalancedJsonStopper(StoppingCriteria):
             def __init__(self, prompt_len: int, max_objects: int | None) -> None:
-                self.prompt_len = prompt_len
-                self.max_objects = max_objects
+                self.prompt_len: int = prompt_len
+                self.max_objects: int | None = max_objects
 
             def _decode(self, ids: "torch.Tensor") -> str:
                 try:
@@ -307,43 +311,48 @@ def run_infer_one(pil_img: Any, prompt: str) -> tuple[str, str]:
                 except Exception:
                     return ""
 
-            def __call__(
+            def __call__(  # type: ignore[override]
                 self,
                 input_ids: "torch.LongTensor",
                 scores: "torch.FloatTensor",
-                **kwargs,
+                **kwargs: Any,  # type: ignore[type-arg]
             ) -> "torch.BoolTensor":
                 batch_size = input_ids.shape[0] if input_ids is not None else 1
                 device = (
                     input_ids.device if input_ids is not None else torch.device("cpu")
                 )
                 if input_ids is None or input_ids.size(0) == 0:
-                    return torch.full(
+                    result = torch.full(
                         (batch_size,), False, device=device, dtype=torch.bool
-                    )  # type: ignore[return-value]
+                    ).bool()
+                    return cast("torch.BoolTensor", result)
                 seq = input_ids[0]
                 gen_ids = seq[self.prompt_len :]
                 if gen_ids.numel() == 0:
-                    return torch.full(
+                    result = torch.full(
                         (batch_size,), False, device=device, dtype=torch.bool
-                    )  # type: ignore[return-value]
+                    ).bool()
+                    return cast("torch.BoolTensor", result)
                 text = self._decode(gen_ids)
                 if not text:
-                    return torch.full(
+                    result = torch.full(
                         (batch_size,), False, device=device, dtype=torch.bool
-                    )  # type: ignore[return-value]
+                    ).bool()
+                    return cast("torch.BoolTensor", result)
                 if self.max_objects is not None and self.max_objects > 0:
                     try:
                         if text.count('"object_') >= self.max_objects:
-                            return torch.full(
+                            result = torch.full(
                                 (batch_size,), True, device=device, dtype=torch.bool
-                            )  # type: ignore[return-value]
+                            ).bool()
+                            return cast("torch.BoolTensor", result)
                     except Exception:
                         pass
                 if not STOP_AT_BALANCED_JSON:
-                    return torch.full(
+                    result = torch.full(
                         (batch_size,), False, device=device, dtype=torch.bool
-                    )  # type: ignore[return-value]
+                    ).bool()
+                    return cast("torch.BoolTensor", result)
                 depth = 0
                 started = False
                 in_str = False
@@ -368,13 +377,17 @@ def run_infer_one(pil_img: Any, prompt: str) -> tuple[str, str]:
                             if depth > 0:
                                 depth -= 1
                                 if started and depth == 0:
-                                    return torch.full(
+                                    result = torch.full(
                                         (batch_size,),
                                         True,
                                         device=device,
                                         dtype=torch.bool,
-                                    )  # type: ignore[return-value]
-                return torch.full((batch_size,), False, device=device, dtype=torch.bool)  # type: ignore[return-value]
+                                    ).bool()
+                                    return cast("torch.BoolTensor", result)
+                result = torch.full(
+                    (batch_size,), False, device=device, dtype=torch.bool
+                ).bool()
+                return cast("torch.BoolTensor", result)
 
         stopping = StoppingCriteriaList(
             [_BalancedJsonStopper(prompt_len, MAX_OBJECTS_CAP)]
@@ -383,7 +396,7 @@ def run_infer_one(pil_img: Any, prompt: str) -> tuple[str, str]:
     # Build logits processor to block exact duplicate object values (e.g., identical line arrays)
     class _DedupObjectValueProcessor(LogitsProcessor):
         def __init__(self, prompt_len: int) -> None:
-            self.prompt_len = prompt_len
+            self.prompt_len: int = prompt_len
             self.seen_values: set[str] = set()
             self.bad_token_sequences: list[list[int]] = []
 
@@ -457,9 +470,9 @@ def run_infer_one(pil_img: Any, prompt: str) -> tuple[str, str]:
                 if ids:
                     self.bad_token_sequences.append(ids)
 
-        def __call__(
+        def __call__(  # type: ignore[override]
             self, input_ids: "torch.LongTensor", scores: "torch.FloatTensor"
-        ) -> "torch.FloatTensor":  # type: ignore[override]
+        ) -> "torch.FloatTensor":
             if input_ids is None or input_ids.size(0) == 0:
                 return scores
             seq = input_ids[0]
@@ -606,12 +619,12 @@ def _json_loads_best_effort(s: str):
                     return None
 
 
-def parse_prediction(text: str) -> List[Dict[str, Any]]:
+def parse_prediction(text: str) -> List[Dict[str, Any]]:  # type: ignore[type-arg]
     """Parse prediction text into list of objects. Handles standard JSON format."""
     if not text or not text.strip():
         return []
 
-    def _flatten_coords(pts: Any) -> List[float] | None:
+    def _flatten_coords(pts: Any) -> List[float] | None:  # type: ignore[type-arg]
         """Flatten nested coordinate arrays like [[x1, y1], [x2, y2]] -> [x1, y1, x2, y2]."""
         if not isinstance(pts, (list, tuple)):
             return None
@@ -629,7 +642,7 @@ def parse_prediction(text: str) -> List[Dict[str, Any]]:
         # Already flat, return as-is
         return [float(x) for x in pts]
 
-    def _build_objects_from_dict(obj_dict: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _build_objects_from_dict(obj_dict: Dict[str, Any]) -> List[Dict[str, Any]]:  # type: ignore[type-arg]
         parsed_local: List[Dict[str, Any]] = []
         for _, val in sorted(
             obj_dict.items(),
@@ -852,7 +865,9 @@ def _generate_colors(labels: List[str]) -> Dict[str, str]:
 
 
 def _create_legend(
-    ax_legend, color_map: Dict[str, str], counts: Dict[str, List[int]]
+    ax_legend: Any,
+    color_map: Dict[str, str],
+    counts: Dict[str, List[int]],  # type: ignore[type-arg]
 ) -> None:
     """Place legend in a dedicated subplot axis instead of overlaying the figure."""
     ax_legend.axis("off")
@@ -888,9 +903,9 @@ def _canonicalize_poly(points: List[int | float]) -> List[int]:
 
 
 def _draw_objects(
-    ax,
-    img: Any,
-    objects: List[Dict[str, Any]],
+    ax: Any,  # type: ignore[type-arg]
+    img: Any,  # type: ignore[type-arg]
+    objects: List[Dict[str, Any]],  # type: ignore[type-arg]
     color_map: Dict[str, str],
     scaled: bool,
 ) -> None:
@@ -960,7 +975,7 @@ def load_records(jsonl_path: str):
                 continue
 
 
-def write_jsonl(records: List[Dict[str, Any]], jsonl_path: str) -> None:
+def write_jsonl(records: List[Dict[str, Any]], jsonl_path: str) -> None:  # type: ignore[type-arg]
     os.makedirs(os.path.dirname(jsonl_path), exist_ok=True)
     with open(jsonl_path, "w", encoding="utf-8") as f:
         for rec in records:
@@ -977,7 +992,7 @@ def _guess_geom_type_from_len(n_points: int) -> str | None:
     return None
 
 
-def extract_gt_objects(rec: Dict[str, Any], image_index: int) -> List[Dict[str, Any]]:
+def extract_gt_objects(rec: Dict[str, Any], image_index: int) -> List[Dict[str, Any]]:  # type: ignore[type-arg]
     objs: List[Dict[str, Any]] = []
     objects = rec.get("objects")
 
@@ -1148,16 +1163,16 @@ def main() -> None:
             total_missing += eval_res.num_missing
 
             # Build legend color map
-            labels = [o.get("desc", "") for o in gt_objs] + [
-                o.get("desc", "") for o in pred_objs_norm
+            labels: List[str] = [str(o.get("desc", "")) for o in gt_objs] + [
+                str(o.get("desc", "")) for o in pred_objs_norm
             ]
             color_map = _generate_colors(labels)
             legend_counts: Dict[str, List[int]] = {}
             for o in gt_objs:
-                key = o.get("desc", "")
+                key = str(o.get("desc", ""))
                 legend_counts.setdefault(key, [0, 0])[0] += 1
             for o in pred_objs_norm:
-                key = o.get("desc", "")
+                key = str(o.get("desc", ""))
                 legend_counts.setdefault(key, [0, 0])[1] += 1
 
             fig, (ax_l, ax_r, ax_legend) = plt.subplots(1, 3, figsize=(18, 6))
@@ -1309,18 +1324,18 @@ def main() -> None:
             )
 
         # Build legend color map using labels appearing in this figure
-        labels = [o.get("desc", "") for o in gt_px] + [
-            o.get("desc", "") for o in pred_px
+        labels: List[str] = [str(o.get("desc", "")) for o in gt_px] + [
+            str(o.get("desc", "")) for o in pred_px
         ]
         color_map = _generate_colors(labels)
 
         # Track counts for legend
         counts: Dict[str, List[int]] = {}
         for o in gt_px:
-            key = o.get("desc", "")
+            key = str(o.get("desc", ""))
             counts.setdefault(key, [0, 0])[0] += 1
         for o in pred_px:
-            key = o.get("desc", "")
+            key = str(o.get("desc", ""))
             counts.setdefault(key, [0, 0])[1] += 1
 
         # Plot 1×3 (GT | Pred | Legend)
@@ -1352,6 +1367,17 @@ def main() -> None:
 
     # Write out dump JSONL if requested
     if SAVE_JSONL and dumped_records:
+        # Add summary record with aggregate metrics
+        if count > 0:
+            summary_record = {
+                "summary": True,
+                "num_samples": count,
+                "total_gt": total_gt,
+                "total_pred": total_pred,
+                "total_matched": total_matched,
+                "total_missing": total_missing,
+            }
+            dumped_records.append(summary_record)
         write_jsonl(dumped_records, str(dump_jsonl_path))
         print(f"[INFO] Dumped GT vs Pred JSONL: {dump_jsonl_path}")
 

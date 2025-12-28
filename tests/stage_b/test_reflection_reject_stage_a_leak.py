@@ -2,7 +2,7 @@ from src.stage_b.reflection.engine import ReflectionEngine
 
 
 def test_reject_stage_a_object_chain_without_multiplier():
-    # Regression: 8B may paste Stage-A object-chain summary into guidance text (no ×N needed).
+    # Regression: 8B may paste Stage-A object-chain summary into guidance text.
     leaked = "BBU设备/完整,空间充足需安装/按要求配备。"
     assert ReflectionEngine._reject_experience_text(leaked) is True
 

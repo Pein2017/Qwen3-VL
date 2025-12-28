@@ -89,7 +89,7 @@ def test_build_user_prompt_sanitizes_need_review_marker():
         label="pass",  # type: ignore[arg-type]
         summaries=StageASummaries(
             per_image={
-                "image_1": "BBU设备/需复核,备注:无法判断品牌×1，标签/无法识别×1",
+                "image_1": "BBU设备/需复核,备注:无法判断品牌，标签/无法识别",
             }
         ),
     )
