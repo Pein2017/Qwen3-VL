@@ -9,9 +9,9 @@ set -euo pipefail
 
 # Fixed configuration
 # CHECKPOINT="output/11-30/summary_merged/epoch_10-lr_2e-4-bs_32-res_1024"
-CHECKPOINT="output/12-25/summary_merged/bbu_only-more_irrelevant-ocr"
+CHECKPOINT="output/12-27/new_schema-4B-summary-merged/checkpoint-330"
 BASE_INPUT_DIR="group_data/scene_2.0_order"
-BASE_OUTPUT_DIR="output_post/stage_a_bbu_only-12-25"
+BASE_OUTPUT_DIR="output_post/stage_a_new_schema-4B-12-28"
 
 # Environment variable overrides (lowercase)
 # BBU接地线检查
@@ -49,8 +49,8 @@ PROMPT_PROFILE="${prompt_profile:-summary_runtime}"
 CUDA_VISIBLE_DEVICES="${gpus:-0}"
 verify_flag="${verify_inputs:-true}"
 DEBUG_FLAG="${debug:-false}"
-PASS_GROUP_NUMBER="${pass_group_number:-100}"
-FAIL_GROUP_NUMBER="${fail_group_number:-20}"
+PASS_GROUP_NUMBER="${pass_group_number:-2000}"
+FAIL_GROUP_NUMBER="${fail_group_number:-500}"
 SAMPLE_SEED="${sample_seed:-42}"
 
 # Derive number of GPUs (ignore empty/whitespace tokens)
