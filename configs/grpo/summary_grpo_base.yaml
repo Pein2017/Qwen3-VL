@@ -1,0 +1,74 @@
+extends: ../fusion_train/sft_base.yaml
+
+global_max_length: null
+
+model:
+  model: output/12-27/new_schema-4B-summary-merged/checkpoint-330
+
+training:
+  run_name: temperature_0.7-num_generations_2-vllm_colocate
+  num_train_epochs: 2
+  learning_rate: 1.0e-4
+  vit_lr: 1.0e-7
+  aligner_lr: 1.0e-7
+  output_dir: ./output/12-29/new_schema-4B-summary-grpo
+  logging_dir: ./tb/12-29/new_schema-4B-summary-grpo
+  per_device_train_batch_size: 2
+  per_device_eval_batch_size: 4
+  effective_batch_size: 32
+  metric_for_best_model: eval_reward
+  logging_steps: 10
+  eval_steps: 100
+  # eval_strategy: 'no'
+  warmup_ratio: 0.05
+  save_delay_steps: 400
+  
+prompts:
+  profile: summary_runtime
+  domain: bbu
+
+rlhf:
+  rlhf_type: grpo
+  reward_funcs: [summary_format, summary_header, summary_parse, summary_dataset, summary_objects_total, summary_content_f1]
+  reward_weights: [1.0, 2.0, 1.5, 0.5, 0.5, 1.0]
+  num_generations: 4
+  temperature: 0.5
+  max_completion_length: 2048
+  truncation_strategy: delete
+  generation_batch_size: 64
+  # ref model is not allowed for Lora training
+  dynamic_sample: true
+  max_resample_times: 1
+  
+  # vLLM Configuration - Colocate Mode (internal vLLM)
+  use_vllm: true
+  vllm_mode: colocate
+  vllm_gpu_memory_utilization: 0.8
+  vllm_enable_prefix_caching: true
+  vllm_enable_lora: false
+  # async_generate: true
+  
+  # Alternative: vLLM Configuration - Server Mode (external vLLM server)
+  # use_vllm: true
+  # vllm_mode: server
+  # vllm_server_host: ["127.0.0.1"]  # Replace <server_ip> with actual server IP address
+  # vllm_server_port: [8000]
+  # vllm_server_timeout: 240
+
+custom:
+  fusion_config: configs/dataset_mix/bbu_rru_summary_grpo_new_schema_1024.yaml
+  use_summary: true
+  val_sample_limit: 200
+  assistant_prefix_format: "<DOMAIN={domain}>, <TASK={task}>"
+  augmentation:
+    enabled: true
+    # Tiny, always-on augmentation (no curriculum).
+    bypass_prob: 0.60
+    ops:
+      - name: resize_by_scale
+        params: { lo: 0.98, hi: 1.02, align_multiple: 32, prob: 0.20 }
+      - name: color_jitter
+        params: { brightness: [0.95, 1.05], contrast: [0.95, 1.05], saturation: [0.95, 1.05], prob: 0.15 }
+      - name: gamma
+        params: { gamma: [0.97, 1.03], prob: 0.08 }
+  augmentation_curriculum: null

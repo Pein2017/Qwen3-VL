@@ -1,0 +1,27 @@
+targets:
+  - name: bbu_summary
+    dataset: bbu
+    train_jsonl: data_new_schema/bbu_full_1024_poly_new_schema/train.jsonl
+    val_jsonl: data_new_schema/bbu_full_1024_poly_new_schema/val.jsonl
+    template: summary_bbu
+    mode: summary
+    ratio: 1.0
+  - name: rru_summary
+    dataset: rru
+    train_jsonl: data_new_schema/rru_full_1024_poly_new_schema/train.jsonl
+    val_jsonl: data_new_schema/rru_full_1024_poly_new_schema/val.jsonl
+    template: summary_rru
+    mode: summary
+    ratio: 1.0
+  - name: irrelevant_summary
+    dataset: bbu
+    train_jsonl: data/irrelevant_summary/train.jsonl
+    val_jsonl: data/irrelevant_summary/train.jsonl
+    template: summary_bbu
+    mode: summary
+    ratio: 1.0
+    augmentation_enabled: true
+    curriculum_enabled: false
+
+# GRPO-only: no dense captioning sources (bbu_dense, rru_dense, lvis, lang_chat)
+sources: []

@@ -1,4 +1,4 @@
-extends: ../fused_data/sft_base.yaml
+extends: ../fusion_train/sft_base.yaml
 
 # Smoke configuration for fusion group metrics with 4B checkpoint.
 
@@ -25,7 +25,7 @@ training:
 
 custom:
   # Keep tiny fusion mix and sample caps from debug base for fast turnaround
-  fusion_config: configs/fusion/bbu_rru_dense_new_schema_1024.yaml
+  fusion_config: configs/dataset_mix/bbu_rru_dense_new_schema_1024.yaml
   train_sample_limit: 16
   val_sample_limit: 8
   token_type_metrics:

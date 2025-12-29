@@ -1,4 +1,4 @@
-extends: ../fused_data/sft_base.yaml
+extends: ../fusion_train/sft_base.yaml
 
 # Stage-B verdict distillation SFT (text-only ChatML).
 #
@@ -48,7 +48,7 @@ custom:
   # Dummy base path for ROOT_IMAGE_DIR auto-derivation; for fusion runs this is not used as the dataset.
   train_jsonl: data/stage_b/distill.train.jsonl
   val_jsonl: data/stage_b/distill.val.jsonl
-  fusion_config: configs/fusion/stage_b_distill.yaml
+  fusion_config: configs/dataset_mix/stage_b_distill.yaml
   use_summary: false
   dump_conversation_text: false
   augmentation:

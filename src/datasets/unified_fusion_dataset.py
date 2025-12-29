@@ -309,6 +309,9 @@ class FusionCaptionDataset(BaseCaptionDataset):
         metadata["_fusion_source"] = spec.name
         metadata["_fusion_template"] = spec.template
         metadata["_fusion_domain"] = spec.domain
+        domain_token = resolve_domain_token(spec.key)
+        if domain_token:
+            metadata["_fusion_domain_token"] = domain_token
         metadata["_fusion_mode"] = mode
         annotated["metadata"] = metadata
         return annotated
@@ -437,6 +440,7 @@ class FusionCaptionDataset(BaseCaptionDataset):
         *,
         dataset_name: str,
         base_idx: int,
+        epoch: int | None = None,
     ) -> str:
         images = record.get("images")
         key = None
@@ -446,6 +450,8 @@ class FusionCaptionDataset(BaseCaptionDataset):
                 key = first
         if key is None:
             key = f"{dataset_name}:{base_idx}"
+        if epoch is not None:
+            key = f"{epoch}:{key}"
         digest = hashlib.md5(key.encode("utf-8")).digest()
         return cls._IRRELEVANT_ALT_TEMPLATES[digest[0] & 1]
 
@@ -715,11 +721,18 @@ class FusionCaptionDataset(BaseCaptionDataset):
             if not isinstance(metadata, dict):
                 metadata = {}
                 record["metadata"] = metadata
+            summary_ref = record.get("summary")
+            if isinstance(summary_ref, str) and summary_ref.strip():
+                metadata["summary_ref"] = summary_ref
             if metadata.get("_fusion_source") == self._IRRELEVANT_SOURCE:
+                assistant_prefix = None
                 if self._split == "train":
-                    alt_template = self._IRRELEVANT_ALT_TEMPLATES[
-                        rng_local.randrange(len(self._IRRELEVANT_ALT_TEMPLATES))
-                    ]
+                    alt_template = self._pick_irrelevant_template(
+                        record,
+                        dataset_name=dataset_name,
+                        base_idx=base_idx,
+                        epoch=self._epoch,
+                    )
                 else:
                     alt_template = self._pick_irrelevant_template(
                         record,
