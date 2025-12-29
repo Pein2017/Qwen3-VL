@@ -22,16 +22,47 @@ class DatasetMetricsMixin:
     def compute_loss(
         self, model, inputs, return_outputs=False, num_items_in_batch=None
     ):
+        # Some trainers (e.g., TRL GRPO) pass inputs as a list during eval.
+        # In that case, bypass dataset metrics and delegate directly.
+        if isinstance(inputs, list):
+            if len(inputs) == 1 and isinstance(inputs[0], Mapping):
+                inputs = inputs[0]
+            else:
+                parent = cast(Any, super())
+                return parent.compute_loss(
+                    model,
+                    inputs,
+                    return_outputs=return_outputs,
+                    num_items_in_batch=num_items_in_batch,
+                )
+
+        if not isinstance(inputs, Mapping):
+            parent = cast(Any, super())
+            return parent.compute_loss(
+                model,
+                inputs,
+                return_outputs=return_outputs,
+                num_items_in_batch=num_items_in_batch,
+            )
+
         dataset_labels = inputs.pop(self.label_field, None)
         _ = inputs.pop(self.segment_field, None)  # Optional legacy field
         token_types = inputs.pop("token_types", None)
 
         parent = cast(Any, super())
-        loss, outputs = parent.compute_loss(
+        result = parent.compute_loss(
             model, inputs, return_outputs=True, num_items_in_batch=num_items_in_batch
         )
 
-        if dataset_labels is not None:
+        outputs = None
+        if isinstance(result, tuple):
+            loss = result[0]
+            if len(result) > 1:
+                outputs = result[1]
+        else:
+            loss = result
+
+        if dataset_labels is not None and outputs is not None:
             # Log metrics per-sample; skip distributed sync to avoid deadlocks.
             # The trainer's own aggregation handles cross-rank reduction safely.
             self._log_dataset_metrics(outputs, inputs, dataset_labels, token_types)

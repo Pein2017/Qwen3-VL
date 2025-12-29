@@ -27,6 +27,7 @@ from .datasets import BaseCaptionDataset
 from .datasets.augmentation.curriculum import AugmentationCurriculumScheduler
 from .datasets.fusion import FusionConfig
 from .metrics.dataset_metrics import DatasetMetricsMixin
+from .rlhf.summary_grpo_rewards import register_summary_grpo_rewards
 from .trainers import with_final_checkpoint
 from .utils import configure_logging, get_logger
 
@@ -68,6 +69,9 @@ def resolve_trainer_cls(train_args: Any) -> type:
 # Use the model's native chat_template (JSON/Jinja) shipped with the tokenizer
 
 logger = get_logger(__name__)
+
+# Ensure custom GRPO rewards are registered before trainer initialization.
+register_summary_grpo_rewards()
 
 
 def parse_args():
