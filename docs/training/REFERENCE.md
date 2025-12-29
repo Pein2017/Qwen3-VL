@@ -233,7 +233,7 @@ Core SFT/LoRA recipes, KL anchoring overlays, augmentation telemetry, and troubl
 - Config: `custom.token_type_metrics.enabled` (default `false`), `include` (default `['target','lvis']`), `exclude` (default `['coig_lang_chat']`).  
 - Behavior: collator reconstructs assistant JSON, tokenizes with the active template, aligns token types (1=desc, 2=coord numbers, 3=format), and pads/truncates to supervised positions; rows outside `include` get IGNORE.  
 - Metrics: per dataset label, logs `{label}_token_acc` (all supervised tokens, naturally weighted), type-sliced accuracies `{label}_{desc|coord|format}_token_acc`.  
-- Validation: smoke run on 2025-12-04 with `configs/smoke/group_metrics.yaml` (4B checkpoint, tiny fusion `configs/fusion/bbu_rru_lvis_coig_tiny.yaml`, `logging_steps=1`, `eval_steps=1`, `save_strategy=no`, `max_steps=20`) produced the expected token-type metrics; see `output/smoke/group_metrics/v0-20251204-062817/smoke_group_metrics_4b/logging.jsonl`.
+- Validation: smoke run on 2025-12-04 with `configs/smoke/group_metrics.yaml` (4B checkpoint, tiny fusion `configs/dataset_mix/bbu_rru_lvis_coig_tiny.yaml`, `logging_steps=1`, `eval_steps=1`, `save_strategy=no`, `max_steps=20`) produced the expected token-type metrics; see `output/smoke/group_metrics/v0-20251204-062817/smoke_group_metrics_4b/logging.jsonl`.
 
 Keep configs under `configs/` in sync with the playbook when making behavioral changes.
 
@@ -245,6 +245,14 @@ Keep configs under `configs/` in sync with the playbook when making behavioral c
   - `prompts.system` / `prompts.user` remain authoritative overrides and bypass profile composition.
   - `custom.assistant_prefix_format`: required for BBU/RRU targets to prepend `<DOMAIN=...>, <TASK=...>` + newline before assistant payloads (dense + summary). Source datasets remain unchanged.
 - **Stage-A runtime composition**: system prompt = summary task base + 全局“非现场/图纸”规则；user prompt = summary instruction + BBU/RRU 场景提示块 + 可选任务重点。
+
+### Summary GRPO Post-Training (Format Stabilization)
+- **Config example**: `configs/fusion_train/bbu_rru_summary_grpo_new_schema_1024.yaml` (merged summary-SFT checkpoint in, LoRA adapter out).
+- **Base template**: `configs/grpo/summary_grpo_base.yaml` (inherits `configs/fusion_train/sft_base.yaml`; edit checkpoint + epochs/LRs).
+- **Required knobs**: `rlhf.rlhf_type=grpo`, `rlhf.reward_funcs=[summary_format, summary_header, summary_parse, summary_dataset, summary_objects_total, summary_content_f1]`, `rlhf.num_generations` (must divide `rlhf.generation_batch_size`), `rlhf.temperature=0.3`, `rlhf.max_completion_length=2048`, plus `training.effective_batch_size` (backward global batch), `rlhf.generation_batch_size` (rollout global trajectories), `prompts.profile=summary_runtime`, `custom.assistant_prefix_format`, and `custom.fusion_config`.
+- **Metadata contract**: summary-mode rows attach `metadata.summary_ref` (ground-truth JSON) and `metadata._fusion_domain_token` (BBU/RRU) for reward functions; irrelevant rows keep `_fusion_source=irrelevant_summary` and suppress assistant prefixes so labels remain single-line `无关图片`.
+- **Dry-run recipe**: clone the example config, set `training.max_steps: 2`, `training.eval_strategy: "no"`, `training.save_strategy: "no"`, `custom.train_sample_limit: 2`, `custom.val_sample_limit: 2`, then launch via `scripts/train.sh config=<new-config.yaml> gpus=0 debug=true`.
+- **Success criteria**: job starts, reward metrics appear (`rewards/summary_format`, `rewards/summary_header`, `rewards/summary_parse`, `rewards/summary_dataset`, `rewards/summary_objects_total`, `rewards/summary_content_f1`), and 1–2 steps complete without dataset or format exceptions.
 
 ## Inference
 

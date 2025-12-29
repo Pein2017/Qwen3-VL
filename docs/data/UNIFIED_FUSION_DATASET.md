@@ -102,11 +102,12 @@ FusionCaptionDataset
 
 - Prompt priority: `default < domain < dataset-specific` for both user/system prompts; template.system is restored after each sample.
 - Per-epoch schedule: per-target coverage scales by `quota_i = round(len_i * ratio_i)` (ratio defaults to 1.0; <1 downsample, >1 upsample with replacement); each source draws `round(ratio * N_target_total)` with optional `sample_without_replacement` (unique draws when quota ≤ pool, otherwise deterministic fallback to replacement); deterministic shuffling using fusion seed + optional per-dataset seed; raises on empty source pool when ratio > 0.
-- Irrelevant summary pools may be listed under targets to consume all samples, but remain identifiable via `metadata._fusion_source` (e.g., `irrelevant_summary`) and should be treated as source-like for analytics/handling. For `irrelevant_summary`, prompts are randomized per sample during training between `summary_bbu` and `summary_rru` (~50/50) without changing `_fusion_source` (eval uses a deterministic mapping).
+- Irrelevant summary pools may be listed under targets to consume all samples, but remain identifiable via `metadata._fusion_source` (e.g., `irrelevant_summary`) and should be treated as source-like for analytics/handling. For `irrelevant_summary`, prompts alternate per epoch between `summary_bbu` and `summary_rru` (~50/50 within an epoch) without changing `_fusion_source` (eval uses a deterministic mapping); assistant prefixes are suppressed so labels stay single-line `无关图片`.
 - Per-dataset policies: sources default to clean (no augmentation/curriculum) and cap objects (default 64); targets inherit global augmentation/curriculum and can opt into a cap.
 - Object caps: applied after augmentation and before encoding; deterministic with the dataset/epoch/worker seed.
 - Evaluation: target eval by default; optional source `val_jsonl` included (no shuffle) when present and prepared offline (no splitting inside the loader).
 - Telemetry: `last_sample_debug` reports dataset, prompt source, augmentation on/off, cap applied/limit, input length; `epoch_plan` summarizes per-epoch counts/policies.
+- Metadata tags: `_fusion_source`, `_fusion_template`, `_fusion_domain`, `_fusion_domain_token` (BBU/RRU), `_fusion_mode`; summary mode attaches `metadata.summary_ref` for reward/QA consumers.
 - No online smart-resize guard; resizing only via explicit augmentation ops and offline preprocessing.
 
 ### Implementation Details
@@ -230,12 +231,12 @@ The `FusionCaptionDataset` (alias `UnifiedFusionDataset`) is automatically used 
 
 ```yaml
 custom:
-  fusion_config: configs/fusion/bbu_with_lvis.yaml
+  fusion_config: configs/dataset_mix/bbu_with_lvis.yaml
 ```
 
 #### Summary fusion + irrelevant negatives
 
-For summary-mode SFT, you can mix a small "irrelevant image" negative pool as an additional **target** stream (so `ratio` scales by that pool’s own size). The default summary fusion config `configs/fusion/summary_lang_chat_0p2.yaml` includes `irrelevant_summary` backed by `data/irrelevant_summary/train.jsonl` (built from `data/irrelevant_summary/images/*.jpg|*.jpeg`).
+For summary-mode SFT, you can mix a small "irrelevant image" negative pool as an additional **target** stream (so `ratio` scales by that pool's own size). The default summary fusion config `configs/dataset_mix/summary_lang_chat_0p2.yaml` includes `irrelevant_summary` backed by `data/irrelevant_summary/train.jsonl` (built from `data/irrelevant_summary/images/*.jpg|*.jpeg`).
 
 Generate and validate the JSONL:
 
@@ -319,8 +320,8 @@ if custom_config.fusion_config:
 
 - **Implementation**: `src/datasets/unified_fusion_dataset.py`
 - **Verification Script**: `check_mask_labels_simple.py`
-- **Fusion Config**: `configs/fusion/bbu_with_lvis.yaml`
-- **Summary Fusion Config**: `configs/fusion/summary_lang_chat_0p2.yaml`
+- **Fusion Config**: `configs/dataset_mix/bbu_with_lvis.yaml`
+- **Summary Fusion Config**: `configs/dataset_mix/summary_lang_chat_0p2.yaml`
 - **Irrelevant JSONL Helper**: `scripts/build_irrelevant_summary_jsonl.py`
 - **Training Integration**: `src/sft.py`
 

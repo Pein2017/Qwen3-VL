@@ -44,9 +44,9 @@ sft.prepare_model(...)
 - `configs/base.yaml` — Non-tunable runtime defaults only (dtype, attention impl, template); no hyperparameters live here.
 - `configs/stage_1/{lora.yaml,full_with_kd.yaml}` — Single-domain BBU recipes (LoRA or full) with GKD monitor
 - `configs/dlora/*.yaml` — Core SFT/LoRA recipes; all hyperparameters (LR groups, freeze/DoRA targets, augmentations, dataset placeholders) are defined here.
-- `configs/fused_data/*.yaml` — Fusion variants that only turn on `custom.fusion_config`, inheriting every other setting from `dlora/sft_base.yaml`.
-- `configs/1024/*.yaml` — High-res fusion variants that only swap in 1024px dataset paths on top of `configs/fused_data/sft_base.yaml`.
-- `configs/fusion/*.yaml` — Offline fusion builder configs for `scripts/fuse_datasets.py`
+- `configs/fusion_train/*.yaml` — Fusion variants that only turn on `custom.fusion_config`, inheriting every other setting from `dlora/sft_base.yaml`.
+- `configs/1024/*.yaml` — High-res fusion variants that only swap in 1024px dataset paths on top of `configs/fusion_train/sft_base.yaml`.
+- `configs/dataset_mix/*.yaml` — Offline fusion builder configs for `scripts/fuse_datasets.py`
 - `configs/summary.yaml` — Summary-only training mode
 - `configs/stage_b/*.yaml` — Stage-B runtime configs (bbu_*.yaml for entry configs)
 - Upstream data for these configs is normally produced by the annotation converter (`data_conversion/convert_dataset.sh`, see `docs/data/DATA_PREPROCESSING_PIPELINE.md`) or by public converters in `public_data/`. Ensure converted JSONL matches `docs/data/DATA_JSONL_CONTRACT.md` before training.
@@ -122,7 +122,7 @@ training:
 
 Use Generalized Knowledge Distillation (GKD) when dense-caption SFT starts hallucinating away from the base checkpoint.
 
-- **Activation**: switch to the GKD overlays (`configs/stage_1/full_with_kd.yaml`, `configs/stage_1/lora.yaml`) or the fusion variants under `configs/fused_data/*gkd*.yaml`. They inherit the vanilla stage configs and only add:
+- **Activation**: switch to the GKD overlays (`configs/stage_1/full_with_kd.yaml`, `configs/stage_1/lora.yaml`) or the fusion variants under `configs/fusion_train/*gkd*.yaml`. They inherit the vanilla stage configs and only add:
   ```yaml
   rlhf:
     rlhf_type: gkd
@@ -138,6 +138,16 @@ Use Generalized Knowledge Distillation (GKD) when dense-caption SFT starts hallu
   ```
 - **Launch**: run the usual entrypoint (`python -m src.sft --config <gkd-config.yaml>`). The loader instantiates `SwiftRLHF` behind the scenes, loads the frozen teacher, and routes training through ms-swift’s `GKDTrainer`.
 - **Telemetry**: the wrapper keeps the huggingface `loss` scalar and emits `train/loss`, `train/sft_loss`, `train/llm_kd_loss`, `train/vision_kd_loss`, `train/token_acc`, plus the same `eval/*` counterparts. Metrics are prefixed exactly once (`train/*`, `eval/*`) to avoid TensorBoard duplication. `train/llm_kd_loss` reflects the **weighted** JSD term (`rlhf.llm_kd_weight * jsd`); when the weight is `0`, the metric is omitted entirely. Watch for `train/llm_kd_loss` spikes to catch drift early; compare `train/sft_loss` against your vanilla SFT runs to ensure language quality is intact.
+
+### Summary GRPO Post-Training (Format Stabilization)
+
+Use GRPO to stabilize summary outputs (two-line header + JSON for BBU/RRU, single-line `无关图片` for irrelevant).
+
+- **Activation**: start from `configs/grpo/summary_grpo_base.yaml` (inherits `configs/fusion_train/sft_base.yaml` and exposes checkpoint/LR/epoch knobs) or `configs/fusion_train/bbu_rru_summary_grpo_new_schema_1024.yaml` for a concrete fused run.
+- **Reward funcs**: `summary_format`, `summary_header`, `summary_parse`, `summary_dataset`, `summary_objects_total`, `summary_content_f1` (format/strict header, gated parse penalty, dataset+count alignment, and count-weighted partial JSON match). Optional: keep `summary_content` for strict exact-match auditing.
+- **Rollout settings**: set backward size via `training.effective_batch_size` (with `per_device_train_batch_size` as the micro-batch), and set rollout size via `rlhf.generation_batch_size` (global trajectories per generation). `rlhf.num_generations` must divide `generation_batch_size`. Keep `temperature=0.3`, `max_completion_length=2048` unless retuning.
+- **LoRA note**: keep `train_type: lora` and do **not** set `rlhf.ref_model` (ms-swift treats LoRA refs via adapter disabling or `ref_adapters` when explicitly provided).
+- **Irrelevant handling**: prompts alternate per epoch (~50/50) between `summary_bbu`/`summary_rru`; assistant prefixes are suppressed so labels stay single-line `无关图片`.
 
 #### LM-head KD Weight
 
@@ -190,7 +200,7 @@ custom:
 - **Effect**: anchors student vision/aligner activations to the frozen teacher while leaving KL + CE to supervise the language tower.
 - **Metrics**: trainer logs `train/vision_kd_loss` / `eval/vision_kd_loss` (post-weight) so you can monitor the regularizer alongside `llm_kd_loss` and `sft_loss` contributions.
 - **Images only**: batches without `pixel_values` automatically skip the term; no special handling is required for summary-only validation shards.
-- **Preset overlay**: `configs/fused_data/last_6.yaml` ships with visual KD enabled; use it as the starting point for experiments (see other `*gkd*` variants for alternative targets).
+- **Preset overlay**: `configs/fusion_train/last_6.yaml` ships with visual KD enabled; use it as the starting point for experiments (see other `*gkd*` variants for alternative targets).
 
 #### Forward-only KD (recommended for domain migration)
 

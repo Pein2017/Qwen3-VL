@@ -221,11 +221,11 @@ Fusion can mix multiple record styles as long as the base template is compatible
 
 ### Irrelevant Summary Target (Negative Stream)
 
-For summary-mode SFT regularization (reduce hallucinations on out-of-domain images), you can add a small **irrelevant** target stream whose samples always have `summary: 无关图片`. The loader keeps `_fusion_source=irrelevant_summary` and randomizes prompts per sample during training between `summary_bbu` and `summary_rru` (~50/50) without changing the dataset identity (eval uses a deterministic mapping).
+For summary-mode SFT regularization (reduce hallucinations on out-of-domain images), you can add a small **irrelevant** target stream whose samples always have `summary: 无关图片`. The loader keeps `_fusion_source=irrelevant_summary` and alternates prompts per epoch between `summary_bbu` and `summary_rru` (~50/50 within an epoch) without changing the dataset identity (eval uses a deterministic mapping). Irrelevant targets suppress the assistant prefix so labels remain single-line `无关图片`.
 
 - Generate the JSONL from a folder of JPEGs (EXIF-aware width/height) and keep the global contract by emitting a single dummy full-frame bbox per image:
   - `conda run -n ms python scripts/build_irrelevant_summary_jsonl.py --images-dir data/irrelevant_summary/images --output-jsonl data/irrelevant_summary/train.jsonl`
-- Reference it as an additional **target** (target ratios scale by the dataset’s own pool size; `ratio: 1` means each image appears once per epoch). See `configs/fusion/summary_lang_chat_0p2.yaml` for a concrete example.
+- Reference it as an additional **target** (target ratios scale by the dataset's own pool size; `ratio: 1` means each image appears once per epoch). See `configs/dataset_mix/summary_lang_chat_0p2.yaml` for a concrete example.
 
 Example fusion config:
 
