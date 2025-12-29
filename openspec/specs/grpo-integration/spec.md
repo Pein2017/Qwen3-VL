@@ -1,5 +1,7 @@
 # grpo-integration Specification
 
+> **Deprecated**: Superseded by `summary-grpo-post-training` for summary-mode GRPO. New work should target the newer spec.
+
 ## Purpose
 Define the Stage-A (image summary) → Stage-B (text-only GRPO) pipeline, including image ingestion/aggregation, strict two-line verdict format, reward wiring, and GRPO training/inference expectations for group-level reasoning.
 ## Requirements
