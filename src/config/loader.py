@@ -320,6 +320,9 @@ class ConfigLoader:
                 )
             template_section["truncation_strategy"] = "raise"
 
+            if rlhf_section.get("vllm_max_model_len") is None:
+                rlhf_section["vllm_max_model_len"] = config.global_max_length
+
         if "system" not in template_section and config.prompts.system:
             template_section["system"] = config.prompts.system
 

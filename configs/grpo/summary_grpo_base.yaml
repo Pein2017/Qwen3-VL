@@ -1,23 +1,26 @@
 extends: ../fusion_train/sft_base.yaml
 
-global_max_length: null
+global_max_length: 16000
 
 model:
   model: output/12-27/new_schema-4B-summary-merged/checkpoint-330
 
 training:
-  run_name: temperature_0.7-num_generations_2-vllm_colocate
+  run_name: temperature_0.7-num_generations_4-vllm_colocate-eff_bs_24-gen_bs_24
   num_train_epochs: 2
   learning_rate: 1.0e-4
   vit_lr: 1.0e-7
   aligner_lr: 1.0e-7
-  output_dir: ./output/12-29/new_schema-4B-summary-grpo
-  logging_dir: ./tb/12-29/new_schema-4B-summary-grpo
-  per_device_train_batch_size: 2
-  per_device_eval_batch_size: 4
-  effective_batch_size: 32
+  output_dir: ./output/12-30/new_schema-4B-summary-grpo
+  logging_dir: ./tb/12-30/new_schema-4B-summary-grpo
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 2
+  effective_batch_size: 24
   metric_for_best_model: eval_reward
   logging_steps: 10
+  logging_first_step: true
+  # because step=1 is a single batch and later logs are windowed/averaged.
+  logging_first_step: false
   eval_steps: 100
   # eval_strategy: 'no'
   warmup_ratio: 0.05
@@ -27,15 +30,22 @@ prompts:
   profile: summary_runtime
   domain: bbu
 
+
 rlhf:
   rlhf_type: grpo
   reward_funcs: [summary_format, summary_header, summary_parse, summary_dataset, summary_objects_total, summary_content_f1]
   reward_weights: [1.0, 2.0, 1.5, 0.5, 0.5, 1.0]
+  # Make core GRPO knobs explicit (avoid relying on library defaults).
+  beta: 0.04
+  kl_in_reward: false
+  scale_rewards: group
+  advantage_estimator: grpo
   num_generations: 4
-  temperature: 0.5
+  temperature: 0.7
+  repetition_penalty: 1.05
   max_completion_length: 2048
   truncation_strategy: delete
-  generation_batch_size: 64
+  generation_batch_size: 24
   # ref model is not allowed for Lora training
   dynamic_sample: true
   max_resample_times: 1
@@ -43,17 +53,10 @@ rlhf:
   # vLLM Configuration - Colocate Mode (internal vLLM)
   use_vllm: true
   vllm_mode: colocate
-  vllm_gpu_memory_utilization: 0.8
+  vllm_gpu_memory_utilization: 0.65
   vllm_enable_prefix_caching: true
   vllm_enable_lora: false
   # async_generate: true
-  
-  # Alternative: vLLM Configuration - Server Mode (external vLLM server)
-  # use_vllm: true
-  # vllm_mode: server
-  # vllm_server_host: ["127.0.0.1"]  # Replace <server_ip> with actual server IP address
-  # vllm_server_port: [8000]
-  # vllm_server_timeout: 240
 
 custom:
   fusion_config: configs/dataset_mix/bbu_rru_summary_grpo_new_schema_1024.yaml
