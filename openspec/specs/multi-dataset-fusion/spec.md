@@ -42,16 +42,19 @@ The fusion stack SHALL load every dataset (BBU, RRU, COCO, Objects365, etc.) thr
 - **THEN** it can be plugged into the fusion config with no changes to the fusion builder or augmentation logic.
 
 ### Requirement: Offline fusion builder (static ratios)
-The system SHALL provide an offline (and equivalent online) fusion builder that mixes datasets according to fixed per-source ratios computed once per epoch.
+The offline fusion builder SHALL mix datasets according to fixed per-source ratios computed once per epoch/configuration, honoring per-source policies including optional `sample_without_replacement`; when enabled and the quota is within the source pool, the builder SHALL draw unique samples (no duplicates) using a deterministic shuffle, and when the quota exceeds the pool it SHALL fall back to deterministic with-replacement sampling and surface the fallback in its logs/telemetry. Targets continue to follow the existing ratio-based sampling rules (with replacement when ratios upsample).
 
-#### Scenario: Per-source auxiliary ratios
-- **GIVEN** a fusion config that declares a target dataset `bbu` and auxiliary datasets `coco` with `ratio: 0.1` and `objects365` with `ratio: 0.05`
-- **WHEN** the fusion builder runs for an epoch
-- **THEN** it computes each auxiliary quota as `round(ratio * N_target)` (e.g., `10` COCO + `5` Objects365 records when `N_target = 100`), samples that many records **with replacement** once for the epoch, and interleaves them with the `N_target` records without requiring any runtime schedule updates mid-epoch.
+#### Scenario: Offline source without-replacement within pool size
+- **WHEN** a fusion config enables `sample_without_replacement: true` for a source and its offline quota is less than or equal to the pool size
+- **THEN** the offline builder writes each sampled record at most once in the fused JSONL for that epoch/config, using a deterministic shuffle before taking the quota.
 
-#### Scenario: Extensibility to additional sources
-- **WHEN** a new auxiliary dataset is added to the fusion config with a valid `train_jsonl` path and `ratio`
-- **THEN** the fusion builder can include it in the fused output without changes to `DenseCaptionDataset` or the augmentation pipeline.
+#### Scenario: Offline source without-replacement quota exceeds pool
+- **WHEN** the same flag is set but the computed quota exceeds the source pool
+- **THEN** the builder reverts to deterministic with-replacement sampling for that source while still emitting logs/telemetry that the fallback occurred.
+
+#### Scenario: Default replacement retained (offline)
+- **WHEN** a source does not enable `sample_without_replacement`
+- **THEN** the offline builder samples that source with replacement (as before) while respecting per-source ratios and deterministic seeding.
 
 ### Requirement: Domain-scoped augmentation policy
 Augmentation SHALL be enabled or disabled per domain via dataset-wrapper configuration, not per-record metadata.
@@ -93,3 +96,70 @@ Source-domain datasets SHALL use an auxiliary prompt that emphasizes concise Eng
 - **WHEN** a wrapper declares `template: aux_dense`
 - **THEN** the bound prompts instruct the model to output norm1000 geometry with short English class names (one or two words) and no completeness or quality commentary
 - **AND** LVIS/COCO style categories remain readable without leaking BBU-specific attributes into auxiliary supervision.
+
+### Requirement: Irrelevant summary target stream
+The fusion stack SHALL support mixing a small "irrelevant image" dataset as an additional **target** stream in summary mode, using the existing summary template.
+
+#### Scenario: Irrelevant target is referenced in fusion config
+- **WHEN** a fusion config includes a target entry:
+  - `{name: irrelevant_summary, dataset: bbu, template: bbu_summary, mode: summary, train_jsonl: data/irrelevant_summary/train.jsonl, val_jsonl: data/irrelevant_summary/train.jsonl, ratio: 1}`
+  - and explicitly sets `{augmentation_enabled: false, curriculum_enabled: false}`
+- **THEN** the fusion loader includes it as a target dataset in `mode: summary` using the `bbu_summary` prompts/template
+- **AND** its per-epoch target quota is computed from its own pool size: `quota = round(len(pool) * ratio)` (so `ratio: 1` yields each record once per epoch)
+- **AND** augmentation and curriculum remain disabled for this entry regardless of global settings.
+
+### Requirement: Irrelevant JSONL records remain canonical
+The irrelevant summary JSONL records SHALL conform to the canonical detection JSONL contract even though summary-mode encoding ignores `objects`.
+
+#### Scenario: Dummy full-frame bbox keeps contract compatibility
+- **WHEN** a record contains exactly one image, a dummy full-frame bbox object, and summary text, e.g.:
+  - `images: ["images/0001.jpeg"]`
+  - `width: W`, `height: H`
+  - `objects: [{"bbox_2d": [0, 0, W, H], "desc": "irrelevant"}]`
+  - `summary: "无关图片"`
+- **THEN** it passes the canonical JSONL validator
+- **AND** it is eligible for fusion sampling and summary-mode template encoding, where the assistant target is the summary string.
+
+### Requirement: Helper for irrelevant JSONL generation
+The system SHALL provide a helper that builds the irrelevant summary JSONL from a folder of JPEGs with a 1:1 image-to-record mapping.
+
+#### Scenario: Operator generates irrelevant JSONL
+- **WHEN** an operator runs the helper against `data/irrelevant_summary/images/*.jpeg`
+- **THEN** it emits `data/irrelevant_summary/train.jsonl` where each line references exactly one image (relative path), sets `summary` to `无关图片`, fills `width/height` from EXIF-aware image dimensions, and emits a single dummy full-frame bbox object with a non-empty `desc`
+- **AND** output ordering is deterministic (sorted by path)
+- **AND** unreadable or missing images are reported and skipped without terminating the run.
+
+### Requirement: Text-only auxiliary sources
+The fusion pipeline SHALL accept text-only JSONL datasets (no images/objects) as source domains without breaking detection targets.
+
+#### Scenario: Chat source with per-epoch ratio
+- **GIVEN** a fusion config whose sources include `dataset: chat` with a valid `train_jsonl` containing `messages` turns only
+- **WHEN** FusionCaptionDataset builds the epoch schedule
+- **THEN** the chat source participates using its declared `ratio` (sampled with replacement) even though it has no images or geometry fields.
+
+#### Scenario: Prompt selection for chat sources
+- **GIVEN** a chat source wrapper that declares `template: chatml` (or equivalent) and provides chat-style prompts
+- **WHEN** a chat record is encoded
+- **THEN** the loader applies the chat template’s system/user prompts (not the detection prompts) and does **not** inject image placeholders or geometry instructions.
+
+#### Scenario: Pass-through pre-authored conversations
+- **WHEN** a record in any source contains a `messages` array and no `images`/`objects`
+- **THEN** the builder reuses those messages verbatim for encoding, keeping metadata intact, instead of synthesizing detection-style user/assistant payloads.
+
+### Requirement: Per-dataset summary label grouping override
+The system SHALL allow fusion dataset entries to override summary label grouping behavior on a per-dataset basis.
+
+#### Scenario: Fusion config overrides grouping for summary datasets
+- **GIVEN** a fusion config entry in summary mode that sets `summary_label_grouping` to `true` or `false`
+- **WHEN** the fused dataset is built for training
+- **THEN** the summary label normalizer is applied (or skipped) for that dataset according to the override
+- **AND** datasets without an override continue to follow `custom.summary_label_grouping`.
+
+### Requirement: Provenance metadata in fused outputs
+The offline fusion builder SHALL emit fused JSONL records annotated with `_fusion_domain`, `_fusion_source`, and `_fusion_template` fields consistent with the online fusion loader so downstream packers and debuggers can distinguish target vs source samples without extra configuration.
+
+#### Scenario: Fused JSONL carries provenance
+- **WHEN** the offline fusion builder materializes a fused train JSONL from a fusion config with target and auxiliary sources
+- **THEN** every written record contains `_fusion_domain`, `_fusion_source`, and `_fusion_template` metadata matching its originating dataset
+- **AND** consumers can group or filter fused records by these fields without inferring provenance from file paths or dataset order.
+

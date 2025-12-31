@@ -14,6 +14,7 @@ The system SHALL reject `custom.hard_sample_mining` configurations and run stand
 - **WHEN** code attempts to import mining-specific callbacks or datasets
 - **THEN** the import fails, indicating the feature was removed.
 
-#### Scenario: Run packed training
-- **WHEN** training runs with packing enabled and no `custom.hard_sample_mining`
-- **THEN** the trainer uses the default dataloader/shuffle path with no mining metadata or hooks.
+#### Scenario: Run training without mining
+- **WHEN** training runs with the default padded batching path (packing removed) and no `custom.hard_sample_mining`
+- **THEN** the trainer uses the standard dataloader/shuffle path with no mining metadata or hooks.
+
