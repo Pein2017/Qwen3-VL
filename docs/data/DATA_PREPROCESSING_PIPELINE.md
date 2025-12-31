@@ -55,6 +55,9 @@ Key flags in `convert_dataset.sh`:
 
 Outputs land in `${OUTPUT_ROOT}/` with `train.jsonl`, `val.jsonl`, tiny subsets, QA reports, and resized images when enabled.
 
+Repo convention (examples checked in):
+- `data_new_schema/bbu_full_1024_poly_new_schema/` and `data_new_schema/rru_full_1024_poly_new_schema/` keep full conversion artifacts, including `all_samples.jsonl`, `train/val(_tiny).jsonl`, `label_vocabulary.json`, and validation reports. These are convenient as “frozen” references when upstream annotation schema changes.
+
 ## Handoff to Training & Fusion
 - **Direct training**: point `custom.train_jsonl` / `custom.val_jsonl` at the outputs (see `../training/TRAINING_PLAYBOOK.md`).
 - **Fusion training**: use the converted set as target or auxiliary in `custom.fusion_config` (see `./UNIFIED_FUSION_DATASET.md`).
