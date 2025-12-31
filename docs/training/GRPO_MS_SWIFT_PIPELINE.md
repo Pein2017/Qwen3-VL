@@ -5,6 +5,8 @@ Status: Internal reference for Qwen3-VL GRPO usage with ms-swift.
 ## Scope and Sources
 - Source of truth: ms-swift repository at `/data/ms-swift`.
 - This document only records behavior observed in code; external dependencies (e.g., TRL / Transformers) are noted where applicable.
+- Operational notes (launch patterns, weight-sync caveats) reference ms-swift documentation in
+  `/data/ms-swift/docs/source_en/Instruction/GRPO/GetStarted/GRPO.md`.
 
 Key code anchors (non-exhaustive):
 - GRPO argument defaults and validation: `swift/trainers/rlhf_arguments.py:77-110`
@@ -14,6 +16,9 @@ Key code anchors (non-exhaustive):
 - Generation mini-batch splitting by `steps_per_generation`: `swift/trainers/rlhf_trainer/grpo_trainer.py:674-745`
 - Sequence-parallel sampler repeat logic: `swift/trainers/rlhf_trainer/grpo_trainer.py:139-147`
 - vLLM engine capacity sizing: `swift/trainers/rlhf_trainer/rollout_mixin.py:181-182`
+- vLLM mode selection + server validation: `swift/llm/argument/rlhf_args.py:243-268`
+- External vLLM warning (max_model_len ignored in server mode): `swift/llm/argument/rlhf_args.py:384-392`
+- Server weight-sync client: `swift/trainers/rlhf_trainer/vllm_client.py:178-235`
 
 ## Pipeline Outline (Code Path)
 
@@ -123,6 +128,47 @@ Key code anchors (non-exhaustive):
 - vLLM colocate engine sets a maximum sequence budget based on `steps_per_generation`:
   - `max_num_seqs = per_device_train_batch_size * vllm_tensor_parallel_size * steps_per_generation`
 - Location: `swift/trainers/rlhf_trainer/rollout_mixin.py:181-182`
+
+## Rollout Integration Modes (Colocate vs Server)
+
+### Colocate (internal vLLM)
+- `use_vllm: true` and `vllm_mode: colocate` start vLLM inside the trainer process.
+- `vllm_tensor_parallel_size` must divide the trainer world size evenly; otherwise the rollout mixin raises.
+  - Location: `swift/trainers/rlhf_trainer/rollout_mixin.py:153-170`
+- vLLM capacity is sized from training batch and `steps_per_generation` (see Batch Size Semantics).
+- Memory relief knobs (from ms-swift docs): `sleep_level`, `offload_optimizer`, `offload_model`, and lower
+  `vllm_gpu_memory_utilization`. See `/data/ms-swift/docs/source_en/Instruction/GRPO/GetStarted/GRPO.md`.
+
+### Server (external `swift rollout`)
+- `vllm_server_host` or `vllm_server_base_url` forces `vllm_mode=server`; missing host forces `colocate`.
+  - Location: `swift/llm/argument/rlhf_args.py:243-256`
+- `async_generate` requires `vllm_mode=server`.
+  - Location: `swift/llm/argument/rlhf_args.py:262-264`
+- External rollout uses `swift rollout` and vLLM backend only. Recommended launch (single node):
+  ```bash
+  CUDA_VISIBLE_DEVICES=0,1 \
+  swift rollout \
+    --model <MODEL_PATH> \
+    --vllm_tensor_parallel_size 2 \
+    --vllm_data_parallel_size 1
+  ```
+  - Source: `/data/ms-swift/docs/source_en/Instruction/GRPO/GetStarted/GRPO.md`
+- Training side connects via `vllm_server_host` / `vllm_server_port` / `vllm_server_timeout`.
+  - Location: `swift/llm/argument/rlhf_args.py:303-313`
+- `vllm_max_model_len` set in training config is ignored in server mode; set it on `swift rollout`.
+  - Location: `swift/llm/argument/rlhf_args.py:384-392`
+- Weight sync uses an NCCL communicator created by `VLLMClient` after `/init_communicator/`:
+  - Location: `swift/trainers/rlhf_trainer/vllm_client.py:178-235`
+  - Operational implication: the trainer process must reach the rollout host and its group port.
+
+### Server-mode guardrails (from ms-swift docs)
+- `use_async_engine` with only DP may fail; use both TP and DP or upgrade vLLM.
+  - Source: `/data/ms-swift/docs/source_en/Instruction/GRPO/GetStarted/GRPO.md`
+- Weight-sync acceleration for LoRA:
+  - Rollout: `--vllm_enable_lora true --vllm_max_lora_rank <lora_rank>`
+  - Colocate: `--vllm_enable_lora true`
+  - Not supported when training multimodal ViT layers or MoE models.
+  - Source: `/data/ms-swift/docs/source_en/Instruction/GRPO/GetStarted/GRPO.md`
 
 ## `num_generations` Semantics (Grouping vs Sampling)
 
