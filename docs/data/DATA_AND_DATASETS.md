@@ -346,6 +346,7 @@ custom:
 
 This corpus covers telecom cabinet inspections, focused on **BBU (Baseband Unit) installation quality**. Understanding the domain helps keep dense annotations, summaries, and production flows aligned.
 
+- **Detailed glossary / quick index**: `BBU_RRU_BUSINESS_KNOWLEDGE.md` (BBU/RRU 类别、属性、分组规则与高频标签模式)
 - **Dense captioning** (training) enumerates every inspected item. Object types map to the attribute taxonomy in `data_conversion/hierarchical_attribute_mapping.json` and `data_conversion/attribute_taxonomy.json` (ignore the `occlusion` block). Core categories include:
   - `bbu` (BBU设备) — expects attributes such as brand (`bbu_brand`), completeness (`bbu_stituation`), and windshield requirement (`bbu_equipment`).
   - `bbu_shield` (挡风板) — brand, completeness, obstruction status, and installation direction.
@@ -358,6 +359,15 @@ This corpus covers telecom cabinet inspections, focused on **BBU (Baseband Unit)
 - **Hierarchy semantics**: Attribute templates are comma‑separated `key=value` pairs (`类别` first, no spaces). Conditional attributes only appear when parent values require them. Free-text `备注`/OCR append at the end (whitespace stripped, punctuation preserved). RRU may include `组=<id>`; BBU never includes `组`.
 
 When adding new inspection criteria, update both conversion JSON files and regenerate summaries before training to avoid drift between dense captions and production outputs.
+
+### Domain Context: RRU Installation Inspection
+
+RRU corpus covers remote radio unit inspection images (现场/弱电井/抱杆等)，强调“线缆有标签/有保护、紧固件合格、接地合格、站点距离数字化”等规则。Key points:
+
+- **Core categories**: `RRU设备`, `站点距离`, `紧固件`, `RRU接地端`, `尾纤`, `接地线`, `标签` (see `BBU_RRU_BUSINESS_KNOWLEDGE.md` for a category→geometry→attribute index).
+- **Grouping semantics (RRU-only)**: label-to-cable pairing is encoded via `desc` (`组=<id>`), not a top-level `groups` field; `summary` may include `分组统计` when groups exist. Conversion rejects groups with only one member.
+- **Station distance**: represented as `类别=站点距离,站点距离=<int>` (digits), typically extracted/normalized upstream during conversion.
+- **Audit pass/fail**: some RRU exports carry `审核通过/审核不通过` in the image path. If pass/fail becomes a first-class target, inject it into `metadata` during conversion/fusion rather than relying on path parsing.
 
 ---
 
