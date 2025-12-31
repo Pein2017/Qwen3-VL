@@ -17,6 +17,19 @@ Provide an easy-to-toggle mechanism to inject supervised learning signal during 
 - A single YAML switch SHALL enable/disable the feature.
 - When disabled, training behavior remains unchanged.
 
+### Proposed config surface (YAML)
+```yaml
+custom:
+  grpo_chord:
+    enabled: true            # default false
+    per_device_train_batch_size: 1
+    mu_warmup_steps: 100
+    mu_decay_steps: 1000
+    mu_peak: 0.10
+    mu_valley: 0.00
+    enable_phi_function: false
+```
+
 ## Impact / risks
 - Adds compute cost (extra forward pass per step when `mu > 0`).
 - Introduces a supervised bias; `mu` schedule needs conservative defaults to avoid overpowering GRPO.
@@ -24,4 +37,3 @@ Provide an easy-to-toggle mechanism to inject supervised learning signal during 
 ## Out of scope
 - Changing reward functions, rollout generation, or advantage estimation.
 - Conditional gating (e.g., only apply SFT loss when `reward_std == 0`) unless explicitly requested in a follow-up.
-
