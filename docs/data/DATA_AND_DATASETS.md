@@ -451,11 +451,15 @@ Before training:
 
 ## See Also
 
+- **Data index**: [README.md](README.md) - Quick map of `docs/data/`
+- **Schema contract**: [DATA_JSONL_CONTRACT.md](DATA_JSONL_CONTRACT.md) - Global JSONL record contract
+- **BBU/RRU glossary**: [BBU_RRU_BUSINESS_KNOWLEDGE.md](BBU_RRU_BUSINESS_KNOWLEDGE.md) - Domain categories, attributes, grouping rules
 - **Augmentation**: [DATA_AUGMENTATION.md](DATA_AUGMENTATION.md) - Geometry-aware transforms
-- **Training**: [REFERENCE.md](REFERENCE.md#training) - Full training guide
-- **Architecture**: [README.md](README.md#architecture) - End-to-end pipeline
+- **Fusion**: [UNIFIED_FUSION_DATASET.md](UNIFIED_FUSION_DATASET.md) - Multi-source mixing and policies
+- **Training**: [REFERENCE.md](../training/REFERENCE.md#training) - Full training guide
+- **Architecture**: [README.md](../README.md#architecture-overview) - End-to-end pipeline
 - **Upstream Models**: [UPSTREAM_DEPENDENCIES.md](../platform/UPSTREAM_DEPENDENCIES.md) - HF Qwen3-VL + ms-swift background
 
 ---
 
-**Last Updated**: 2025-11-24 (geometry schema + links)
+**Last Updated**: 2025-12-31 (RRU domain context + data doc index links)

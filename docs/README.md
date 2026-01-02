@@ -4,7 +4,8 @@ Status: Active — Internal Engineering
 
 ## Quick Navigation
 - **Intake & preprocessing** → `data/DATA_PREPROCESSING_PIPELINE.md` (annotation → JSONL) → `data/DATA_JSONL_CONTRACT.md`
-- **Data & datasets** → `data/DATA_AND_DATASETS.md` (schema/builders/conversion), `data/DATA_AUGMENTATION.md`, `data/POLYGON_SUPPORT.md`
+- **Data & datasets** → `data/README.md` (index), `data/DATA_AND_DATASETS.md` (schema/builders/conversion), `data/DATA_AUGMENTATION.md`, `data/POLYGON_SUPPORT.md`
+- **BBU/RRU business knowledge** → `data/BBU_RRU_BUSINESS_KNOWLEDGE.md` (类别/属性/分组规则速查)
 - **Fusion & public data** → `data/UNIFIED_FUSION_DATASET.md`, `data/PUBLIC_DATA.md`
 - **Training & reference** → `training/TRAINING_PLAYBOOK.md`, `training/REFERENCE.md`, `training/GRPO_MS_SWIFT_PIPELINE.md`
 - **Stage‑1 runtime** → `runtime/STAGE_A_RUNTIME.md`
@@ -14,7 +15,7 @@ Status: Active — Internal Engineering
 - **Specs & governance** → `openspec/AGENTS.md`, `openspec/project.md`
 
 ### Suggested Reading Order
-1. **Intake → schema** — `data/DATA_PREPROCESSING_PIPELINE.md`, `data/DATA_JSONL_CONTRACT.md`, `data/DATA_AND_DATASETS.md`
+1. **Intake → schema** — `data/README.md`, `data/DATA_PREPROCESSING_PIPELINE.md`, `data/DATA_JSONL_CONTRACT.md`, `data/DATA_AND_DATASETS.md`, `data/BBU_RRU_BUSINESS_KNOWLEDGE.md`
 2. **Augmentation** — `data/DATA_AUGMENTATION.md`
 3. **Training & fusion** — `training/TRAINING_PLAYBOOK.md`, `training/REFERENCE.md`, `training/GRPO_MS_SWIFT_PIPELINE.md`, `data/UNIFIED_FUSION_DATASET.md`
 4. **Stage‑1 runtime** — `runtime/STAGE_A_RUNTIME.md`

@@ -40,7 +40,7 @@ See [`docs/README.md`](docs/README.md) for navigation across the full manual.
 1. Create or activate the `ms` Conda environment and install project
    dependencies (`ms-environment.yaml` is provided as a reference).
 2. Prepare training JSONL files that follow the schema documented in
-   [`docs/DATA_AND_DATASETS.md`](docs/DATA_AND_DATASETS.md).
+   [`docs/data/DATA_AND_DATASETS.md`](docs/data/DATA_AND_DATASETS.md).
 3. Pick or customize a config in `configs/` (e.g., `stage_3_vision_last6_lora.yaml`).
 4. Launch training:
 
@@ -57,7 +57,9 @@ See [`docs/README.md`](docs/README.md) for navigation across the full manual.
 
 ## Documentation
 
+- [Data Docs Index](docs/data/README.md)
 - [Data & Datasets](docs/data/DATA_AND_DATASETS.md)
+- [BBU/RRU Business Knowledge](docs/data/BBU_RRU_BUSINESS_KNOWLEDGE.md)
 - [Augmentation Guide](docs/data/DATA_AUGMENTATION.md)
 - [Training & Inference Reference](docs/training/REFERENCE.md)
 - [Upstream Dependencies](docs/platform/UPSTREAM_DEPENDENCIES.md)

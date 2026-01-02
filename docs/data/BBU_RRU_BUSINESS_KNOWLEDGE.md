@@ -10,6 +10,17 @@
 
 ---
 
+## Table of Contents
+- [1. 业务背景](#background)
+- [2. Dense Caption vs Summary](#dense-vs-summary)
+- [3. BBU：类别/几何/属性索引](#bbu-index)
+- [4. RRU：类别/几何/属性索引](#rru-index)
+- [5. 标签（OCR 文本）常见模式](#label-ocr)
+- [6. 实务建议](#practice-notes)
+
+---
+
+<a id="background"></a>
 ## 1. 业务背景（这两套数据在做什么）
 
 ### 1.1 BBU：机房/机柜内安装质检（BaseBand Unit）
@@ -35,6 +46,7 @@ RRU 数据主要覆盖**RRU 侧设备与线缆**质检，常见检查点包括�
 
 ---
 
+<a id="dense-vs-summary"></a>
 ## 2. Dense Caption vs Summary：两种“训练/产线”目标结构
 
 两种模式的核心差异：
@@ -84,6 +96,7 @@ RRU summary 示例（截断）：
 
 ---
 
+<a id="bbu-index"></a>
 ## 3. BBU：类别/几何/属性索引
 
 > 统计与取值来自 `data_new_schema/bbu_full_1024_poly_new_schema/all_samples.jsonl`；若后续 taxonomy 扩展，请以实际导出的 `all_samples.jsonl` 为准重新生成。
@@ -123,6 +136,7 @@ RRU summary 示例（截断）：
 
 ---
 
+<a id="rru-index"></a>
 ## 4. RRU：类别/几何/属性索引
 
 > 统计与取值来自 `data_new_schema/rru_full_1024_poly_new_schema/all_samples.jsonl`。
@@ -160,6 +174,7 @@ RRU 中存在“同一张图里多根线 + 多个标签”的情况。为避免�
 
 ---
 
+<a id="label-ocr"></a>
 ## 5. 标签（OCR 文本）常见模式：用于 Prompt/规则快速定位
 
 ### 5.1 BBU 标签文本高频片段（示例）
@@ -180,10 +195,10 @@ RRU 的标签文本更集中在“尾纤/接地线/光纤”：
 
 ---
 
+<a id="practice-notes"></a>
 ## 6. 实务建议（面向规则/质检/数据演进）
 
 - **优先以 `类别` 驱动规则**：避免对 `文本` 做硬编码匹配；文本存在大量站点名/扇区号/频段差异。
 - **把 `备注` 视为“不确定/特殊情况”通道**：BBU 中大量 “无法判断品牌/未套蛇形管”等属于关键质检语义。
 - **RRU 分组务必同时检查 `分组统计` 与对象级 `组`**：`summary` 用于快速判定分组存在；对象级 `组` 决定具体配对。
 - **若需要通过/不通过标签**：建议在转换/融合阶段将目录语义写入 `metadata.audit_result`，避免仅靠路径解析。
-

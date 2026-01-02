@@ -2,6 +2,10 @@
 
 This document defines the universal JSONL format consumed by all training/eval datasets (BBU, LVIS, and future domains). Every record MUST adhere to this contract so that a single chat template pipeline can process all sources.
 
+See also:
+- `README.md` — index of data documentation under `docs/data/`
+- `BBU_RRU_BUSINESS_KNOWLEDGE.md` — BBU/RRU domain glossary (categories/attributes/grouping rules)
+
 ## Top-Level Record
 - **Provenance**: Records are typically produced either by the offline converter (`data_conversion/convert_dataset.sh`, see `./DATA_PREPROCESSING_PIPELINE.md`) or by domain-specific public converters. Regardless of source, they MUST match this contract.
 - `images` (list[str], required): Relative paths to image files; resolved against the JSONL directory.

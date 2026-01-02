@@ -2,6 +2,10 @@
 
 Purpose-built guide for the optional offline preprocessing stage that turns human-annotated exports into training-ready JSONL plus QA artifacts.
 
+See also:
+- `DATA_JSONL_CONTRACT.md` — global JSONL contract (required fields + geometry invariants)
+- `BBU_RRU_BUSINESS_KNOWLEDGE.md` — BBU/RRU domain glossary for label/taxonomy review
+
 ## When to Run
 - You receive raw exports from the annotation platform (BBU/RRU or new domains) and need train/val splits that match the project JSONL contract.
 - You want long-tail/rare-object coverage before training or fusion.
