@@ -8,13 +8,13 @@ set -euo pipefail
 # GPU configuration (unified API)
 CUDA_VISIBLE_DEVICES="${gpus:-0}"
 
-adapters=output/12-30/new_schema-4B-summary-grpo/v0-20251231-032857/temperature_0.7-num_generations_4-vllm_colocate-eff_bs_24-gen_bs_24/checkpoint-1252
+adapters=output/1-1/new_schema-4B-summary-grpo/v2-20260101-073254/continue_training-lrs_1e-5-more_rewards-epochs_5-chord_sft/checkpoint-400
 
 # Extract base model path from adapter_config.json
 base_model=$(python3 -c "import json; print(json.load(open(\"$adapters/adapter_config.json\"))[\"base_model_name_or_path\"])")
 
 
-output_dir=output/12-30/grpo-merged
+output_dir=output/1-1/grpo-merged
 
 
 echo "Detected base model: $base_model"
