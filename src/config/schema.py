@@ -248,6 +248,94 @@ class VisualKDConfig:
 
 
 @dataclass(frozen=True)
+class GrpoChordConfig:
+    enabled: bool = False
+    sft_per_device_train_batch_size: int | None = None
+    mu_warmup_steps: int | None = None
+    mu_decay_steps: int | None = None
+    mu_peak: float | None = None
+    mu_valley: float | None = None
+    enable_phi_function: bool = False
+
+    @classmethod
+    def disabled(cls) -> "GrpoChordConfig":
+        return cls(enabled=False)
+
+    @classmethod
+    def from_mapping(cls, payload: Mapping[str, Any] | None) -> "GrpoChordConfig":
+        if payload is None:
+            return cls.disabled()
+        if not isinstance(payload, Mapping):
+            raise TypeError("custom.grpo.chord must be a mapping when provided")
+
+        enabled = bool(payload.get("enabled", False))
+        if not enabled:
+            return cls.disabled()
+
+        def _require_int(name: str, *, min_value: int = 0) -> int:
+            raw = payload.get(name)
+            if raw is None:
+                raise ValueError(f"custom.grpo.chord.{name} must be provided when enabled")
+            try:
+                value = int(raw)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"custom.grpo.chord.{name} must be an integer, got {raw!r}"
+                ) from exc
+            if value < min_value:
+                raise ValueError(
+                    f"custom.grpo.chord.{name} must be >= {min_value}, got {value}"
+                )
+            return value
+
+        def _require_float(
+            name: str, *, min_value: float = 0.0, max_value: float = 1.0
+        ) -> float:
+            raw = payload.get(name)
+            if raw is None:
+                raise ValueError(f"custom.grpo.chord.{name} must be provided when enabled")
+            try:
+                value = float(raw)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"custom.grpo.chord.{name} must be a float, got {raw!r}"
+                ) from exc
+            if not (min_value <= value <= max_value):
+                raise ValueError(
+                    f"custom.grpo.chord.{name} must be in [{min_value}, {max_value}], got {value}"
+                )
+            return value
+
+        return cls(
+            enabled=True,
+            sft_per_device_train_batch_size=_require_int(
+                "sft_per_device_train_batch_size", min_value=1
+            ),
+            mu_warmup_steps=_require_int("mu_warmup_steps", min_value=0),
+            mu_decay_steps=_require_int("mu_decay_steps", min_value=0),
+            mu_peak=_require_float("mu_peak"),
+            mu_valley=_require_float("mu_valley"),
+            enable_phi_function=bool(payload.get("enable_phi_function", False)),
+        )
+
+
+@dataclass(frozen=True)
+class GrpoConfig:
+    chord: GrpoChordConfig = field(default_factory=GrpoChordConfig.disabled)
+    extra: Mapping[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_mapping(cls, payload: Mapping[str, Any] | None) -> "GrpoConfig":
+        if payload is None:
+            return cls()
+        if not isinstance(payload, Mapping):
+            raise TypeError("custom.grpo must be a mapping when provided")
+        data = dict(payload)
+        chord = GrpoChordConfig.from_mapping(data.pop("chord", None))
+        return cls(chord=chord, extra=dict(data))
+
+
+@dataclass(frozen=True)
 class CustomConfig:
     train_jsonl: str
     user_prompt: str
@@ -271,6 +359,7 @@ class CustomConfig:
     token_type_metrics: TokenTypeMetricsConfig = field(default_factory=TokenTypeMetricsConfig)
     extra: Mapping[str, Any] = field(default_factory=dict)
     fusion_config: str | None = None
+    grpo: GrpoConfig = field(default_factory=GrpoConfig)
 
     def __post_init__(self) -> None:
         if not self.train_jsonl:
@@ -311,6 +400,10 @@ class CustomConfig:
         if "use_legacy_fusion" in data:
             raise ValueError(
                 "custom.use_legacy_fusion has been removed; unified fusion loader is the only supported path."
+            )
+        if "grpo_chord" in data:
+            raise ValueError(
+                "custom.grpo_chord has been removed; use custom.grpo.chord instead."
             )
 
         train_jsonl = data.pop("train_jsonl", data.pop("jsonl", None))
@@ -403,6 +496,8 @@ class CustomConfig:
         dump_conversation_path = data.pop("dump_conversation_path", None)
         val_jsonl = data.pop("val_jsonl", None)
         fusion_config = data.pop("fusion_config", None)
+        grpo_raw = data.pop("grpo", None)
+        grpo = GrpoConfig.from_mapping(grpo_raw)
         visual_kd_raw = data.pop("visual_kd", None)
         visual_kd = VisualKDConfig.from_mapping(visual_kd_raw)
         token_type_metrics_raw = data.pop("token_type_metrics", None)
@@ -468,6 +563,7 @@ class CustomConfig:
             visual_kd=visual_kd,
             token_type_metrics=token_type_metrics,
             extra=extra,
+            grpo=grpo,
         )
 
 

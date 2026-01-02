@@ -22,12 +22,13 @@ from transformers.trainer_utils import SaveStrategy
 
 from .callbacks.fusion_epoch import FusionEpochCallback
 from .config import ConfigLoader, SaveDelayConfig
+from .config.grpo import validate_grpo_config
 from .data_collators.dataset_metrics import build_dataset_metrics_collator
 from .datasets import BaseCaptionDataset
 from .datasets.augmentation.curriculum import AugmentationCurriculumScheduler
 from .datasets.fusion import FusionConfig
 from .metrics.dataset_metrics import DatasetMetricsMixin
-from .rlhf.summary_grpo_rewards import register_summary_grpo_rewards
+from .rlhf.grpo import register_grpo_rewards
 from .trainers import with_final_checkpoint
 from .utils import configure_logging, get_logger
 
@@ -71,7 +72,7 @@ def resolve_trainer_cls(train_args: Any) -> type:
 logger = get_logger(__name__)
 
 # Ensure custom GRPO rewards are registered before trainer initialization.
-register_summary_grpo_rewards()
+register_grpo_rewards()
 
 
 def parse_args():
@@ -163,6 +164,7 @@ def main():
         args.config, args.base_config
     )
     custom_config = training_config.custom
+    validate_grpo_config(training_config)
 
     # Packing is removed; fail fast if configs still request it.
     if getattr(train_args, "packing", False):
@@ -473,6 +475,133 @@ def main():
             assistant_prefix_format=None,
         )
     logger.info(f"Training dataset size: {len(dataset)}")
+
+    # Optional: CHORD-style SFT mixing for GRPO.
+    # This provides a supervised fallback gradient even when GRPO advantages collapse (e.g., zero-variance rollouts).
+    chord_cfg = custom_config.grpo.chord
+    chord_enabled = chord_cfg.enabled
+    chord_dataset = None
+
+    if chord_enabled:
+        sft_per_device_bs = cast(int, chord_cfg.sft_per_device_train_batch_size)
+        mu_warmup_steps = cast(int, chord_cfg.mu_warmup_steps)
+        mu_decay_steps = cast(int, chord_cfg.mu_decay_steps)
+        mu_peak = cast(float, chord_cfg.mu_peak)
+        mu_valley = cast(float, chord_cfg.mu_valley)
+        enable_phi = bool(chord_cfg.enable_phi_function)
+
+        # Avoid sharing the same dataset instance between GRPO and CHORD dataloaders:
+        # FusionCaptionDataset maintains per-epoch RNG/shuffling state; a second instance reduces coupling.
+        if fusion_config_obj:
+            from .datasets.unified_fusion_dataset import FusionCaptionDataset
+
+            chord_dataset = FusionCaptionDataset(
+                fusion_config=fusion_config_obj,
+                base_template=sft.template,
+                user_prompt=custom_config.user_prompt,
+                emit_norm=custom_config.emit_norm,
+                json_format=custom_config.json_format,
+                assistant_prefix_format=custom_config.assistant_prefix_format,
+                augmenter=augmenter,
+                bypass_prob=bypass_prob,
+                curriculum_state=curriculum_state,
+                use_summary=use_summary,
+                system_prompt_dense=system_prompt_dense,
+                system_prompt_summary=system_prompt_summary,
+                seed=dataset_seed,
+                sample_limit=train_sample_limit,
+                split="train",
+            )
+        else:
+            chord_dataset = BaseCaptionDataset.from_jsonl(
+                train_jsonl,
+                template=sft.template,
+                user_prompt=custom_config.user_prompt,
+                emit_norm=custom_config.emit_norm,
+                json_format=custom_config.json_format,
+                augmenter=augmenter,
+                bypass_prob=bypass_prob,
+                curriculum_state=curriculum_state,
+                sample_limit=train_sample_limit,
+                use_summary=use_summary,
+                system_prompt_dense=system_prompt_dense,
+                system_prompt_summary=system_prompt_summary,
+                seed=dataset_seed,
+                assistant_prefix_format=None,
+            )
+
+        logger.info(
+            "CHORD enabled for GRPO: sft_per_device_bs=%s mu_warmup_steps=%s mu_decay_steps=%s mu_peak=%s mu_valley=%s phi=%s",
+            sft_per_device_bs,
+            mu_warmup_steps,
+            mu_decay_steps,
+            mu_peak,
+            mu_valley,
+            enable_phi,
+        )
+
+        # Populate ms-swift CHORD arguments on both outer args and nested training_args (GRPOConfig).
+        for args_obj in (train_args, getattr(train_args, "training_args", None)):
+            if args_obj is None:
+                continue
+            try:
+                setattr(args_obj, "chord_sft_per_device_train_batch_size", sft_per_device_bs)
+                setattr(args_obj, "chord_mu_warmup_steps", mu_warmup_steps)
+                setattr(args_obj, "chord_mu_decay_steps", mu_decay_steps)
+                setattr(args_obj, "chord_mu_peak", mu_peak)
+                setattr(args_obj, "chord_mu_valley", mu_valley)
+                setattr(args_obj, "chord_enable_phi_function", enable_phi)
+            except Exception as exc:
+                raise RuntimeError(
+                    "Unable to attach CHORD settings to training arguments; ms-swift interface may have changed."
+                ) from exc
+
+        # DeepSpeed guardrail: ms-swift CHORD mixing performs an extra forward pass per step.
+        # DeepSpeed ZeRO-2 (stage 1/2) may assert on duplicated gradient reductions when parameters
+        # receive multiple gradient contributions in a single backward. Prefer ZeRO-3 for CHORD.
+        def _infer_deepspeed_zero_stage(ds_value: object) -> int | None:
+            if ds_value is None:
+                return None
+            if isinstance(ds_value, str):
+                name = ds_value.strip()
+                known = {
+                    "zero0": 0,
+                    "zero1": 1,
+                    "zero2": 2,
+                    "zero2_offload": 2,
+                    "zero3": 3,
+                    "zero3_offload": 3,
+                }
+                if name in known:
+                    return known[name]
+                if name.endswith(".json") and os.path.exists(name):
+                    try:
+                        import json
+
+                        with open(name, "r", encoding="utf-8") as f:
+                            cfg = json.load(f)
+                        stage = cfg.get("zero_optimization", {}).get("stage")
+                        return int(stage) if stage is not None else None
+                    except Exception:
+                        return None
+                return None
+            if isinstance(ds_value, dict):
+                stage = ds_value.get("zero_optimization", {}).get("stage")
+                try:
+                    return int(stage) if stage is not None else None
+                except Exception:
+                    return None
+            return None
+
+        ds_cfg = getattr(train_args, "deepspeed", None)
+        ds_stage = _infer_deepspeed_zero_stage(ds_cfg)
+        if ds_stage is not None and ds_stage in (1, 2):
+            raise ValueError(
+                "CHORD is enabled (custom.grpo.chord.enabled=true) but DeepSpeed ZeRO stage is "
+                f"{ds_stage}. This configuration is known to trigger DeepSpeed assertions like "
+                "\"Gradient computed twice for this partition\". "
+                "Set deepspeed.config to zero3/zero3_offload (recommended) or disable CHORD."
+            )
 
     # Calculate total_steps and initialize curriculum_state if needed
     if curriculum_scheduler is not None:
@@ -822,6 +951,10 @@ def main():
     trainer_kwargs = (
         sft._get_trainer_kwargs() if hasattr(sft, "_get_trainer_kwargs") else {}
     )
+    # NOTE: Do NOT pass chord_sft_dataset via GRPOTrainer constructor.
+    # ms-swift's GRPOTrainer calls _prepare_algorithm_params() before SwiftMixin/Trainer
+    # initialization, and CHORD dataloader creation requires trainer.accelerator.
+    # Initializing CHORD post-construction avoids AttributeError: no attribute 'accelerator'.
     # trainer_cls is dynamically determined and accepts standard trainer parameters
     # Type checker can't infer the exact constructor signature, so we ignore these errors
     trainer_ctor = cast(Any, trainer_cls)
@@ -835,6 +968,27 @@ def main():
         template=sft.template,  # type: ignore[arg-type]
         **trainer_kwargs,
     )
+
+    # Post-init CHORD wiring (GRPO-only). This must happen after trainer.accelerator exists.
+    if chord_enabled and chord_dataset is not None:
+        try:
+            from swift.trainers.rlhf_trainer.utils import make_chord_sft_dataset
+
+            chord_iter = make_chord_sft_dataset(trainer, chord_dataset)
+            if chord_iter is None:
+                raise RuntimeError(
+                    "CHORD was enabled but CHORD iterator initialization returned None."
+                )
+            setattr(trainer, "chord_sft_iterator", chord_iter)
+            logger.info(
+                "CHORD SFT iterator prepared (post-init): sft_per_device_bs=%s",
+                getattr(getattr(trainer, "args", None), "chord_sft_per_device_train_batch_size", None),
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                "Failed to initialize CHORD SFT iterator post-init. "
+                "This usually indicates a CHORD dataset/labels issue or an ms-swift incompatibility."
+            ) from exc
     if dataset_domains is not None:
         try:
             setattr(trainer, "dataset_domains", dict(dataset_domains))
