@@ -2,6 +2,10 @@
 
 Purpose-built guide for the optional offline preprocessing stage that turns human-annotated exports into training-ready JSONL plus QA artifacts.
 
+See also:
+- `DATA_JSONL_CONTRACT.md` — global JSONL contract (required fields + geometry invariants)
+- `BBU_RRU_BUSINESS_KNOWLEDGE.md` — BBU/RRU domain glossary for label/taxonomy review
+
 ## When to Run
 - You receive raw exports from the annotation platform (BBU/RRU or new domains) and need train/val splits that match the project JSONL contract.
 - You want long-tail/rare-object coverage before training or fusion.
@@ -54,6 +58,9 @@ Key flags in `convert_dataset.sh`:
 - `SEED` — deterministic split and tiny subsets
 
 Outputs land in `${OUTPUT_ROOT}/` with `train.jsonl`, `val.jsonl`, tiny subsets, QA reports, and resized images when enabled.
+
+Repo convention (examples checked in):
+- `data_new_schema/bbu_full_1024_poly_new_schema/` and `data_new_schema/rru_full_1024_poly_new_schema/` keep full conversion artifacts, including `all_samples.jsonl`, `train/val(_tiny).jsonl`, `label_vocabulary.json`, and validation reports. These are convenient as “frozen” references when upstream annotation schema changes.
 
 ## Handoff to Training & Fusion
 - **Direct training**: point `custom.train_jsonl` / `custom.val_jsonl` at the outputs (see `../training/TRAINING_PLAYBOOK.md`).

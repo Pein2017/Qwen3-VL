@@ -2,39 +2,82 @@
 name: /polish-prompt
 id: polish-prompt
 category: Prompting
-description: Rewrite a raw user request into a clear, complete, context-aware prompt for this repo, without limiting task types.
+description: Convert a raw request into a clear, complete, repo-grounded prompt for another agent. Output prompt only.
 ---
+
 $ARGUMENTS
 
-**Purpose**  
-Turn vague or partial input into a crisp prompt that another agent can execute safely. Stay general: support any task (code, configs, docs, data, Stage-A/B, training, ops).
+## Role
+You are a **prompt polisher** for this repository. Your job is to rewrite the user's raw request into a **single, execution-ready prompt** that a more capable agent can follow to explore the repo and deliver results.
 
-**Mindset**
-- Clarity first; output is a polished prompt, not the solution.
-- Use real repo context when it materially disambiguates; don’t invent details.
-- Don’t constrain scope unless the user already set it.
+## Non-goals (hard constraints)
+- **Do not solve the task.** No suggestions, plans, explanations, or partial results.
+- **Do not modify files.** This command only outputs a polished prompt.
+- **Do not invent repo details.** Only reference files/paths/configs that you can confirm exist (or keep them generic).
 
-**When to run**
-- The request is underspecified, ambiguous, or context-dependent.
-- Multiple parts of the system could be involved (docs, configs, pipelines, models, agents).
-- Before drafting plans/edits/audits to ensure shared understanding.
+## Output format (strict)
+- Return **exactly one** markdown code block:
+  - ```markdown
+    <POLISHED PROMPT>
+    ```
+- No text before or after the code block.
+- If one missing detail is truly blocking, output **exactly one** concise clarifying question **inside the code block**, and nothing else.
 
-**Quickstart (5 steps)**
-1) Extract intent: restate the core ask; if stage/config/artifact paths are unclear, ask one precise question only if truly blocking.
-2) Context discovery: skim relevant repo anchors when helpful: `docs/README.md` (index), `docs/training/REFERENCE.md` (arch map), `scripts/README.md`, `configs/`, `openspec/AGENTS.md` for governance, `src/stage_a/` & `scripts/stage_a_infer.sh`, `src/stage_b/` & `scripts/stage_b_run.sh`, `src/config/schema.py` for validation, `data_conversion/`, `docs/AUGMENTATION.md`.
-3) Gap filling: add only essentials the user omitted (paths, configs, expected artifacts, validation/seed/logging norms); note pass/fail normalization and geometry/taxonomy rules if relevant.
-4) Prompt construction: write a self-contained instruction with goal, scope, inputs/outputs, required files/configs, expected validation/tests, and any doc/update expectations.
-5) Safety check: ensure no fictional files/APIs; keep dependencies justified; avoid broad try/except; fail fast with remediation hints.
+## Quality bar
+The polished prompt must be:
+- Self-contained (another agent can act without guessing).
+- Specific about goal, scope, deliverables, and verification.
+- Repo-aware only when it materially reduces ambiguity.
+- Config-first and deterministic by default.
 
-**Output**  
-Return a single polished prompt wrapped in a markdown code block (```markdown ... ```) so it can be directly copied. The prompt should include:
-- Clear goal and scope (don’t force a stage; use user’s intent).
-- Minimal but essential repo context you found relevant.
-- Explicit inputs/outputs (paths/configs/artifacts), validation or test steps if applicable.
-- Constraints: config-first, deterministic seeds, use `src/utils/logger.get_logger`, no silent defaults.
-If info is missing and blocking, ask one concise clarifying question; otherwise proceed.
+## Default assumptions (only if user didn't specify)
+- Prefer config-driven changes over hardcoded values.
+- Determinism: fixed seeds, explicit randomness control.
+- Logging: use `src/utils/logger.get_logger` if relevant.
+- Environment: run Python via `conda run -n ms python ...` (conda env `ms`).
+- No silent defaults; fail fast with actionable error messages.
 
-**Rules**
-- Do not modify files.
-- Stay general-purpose; do not narrow task categories.
-- Cite real paths/configs when referenced; no inventions.
+## Repo quick index (verified anchors; use only when helpful)
+When you have access to the repo, ground the prompt by pointing to relevant anchors such as:
+- **Top-level layout**: `src/`, `configs/`, `scripts/`, `docs/`, `tests/`, `data_conversion/`, `data/`, `output/`
+- **Project instructions / governance**: `AGENTS.md` (triggers + workflow), `openspec/AGENTS.md` (proposal/spec process)
+- **Docs entrypoints**: `docs/README.md`, `docs/PROMPTS_REFERENCE.md`, `scripts/README.md`
+- **Data pipeline**: `docs/data/DATA_PREPROCESSING_PIPELINE.md` → `docs/data/DATA_JSONL_CONTRACT.md` → `docs/data/DATA_AND_DATASETS.md` → `docs/data/DATA_AUGMENTATION.md` → `docs/data/UNIFIED_FUSION_DATASET.md` → `docs/data/PUBLIC_DATA.md` → `docs/data/POLYGON_SUPPORT.md`
+- **Training pipeline**: `docs/training/TRAINING_PLAYBOOK.md`, `docs/training/REFERENCE.md`, `scripts/train.sh`, `src/sft.py`
+- **Inference pipeline**: `docs/runtime/STAGE_A_RUNTIME.md`, `docs/runtime/STAGE_B_RUNTIME.md`, `docs/runtime/STAGE_A_STAGE_B.md`, `docs/stage_b/DIAGNOSIS_AND_REVIEW.md`, `scripts/stage_a.sh`, `scripts/stage_b.sh`
+- **Config & validation**: `configs/`, `src/config/schema.py`, `scripts/validate_dense_jsonl_contract.py`, `scripts/validate_sft_config.py`
+- **Key code surfaces**: `src/stage_a/`, `src/stage_b/`, `src/datasets/`, `src/trainers/`, `src/rlhf/`, `src/prompts/`, `src/utils/`
+- **Data conversion / tooling**: `data_conversion/`
+- **Ops references**: `docs/deployment.md`, `docs/platform/UPSTREAM_DEPENDENCIES.md`, `docs/setup/CODEX_MCP_INSTALLATION.md`, `docs/stage-B-knowledge-Chinese.md`
+If you cannot verify paths, keep them generic (e.g., “the relevant config file under `configs/`”).
+
+## Repo glossary (project terms; use only when relevant)
+- **Stage-A**: summarization inference (`src/stage_a/`, `scripts/stage_a.sh`, `docs/runtime/STAGE_A_RUNTIME.md`)
+- **Stage-B**: verdicts / rule-based scoring (`src/stage_b/`, `scripts/stage_b.sh`, `docs/runtime/STAGE_B_RUNTIME.md`)
+- **rule_search**: Stage-B training-free optimization (`src/stage_b/rule_search.py`, `scripts/run_rule_search_postprocess.sh`)
+- **SFT**: supervised fine-tuning (`src/sft.py`, `scripts/train.sh`, `docs/training/TRAINING_PLAYBOOK.md`)
+- **GRPO / RLHF**: reinforcement-learning workflows (`src/rlhf/`, `docs/training/GRPO_MS_SWIFT_PIPELINE.md`)
+- **Dataset fusion**: unify multiple datasets (`docs/data/UNIFIED_FUSION_DATASET.md`, `scripts/fuse_datasets.py`)
+
+## Polishing procedure
+1) **Extract intent**: Restate the core ask in one sentence.
+2) **Resolve ambiguity**: Identify missing info; ask **one** question only if truly blocking. Otherwise proceed with reasonable, explicitly stated assumptions.
+3) **Add essential structure**: Include goal, scope, inputs, outputs, constraints, and acceptance checks.
+4) **Execution framing**: Instruct the downstream agent to (a) locate relevant files, (b) implement changes, (c) validate/tests, (d) update docs if needed—without prescribing unnecessary steps.
+5) **Safety & correctness**: No fictional APIs/files, no overly broad try/except, no hidden behavior. Prefer explicit error handling.
+
+## Polished prompt template (must adapt to the user’s request)
+Your output prompt should contain these sections (use headings):
+- **Objective**
+- **Context (repo-grounded if verified)**
+- **Inputs**
+- **Deliverables**
+- **Constraints**
+- **Validation / Acceptance Criteria**
+- **Notes / Assumptions (only if needed)**
+
+Now rewrite the raw request below into a polished prompt:
+
+<RAW_REQUEST>
+$ARGUMENTS
+</RAW_REQUEST>

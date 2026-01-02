@@ -9,6 +9,8 @@ from .schema import (
     VisualKDConfig,
     DeepSpeedConfig,
     SaveDelayConfig,
+    GrpoChordConfig,
+    GrpoConfig,
 )
 from .prompts import SYSTEM_PROMPT, USER_PROMPT
 
@@ -21,6 +23,8 @@ __all__ = [
     "VisualKDConfig",
     "DeepSpeedConfig",
     "SaveDelayConfig",
+    "GrpoChordConfig",
+    "GrpoConfig",
     "SYSTEM_PROMPT",
     "USER_PROMPT",
 ]

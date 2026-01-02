@@ -1,7 +1,7 @@
 # data-augmentation Specification
 
 ## Purpose
-Define the Qwen3‑VL augmentation pipeline: plugin registry, geometry-safe affine handling, clipping/cropping, padding/telemetry, and curriculum scheduling for dense-caption training/inference.
+Define the Qwen3-VL augmentation pipeline: plugin registry, geometry-safe affine handling, clipping/cropping, padding/telemetry, and curriculum scheduling for dense-caption training/inference.
 ## Requirements
 ### Requirement: Image-level Augmentation Plugin System
 The system SHALL provide a plugin-based mechanism to apply image-level augmentations during preprocessing without modifying dataset builders.
@@ -29,6 +29,40 @@ The system SHALL provide a plugin-based mechanism to apply image-level augmentat
 #### Scenario: RNG injection for determinism
 - **WHEN** a fixed seed RNG is passed to the preprocessor
 - **THEN** the same sequence of augmentations and parameters is produced across runs
+
+### Requirement: Base operator classes for augmentation
+The augmentation system SHALL provide base operator classes `AffineOp`, `ColorOp`, and `PatchOp` that encapsulate shared behavior and remain compatible with the registry and YAML schema.
+
+#### Scenario: Register a new affine op via base class
+- **WHEN** a developer implements `class Tilt(AffineOp)` with `affine(...)` and registers it
+- **THEN** Compose accumulates its matrix with other affine ops and applies a single warp to images and geometries
+
+#### Scenario: Deferred color ops via ColorOp
+- **WHEN** a ColorOp is listed in YAML after affine ops
+- **THEN** Compose flushes affines first, then applies the ColorOp to every image without touching geometries
+
+#### Scenario: PatchOp lifecycle
+- **WHEN** a PatchOp is executed
+- **THEN** Compose flushes pending affines before the PatchOp and propagates its crop telemetry (kept indices, coverages, skip reasons)
+
+### Requirement: Typed curriculum exposure for ops
+Each registered op SHALL expose a typed curriculum parameter map so the augmentation curriculum scheduler can adjust probabilities and numeric ranges without bespoke per-op logic and with fail-fast validation.
+
+- The map MUST contain numeric scalars or 2-element numeric ranges for tunable fields (e.g., `prob`, `scale`, `gamma`), derived from the op’s current configuration.
+- Only numeric values (ints/floats) are allowed; booleans, strings, and nested structures MUST be rejected.
+- The scheduler MUST:
+  - Read the base map for each op at initialization.
+  - Reject curriculum overrides that reference unknown ops or parameters.
+  - Reject overrides whose numeric dimensionality does not match the base value (scalar vs 2-range).
+  - Enforce `[0.0, 1.0]` bounds for probability parameters (`prob` or `*_prob`), raising an error when violated.
+
+#### Scenario: Curriculum scales patch prob
+- **WHEN** curriculum requests `small_object_zoom_paste.prob = 0.25` at 50% progress
+- **THEN** the scheduler updates the PatchOp instance via the typed param map and Compose applies the new probability within that step
+
+#### Scenario: Invalid curriculum override fails fast
+- **WHEN** curriculum refers to `random_crop.scale = [0.5, 1.5, 2.0]` (wrong dimension) or `rotate.unknown_param = 1.0`
+- **THEN** the scheduler raises a `ValueError` during configuration and training does not start
 
 ### Requirement: Geometry correctness after augmentation
 All geometries (bbox_2d, poly, line) SHALL remain correct and valid in the augmented image coordinate frame.
@@ -59,7 +93,48 @@ All geometries (bbox_2d, poly, line) SHALL remain correct and valid in the augme
 
 #### Scenario: keep absolute pixel coordinates
 - **WHEN** any augmentation is applied
-- **THEN** all geometry coordinates remain integer pixels in the image frame `[0, W-1]×[0, H-1]` (no normalization to 0–1000 here)
+- **THEN** all geometry coordinates remain integer pixels in the image frame `[0, W-1]×[0, H-1]` (no normalization to 0-1000 here)
+
+### Requirement: PatchOp determinism, ordering, and telemetry invariants
+PatchOps SHALL provide deterministic behavior under a fixed RNG seed, preserve a well-defined object ordering, and expose consistent telemetry for crops and copy/paste operations.
+
+- Given identical inputs and RNG seed, PatchOps MUST produce identical outputs (images, geometries, and telemetry).
+- Patch selection and placement MUST use deterministic ordering (no dependence on hash/dict iteration order).
+- Crop-style PatchOps MUST:
+  - Report `last_kept_indices` as indices into the original geometry list for retained objects.
+  - Report a coverage value per kept index in `last_object_coverages`.
+  - Populate `last_crop_skip_reason` and `last_skip_counters` when the op bails out and returns the original images/geometries.
+  - Preserve the relative order of retained original objects in the output geometry list.
+- Copy/paste PatchOps MUST:
+  - Preserve all original objects and append duplicate geometries; they MUST NOT drop objects unless explicitly documented as a crop.
+  - Append duplicates after all originals in deterministic selection order.
+  - Enforce configured overlap/IoU rules when placing patches, skipping placements that would violate them.
+  - Leave crop telemetry fields (`last_kept_indices`, `last_object_coverages`, `last_crop_skip_reason`) unset/empty so that crop telemetry continues to reflect only crop-style operations.
+
+#### Scenario: Deterministic crop PatchOp
+- **WHEN** `random_crop` is applied twice to the same record with the same RNG seed
+- **THEN** the cropped images, retained object set, `last_kept_indices`, and `last_object_coverages` are identical across runs
+
+#### Scenario: Deterministic copy/paste PatchOp
+- **WHEN** `small_object_zoom_paste` is applied twice to the same record with the same RNG seed
+- **THEN** the same source objects are selected, the same number of duplicates are added at the same locations, original geometries remain present in both runs, duplicates appear after originals, and crop telemetry fields remain unset/empty
+
+### Requirement: TL→BR object ordering after augmentation
+For dense-caption training, the system SHALL restore **top-to-bottom, left-to-right (TL→BR)** ordering of objects after augmentation and before building conversations, consistent with the prompt and data conversion pipeline.
+
+- Sorting keys:
+  - Primary: Y coordinate ascending (objects higher in the image come first).
+  - Secondary: X coordinate ascending (objects further left come first).
+- Reference point per geometry type:
+  - `bbox_2d`: top-left corner `(x1, y1)`.
+  - `poly`: first vertex `(x1, y1)` after canonicalization.
+  - `line`: leftmost endpoint (smallest X; if tie, smallest Y).
+- The same TL→BR sort rules MUST be used in both data conversion and training-time builders so that object enumeration (`object_1`, `object_2`, …) always matches the natural reading order described in the prompt.
+
+#### Scenario: TL→BR ordering after rotation and copy-paste
+- **WHEN** a record is augmented with rotation and small-object copy-paste, changing object positions
+- **AND** the dense-caption builder prepares `object_{n}` entries
+- **THEN** the builder re-sorts objects by TL→BR using the defined reference points before assigning indices, so the final enumeration order matches the prompt’s “top-to-bottom, then left-to-right” contract
 
 ### Requirement: Preserve geometry under affine transforms
 - The augmentation pipeline SHALL accumulate affines across sequential affine ops and apply a single transform to geometry per flush.
@@ -77,7 +152,7 @@ All geometries (bbox_2d, poly, line) SHALL remain correct and valid in the augme
 - THEN output remains a bbox with correctly mirrored and scaled coordinates within [0..W'-1, 0..H'-1].
 
 ### Requirement: Exact polygon clipping
-- Polygons (including rotated 4-point polys) MUST be clipped against the image rectangle using Sutherland–Hodgman (convex) or an equivalent exact convex clipping algorithm.
+- Polygons (including rotated 4-point polys) MUST be clipped against the image rectangle using Sutherland-Hodgman (convex) or an equivalent exact convex clipping algorithm.
 - Clipping MUST occur in floating-point space; rounding to integer grid SHALL happen only after clipping.
 - Coordinate bounds after rounding MUST lie in [0..W-1]×[0..H-1]; self-intersections are forbidden.
 
@@ -142,7 +217,7 @@ All geometries (bbox_2d, poly, line) SHALL remain correct and valid in the augme
 - THEN an overlay PNG and a JSON log are saved with matrix, pivot, and metrics.
 
 ### Requirement: Robust polyline (line) clipping
-- Polylines MUST be clipped against the image rectangle using segment-wise clipping (e.g., Cohen–Sutherland or Liang–Barsky) in floating-point space, then rounded.
+- Polylines MUST be clipped against the image rectangle using segment-wise clipping (e.g., Cohen-Sutherland or Liang-Barsky) in floating-point space, then rounded.
 - Consecutive duplicate points MUST be removed; segments shorter than 1 pixel after rounding MUST be dropped.
 - If fewer than 2 points remain (i.e., <1 segment), the object MUST be dropped with a logged warning.
 #### Scenario: line exiting frame
@@ -240,14 +315,14 @@ All geometries (bbox_2d, poly, line) SHALL remain correct and valid in the augme
 - AND messages contain specific dimensions and remediation advice
 
 ### Requirement: Smart Random Cropping with Label Filtering and Completeness Tracking
-The system SHALL provide random crop operators that automatically filter objects, truncate geometries, AND update completeness fields (`完整`/`部分`) to match visual reality in the cropped region.
+The system SHALL provide random crop operators that automatically filter objects, truncate geometries, AND update completeness fields (`可见性=完整`/`可见性=部分`) to match visual reality in the cropped region.
 
 #### Scenario: Random crop with coverage-based filtering and completeness update
 - **WHEN** random_crop is applied with min_coverage=0.3 and completeness_threshold=0.95
 - **AND** an object has 80% of its area inside the crop region
 - **THEN** the object is retained and its geometry is clipped to the crop boundary
 - **AND** the cropped geometry is translated to the new coordinate system [0, crop_w-1] × [0, crop_h-1]
-- **AND** if the object description contains "完整", it is changed to "部分"
+- **AND** if the object description contains `可见性=完整`, it is changed to `可见性=部分`
 
 #### Scenario: Drop objects below visibility threshold
 - **WHEN** random_crop is applied with min_coverage=0.3
@@ -296,47 +371,53 @@ For objects that meet the visibility threshold but extend beyond the crop region
 - **AND** result is translated to crop coordinates with duplicate points removed
 
 ### Requirement: Completeness Field Update Based on Coverage
-The system MUST update object description completeness fields (`完整` → `部分`) when crop-induced truncation makes objects partially visible.
+The system MUST update object description completeness fields (`可见性=完整` → `可见性=部分`) when crop-induced truncation makes objects partially visible.
 
 #### Scenario: Fully visible object keeps completeness unchanged
 - **WHEN** an object has 98% coverage (≥ completeness_threshold of 0.95)
-- **AND** the object description contains "完整"
-- **THEN** the completeness field remains "完整" (no update)
+- **AND** the object description contains `可见性=完整`
+- **THEN** the completeness field remains `可见性=完整` (no update)
 
 #### Scenario: Truncated object gets completeness updated
 - **WHEN** an object has 70% coverage (< completeness_threshold of 0.95 but ≥ min_coverage of 0.3)
-- **AND** the object description contains "完整"
-- **THEN** the description is updated to replace "完整" with "部分"
+- **AND** the object description contains `可见性=完整`
+- **THEN** the description is updated to replace `可见性=完整` with `可见性=部分`
 
 #### Scenario: Already partial object remains partial
 - **WHEN** an object has 60% coverage
-- **AND** the object description already contains "部分"
+- **AND** the object description already contains `可见性=部分`
 - **THEN** the completeness field remains unchanged (already marked as partial)
 
 #### Scenario: Objects without completeness field unchanged
-- **WHEN** an object description does not contain "完整" or "部分"
+- **WHEN** an object description does not contain `可见性=完整` or `可见性=部分`
 - **THEN** the description remains unchanged (no completeness update applied)
 
 ### Requirement: Coverage Computation for Filtering
-Coverage SHALL be computed as the ratio of object area inside the crop region to total object area, using axis-aligned bounding boxes for efficiency.
+Coverage SHALL be computed as the ratio of object area inside the crop region to total object area. Poly geometries MUST use polygon clipping against the crop rectangle; bbox/line geometries MUST use axis-aligned bounding box (AABB) intersection. If polygon clipping returns zero area and bbox fallback is enabled, the system MAY return AABB-based coverage.
 
 **Coverage is used for two purposes**:
 1. **Filtering**: Drop objects with coverage < min_coverage (e.g., 0.3)
-2. **Completeness**: Update "完整" → "部分" for objects with coverage < completeness_threshold (e.g., 0.95)
+2. **Completeness**: Update `可见性=完整` → `可见性=部分` for objects with coverage < completeness_threshold (e.g., 0.95)
 
-#### Scenario: AABB-based coverage for all geometry types
-- **WHEN** computing coverage for any geometry (bbox, poly, or line)
+#### Scenario: Polygon coverage via clipping
+- **WHEN** computing coverage for a polygon geometry
+- **THEN** the system clips the polygon against the crop rectangle
+- **AND** returns coverage = clipped_polygon_area / polygon_area
+- **AND** if clipped_polygon_area is 0 and bbox fallback is enabled, returns AABB-based coverage instead
+
+#### Scenario: AABB-based coverage for bbox/line geometries
+- **WHEN** computing coverage for a bbox_2d or line geometry
 - **THEN** the system computes the geometry's axis-aligned bounding box (AABB)
 - **AND** intersects the AABB with the crop rectangle
 - **AND** returns coverage = intersection_area / geometry_aabb_area
 
 #### Scenario: Zero coverage (fully outside)
-- **WHEN** an object's AABB has no overlap with the crop region
+- **WHEN** an object's geometry has no overlap with the crop region
 - **THEN** coverage returns 0.0
 - **AND** the object is always dropped regardless of threshold
 
 #### Scenario: Full coverage (fully inside)
-- **WHEN** an object's AABB is completely contained within the crop region
+- **WHEN** an object's geometry is completely contained within the crop region
 - **THEN** coverage returns 1.0
 - **AND** the object is always retained
 
@@ -376,7 +457,7 @@ The system SHALL provide a `RandomCrop` operator with configurable crop size, as
 
 #### Scenario: Configurable completeness threshold
 - **WHEN** random_crop is configured with completeness_threshold=0.95
-- **THEN** objects with coverage < 0.95 get "完整" → "部分" update
+- **THEN** objects with coverage < 0.95 get `可见性=完整` → `可见性=部分` update
 - **AND** objects with coverage >= 0.95 keep original completeness field
 
 #### Scenario: Configurable minimum object count for dense scenes
@@ -410,7 +491,7 @@ The system SHALL provide a `CenterCrop` operator as a drop-in replacement for `s
 #### Scenario: Center crop with label filtering and completeness update
 - **WHEN** center_crop is applied with min_coverage=0.3 and completeness_threshold=0.95
 - **THEN** edge objects with <30% coverage are dropped
-- **AND** objects with 30-95% coverage get "完整" → "部分"
+- **AND** objects with 30-95% coverage get `可见性=完整` → `可见性=部分`
 - **AND** objects with 95%+ coverage keep original completeness
 - **AND** remaining objects are clipped and translated
 - **AND** generated JSON only describes visible objects with correct completeness
@@ -510,7 +591,7 @@ Crop operators MUST integrate seamlessly with existing augmentation operations (
 The system SHALL support a config-driven curriculum that adjusts augmentation bypass probability and numeric operator parameters over training progress without rebuilding the dataset.
 
 #### Scenario: Progress-based phase selection with linear ramps
-- **WHEN** the YAML defines `custom.augmentation.curriculum` with ordered phase boundaries keyed by `until_percent` (preferred, 0–1 or 0–100) or `until_step`
+- **WHEN** the YAML defines `custom.augmentation.curriculum` with ordered phase boundaries keyed by `until_percent` (preferred, 0-1 or 0-100) or `until_step`
 - **THEN** effective `bypass_prob` and each overridden numeric field (e.g., op `prob`, scalar, or numeric range bounds) are linearly interpolated from the previous phase target to the current phase target over that interval (percentages resolved using trainer-reported total steps), and held at the final targets after the last phase
 
 #### Scenario: Consistent application across ranks and workers
@@ -569,4 +650,3 @@ The augmentation pipeline SHALL emit telemetry for affine/crop safety (padding r
 #### Scenario: Failure on missing telemetry
 - **WHEN** telemetry sink is unavailable or disabled
 - **THEN** augmentation still proceeds, but missing sinks are reported once with a warning; training is not blocked.
-

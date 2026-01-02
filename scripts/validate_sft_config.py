@@ -15,6 +15,7 @@ import argparse
 from pathlib import Path
 
 from src.config import ConfigLoader, TrainingConfig
+from src.config.grpo import validate_grpo_config
 
 
 def main() -> None:
@@ -36,6 +37,7 @@ def main() -> None:
     prompts = ConfigLoader.resolve_prompts(raw)
     training_cfg = TrainingConfig.from_mapping(raw, prompts)
 
+    validate_grpo_config(training_cfg)
     custom = training_cfg.custom
     print("[OK] Parsed training config.")
     print(f"  output_variant: {custom.output_variant}")

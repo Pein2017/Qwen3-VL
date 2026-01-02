@@ -2,6 +2,10 @@
 
 This document defines the universal JSONL format consumed by all training/eval datasets (BBU, LVIS, and future domains). Every record MUST adhere to this contract so that a single chat template pipeline can process all sources.
 
+See also:
+- `README.md` — index of data documentation under `docs/data/`
+- `BBU_RRU_BUSINESS_KNOWLEDGE.md` — BBU/RRU domain glossary (categories/attributes/grouping rules)
+
 ## Top-Level Record
 - **Provenance**: Records are typically produced either by the offline converter (`data_conversion/convert_dataset.sh`, see `./DATA_PREPROCESSING_PIPELINE.md`) or by domain-specific public converters. Regardless of source, they MUST match this contract.
 - `images` (list[str], required): Relative paths to image files; resolved against the JSONL directory.
@@ -48,8 +52,10 @@ Each object MUST contain exactly one geometry field plus a non-empty `desc`.
 ```
 
 ## Current Sources (checked)
-- `data/bbu_full_768_poly/train.jsonl`: includes `summary`; objects use `poly` or `bbox_2d`.
+- `data_new_schema/bbu_full_1024_poly_new_schema/all_samples.jsonl`: BBU domain (new-schema export); includes `summary`; objects use `poly`/`bbox_2d`/`line`. Train/val splits exist in the same directory.
+- `data_new_schema/rru_full_1024_poly_new_schema/all_samples.jsonl`: RRU domain (new-schema export); includes `summary`; objects use `bbox_2d`/`poly`/`line`, `desc` carries group membership via `组=<id>` and station distance as `类别=站点距离,站点距离=<int>` (digits). `summary` may include `分组统计`.
+- `data/bbu_full_768_poly/train.jsonl`: legacy BBU dense+summary; objects use `poly` or `bbox_2d`.
+- `data/rru_full_1024_poly/all_samples.jsonl`: RRU domain (current training/eval); same structure as above.
 - `public_data/lvis/rescale_32_768_poly_max_12/train.jsonl`: same structure, no `summary`; objects may include `poly_points` metadata.
-- `data/rru_full_768_poly/all_samples.jsonl`: RRU domain; uses `bbox_2d`/`poly`/`line`, `desc` carries group membership via `组=<id>` and station distance as `类别=站点距离,站点距离=<int>` (current exports yield digits); `summary` is a JSON string with per-category stats.
 
 All future domains MUST emit this contract to remain compatible with the shared chat template pipeline.

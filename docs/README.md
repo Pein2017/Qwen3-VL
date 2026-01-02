@@ -4,9 +4,10 @@ Status: Active — Internal Engineering
 
 ## Quick Navigation
 - **Intake & preprocessing** → `data/DATA_PREPROCESSING_PIPELINE.md` (annotation → JSONL) → `data/DATA_JSONL_CONTRACT.md`
-- **Data & datasets** → `data/DATA_AND_DATASETS.md` (schema/builders/conversion), `data/DATA_AUGMENTATION.md`, `data/POLYGON_SUPPORT.md`
+- **Data & datasets** → `data/README.md` (index), `data/DATA_AND_DATASETS.md` (schema/builders/conversion), `data/DATA_AUGMENTATION.md`, `data/POLYGON_SUPPORT.md`
+- **BBU/RRU business knowledge** → `data/BBU_RRU_BUSINESS_KNOWLEDGE.md` (类别/属性/分组规则速查)
 - **Fusion & public data** → `data/UNIFIED_FUSION_DATASET.md`, `data/PUBLIC_DATA.md`
-- **Training & reference** → `training/TRAINING_PLAYBOOK.md`, `training/REFERENCE.md`
+- **Training & reference** → `training/TRAINING_PLAYBOOK.md`, `training/REFERENCE.md`, `training/GRPO_MS_SWIFT_PIPELINE.md`
 - **Stage‑1 runtime** → `runtime/STAGE_A_RUNTIME.md`
 - **Stage‑2 runtime** → `runtime/STAGE_B_RUNTIME.md`, `stage_b/DIAGNOSIS_AND_REVIEW.md`
 - **Business pipeline & guidance** → `runtime/STAGE_A_STAGE_B.md`, `stage-B-knowledge-Chinese.md`
@@ -14,9 +15,9 @@ Status: Active — Internal Engineering
 - **Specs & governance** → `openspec/AGENTS.md`, `openspec/project.md`
 
 ### Suggested Reading Order
-1. **Intake → schema** — `data/DATA_PREPROCESSING_PIPELINE.md`, `data/DATA_JSONL_CONTRACT.md`, `data/DATA_AND_DATASETS.md`
+1. **Intake → schema** — `data/README.md`, `data/DATA_PREPROCESSING_PIPELINE.md`, `data/DATA_JSONL_CONTRACT.md`, `data/DATA_AND_DATASETS.md`, `data/BBU_RRU_BUSINESS_KNOWLEDGE.md`
 2. **Augmentation** — `data/DATA_AUGMENTATION.md`
-3. **Training & fusion** — `training/TRAINING_PLAYBOOK.md`, `data/UNIFIED_FUSION_DATASET.md`, `training/REFERENCE.md`
+3. **Training & fusion** — `training/TRAINING_PLAYBOOK.md`, `training/REFERENCE.md`, `training/GRPO_MS_SWIFT_PIPELINE.md`, `data/UNIFIED_FUSION_DATASET.md`
 4. **Stage‑1 runtime** — `runtime/STAGE_A_RUNTIME.md`
 5. **Stage‑2 runtime** — `runtime/STAGE_B_RUNTIME.md`, `runtime/STAGE_A_STAGE_B.md`
 6. **Ecosystem** — `data/PUBLIC_DATA.md`, `platform/UPSTREAM_DEPENDENCIES.md`
@@ -31,6 +32,7 @@ Status: Active — Internal Engineering
 | `data_conversion/` | `data/DATA_PREPROCESSING_PIPELINE.md`, `data/DATA_AND_DATASETS.md` (Conversion section) | Optional offline preprocessing from annotation exports; taxonomy, resize, validation. |
 | `public_data/` | `data/PUBLIC_DATA.md` | LVIS and auxiliary datasets (download, convert, sample, validate, visualize). |
 | `scripts/` | `scripts/README.md`, `training/TRAINING_PLAYBOOK.md`, `runtime/STAGE_B_RUNTIME.md` | Canonical entrypoints: training, inference, Stage‑A/B launchers, dataset fusion. |
+| `configs/` | `training/TRAINING_PLAYBOOK.md`, `training/REFERENCE.md`, `training/GRPO_MS_SWIFT_PIPELINE.md` | YAML training presets and overlays (including `configs/grpo/` GRPO post‑training templates). |
 | `openspec/` | `openspec/AGENTS.md`, `openspec/project.md` | Change-management specs and proposal workflow. |
 | `vis_tools/` | `data/DATA_AUGMENTATION.md`, `vis_tools/README_CROP_VIS.md` | Visualization/debug scripts for augmentation and QA spot checks. |
 

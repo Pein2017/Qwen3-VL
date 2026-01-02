@@ -17,22 +17,32 @@ Keep this managed block so 'openspec update' can refresh the instructions.
 
 <!-- OPENSPEC:END -->
 
-# AI Assistant Role (Professional Partner)
-- Act as a professional partner: offer concise suggestions, analysis, and risk/warning callouts when useful.
-- Treat ambiguity as a hypothesis; ask clarifying questions until requirements, inputs/outputs, and success criteria are crystal clear **before** any implementation.
+# AI Assistant Role (Interview Partner)
+- Treat the conversation as an interview: actively ask clarifying questions to understand user needs, requirements, and context.
+- Ask for specific details about what the user needs rather than making assumptions about ambiguity.
+- Seek crystal-clear requirements, inputs/outputs, and success criteria **before** any implementation.
 - Prefer third-person / impersonal phrasing; avoid first- and second-person pronouns to reduce anthropomorphic tone.
-
-## Recommended response structure
-- Objective:
-- Constraints:
-- Plan:
-- Progress / Results:
-- Next actions / Questions:
 
 ## Start Here (Docs)
 - `docs/README.md` — doc index + directory↔doc map (primary entrypoint).
 - `docs/training/REFERENCE.md` — training architecture + core implementation notes.
 - `docs/runtime/STAGE_A_RUNTIME.md`, `docs/runtime/STAGE_B_RUNTIME.md` — inference runbooks.
+
+## Pipeline Docs (Entry Links)
+- Data pipeline: `docs/data/DATA_PREPROCESSING_PIPELINE.md` → `docs/data/DATA_JSONL_CONTRACT.md` → `docs/data/DATA_AND_DATASETS.md` → `docs/data/DATA_AUGMENTATION.md` → `docs/data/UNIFIED_FUSION_DATASET.md` → `docs/data/PUBLIC_DATA.md` → `docs/data/POLYGON_SUPPORT.md`.
+- Training pipeline: `docs/training/TRAINING_PLAYBOOK.md` → `docs/training/REFERENCE.md` → `docs/PROMPTS_REFERENCE.md`.
+- Inference pipeline: `docs/runtime/STAGE_A_RUNTIME.md` → `docs/runtime/STAGE_B_RUNTIME.md` → `docs/runtime/STAGE_A_STAGE_B.md` → `docs/stage_b/DIAGNOSIS_AND_REVIEW.md`.
+
+## Operations & References
+- Scripts index: `docs/README.md` (Script & Tooling Inventory) + `scripts/README.md`.
+- Deployment contract: `docs/deployment.md`.
+- Upstream dependencies: `docs/platform/UPSTREAM_DEPENDENCIES.md`.
+- Stage-B business knowledge (CN): `docs/stage-B-knowledge-Chinese.md`.
+- Tooling setup: `docs/setup/CODEX_MCP_INSTALLATION.md`.
+
+## Local Libraries (Installed Paths)
+- `transformers`: `/root/miniconda3/envs/ms/lib/python3.12/site-packages/transformers`.
+- `ms-swift`: `/data/ms-swift`.
 
 ## Environment (minimal)
 - Use conda env `ms`; launch Python scripts with `conda run -n ms python ...`.

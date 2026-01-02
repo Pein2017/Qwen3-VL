@@ -43,7 +43,7 @@ NUM_GPUS="${#gpu_array[@]}"
 ## Resolve CONFIG_RAW to absolute path or repo-relative
 ## Supports:
 ##   - Absolute paths: /path/to/config.yaml
-##   - Repo-relative paths: configs/fused_data/bbu_rru_summary.yaml
+##   - Repo-relative paths: configs/fusion_train/bbu_rru_summary.yaml
 ##   - Configs subdirectory paths: fused_data/bbu_rru_summary.yaml (auto-adds configs/ prefix)
 ##   - Config names: bbu_rru_summary (auto-adds configs/ prefix and .yaml suffix)
 if [[ "${CONFIG_RAW}" = /* ]]; then

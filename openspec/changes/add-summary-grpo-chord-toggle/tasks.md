@@ -1,0 +1,8 @@
+- [x] Update OpenSpec: add a requirement to `summary-grpo-post-training` for optional CHORD mixing and config toggle.
+- [x] Add config schema + validation for a single enable/disable switch and required CHORD schedule fields.
+- [x] Wire `src/sft.py` to pass `chord_sft_dataset` (default: current GRPO train dataset) to the GRPO trainer when enabled.
+- [x] Ensure CHORD schedule params are applied to the GRPO trainer args (`chord_mu_*`, `chord_sft_per_device_train_batch_size`, `chord_enable_phi_function`).
+- [x] Fail fast if `custom.grpo_chord.enabled=true` but `rlhf.rlhf_type != grpo`.
+- [x] Add an example config under `configs/grpo/` demonstrating the toggle and safe default mu schedule.
+- [x] Update docs (`docs/training/GRPO_MS_SWIFT_PIPELINE.md`) with usage, tradeoffs, and debugging checklist.
+- [x] Run `openspec validate add-summary-grpo-chord-toggle --strict`.

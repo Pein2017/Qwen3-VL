@@ -1,11 +1,11 @@
 # sft-training Specification
 
 ## Purpose
-Specify Qwen3‑VL SFT training behavior, including GKD integration, KD/CE telemetry, config plumbing, and stage-specific trainer expectations.
+Specify Qwen3-VL SFT training behavior, including GKD integration, KD/CE telemetry, config plumbing, and stage-specific trainer expectations.
 ## Requirements
 ### Requirement: Dense-caption SFT with KL anchoring (GKD)
-- When `rlhf_type == "gkd"`, the system SHALL keep the dense-caption dataset pipeline unchanged (same Stage-2/3 templates, augmentation, packing, LoRA targeting).
-- A frozen `teacher_model` (base Qwen3‑VL) SHALL be loaded with matching tokenizer/template.
+- When `rlhf_type == "gkd"`, the system SHALL keep the dense-caption dataset pipeline unchanged (same Stage-2/3 templates, augmentation, and LoRA targeting).
+- A frozen `teacher_model` (base Qwen3-VL) SHALL be loaded with matching tokenizer/template.
 - The trainer SHALL minimize `loss = sft_alpha * CE(student, labels) + beta * KL(teacher||student)` and run on multimodal batches.
 - The teacher MUST be no-grad and never updated.
 - Student logits and labels MUST be aligned via left-shifted slicing (`logits[:, :-1]` vs `labels[:, 1:]`); rotations/wrap-around that leak BOS tokens into the final position are forbidden.
@@ -41,9 +41,7 @@ Specify Qwen3‑VL SFT training behavior, including GKD integration, KD/CE telem
 #### Scenario: Overlay application
 - GIVEN `stage_3_vision_llm.yaml`
 - WHEN applying `stage_3_gkd.yaml`
-- THEN LoRA targets, augmentation, and packing are identical; only trainer/teacher knobs differ
-
----
+- THEN LoRA targets and augmentation are identical; only trainer/teacher knobs differ
 
 ### Requirement: KD/CE telemetry
 - Training logs SHALL expose `train/llm_kd_loss`, `train/vision_kd_loss`, `train/sft_loss`, total `train/loss`, and `train/token_acc` every logging step, and emit matching `eval/*` metrics without duplicating prefixes (e.g., no `train/eval/*`).
@@ -139,7 +137,7 @@ Specify Qwen3‑VL SFT training behavior, including GKD integration, KD/CE telem
 ### Requirement: Config interface
 - `custom.visual_kd` SHALL be parsed by the config loader with defaults `enabled=false`, `weight=0.0`, `targets=[]`, `distance='mse'`.
 - The loader MUST validate that `weight > 0` whenever the feature is enabled and reject unsupported `distance` or `targets` values.
-- Stage configs (e.g., `stage_3_gkd.yaml` overlays) SHALL enable the feature purely via YAML edits—no CLI flags or hard-coded overrides.
+- Stage configs (e.g., `stage_3_gkd.yaml` overlays) SHALL enable the feature purely via YAML edits - no CLI flags or hard-coded overrides.
 
 #### Scenario: Stage-3 overlay enables vision KD
 - GIVEN `stage_3_gkd.yaml` extended with:
@@ -258,4 +256,153 @@ The grouped packing path SHALL be validated against extreme and boundary conditi
 #### Scenario: Fallback with grouping disabled
 - **WHEN** `packing: true` but `packing_group_key` is unset
 - **THEN** behavior matches ms-swift default packing (no group leakage, identical pack counts as baseline).
+
+### Requirement: Optional token-type telemetry gate
+- The system SHALL expose `custom.token_type_metrics` with fields `enabled` (bool, default false), `include` (list of dataset labels; default `['target', 'lvis']`), and `exclude` (list; default `['coig_lang_chat']`).
+- Token-type metrics SHALL run only when `enabled` is true and `dataset_labels` intersect `include` minus `exclude`; otherwise the batch SHALL skip token-type processing and logging.
+- Default behavior (enabled=false) MUST match current telemetry (no extra metrics, no new batch fields).
+
+#### Scenario: Disabled config
+- GIVEN a config without `custom.token_type_metrics.enabled: true`
+- WHEN training or evaluation runs
+- THEN no token-type preprocessing is executed and logs contain only the existing metrics.
+
+#### Scenario: Included vs excluded datasets
+- GIVEN `custom.token_type_metrics.enabled: true`, `include: ['target','lvis']`, `exclude: ['coig_lang_chat']`
+- WHEN a mixed fusion batch contains samples labeled `target`, `lvis`, and `coig_lang_chat`
+- THEN token-type metrics are computed/logged only for `target` and `lvis` samples, and skipped for `coig_lang_chat`.
+
+---
+
+### Requirement: Token typing and alignment
+- The collator SHALL reconstruct the assistant payload text deterministically (same separators/ordering as JSONLinesBuilder), tokenize it with the active template tokenizer, and assign token types: 1=description text, 2=coordinate numbers, 3=format/structure; tokens masked by labels == -100 or padding SHALL be type 0/ignored.
+- The collator SHALL align token types to supervised positions (`labels != -100`) after padding; padded/ignored positions MUST be filled with -1 and removed before model forward.
+- On length mismatch between supervised tokens and computed token types, the system SHALL skip token-type metrics for that batch and emit a debug warning without failing training.
+
+#### Scenario: Successful alignment
+- GIVEN a sample containing `desc`, `bbox_2d`, and `line_points`
+- WHEN the collator builds `token_types`
+- THEN the number of type entries matches the count of `labels != -100` and includes at least one token of each of types 1, 2, and 3.
+
+#### Scenario: Length mismatch fallback
+- GIVEN malformed input that causes token count mismatch
+- WHEN the collator detects the mismatch
+- THEN it drops token-type metrics for that batch and logs a debug warning while continuing training.
+
+---
+
+### Requirement: Per-type accuracy and entropy metrics
+- For each included dataset label, the trainer SHALL log per-type token accuracy (`desc_token_acc`, `coord_token_acc`, `format_token_acc`) and per-type entropy (`desc_entropy`, `coord_entropy`, `format_entropy`) in both train and eval modes using logits[:, :-1] vs labels[:, 1:] masked by `token_types`.
+- Metrics SHALL only be emitted when token-type telemetry is enabled and the dataset label is included; excluded datasets SHALL not emit these keys.
+- Metric naming SHALL stay stable across train/eval (`train/` vs `eval/` prefixes as provided by the existing custom_metrics sink).
+
+#### Scenario: Train step with target sample
+- GIVEN `token_type_metrics.enabled: true` and a batch whose `dataset_labels` include `target`
+- WHEN a train logging step occurs
+- THEN logs contain `target_desc_token_acc`, `target_coord_token_acc`, `target_format_token_acc`, and corresponding entropy metrics with finite values.
+
+#### Scenario: Eval step with excluded dataset
+- GIVEN `token_type_metrics.enabled: true` but a batch labeled `coig_lang_chat`
+- WHEN evaluation runs
+- THEN no token-type metrics are emitted for that batch.
+
+### Requirement: Deterministic cross-rank grouped metric sync
+Grouped per-dataset metrics SHALL synchronize keys deterministically across ranks and rely on a single reduction at logging time (via `MeanMetric.compute()`), avoiding per-step double reduction while still exposing groups seen only on nonzero ranks.
+
+#### Scenario: Small group only on nonzero rank
+- **WHEN** a fusion group (e.g., `lvis` or `lang_chat`) appears only on rank>0 within a logging window
+- **THEN** rank0 logs still contain that group's loss/accuracy metrics with correct values aggregated once
+
+#### Scenario: No double reduction vs single GPU
+- **GIVEN** the same tiny fusion dataset is run on 1 GPU and on 2 GPUs
+- **WHEN** reading per-group loss/accuracy after one logging interval
+- **THEN** the multi-GPU values match the single-GPU run within floating tolerance, showing that state/count were reduced exactly once
+
+#### Scenario: Deterministic key ordering across ranks
+- **WHEN** different ranks observe metric keys in different insertion orders
+- **THEN** the sync step gathers the union and instantiates missing metrics in sorted order so collective calls remain aligned and cannot bleed values across metric names
+
+### Requirement: Summary prompt profiles SHALL separate training and inference roles.
+When `custom.use_summary` is enabled, the system SHALL resolve a summary prompt profile. The default profile for training SHALL be `summary_train_min`, and it MUST include **only** format rules and task criterion (including evidence-only / no-hallucination constraints); it MUST NOT include domain knowledge, mission rules, or dataset-specific priors.
+
+#### Scenario: Default summary training uses minimal profile
+- **GIVEN** a training config with `custom.use_summary: true` and no prompt profile override
+- **WHEN** prompts are resolved for summary training
+- **THEN** the system selects `summary_train_min`
+- **AND THEN** the resulting system prompt contains format + task criterion only (including evidence-only / no-hallucination constraints), with no BBU/RRU domain rules or mission-specific priors
+
+#### Scenario: Runtime profile is explicit and opt-in
+- **GIVEN** a config that sets `prompts.profile: summary_runtime`
+- **WHEN** prompts are resolved
+- **THEN** the system uses the runtime profile and allows domain knowledge injection (if a domain is provided)
+
+---
+
+### Requirement: Domain knowledge packs SHALL be defined as Python dataclasses and excluded from training prompts.
+Domain knowledge (BBU/RRU schema hints, priors, and restrictions) SHALL be defined in Python dataclasses and composed into prompts only when the runtime profile is selected. Training profiles MUST ignore domain packs entirely.
+
+#### Scenario: Training profile ignores domain packs
+- **GIVEN** domain packs defined for BBU and RRU
+- **WHEN** a training run resolves `summary_train_min`
+- **THEN** the system prompt excludes domain pack content even if a domain is configured
+
+#### Scenario: Runtime profile includes domain pack
+- **GIVEN** `prompts.profile: summary_runtime` and `prompts.domain: rru`
+- **WHEN** the summary system prompt is built
+- **THEN** the prompt includes the RRU domain pack content and excludes BBU-only rules
+
+---
+
+### Requirement: Prompt profile selection SHALL be configurable and validated.
+Prompt profile and domain selection SHALL be configured via the `prompts` section. `prompts.system` or `prompts.user` overrides MUST remain authoritative. If a runtime profile is selected and the domain is missing or unknown, the system MUST fail fast with an actionable error.
+
+#### Scenario: Unknown domain is rejected
+- **GIVEN** `prompts.profile: summary_runtime` and `prompts.domain: unknown`
+- **WHEN** the loader resolves prompts
+- **THEN** it raises a validation error describing the allowed domains
+
+#### Scenario: Explicit prompt override bypasses profiles
+- **GIVEN** `prompts.system` or `prompts.user` is set in the config
+- **WHEN** prompts are resolved
+- **THEN** profile composition is bypassed and the provided override is used verbatim
+
+### Requirement: Padding-only batching and telemetry
+- The SFT runner SHALL reject any config that sets `training.packing` to true or supplies packing-specific knobs (`packing_group_key`, cached-length settings), returning a clear error that packing is removed and padding is the only supported batching mode.
+- The default batching path SHALL use standard padding for `per_device_train_batch_size>1`, with no bin-packing or length-cache prepass executed in training or evaluation.
+- Per-dataset telemetry SHALL remain available in this padding-only mode by attaching dataset labels from sample metadata and emitting one segment per sample to the grouped-metrics reducer.
+- Evaluation metrics SHALL log only datasets that provide `val` splits; source-only datasets remain absent unless their `val` path is configured.
+- The legacy packing implementation SHALL be removed from runtime import paths and stored only under `archive/packing/` for future reference.
+
+#### Scenario: Config tries to enable packing
+- WHEN a user launches training with `training.packing: true` (or any packing knobs)
+- THEN initialization fails fast with an actionable error explaining packing is removed and to delete the packing settings.
+
+#### Scenario: Normal padded training
+- WHEN packing keys are absent and `per_device_train_batch_size>1`
+- THEN the dataloader uses the padded collator, training proceeds, and aggregate metrics remain unchanged.
+
+#### Scenario: Per-dataset metrics with padded batches
+- WHEN padded batches contain samples from multiple datasets (e.g., `bbu`, `rru`, `lvis`, `lang_chat`)
+- THEN the collator attaches per-sample dataset labels and single-sample lengths, the trainer logs `train/{dataset}_loss` and `train/{dataset}_token_acc` for each dataset during logging steps, and aggregate training metrics remain unchanged.
+
+#### Scenario: Evaluation limited to datasets with val splits
+- GIVEN only target datasets provide `val` JSONL paths
+- WHEN evaluation runs with padding-only batching
+- THEN only those datasets produce eval metrics (e.g., `eval/bbu_loss`, `eval/bbu_token_acc`); sources without `val` remain absent.
+
+#### Scenario: Stray packing metadata
+- WHEN a config includes `custom.packing_group_key` or `custom.cached_lengths`
+- THEN validation fails with guidance to remove packing metadata because the feature is no longer supported.
+
+#### Scenario: Packing code archived
+- WHEN code attempts to import packing modules from the main package
+- THEN the import fails; the archived implementation lives under `archive/packing/` and is not on the runtime path.
+
+### Requirement: Geometry JSON spacing stability
+The conversation builder SHALL serialize assistant JSON with space-separated separators to preserve tokenizer distribution for geometry arrays.
+
+#### Scenario: Geometry arrays retain spaces
+- **WHEN** the JSONLinesBuilder renders assistant JSON for geometry payloads
+- **THEN** JSON separators use `", "` and `": "` (spaces preserved)
+- **AND** geometry arrays (bbox_2d/poly/line) are serialized with spaces between numeric elements
 
