@@ -119,6 +119,50 @@ Key code anchors (non-exhaustive):
   - `generation_batch_size = per_device_train_batch_size * world_size * steps_per_generation`
 - Location: `swift/trainers/rlhf_arguments.py:80-81`
 
+## CHORD (SFT-mixed) Loss for GRPO (Qwen3-VL Toggle)
+
+ms-swift GRPO supports CHORD-style loss mixing: a supervised (SFT) loss is mixed into GRPO loss to provide a fallback gradient even when advantages collapse (e.g., `reward_std == 0` groups).
+
+### How ms-swift CHORD mixing works
+- When enabled, GRPOTrainer combines losses:
+  - `loss = (1 - mu) * grpo_loss + mu * chord_sft_loss`
+- `mu` is scheduled by warmup + cosine decay (or constant if decay steps are 0).
+- Code locations:
+  - Mix point: `swift/trainers/rlhf_trainer/grpo_trainer.py:1085-1087`
+  - Implementation: `swift/trainers/rlhf_trainer/utils.py:945-987`
+
+### Qwen3-VL config surface
+Qwen3-VL exposes a config-only toggle under `custom.grpo.chord` (GRPO-only):
+
+```yaml
+custom:
+  grpo:
+    chord:
+      enabled: true
+      sft_per_device_train_batch_size: 1
+      mu_warmup_steps: 100
+      mu_decay_steps: 0
+      mu_peak: 0.05
+      mu_valley: 0.05
+      enable_phi_function: false
+```
+
+Mapping to ms-swift trainer args:
+- `custom.grpo.chord.sft_per_device_train_batch_size` → `chord_sft_per_device_train_batch_size`
+- `custom.grpo.chord.mu_*` → `chord_mu_*`
+- `custom.grpo.chord.enable_phi_function` → `chord_enable_phi_function`
+
+Qwen3-VL passes `chord_sft_dataset` to the GRPO trainer using the same fusion train dataset stream as expert targets (including irrelevant samples with target `无关图片`).
+
+### Batch size guidance for tight VRAM
+- Keep GRPO micro-batch minimal: `training.per_device_train_batch_size: 1`.
+- Control effective update size via gradient accumulation (`training.effective_batch_size`).
+- Keep CHORD SFT micro-batch minimal: `custom.grpo.chord.sft_per_device_train_batch_size: 1`.
+
+Note: CHORD adds an extra supervised forward/backward per train step when `mu > 0`, so overall VRAM and step time increase.
+Note: With DeepSpeed ZeRO-2, CHORD introduces a second forward pass per step. If DeepSpeed asserts on duplicated gradient
+reductions, override DeepSpeed config to disable `zero_optimization.reduce_scatter` (example: `configs/deepspeed/zero2_chord_no_reduce_scatter.json`).
+
 ### Prompt batch size (grouped rollouts)
 - Prompt count is derived as:
   - `prompt_batch_size = generation_batch_size // num_generations`
@@ -290,6 +334,18 @@ Implication:
 - `rlhf.rlhf_type: grpo` routes to `GRPOTrainer` / `GRPOConfig`.
 - `rlhf.reward_funcs` must be non-empty (or set `reward_model`).
 - `rlhf.reward_weights` length must match `reward_funcs`.
+- Summary-mode reward funcs used by the base template are implemented in `src/rlhf/grpo/rewards/summary/rewards.py` and include:
+  - Contract + guardrails: `summary.format`, `summary.header`, `summary.strict`, `summary.parse`
+  - Hard JSON correctness: `summary.no_dup_keys` (hard-penalize duplicate JSON keys, including nested dicts)
+  - Core content alignment (strict-format gated, GT treated as lower bound):
+    - `summary.dataset` (domain token matches)
+    - `summary.objects_total_lb` (undercount-heavy; overcount is free up to `ref+2`)
+    - `summary.category_recall` (category recall over `统计[*].类别`)
+    - `summary.content_structured_tversky` (recall-biased Tversky on structured facts; BBU excludes `文本/备注`; RRU is stricter)
+  - BBU free-text handling:
+    - `summary.text_bbu` (OCR `文本` lower-bound recall with punctuation normalization and `+2` unique-string slack)
+    - `summary.notes_bbu` (recall when GT has `备注`; hard-penalize spurious notes when GT has none)
+  - Conditional domain structure: `summary.group_stats_presence` (RRU-only, only when GT has `分组统计`)
 - `training.effective_batch_size` controls backward accumulation; `per_device_train_batch_size` remains the micro-batch.
 - `rlhf.generation_batch_size` is the global rollout size (total trajectories per generation cycle).
 - `rlhf.num_generations` must divide the global `generation_batch_size`.

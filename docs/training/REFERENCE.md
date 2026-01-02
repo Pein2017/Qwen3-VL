@@ -249,10 +249,17 @@ Keep configs under `configs/` in sync with the playbook when making behavioral c
 ### Summary GRPO Post-Training (Format Stabilization)
 - **Config example**: `configs/fusion_train/bbu_rru_summary_grpo_new_schema_1024.yaml` (merged summary-SFT checkpoint in, LoRA adapter out).
 - **Base template**: `configs/grpo/summary_grpo_base.yaml` (inherits `configs/fusion_train/sft_base.yaml`; edit checkpoint + epochs/LRs).
-- **Required knobs**: `rlhf.rlhf_type=grpo`, `rlhf.reward_funcs=[summary_format, summary_header, summary_parse, summary_dataset, summary_objects_total, summary_content_f1]`, `rlhf.num_generations` (must divide `rlhf.generation_batch_size`), `rlhf.temperature=0.3`, `rlhf.max_completion_length=2048`, plus `training.effective_batch_size` (backward global batch), `rlhf.generation_batch_size` (rollout global trajectories), `prompts.profile=summary_runtime`, `custom.assistant_prefix_format`, and `custom.fusion_config`.
+  - **Required knobs**:
+    - `rlhf.rlhf_type=grpo`
+    - `rlhf.reward_funcs=[summary.format, summary.header, summary.strict, summary.parse, summary.no_dup_keys, summary.dataset, summary.objects_total_lb, summary.category_recall, summary.content_structured_tversky, summary.text_bbu, summary.notes_bbu, summary.group_stats_presence]`
+    - `rlhf.num_generations` (must divide `rlhf.generation_batch_size`)
+    - `rlhf.max_completion_length=2048`
+    - `training.effective_batch_size` (backward global batch), `rlhf.generation_batch_size` (rollout global trajectories)
+    - `prompts.profile=summary_runtime`, `custom.assistant_prefix_format`, `custom.fusion_config`
+    - Tune `rlhf.temperature` based on contract stability vs exploration.
 - **Metadata contract**: summary-mode rows attach `metadata.summary_ref` (ground-truth JSON) and `metadata._fusion_domain_token` (BBU/RRU) for reward functions; irrelevant rows keep `_fusion_source=irrelevant_summary` and suppress assistant prefixes so labels remain single-line `无关图片`.
 - **Dry-run recipe**: clone the example config, set `training.max_steps: 2`, `training.eval_strategy: "no"`, `training.save_strategy: "no"`, `custom.train_sample_limit: 2`, `custom.val_sample_limit: 2`, then launch via `scripts/train.sh config=<new-config.yaml> gpus=0 debug=true`.
-- **Success criteria**: job starts, reward metrics appear (`rewards/summary_format`, `rewards/summary_header`, `rewards/summary_parse`, `rewards/summary_dataset`, `rewards/summary_objects_total`, `rewards/summary_content_f1`), and 1–2 steps complete without dataset or format exceptions.
+  - **Success criteria**: job starts, reward metrics appear (format/header/strict/parse + dup-key penalty + lower-bound content rewards), and 1–2 steps complete without dataset or format exceptions.
 
 ## Inference
 
@@ -280,4 +287,4 @@ Operational FAQs (LR schedulers, DeepSpeed presets, augmentation pipelines, temp
 
 ---
 
-**Last Updated**: 2025-12-04 (Token-type telemetry validated via smoke run)
+**Last Updated**: 2026-01-02 (Summary GRPO rewards + docs refreshed; token-type telemetry previously validated via smoke run on 2025-12-04)

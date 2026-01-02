@@ -144,8 +144,20 @@ Use Generalized Knowledge Distillation (GKD) when dense-caption SFT starts hallu
 Use GRPO to stabilize summary outputs (two-line header + JSON for BBU/RRU, single-line `无关图片` for irrelevant).
 
 - **Activation**: start from `configs/grpo/summary_grpo_base.yaml` (inherits `configs/fusion_train/sft_base.yaml` and exposes checkpoint/LR/epoch knobs) or `configs/fusion_train/bbu_rru_summary_grpo_new_schema_1024.yaml` for a concrete fused run.
-- **Reward funcs**: `summary_format`, `summary_header`, `summary_parse`, `summary_dataset`, `summary_objects_total`, `summary_content_f1` (format/strict header, gated parse penalty, dataset+count alignment, and count-weighted partial JSON match). Optional: keep `summary_content` for strict exact-match auditing.
-- **Rollout settings**: set backward size via `training.effective_batch_size` (with `per_device_train_batch_size` as the micro-batch), and set rollout size via `rlhf.generation_batch_size` (global trajectories per generation). `rlhf.num_generations` must divide `generation_batch_size`. Keep `temperature=0.3`, `max_completion_length=2048` unless retuning.
+- **Reward funcs** (summary mode):
+  - Core contract + safety: `summary.format` (irrelevant must be single-line `无关图片`), `summary.header`, `summary.strict` (penalize extra lines / wrong header), `summary.parse` (JSON parse penalty).
+  - Hard JSON correctness: `summary.no_dup_keys` (hard-penalize duplicate JSON keys, including nested dicts).
+  - Lower-bound content alignment (strict-format gated; missing annotated facts > spurious extras):
+    - `summary.dataset` (domain token matches)
+    - `summary.objects_total_lb` (undercount-heavy; overcount free up to `ref+2`)
+    - `summary.category_recall` (category recall over `统计[*].类别`)
+    - `summary.content_structured_tversky` (recall-biased structured facts; BBU excludes `文本/备注`; RRU is stricter)
+  - BBU free-text handling:
+    - `summary.text_bbu` (OCR `文本` lower-bound recall with punctuation normalization and `+2` unique-string slack)
+    - `summary.notes_bbu` (recall when GT has `备注`; hard-penalize spurious notes when GT has none)
+  - Domain-specific structure: `summary.group_stats_presence` (RRU-only, only when GT has non-empty `分组统计`).
+  - Implementation lives in `src/rlhf/grpo/rewards/summary/rewards.py`; strict-format gating ensures content rewards only fire when the two-line contract is obeyed.
+- **Rollout settings**: set backward size via `training.effective_batch_size` (with `per_device_train_batch_size` as the micro-batch), and set rollout size via `rlhf.generation_batch_size` (global trajectories per generation). `rlhf.num_generations` must divide `generation_batch_size`. Keep `rlhf.max_completion_length=2048` unless retuning; tune `rlhf.temperature` based on format stability vs diversity.
 - **LoRA note**: keep `train_type: lora` and do **not** set `rlhf.ref_model` (ms-swift treats LoRA refs via adapter disabling or `ref_adapters` when explicitly provided).
 - **Irrelevant handling**: prompts alternate per epoch (~50/50) between `summary_bbu`/`summary_rru`; assistant prefixes are suppressed so labels stay single-line `无关图片`.
 
