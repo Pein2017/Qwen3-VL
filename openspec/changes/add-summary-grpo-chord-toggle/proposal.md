@@ -12,6 +12,7 @@ Provide an easy-to-toggle mechanism to inject supervised learning signal during 
   - `loss = (1 - mu) * grpo_loss + mu * chord_sft_loss`
   - where `chord_sft_loss` is a teacher-forced token-level cross-entropy loss over an expert dataset.
 - Default expert dataset source: reuse the in-memory GRPO training dataset (fusion summary dataset) so the expert targets match the two-line summary contract and irrelevant handling.
+  - Implementation note: prefer constructing a **separate dataset instance** for CHORD SFT to avoid RNG/state coupling if the same dataset class maintains per-epoch shuffling or internal RNG state.
 
 ## Toggle UX
 - A single YAML switch SHALL enable/disable the feature.
@@ -22,7 +23,7 @@ Provide an easy-to-toggle mechanism to inject supervised learning signal during 
 custom:
   grpo_chord:
     enabled: true            # default false
-    per_device_train_batch_size: 1
+    sft_per_device_train_batch_size: 1
     mu_warmup_steps: 100
     mu_decay_steps: 1000
     mu_peak: 0.10
