@@ -30,6 +30,6 @@
   - [ ] “硬故障只进 failure_malformed，不进 need-review” 的最小回归用例。
 - [ ] 文档更新（实现后执行）：
   - [ ] `docs/runtime/STAGE_A_STAGE_B.md`、`docs/runtime/STAGE_B_RUNTIME.md`
-  - [ ] `docs/stage-B-knowledge-Chinese.md`
+  - [ ] `docs/reference/stage-B-knowledge-Chinese.md`
 - [ ] 运行 `openspec validate update-stageb-feedback-window-and-observability --strict` 并修复所有格式问题。
 

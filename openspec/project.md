@@ -22,11 +22,13 @@
    - `configs/base.yaml` sets defaults; stage configs (`stage_1`-`stage_4`, `summary*.yaml`) layer behavior for specific training phases.
    - Summary of new knobs should live alongside the config file.
 3. **Docs**
-   - `docs/README.md` - onboarding, directory map, and recent updates.
+   - `docs/README.md` - onboarding and directory map.
+   - `docs/overview/CHANGELOG.md` - recent updates and major changes.
    - `docs/data/DATA_AUGMENTATION.md` - authoritative augmentation/geometry spec.
    - `docs/data/DATA_AND_DATASETS.md` - JSONL schema, preprocessing expectations.
    - `docs/training/TRAINING_PLAYBOOK.md`, `docs/training/REFERENCE.md`, `docs/training/GRPO_MS_SWIFT_PIPELINE.md` - training runbooks.
-   - `docs/runtime/STAGE_A_RUNTIME.md`, `docs/runtime/STAGE_B_RUNTIME.md`, `docs/runtime/STAGE_A_STAGE_B.md` - inference runbooks + business guidance.
+   - `docs/runtime/STAGE_A_RUNTIME.md`, `docs/runtime/STAGE_B_RUNTIME.md`, `docs/runtime/STAGE_A_STAGE_B.md` - inference runbooks.
+   - `docs/reference/stage-B-knowledge-Chinese.md` - business guidance (CN).
 4. **Visual Tooling**
    - `vis_tools/vis_augment_compare.py` (side-by-side augmentation check).
    - `vis_tools/vis_qwen3.py`, `vis_tools/vis_raw.py` for data sanity.
@@ -100,7 +102,8 @@
 - Optional: trl 0.23.1, DeepSpeed (ZeRO-2)
 
 ## Useful References
-- `docs/README.md` - directory map and update timeline.
+- `docs/README.md` - directory map.
+- `docs/overview/CHANGELOG.md` - update timeline.
 - `docs/training/GRPO_MS_SWIFT_PIPELINE.md` - GRPO rollout/trainer notes.
 - `src/datasets/changelog.md` - dataset contract changes.
 - `scripts/merge_stage2_lora.sh` - adapter workflow.

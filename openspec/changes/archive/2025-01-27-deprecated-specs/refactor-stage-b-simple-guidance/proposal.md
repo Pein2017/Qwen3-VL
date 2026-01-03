@@ -27,7 +27,7 @@ Stage-B is currently built around a training-free GRPO-style loop with CriticEng
 
 ## Impacted Areas
 - Code: `src/stage_b` runtime (rollout, selection, reflection), guidance IO, runner; configs under `configs/stage_b/`; scripts `stage_b_run.sh` if flags change.
-- Docs: `docs/STAGE_B_RUNTIME.md`, `docs/STAGE_A_STAGE_B.md`, `stage-B-knowledge-Chinese.md`, `docs/REFERENCE.md`.
+- Docs: `docs/runtime/STAGE_B_RUNTIME.md`, `docs/runtime/STAGE_A_STAGE_B.md`, `docs/reference/stage-B-knowledge-Chinese.md`, `docs/training/REFERENCE.md`.
 
 ## Rollout / Migration
 - Overwrite old Stage-B behavior with the simplified path; no dual modes.

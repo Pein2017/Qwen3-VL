@@ -46,7 +46,7 @@
   - 新增一个 text‑only `dataset: chat` 目标，指向蒸馏出的 Stage‑B JSONL；
   - 复用 `template: chatml`，与当前 coig_cqia 源保持一致。
 - **文档**：
-  - 更新 `docs/runtime/STAGE_A_STAGE_B.md` / `docs/stage-B-knowledge-Chinese.md`，描述 Teacher 蒸馏与统一模型的关系；
+  - 更新 `docs/runtime/STAGE_A_STAGE_B.md` / `docs/reference/stage-B-knowledge-Chinese.md`，描述 Teacher 蒸馏与统一模型的关系；
   - 在 `docs/training/REFERENCE.md` 或 `docs/experiments/` 增补蒸馏 runbook。
 
 ## 风险与缓解

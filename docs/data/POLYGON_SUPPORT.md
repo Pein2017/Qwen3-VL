@@ -1,11 +1,17 @@
 # Polygon Support
 
+Status: Active
+Scope: Polygon geometry conventions, canonicalization, and conversion guidance.
+Owners: Data Pipeline
+Last updated: 2026-01-02
+Related: [DATA_JSONL_CONTRACT.md](DATA_JSONL_CONTRACT.md), [DATA_PREPROCESSING_PIPELINE.md](DATA_PREPROCESSING_PIPELINE.md), [DATA_AUGMENTATION.md](DATA_AUGMENTATION.md)
+
 Qwen3-VL standardizes on three geometry primitives: `bbox_2d`, `poly`, and `line`. The training pipeline and data converters no longer emit the legacy `quad` field. This document explains the expected behavior and how polygons are handled offline.
 
 ## Canonical Geometry
 
 - **`bbox_2d`**: Axis-aligned boxes `[x1, y1, x2, y2]` useful for simple detection cases.
-- **`poly`**: Flat `[x1, y1, x2, y2, ..., xn, yn]` representing closed polygons (N ≥ 3). Use `poly_points` to make the vertex count explicit (`len(poly) == 2 * poly_points`).
+- **`poly`**: Flat `[x1, y1, x2, y2, ..., xn, yn]` representing closed polygons (N ≥ 4; current runtime validation). Use `poly_points` to make the vertex count explicit (`len(poly) == 2 * poly_points`).
 - **`line`**: Open polylines (e.g., cables or fibers) with `line_points` tracking point count.
 
 Each object must include exactly one of these fields plus a non-empty `desc`. Conversion scripts (LVIS, COCO, etc.) now map polygons directly to `poly` and emit `poly_points` for downstream validation. If you need rectangles instead of polygons, perform the downgrade during conversion (e.g., cap vertices with `--poly-max-points`); the dataloader no longer mutates geometry.
@@ -32,4 +38,4 @@ With runtime fallback removed, polygons survive through augmentation and are nor
 - Dataset wrappers carry domain information (target vs source) so the fusion loader knows whether to attach augmentation/curriculum. Template selection is handled at the wrapper level, so JSONL records themselves no longer require provenance metadata.
 - Source-domain wrappers default to clean images; target-domain wrappers automatically attach the configured augmentation pipeline. Override per dataset via `params.augmentation_enabled`/`params.curriculum_enabled` if needed.
 
-For a deeper look, see `./DATA_AND_DATASETS.md` (multi-dataset fusion section) and `openspec/changes/update-geometry-poly-fusion/design.md`.
+For a deeper look, see `./DATA_AND_DATASETS.md` (multi-dataset fusion section).

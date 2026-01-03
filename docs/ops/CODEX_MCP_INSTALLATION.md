@@ -1,5 +1,11 @@
 # Codex MCP Installation Guide
 
+Status: Active
+Scope: Installation and configuration steps for Codex MCP used by local tooling.
+Owners: Ops
+Last updated: 2026-01-02
+Related: [ops/README.md](README.md)
+
 This guide provides step-by-step instructions for installing and configuring the Codex MCP server for Claude Code on any host machine.
 
 ## Prerequisites
@@ -9,6 +15,14 @@ Before installation, ensure you have:
 1. **Claude Code** (v2.0.56 or later)
 2. **Codex CLI** (v0.61.0 or later)
 3. **UV tool** (Python package installer)
+
+Placeholders used in this guide:
+- `<UVX_BIN_DIR>` — directory that contains the `uvx` executable
+- `<UVX_ENV_FILE>` — uv-generated env file to source (if used)
+- `<UVX_PATH>` — full path to `uvx` (if not on PATH)
+- `<SHELL_RC>` — shell startup file (e.g., `.bashrc`, `.zshrc`)
+- `<CLAUDE_CONFIG_PATH>` — Claude config file location
+- `<CLAUDE_SETTINGS_PATH>` — Claude settings file location
 
 ### Check Prerequisites
 
@@ -31,21 +45,21 @@ uv --version
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-After installation, add UV to your PATH:
+After installation, ensure `uvx` is available on PATH:
 
 ```bash
-# Add to your shell configuration (~/.bashrc, ~/.zshrc, etc.)
-export PATH="$HOME/.local/bin:$PATH"
+# Add to your shell configuration (replace <UVX_BIN_DIR> with the directory that contains uvx)
+export PATH="<UVX_BIN_DIR>:$PATH"
 
-# Or source it immediately
-source $HOME/.local/bin/env
+# Or source the uv-provided env file (replace <UVX_ENV_FILE> with the actual path)
+source <UVX_ENV_FILE>
 ```
 
 Verify installation:
 
 ```bash
 which uvx
-# Should output: /root/.local/bin/uvx (or your home directory)
+# Should output: <UVX_PATH>
 ```
 
 ### Step 2: Remove Existing Codex MCP (if installed)
@@ -58,21 +72,11 @@ claude mcp remove codex
 
 ### Step 3: Install Codex MCP
 
-**IMPORTANT:** Use the **full path** to `uvx` to avoid PATH resolution issues:
+Use the `uvx` executable on PATH (or replace `<UVX_PATH>` with the output of `which uvx`):
 
 ```bash
-claude mcp add codex -s user --transport stdio -- /root/.local/bin/uvx --from git+https://github.com/GuDaStudio/codexmcp.git codexmcp
+claude mcp add codex -s user --transport stdio -- uvx --from git+https://github.com/GuDaStudio/codexmcp.git codexmcp
 ```
-
-**Note:** Replace `/root/.local/bin/uvx` with your actual `uvx` path if different. You can find it with:
-
-```bash
-which uvx
-```
-
-For example, on macOS or different Linux setups, it might be:
-- `/Users/username/.local/bin/uvx` (macOS)
-- `/home/username/.local/bin/uvx` (Linux)
 
 ### Step 4: Verify Installation
 
@@ -84,7 +88,7 @@ Expected output:
 ```
 Checking MCP server health...
 
-codex: /root/.local/bin/uvx --from git+https://github.com/GuDaStudio/codexmcp.git codexmcp - ✓ Connected
+codex: uvx --from git+https://github.com/GuDaStudio/codexmcp.git codexmcp - ✓ Connected
 ```
 
 ### Step 5: Restart Claude Code
@@ -105,9 +109,9 @@ You should see the Codex MCP server listed with status "✓ Connected".
 
 ### MCP Server Configuration Location
 
-The MCP server configuration is stored in:
+The MCP server configuration is stored in the Claude configuration file:
 ```
-~/.claude.json
+<CLAUDE_CONFIG_PATH>
 ```
 
 Example configuration entry:
@@ -115,7 +119,7 @@ Example configuration entry:
 {
   "mcpServers": {
     "codex": {
-      "command": "/root/.local/bin/uvx",
+      "command": "uvx",
       "args": [
         "--from",
         "git+https://github.com/GuDaStudio/codexmcp.git",
@@ -131,7 +135,7 @@ Example configuration entry:
 
 To grant Claude Code automatic permissions to use Codex MCP tools, edit:
 ```
-~/.claude/settings.json
+<CLAUDE_SETTINGS_PATH>
 ```
 
 Add the tool to the allow list:
@@ -200,14 +204,14 @@ Can you send a test greeting to Codex using the MCP tool?
 
 **Symptom:** Shell can't find `uvx` command
 
-**Solution:** Add UV to your PATH permanently:
+**Solution:** Add UV to PATH permanently:
 
 ```bash
-# Add to ~/.bashrc or ~/.zshrc
-echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+# Add to shell config (replace <UVX_BIN_DIR> and <SHELL_RC> as needed)
+echo 'export PATH="<UVX_BIN_DIR>:$PATH"' >> <SHELL_RC>
 
 # Reload shell configuration
-source ~/.bashrc
+source <SHELL_RC>
 ```
 
 ### Issue: Connection Works but Tools Don't Load
@@ -227,7 +231,7 @@ Windows users are strongly recommended to run this in WSL (Windows Subsystem for
 
 ### macOS
 
-Replace `/root/.local/bin/uvx` with `/Users/yourusername/.local/bin/uvx` in all commands.
+Replace `<UVX_PATH>` placeholders with the local `uvx` path if it is not available on PATH.
 
 ### Linux
 
@@ -237,14 +241,14 @@ Works on most distributions. For Alpine or musl-based distributions, you may nee
 
 If you prefer to manually edit the configuration file:
 
-1. Open `~/.claude.json`
+1. Open `<CLAUDE_CONFIG_PATH>`
 2. Add the MCP server configuration:
 
 ```json
 {
   "mcpServers": {
     "codex": {
-      "command": "/full/path/to/uvx",
+      "command": "uvx",
       "args": [
         "--from",
         "git+https://github.com/GuDaStudio/codexmcp.git",
@@ -266,7 +270,7 @@ To remove Codex MCP:
 claude mcp remove codex
 ```
 
-This removes the configuration from `~/.claude.json`.
+This removes the configuration from `<CLAUDE_CONFIG_PATH>`.
 
 ## Additional Resources
 
@@ -280,11 +284,11 @@ This removes the configuration from `~/.claude.json`.
 # Install UV
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Add to PATH
-export PATH="$HOME/.local/bin:$PATH"
+# Add to PATH (replace <UVX_BIN_DIR>)
+export PATH="<UVX_BIN_DIR>:$PATH"
 
-# Install Codex MCP (use full path!)
-claude mcp add codex -s user --transport stdio -- $(which uvx) --from git+https://github.com/GuDaStudio/codexmcp.git codexmcp
+# Install Codex MCP (use uvx from PATH or replace <UVX_PATH>)
+claude mcp add codex -s user --transport stdio -- uvx --from git+https://github.com/GuDaStudio/codexmcp.git codexmcp
 
 # Verify
 claude mcp list
@@ -301,6 +305,6 @@ claude mcp list
 If you encounter issues:
 1. Check the troubleshooting section above
 2. Verify all prerequisites are met
-3. Ensure you're using full paths to `uvx`
+3. Ensure `uvx` is on PATH (or substitute the full path)
 4. Check Claude Code and Codex CLI versions
 5. Restart Claude Code after configuration changes

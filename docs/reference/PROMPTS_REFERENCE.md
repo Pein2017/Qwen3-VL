@@ -1,5 +1,14 @@
 # Exact Prompts for BBU/RRU Dense and Summary Modes
 
+Status: Active
+Scope: Authoritative prompt text for BBU/RRU dense-caption and summary modes, aligned with current template code.
+Owners: Training + Runtime
+Last updated: 2026-01-02
+Related: [data/BBU_RRU_BUSINESS_KNOWLEDGE.md](../data/BBU_RRU_BUSINESS_KNOWLEDGE.md), [data/DATA_JSONL_CONTRACT.md](../data/DATA_JSONL_CONTRACT.md), [reference/stage-B-knowledge-Chinese.md](stage-B-knowledge-Chinese.md), [training/REFERENCE.md](../training/REFERENCE.md)
+
+Source of truth: `src/config/prompts.py` and `src/prompts/` (summary/core + Stage-A summary builders). This document mirrors those definitions for review and operations.
+Note: Training JSONL stores `poly`/`line` as flat lists; `src/datasets/builders/jsonlines.py` formats them into paired lists (`[[x,y], ...]`) in the assistant text. The prompts below describe the paired output format.
+
 ## 1. BBU_DENSE
 
 ### System Prompt:

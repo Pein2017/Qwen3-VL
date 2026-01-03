@@ -1,5 +1,11 @@
 # Stage-A & Stage-B: Group Quality Control Pipeline
 
+Status: Active
+Scope: Business overview of the Stage-A → Stage-B pipeline and decision governance.
+Owners: Runtime + Business
+Last updated: 2026-01-02
+Related: [runtime/STAGE_A_RUNTIME.md](STAGE_A_RUNTIME.md), [runtime/STAGE_B_RUNTIME.md](STAGE_B_RUNTIME.md), [reference/stage-B-knowledge-Chinese.md](../reference/stage-B-knowledge-Chinese.md)
+
 Business briefing on the two-stage quality control pipeline that underpins production-grade group verdicts.
 
 **Stage‑1 (Stage‑A)** focuses on **single-image basic object recognition** (including rare/long-tail items) and produces structured evidence per image.
@@ -8,7 +14,7 @@ Business briefing on the two-stage quality control pipeline that underpins produ
 
 **Audience**: Quality operations leads, production planners, mission owners, compliance partners.
 
-**Further technical reading**: `./STAGE_A_RUNTIME.md`, `./STAGE_B_RUNTIME.md`, and `openspec/changes/2025-11-03-adopt-training-free-stage-b/`.
+**Further technical reading**: [runtime/STAGE_A_RUNTIME.md](STAGE_A_RUNTIME.md), [runtime/STAGE_B_RUNTIME.md](STAGE_B_RUNTIME.md), and [reference/DIAGNOSIS_AND_REVIEW.md](../reference/DIAGNOSIS_AND_REVIEW.md).
 
 ---
 
@@ -171,7 +177,7 @@ Ensure downstream teams understand schema stability commitments; breaking change
 ## 10. Support & Further Reading
 
 - Technical operations guide: `./STAGE_B_RUNTIME.md`
-- Prompt templates & schema: `configs/prompts/`, `src/prompts/summary_profiles.py`, `src/prompts/domain_packs.py`, `src/prompts/stage_a_summary.py`, `src/prompts/stage_b_verdict.py`, `src/stage_b/sampling/prompts.py`
+- Prompt templates & schema: `configs/prompts/` (`stage_b_rule_search_proposer_prompt.txt`, `stage_b_reflection_prompt.txt`, `stage_b_reflection_ops_prompt.txt`, `stage_b_reflection_decision_prompt.txt`), `src/prompts/summary_profiles.py`, `src/prompts/domain_packs.py`, `src/prompts/stage_a_summary.py`, `src/prompts/stage_b_verdict.py`, `src/stage_b/sampling/prompts.py`
 - Reflection change log & rationale: `openspec/changes/2025-11-03-adopt-training-free-stage-b/`
 - Visualization utilities for QA spot checks: `vis_tools/`
 

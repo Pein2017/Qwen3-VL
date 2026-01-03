@@ -1,5 +1,11 @@
 # Qwen3‑VL Training Playbook
 
+Status: Active
+Scope: Practical training runbook and configuration checklist.
+Owners: Training
+Last updated: 2026-01-02
+Related: [REFERENCE.md](REFERENCE.md), [data/DATA_AND_DATASETS.md](../data/DATA_AND_DATASETS.md), [reference/PROMPTS_REFERENCE.md](../reference/PROMPTS_REFERENCE.md)
+
 ## Training
 
 ### Training Essentials
@@ -14,7 +20,7 @@
 ```yaml
 # Always set these
 model:
-  model: /path/to/Qwen3-VL-4B-Instruct
+  model: path/to/Qwen3-VL-4B-Instruct
 template:
   template: qwen3_vl
   max_length: 4096           # Or use global_max_length
@@ -42,14 +48,16 @@ sft.prepare_model(...)
 ### Config catalog (Dec 2025)
 
 - `configs/base.yaml` — Non-tunable runtime defaults only (dtype, attention impl, template); no hyperparameters live here.
-- `configs/stage_1/{lora.yaml,full_with_kd.yaml}` — Single-domain BBU recipes (LoRA or full) with GKD monitor
-- `configs/dlora/*.yaml` — Core SFT/LoRA recipes; all hyperparameters (LR groups, freeze/DoRA targets, augmentations, dataset placeholders) are defined here.
-- `configs/fusion_train/*.yaml` — Fusion variants that only turn on `custom.fusion_config`, inheriting every other setting from `dlora/sft_base.yaml`.
-- `configs/1024/*.yaml` — High-res fusion variants that only swap in 1024px dataset paths on top of `configs/fusion_train/sft_base.yaml`.
-- `configs/dataset_mix/*.yaml` — Offline fusion builder configs for `scripts/fuse_datasets.py`
-- `configs/summary.yaml` — Summary-only training mode
+- `configs/prompts/*.txt` — Stage-B reflection and rule_search prompt templates (proposer/reflection/ops/decision).
+- `configs/fusion_train/sft_base.yaml` — Core multi-domain DoRA/LoRA recipe (extends `configs/base.yaml`); defines training hyperparameters, augmentation defaults, and token-type metrics.
+- `configs/fusion_train/bbu_rru_dense_new_schema_1024.yaml` — Dense fusion run; sets `custom.fusion_config` to `configs/dataset_mix/bbu_rru_dense_new_schema_1024.yaml`.
+- `configs/fusion_train/bbu_rru_summary_new_schema_1024.yaml` — Summary fusion run; sets `custom.fusion_config` to `configs/dataset_mix/bbu_rru_summary_new_schema_1024.yaml` and summary-specific augmentation.
+- `configs/grpo/summary_grpo_base.yaml` — Summary GRPO base (extends `configs/fusion_train/sft_base.yaml`, uses `configs/dataset_mix/bbu_rru_summary_grpo_new_schema_1024.yaml`).
+- `configs/grpo/summary_grpo_server.yaml` — vLLM server-mode override for GRPO.
+- `configs/dlora/distill.yaml` — Stage-B verdict distillation SFT (text-only ChatML), uses `configs/dataset_mix/stage_b_distill.yaml`.
+- `configs/dataset_mix/*.yaml` — Offline fusion builder configs for `scripts/fuse_datasets.py` (dense, summary, GRPO-only summary, Stage-B distill).
 - `configs/stage_b/*.yaml` — Stage-B runtime configs (bbu_*.yaml for entry configs)
-- Upstream data for these configs is normally produced by the annotation converter (`data_conversion/convert_dataset.sh`, see `docs/data/DATA_PREPROCESSING_PIPELINE.md`) or by public converters in `public_data/`. Ensure converted JSONL matches `docs/data/DATA_JSONL_CONTRACT.md` before training.
+- Upstream data for these configs is normally produced by the annotation converter (`data_conversion/convert_dataset.sh`, see `../data/DATA_PREPROCESSING_PIPELINE.md`) or by public converters in `public_data/`. Ensure converted JSONL matches `../data/DATA_JSONL_CONTRACT.md` before training.
 
 ### Training Modes
 
@@ -97,7 +105,7 @@ training:
 ```yaml
 # Refine language while preserving alignment
 model:
-  model: /path/to/base/Qwen3-VL-4B-Instruct
+  model: path/to/base/Qwen3-VL-4B-Instruct
 
 tuner:
   train_type: lora
@@ -105,7 +113,7 @@ tuner:
   freeze_llm: false                 # Train LLM
   freeze_vit: true                  # Keep ViT frozen
   freeze_aligner: false             # Train aligner
-  resume_from_checkpoint: /path/to/stage1/checkpoint-XXX
+  resume_from_checkpoint: path/to/stage1/checkpoint-XXX
 
 training:
   num_train_epochs: 2
@@ -122,11 +130,11 @@ training:
 
 Use Generalized Knowledge Distillation (GKD) when dense-caption SFT starts hallucinating away from the base checkpoint.
 
-- **Activation**: switch to the GKD overlays (`configs/stage_1/full_with_kd.yaml`, `configs/stage_1/lora.yaml`) or the fusion variants under `configs/fusion_train/*gkd*.yaml`. They inherit the vanilla stage configs and only add:
+- **Activation**: apply the following overlay to a fusion training config under `configs/fusion_train/` (no preset GKD overlays are tracked in-tree). The overlay only adds:
   ```yaml
   rlhf:
     rlhf_type: gkd
-    teacher_model: /abs/path/to/base/Qwen3-VL-4B-Instruct
+    teacher_model: path/to/base/Qwen3-VL-4B-Instruct
     beta: 0.5        # KL weight
     sft_alpha: 0.3   # CE mix-in weight
     seq_kd: true
@@ -143,7 +151,7 @@ Use Generalized Knowledge Distillation (GKD) when dense-caption SFT starts hallu
 
 Use GRPO to stabilize summary outputs (two-line header + JSON for BBU/RRU, single-line `无关图片` for irrelevant).
 
-- **Activation**: start from `configs/grpo/summary_grpo_base.yaml` (inherits `configs/fusion_train/sft_base.yaml` and exposes checkpoint/LR/epoch knobs) or `configs/fusion_train/bbu_rru_summary_grpo_new_schema_1024.yaml` for a concrete fused run.
+- **Activation**: start from `configs/grpo/summary_grpo_base.yaml` (extends `configs/fusion_train/sft_base.yaml` and uses `configs/dataset_mix/bbu_rru_summary_grpo_new_schema_1024.yaml`), or use `configs/grpo/summary_grpo_server.yaml` for vLLM server mode.
 - **Reward funcs** (summary mode):
   - Core contract + safety: `summary.format` (irrelevant must be single-line `无关图片`), `summary.header`, `summary.strict` (penalize extra lines / wrong header), `summary.parse` (JSON parse penalty).
   - Hard JSON correctness: `summary.no_dup_keys` (hard-penalize duplicate JSON keys, including nested dicts).
@@ -212,7 +220,7 @@ custom:
 - **Effect**: anchors student vision/aligner activations to the frozen teacher while leaving KL + CE to supervise the language tower.
 - **Metrics**: trainer logs `train/vision_kd_loss` / `eval/vision_kd_loss` (post-weight) so you can monitor the regularizer alongside `llm_kd_loss` and `sft_loss` contributions.
 - **Images only**: batches without `pixel_values` automatically skip the term; no special handling is required for summary-only validation shards.
-- **Preset overlay**: `configs/fusion_train/last_6.yaml` ships with visual KD enabled; use it as the starting point for experiments (see other `*gkd*` variants for alternative targets).
+- **Preset overlay**: create a small overlay under `configs/fusion_train/` when enabling visual KD; keep it limited to `custom.visual_kd` so it can be layered on top of `sft_base.yaml`.
 
 #### Forward-only KD (recommended for domain migration)
 
@@ -221,7 +229,7 @@ Use this when you want CE to drive adaptation while KL lightly anchors logits to
 ```yaml
 rlhf:
   rlhf_type: gkd
-  teacher_model: /abs/path/to/base/Qwen3-VL-4B-Instruct
+  teacher_model: path/to/base/Qwen3-VL-4B-Instruct
   sft_alpha: 1.0   # CE dominates (domain learning)
   beta: 0.1        # light KL anchoring
   seq_kd: false    # no teacher sampling
@@ -242,7 +250,7 @@ Notes:
 - `train/llm_kd_loss` steady or slowly decreasing → healthy anchoring.
   - `train/sft_loss` aligns with prior SFT runs → no regression.
 - `eval/llm_kd_loss` jump → teacher/template mismatch (fix tokenizer/template).
-- **Smoke Test**: set `custom.sample_limit: 32` and `training.save_steps: 5` in a temporary overlay, then run `python -m src.sft --config configs/stage_1/full_with_kd.yaml`. Verify `logging.jsonl` includes `train/llm_kd_loss`, `train/vision_kd_loss`, `train/sft_loss`, and the output directory writes checkpoints.
+- **Smoke Test**: set `custom.sample_limit: 32` and `training.save_steps: 5` in a temporary overlay, then run `python -m src.sft --config configs/fusion_train/<gkd-overlay>.yaml` (create the overlay by layering the GKD block on top of `configs/fusion_train/sft_base.yaml`). Verify `logging.jsonl` includes `train/llm_kd_loss`, `train/vision_kd_loss`, `train/sft_loss`, and the output directory writes checkpoints.
 
 ### Packing
 
@@ -414,8 +422,8 @@ ms-swift extracts media via `item.get(item['type'])`, so the value key must matc
 ### Upstream internals (ms-swift, HF Qwen3‑VL)
 
 - ms‑swift SFT/LoRA integration
-  - `prepare_adapter(...)` builds LoRA config from `TunerArguments` and applies adapters via `Swift.prepare_model(...)`:
-```148:171:/data/ms-swift/swift/llm/train/tuner.py
+  - `prepare_adapter(...)` builds LoRA config from `TunerArguments` and applies adapters via `Swift.prepare_model(...)` (source: `swift/llm/train/tuner.py`):
+```python
 def prepare_adapter(args: TrainArguments, model, *, template=None, train_dataset=None, task_type=None):
     from swift.tuners import (AdaLoraConfig, AdapterConfig, BOFTConfig, LLaMAProConfig, LongLoRAModelType, LoraConfig,
                               LoRAConfig, ReftConfig, Swift, VeraConfig)
@@ -441,7 +449,8 @@ def prepare_adapter(args: TrainArguments, model, *, template=None, train_dataset
             logger.info(f'lora_config: {lora_config}')
 ```
 - `get_target_modules` resolves `'all-linear'` to an exact regex for multimodal modules honoring freeze flags:
-```92:106:/data/ms-swift/swift/llm/train/tuner.py
+  - Source: `swift/llm/train/tuner.py`
+```python
 def get_target_modules(args, model) -> Union[str, List[str]]:
     """Replace all-linear to actual modules"""
     model_meta = model.model_meta
@@ -474,8 +483,8 @@ def get_target_modules(args, model) -> Union[str, List[str]]:
     target_parameters: []
   ```
   This keeps DoRA and dropout working because it stays on the module-target path.
-  - Freeze knobs live in `TunerArguments` (defaults shown):
-```105:114:/data/ms-swift/swift/llm/argument/tuner_args.py
+  - Freeze knobs live in `TunerArguments` (defaults shown; source: `swift/llm/argument/tuner_args.py`):
+```python
 # lora or full
 freeze_llm: bool = False
 freeze_vit: bool = True
@@ -487,8 +496,8 @@ modules_to_save: List[str] = field(default_factory=list)
 ```
 
 - ms‑swift media extraction (strict key contract)
-  - Content items must use matching keys: `{"type":"image","image":...}`; `_url` suffix is normalized, and the value is taken via `item.get(item['type'])`.
-```240:254:/data/ms-swift/swift/llm/template/template_inputs.py
+  - Content items must use matching keys: `{"type":"image","image":...}`; `_url` suffix is normalized, and the value is taken via `item.get(item['type'])` (source: `swift/llm/template/template_inputs.py`).
+```python
 for item in content:
     key: str = item['type']
     value = item.get(key)
@@ -507,8 +516,8 @@ for item in content:
 ```
 
 - HF transformers Qwen3‑VL internals
-  - Placeholder expansion in the processor scales `<|image_pad|>` by the image grid and merge size:
-```185:195:/root/miniconda3/envs/ms/lib/python3.12/site-packages/transformers/models/qwen3_vl/processing_qwen3_vl.py
+  - Placeholder expansion in the processor scales `<|image_pad|>` by the image grid and merge size (source: `transformers/models/qwen3_vl/processing_qwen3_vl.py`):
+```python
 text = text.copy()  # below lines change text in-place
 if image_grid_thw is not None:
     merge_length = self.image_processor.merge_size**2
@@ -521,7 +530,8 @@ if image_grid_thw is not None:
         text[i] = text[i].replace("<|placeholder|>", self.image_token)
 ```
   - Model replaces special tokens with visual embeddings via `masked_scatter`:
-```1137:1144:/root/miniconda3/envs/ms/lib/python3.12/site-packages/transformers/models/qwen3_vl/modeling_qwen3_vl.py
+  - Source: `transformers/models/qwen3_vl/modeling_qwen3_vl.py`
+```python
 if pixel_values is not None:
     image_embeds, deepstack_image_embeds = self.get_image_features(pixel_values, image_grid_thw)
     image_embeds = torch.cat(image_embeds, dim=0).to(inputs_embeds.device, inputs_embeds.dtype)
@@ -626,7 +636,7 @@ data:
   dataset: ["dummy"]  # Required by ms-swift TrainArguments validation
 ```
 
-**Why needed:** ms-swift validates non-empty dataset during `TrainArguments.__post_init__()` before our custom dataset loading. The placeholder satisfies validation but is never used. See `data/DATA_AND_DATASETS.md` for details.
+**Why needed:** ms-swift validates non-empty dataset during `TrainArguments.__post_init__()` before our custom dataset loading. The placeholder satisfies validation but is never used. See `../data/DATA_AND_DATASETS.md` for details.
 
 ### Issue: "Expected all tensors to be on the same device"
 

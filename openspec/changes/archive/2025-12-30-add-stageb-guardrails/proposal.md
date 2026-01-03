@@ -20,7 +20,7 @@
 ## 影响面
 - 代码：`src/stage_b/sampling/prompts.py`, `signals.py`, `scoring/selection.py`, `reflection/engine.py`（去除硬规则，强化 prompt 与不确定性/冲突标记流）。
 - 数据/配置：无新增外部依赖；可复用 guidance 与现有 Stage-A 摘要。
-- 文档：`docs/STAGE_B_RUNTIME.md`, `docs/stage-B-knowledge-Chinese.md` 更新护栏与人工复核策略。
+- 文档：`docs/runtime/STAGE_B_RUNTIME.md`, `docs/reference/stage-B-knowledge-Chinese.md` 更新护栏与人工复核策略。
 
 ## 风险与缓解
 - 过度依赖 LLM：保持 label=fail 兜底和不确定提示，必要时可加轻量警告而非强制规则。

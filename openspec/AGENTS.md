@@ -15,9 +15,9 @@ Instructions for AI coding assistants using OpenSpec for spec-driven development
 ## Documentation Expectations
 
 - Keep the doc base in sync with code changes. Use `docs/README.md` as the directory ↔ doc map (e.g., `src/` → `docs/training/REFERENCE.md`, `data_conversion/` → `docs/data/DATA_AND_DATASETS.md`, `public_data/` → `docs/data/PUBLIC_DATA.md`, `scripts/` → `docs/training/REFERENCE.md` + `docs/runtime/STAGE_A_STAGE_B.md`).
-- When touching Stage-A/B pipelines (`src/stage_a`, `src/stage_b`, `configs/stage_b`, `scripts/stage_*`), update both `docs/training/REFERENCE.md` (technical runbook) and `docs/runtime/STAGE_A_STAGE_B.md` / `stage-B-knowledge-Chinese.md` (business guidance).
+- When touching Stage-A/B pipelines (`src/stage_a`, `src/stage_b`, `configs/stage_b`, `scripts/stage_*`), update both `docs/training/REFERENCE.md` (technical runbook) and `docs/runtime/STAGE_A_STAGE_B.md` / `docs/reference/stage-B-knowledge-Chinese.md` (business guidance).
 - Changes to conversion, datasets, or augmentation must update `docs/data/DATA_AND_DATASETS.md` and/or `docs/data/DATA_AUGMENTATION.md` plus any taxonomy JSONs referenced there.
-- New CLI entrypoints or script behaviors go into `docs/README.md` (script table) and the relevant deep-dive doc.
+- New CLI entrypoints or script behaviors go into `scripts/README.md` (inventory) and the relevant deep-dive doc; keep `docs/README.md` updated with the index.
 - If instructions conflict, pause and ask for clarification before editing specs or docs.
 
 ## Three-Stage Workflow

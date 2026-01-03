@@ -1,12 +1,18 @@
 # BBU / RRU 业务知识与数据结构速查（Quick Index）
 
+Status: Active
+Scope: BBU/RRU domain taxonomy, attributes, and schema conventions for prompts and Stage-A/B rules.
+Owners: Data Pipeline + Runtime
+Last updated: 2026-01-02
+Related: [DATA_JSONL_CONTRACT.md](DATA_JSONL_CONTRACT.md), [reference/PROMPTS_REFERENCE.md](../reference/PROMPTS_REFERENCE.md), [reference/stage-B-knowledge-Chinese.md](../reference/stage-B-knowledge-Chinese.md)
+
 本文面向**数据生产 / Prompt 设计 / Stage-A/B 规则**等场景，基于数据集样本中出现的字段与标签，抽取可快速索引的**业务背景 + 类别/属性词表 + 结构约定**。
 
 **数据来源（本次归纳的直接证据）**：
 - BBU：`data_new_schema/bbu_full_1024_poly_new_schema/all_samples.jsonl`（2745 张图，31333 个 objects；全部样本含 `summary`）
 - RRU：`data_new_schema/rru_full_1024_poly_new_schema/all_samples.jsonl`（1502 张图，4398 个 objects；全部样本含 `summary`）
 
-> 更通用的“全局 JSONL 合约”见：`docs/data/DATA_JSONL_CONTRACT.md`；本文只补齐 BBU/RRU 的业务语义与索引视角。
+> 更通用的“全局 JSONL 合约”见：[docs/data/DATA_JSONL_CONTRACT.md](DATA_JSONL_CONTRACT.md)；本文只补齐 BBU/RRU 的业务语义与索引视角。
 
 ---
 

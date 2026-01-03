@@ -1,8 +1,14 @@
 # Data & Datasets
 
+Status: Active
+Scope: Dataset schema, builders, preprocessing, and conversion/fusion integration.
+Owners: Data Pipeline + Training
+Last updated: 2026-01-02
+Related: [DATA_JSONL_CONTRACT.md](DATA_JSONL_CONTRACT.md), [DATA_PREPROCESSING_PIPELINE.md](DATA_PREPROCESSING_PIPELINE.md), [UNIFIED_FUSION_DATASET.md](UNIFIED_FUSION_DATASET.md)
+
 Comprehensive guide to data format, schema, dataset builders, and preprocessing pipeline.
 
-**Source of truth**: `src/datasets/`, `src/datasets/data_details.md`, `src/datasets/geometry.py`
+**Source of truth**: `src/datasets/`, `src/datasets/changelog.md`, `src/datasets/geometry.py`
 
 **Raw annotation intake** is covered in `DATA_PREPROCESSING_PIPELINE.md` (how `data_conversion/` produces the train/val JSONL that feed this pipeline).
 
@@ -40,7 +46,7 @@ Each record in your training data follows this structure:
 **Key Rules**:
 - Image paths resolve relative to JSONL file directory (absolute paths also allowed)
 - Exactly ONE geometry field per object (`bbox_2d`, `poly`, or `line`)
-- For polygons: `poly` is a flat, even-length list (≥6 values / ≥3 points). `poly_points` is optional metadata but should match `len(poly) / 2` when present.
+- For polygons: `poly` is a flat, even-length list (≥8 values / ≥4 points; current runtime validation). `poly_points` is optional metadata but should match `len(poly) / 2` when present.
 - For lines: `line_points` should equal number of coords ÷ 2 (optional but recommended; validation falls back to the coord count when absent)
 - Coordinates are in pixel space with original `width`/`height`
 
@@ -49,7 +55,7 @@ Each record in your training data follows this structure:
 | Type | Format | Use Case |
 |------|--------|----------|
 | **bbox_2d** | `[x1, y1, x2, y2]` | Axis-aligned boxes |
-| **poly** | `[x1,y1, x2,y2, x3,y3, ...]` | Arbitrary polygons (even-length list, ≥3 points). Use `poly_points` to record vertex count. |
+| **poly** | `[x1,y1, x2,y2, x3,y3, ...]` | Polygons (even-length list, ≥4 points). Use `poly_points` to record vertex count. |
 | **line** | `[x1,y1, ..., xn,yn]` + `line_points: N` | Polylines (cables, fibers) |
 
 ### Coordinate Normalization
@@ -116,7 +122,7 @@ BBU/RRU converters normalize fixed (non‑free‑text) values to compact forms. 
 #### RRU Summary Guidance
 
 - RRU summaries are built from key=value descs; `站点距离` appears as `类别=站点距离,站点距离=<int>` in desc (current exports yield digits) and becomes a `统计` entry with key `站点距离`.
-- Train a summary-only stream against RRU data via `configs/summary_rru.yaml`, which inherits the BBU summary settings but points to `data/rru_full_1024_poly` and the new model run directory.
+- Train summary-mode runs via `configs/fusion_train/bbu_rru_summary_new_schema_1024.yaml` (dataset mix in `configs/dataset_mix/bbu_rru_summary_new_schema_1024.yaml`). To focus on RRU only, edit the mix to keep just the RRU summary stream.
 
 **Example**: `{"dataset": "BBU", "objects_total": 2, "统计": [{"类别": "BBU设备", "品牌": {"华为": 1}}, {"类别": "标签", "文本": {"NR900-BBU": 1}}]}`
 
@@ -139,7 +145,7 @@ data:
 - The `["dummy"]` placeholder satisfies the validation but is never actually used
 - Removing this will cause: `ValueError: self.dataset: [], self.cached_dataset: []. Please input the training dataset.`
 
-**Source**: `/data/ms-swift/swift/llm/argument/train_args.py:162-164`
+**Source**: ms-swift TrainArguments validation (see [docs/ops/UPSTREAM_DEPENDENCIES.md](../ops/UPSTREAM_DEPENDENCIES.md)).
 
 ### Architecture Overview
 
@@ -169,8 +175,8 @@ JSONL → DenseCaptionDataset → Collator → Trainer
 **Configuration**:
 ```yaml
 custom:
-  train_jsonl: /path/to/train.jsonl
-  val_jsonl: /path/to/val.jsonl
+  train_jsonl: path/to/train.jsonl
+  val_jsonl: path/to/val.jsonl
   use_summary: false                # true → summary-only mode
   emit_norm: norm1000              # Coordinate format in text
   # fusion configs: each target/source can set mode: dense|summary (alias use_summary) to override this default
@@ -195,7 +201,7 @@ If your source is a human-annotation export, start with the intake guide (`./DAT
 - **Fusion tooling**:
   - `scripts/fuse_datasets.py` plus `src/datasets/fusion.py` can pre-build fused JSONL based on a YAML config (target dataset + auxiliary sources). Useful when you want deterministic sampling instead of streaming fusion.
 - **Visualization**:
-  - `vis_tools/vis_augment_compare.py` and friends overlay objects/summaries to validate augmentation and JSONL integrity. See `vis_tools/README_CROP_VIS.md`.
+- `vis_tools/vis_augment_compare.py` and friends overlay objects/summaries to validate augmentation and JSONL integrity. See `../../vis_tools/README_CROP_VIS.md`.
 
 ## Multi-Dataset Fusion
 
@@ -225,7 +231,7 @@ For summary-mode SFT regularization (reduce hallucinations on out-of-domain imag
 
 - Generate the JSONL from a folder of JPEGs (EXIF-aware width/height) and keep the global contract by emitting a single dummy full-frame bbox per image:
   - `conda run -n ms python scripts/build_irrelevant_summary_jsonl.py --images-dir data/irrelevant_summary/images --output-jsonl data/irrelevant_summary/train.jsonl`
-- Reference it as an additional **target** (target ratios scale by the dataset's own pool size; `ratio: 1` means each image appears once per epoch). See `configs/dataset_mix/summary_lang_chat_0p2.yaml` for a concrete example.
+- Reference it as an additional **target** (target ratios scale by the dataset's own pool size; `ratio: 1` means each image appears once per epoch). See `configs/dataset_mix/bbu_rru_summary_new_schema_1024.yaml` for a concrete example.
 
 Example fusion config:
 
@@ -233,20 +239,20 @@ Example fusion config:
 target:
   dataset: bbu
   params:
-    train_jsonl: /data/bbu/train.jsonl
-    val_jsonl: /data/bbu/val.jsonl
+    train_jsonl: data/bbu/train.jsonl
+    val_jsonl: data/bbu/val.jsonl
 sources:
   - dataset: coco
     ratio: 0.1
     params:
-      train_jsonl: /data/coco/train.jsonl
+      train_jsonl: data/coco/train.jsonl
       user_prompt: "List objects in JSON."        # optional override
       max_objects_per_image: 48                  # optional cap override
       seed: 123                                  # optional per-source seed
   - dataset: objects365
     ratio: 0.05
     params:
-      train_jsonl: /data/objects365/train.jsonl
+      train_jsonl: data/objects365/train.jsonl
 ```
 
 Runtime loader: `custom.fusion_config` always uses `FusionCaptionDataset` (alias `UnifiedFusionDataset`) with a single shared template. For deterministic static mixes, you can still precompute fused JSONLs with `scripts/fuse_datasets.py --config <path>`.
@@ -457,9 +463,5 @@ Before training:
 - **Augmentation**: [DATA_AUGMENTATION.md](DATA_AUGMENTATION.md) - Geometry-aware transforms
 - **Fusion**: [UNIFIED_FUSION_DATASET.md](UNIFIED_FUSION_DATASET.md) - Multi-source mixing and policies
 - **Training**: [REFERENCE.md](../training/REFERENCE.md#training) - Full training guide
-- **Architecture**: [README.md](../README.md#architecture-overview) - End-to-end pipeline
-- **Upstream Models**: [UPSTREAM_DEPENDENCIES.md](../platform/UPSTREAM_DEPENDENCIES.md) - HF Qwen3-VL + ms-swift background
-
----
-
-**Last Updated**: 2025-12-31 (RRU domain context + data doc index links)
+- **Architecture**: [Architecture overview](../overview/ARCHITECTURE.md) - End-to-end pipeline
+- **Upstream Models**: [UPSTREAM_DEPENDENCIES.md](../ops/UPSTREAM_DEPENDENCIES.md) - HF Qwen3-VL + ms-swift background

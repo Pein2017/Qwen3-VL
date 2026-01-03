@@ -62,7 +62,7 @@ See [`docs/README.md`](docs/README.md) for navigation across the full manual.
 - [BBU/RRU Business Knowledge](docs/data/BBU_RRU_BUSINESS_KNOWLEDGE.md)
 - [Augmentation Guide](docs/data/DATA_AUGMENTATION.md)
 - [Training & Inference Reference](docs/training/REFERENCE.md)
-- [Upstream Dependencies](docs/platform/UPSTREAM_DEPENDENCIES.md)
+- [Upstream Dependencies](docs/ops/UPSTREAM_DEPENDENCIES.md)
 
 ## Contributing
 

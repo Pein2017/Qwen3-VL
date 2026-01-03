@@ -1,4 +1,4 @@
 # Moved
 
-See docs/ARCHITECTURE.md (Logging & callbacks) for the unified guidance.
+See docs/overview/ARCHITECTURE.md (Logging & callbacks) for the unified guidance.
 

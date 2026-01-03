@@ -1,5 +1,11 @@
 # Stage-B Diagnosis & Review (Rule-Search)
 
+Status: Active
+Scope: Rule-search diagnostics checklist and triage flow for Stage-B runs.
+Owners: Runtime
+Last updated: 2026-01-02
+Related: [runtime/STAGE_B_RUNTIME.md](../runtime/STAGE_B_RUNTIME.md), [runtime/STAGE_A_STAGE_B.md](../runtime/STAGE_A_STAGE_B.md)
+
 Stage‑B now runs **rule_search only**. Legacy selection/reflection diagnostics are removed; consult Git history if needed.
 
 ## Rule-search review checklist

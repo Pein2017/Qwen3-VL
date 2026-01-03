@@ -1,5 +1,11 @@
 # Data Augmentation Guide
 
+Status: Active
+Scope: Geometry-safe augmentation pipeline, operators, and configuration guidance.
+Owners: Data Pipeline
+Last updated: 2026-01-02
+Related: [DATA_AND_DATASETS.md](DATA_AND_DATASETS.md), [POLYGON_SUPPORT.md](POLYGON_SUPPORT.md), [overview/CHANGELOG.md](../overview/CHANGELOG.md)
+
 This document describes the robust geometry-preserving augmentation system for Qwen3-VL training.
 
 ## Overview
@@ -459,7 +465,7 @@ Under **axis-aligned affines** (flips, uniform scale):
 - Min/max envelope maintained
 
 ### Polygon Handling
-- Flat, even-length list (≥6 values / ≥3 points)
+- Flat, even-length list (≥8 values / ≥4 points; current runtime validation)
 - All vertices transformed by affine
 - Clipped to image bounds
 - After clipping the pipeline may simplify to stable corners (e.g., choose four representative points or a min-area rectangle) while preserving polygon orientation
@@ -713,9 +719,9 @@ class MyCustomBarrier(ImageAugmenter):
 
 ## References
 
-- **Proposal**: `openspec/changes/2025-10-27-robust-geometry-aug/proposal.md`
-- **Design Doc**: `openspec/changes/2025-10-27-robust-geometry-aug/design.md`
-- **Spec**: `openspec/changes/2025-10-27-robust-geometry-aug/specs/augmentation-geometry/spec.md`
+- **Proposal**: `openspec/changes/archive/2025-10-27-2025-10-27-robust-geometry-aug/proposal.md`
+- **Design Doc**: `openspec/changes/archive/2025-10-27-2025-10-27-robust-geometry-aug/design.md`
+- **Spec**: `openspec/changes/archive/2025-10-27-2025-10-27-robust-geometry-aug/specs/augmentation-geometry/spec.md`
 - **Tests**: `tests/test_augmentation_geometry.py`, `tests/augmentation/`
 
 ## Summary
@@ -910,5 +916,3 @@ If your config has `expand_to_fit_affine` before size-changing operations, move 
 - TL→BR ordering is enforced at training time, keeping captions aligned with spatial prompts.
 
 ---
-
-**Last Updated**: 2025-12-11 (refactor-augmentation-baseops)

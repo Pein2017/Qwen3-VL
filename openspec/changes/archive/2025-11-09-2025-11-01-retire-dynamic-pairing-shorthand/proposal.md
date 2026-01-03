@@ -24,7 +24,7 @@ status: draft
 - **Template & prompt alignment**
   - Refresh prompts/system instructions to reference the new structure (no `图片_{n}` tokens) and emphasize the expected JSON schema.
 - **Docs & tooling**
-  - Update `docs/REFERENCE.md`, `docs/DATA_AND_DATASETS.md`, and `src/README.md` to describe the simplified format.
+  - Update `docs/training/REFERENCE.md`, `docs/DATA_AND_DATASETS.md`, and `src/README.md` to describe the simplified format.
   - Adjust visualization or demo scripts that parse `图片_{n}`.
 - **Testing & telemetry**
   - Expand dataset/unit tests to ensure configs reject pairing and that builders emit the minimal structure.

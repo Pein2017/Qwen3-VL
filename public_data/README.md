@@ -130,7 +130,7 @@ custom:
   images_per_user_turn: 1
 ```
 - Templates in Qwen3-VL convert pixel coords to `norm1000`.
-- For multi-dataset fusion, see `openspec/changes/update-geometry-poly-fusion/design.md`.
+- For multi-dataset fusion, see `docs/data/UNIFIED_FUSION_DATASET.md`.
 
 ## Dataset Facts
 - LVIS v1.0: 1203 categories (long-tail: frequent/common/rare), ~100k train images, ~20k val, ~1.27M annotations.

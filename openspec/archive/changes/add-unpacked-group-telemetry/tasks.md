@@ -2,5 +2,5 @@
 - [ ] Keep `GroupedMetricsMixin` active without packing so it logs only `{dataset}_loss` and `{dataset}_token_acc` from those labels/lengths.
 - [ ] Derive dataset labels from metadata (`_fusion_source` → `dataset_name`) with no extra grouping key; treat domain mapping as target-by-default and gate source eval on presence of a `val` path.
 - [ ] Add unit/integ test covering non-packed per-dataset metrics (train) and target-only eval, plus source eval when a `val` path is provided.
-- [ ] Update documentation (docs/REFERENCE.md and TRAINING_PLAYBOOK.md) to explain the default-on behavior when packing is off, metric names, and how eval gating follows `val` paths.
+- [ ] Update documentation (docs/training/REFERENCE.md and TRAINING_PLAYBOOK.md) to explain the default-on behavior when packing is off, metric names, and how eval gating follows `val` paths.
 - [ ] Run `openspec validate add-unpacked-group-telemetry --strict`.

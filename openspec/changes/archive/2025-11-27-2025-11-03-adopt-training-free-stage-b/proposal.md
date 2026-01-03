@@ -47,7 +47,7 @@ References: `/references/youtu-agent` (README, train.py, main.py, math/web exper
 - Fully refactor `src/stage_b/`: remove legacy GRPO-only modules, rebuild the package around the training-free runner (dataset ingestion reuse, sampler, LLM reflection engine, pipeline class), and ensure every step validates prerequisites before touching the model. Preserve public API surface (`__init__`, `run_all`) by pointing to new implementations.
 - Extend configuration schemas under `src/config/` for mission rule files, sampler settings, verifier plugins, guidance hashes, and fail-fast toggles (primarily booleans that default to "on").
 - Provide an optional wrapper script (`scripts/stage_b_run.sh`) that instantiates the pipeline and calls `run_all()`; no multi-step CLI is required.
-- Update documentation (`docs/REFERENCE.md`, `docs/DATA_AND_DATASETS.md`, new how-to under `docs/`) to explain the training-free + reflection lifecycle, exception queue workflow, and how `StageBPipeline.run_all()` is invoked in automation.
+- Update documentation (`docs/training/REFERENCE.md`, `docs/DATA_AND_DATASETS.md`, new how-to under `docs/`) to explain the training-free + reflection lifecycle, exception queue workflow, and how `StageBPipeline.run_all()` is invoked in automation.
 - Add tests covering rule file validation, guidance hash generation, deterministic scoring + trust weighting, reflection application, exception queue writes, and export integrity.
 
 ## Non-Goals

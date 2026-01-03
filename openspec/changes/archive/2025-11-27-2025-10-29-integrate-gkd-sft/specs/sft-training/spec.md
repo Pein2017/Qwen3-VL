@@ -86,7 +86,7 @@
 - The documentation SHALL include a minimal YAML snippet that demonstrates the required `rlhf` keys and the custom trainer toggle for GKD overlays.
 
 #### Scenario: Reference doc snippet
-- GIVEN `docs/REFERENCE.md`
+- GIVEN `docs/training/REFERENCE.md`
 - WHEN reading the "KL Anchoring with GKD" section
 - THEN a YAML fragment is present showing the GKD keys (`rlhf_type`, `teacher_model`, `beta`, `sft_alpha`, `seq_kd`, `lmbda`, `max_completion_length`, `temperature`) and the custom `trainer_variant: gkd_monitor`
 
@@ -98,5 +98,5 @@
 
 #### Scenario: Domain migration without on-policy
 - GIVEN a downstream domain migration task where teacher equals the base model
-- WHEN reading the GKD section in `docs/REFERENCE.md`
+- WHEN reading the GKD section in `docs/training/REFERENCE.md`
 - THEN a YAML example with `seq_kd: false`, `lmbda: 0.0`, `sft_alpha: 1.0`, `beta: 0.1` is present with a note that generation knobs are inactive

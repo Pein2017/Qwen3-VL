@@ -1,3 +1,11 @@
+# Stage-B 业务知识与规则背景（中文）
+
+Status: Active
+Scope: Stage-B 业务背景、摘要规范、规则搜索与判定策略（中文）。
+Owners: Runtime + Business
+Last updated: 2026-01-02
+Related: [runtime/STAGE_A_STAGE_B.md](../runtime/STAGE_A_STAGE_B.md), [runtime/STAGE_B_RUNTIME.md](../runtime/STAGE_B_RUNTIME.md), [reference/PROMPTS_REFERENCE.md](PROMPTS_REFERENCE.md), [data/DATA_AND_DATASETS.md](../data/DATA_AND_DATASETS.md)
+
 ## 背景与目标
 
 通信工程竣工验收场景中，我们以 AI 辅助人工坐席进行工单审核。输入为一组与某个“任务/条目（mission）”相关的图片，输出为组级别的“审核通过/审核不通过”以及规范化的理由说明。整体采用“两阶段”流程：
@@ -24,7 +32,7 @@ Stage-B 现为“prompt-only”流程：推理输出**严格两行二分类**（
 - 几何约束：硬件采用 `poly/bbox_2d`，线缆采用 `line`；训练与推理链路保持几何与文本同步
 - 描述语义：desc 使用 `key=value` 逗号分隔；条件属性仅在父属性满足时出现；`备注` 为自由文本备注
 
-生产摘要（Stage-A与Stage-B共用）的格式规范见 `docs/data/DATA_AND_DATASETS.md`：
+生产摘要（Stage-A与Stage-B共用）的格式规范见 [data/DATA_AND_DATASETS.md](../data/DATA_AND_DATASETS.md)：
 - 单行 JSON 字符串；包含 `dataset/objects_total/统计`，`异常` 仅在非零时出现（BBU 额外含 `备注`，RRU 可含 `分组统计`）
 - `统计` 为类别+属性值计数（`{value: count}`），仅统计可见值，不输出缺失/需复核/遮挡
 - 无坐标数组；OCR 保留原文（去空格，保留 `-`/`/`），不可读写 `可读性=不可读`
@@ -39,7 +47,7 @@ Stage-B 现为“prompt-only”流程：推理输出**严格两行二分类**（
 - 准确定位关键物体并输出类型/属性/备注的层级结构
 - 在 `summary` 模式下弱化定位能力，面向生产输出要求的“单行摘要”
 
-训练与数据要点（详见 `docs/data/DATA_AND_DATASETS.md` 与 `docs/training/REFERENCE.md`）：
+训练与数据要点（详见 [data/DATA_AND_DATASETS.md](../data/DATA_AND_DATASETS.md) 与 [training/REFERENCE.md](../training/REFERENCE.md)）：
 - JSONL 记录包含图片、对象几何与可选的 `summary` 字段；几何在磁盘保持像素坐标，模板在编码时归一化
 - 必备占位配置：`data.dataset: ["dummy"]` 用于 ms‑swift 初始化校验；实际训练数据通过 `custom.train_jsonl` 提供
 - 模板自动插入视觉占位符，打包与增广均为几何感知，确保图文对齐
@@ -134,8 +142,8 @@ Stage‑B system prompt 不再包含领域提示；领域知识上移到 Stage�
 ## 生产推理与运行建议
 
 运行入口与配置：
-- 通过 `bash scripts/stage_b.sh` 或 `python -m src.stage_b.runner --config /abs/path/to/config.yaml --log-level debug` 运行
-- 关键配置项（见 `docs/training/REFERENCE.md` “Stage-B” 与仓库 `configs/stage_b/`）：
+- 通过 `bash scripts/stage_b.sh` 或 `python -m src.stage_b.runner --config path/to/config.yaml --log-level debug` 运行
+- 关键配置项（见 [training/REFERENCE.md](../training/REFERENCE.md) “Stage-B” 与仓库 [configs/stage_b/](../../configs/stage_b/)）：
   - stage_a_paths：Stage-A JSONL 路径列表
   - model：`model_name_or_path / torch_dtype / device_map`
   - rule_search：proposer 提示、train/eval pool、gate 参数、train/eval sampler
@@ -171,7 +179,7 @@ Stage‑B system prompt 不再包含领域提示；领域知识上移到 Stage�
 - 误放行控制：通过 **mission-scoped fail-first**（负项需与当前 `G0` 相关才触发）+ 安全约束（无通过证据则不通过）+ 多候选多数表决，把“人工 fail 而 AI pass”的风险压到最低；冲突样本通过 `conflict_flag` 路由给反思与排查，而不是简单用标签覆盖模型判定
 - 冲突/不确定反馈：`conflict_flag` 表示与历史标签矛盾；反思阶段默认尝试从错例中学习可泛化规则。
 - 指标退化监控：持续追踪 Label Match、误放行率、verdict/Reason 分布，异常时冻结 guidance 变更并回滚到最近的稳定快照
-- 词表与格式漂移：严守 `DATA_AND_DATASETS.md` 摘要规范；新增检查点须同步更新属性映射与摘要生成
+- 词表与格式漂移：严守 [data/DATA_AND_DATASETS.md](../data/DATA_AND_DATASETS.md) 摘要规范；新增检查点须同步更新属性映射与摘要生成
 
 ---
 
@@ -188,6 +196,6 @@ Stage‑B system prompt 不再包含领域提示；领域知识上移到 Stage�
 ## 附：与仓库文档的映射关系
 
 - 属性与层级：`data_conversion/hierarchical_attribute_mapping.json`
-- 数据与摘要规范：`docs/data/DATA_AND_DATASETS.md`
-- 训练与推理参考：`docs/training/REFERENCE.md`
-- 业务背景与双阶段关系：`docs/runtime/STAGE_A_STAGE_B.md`
+- 数据与摘要规范：[data/DATA_AND_DATASETS.md](../data/DATA_AND_DATASETS.md)
+- 训练与推理参考：[training/REFERENCE.md](../training/REFERENCE.md)
+- 业务背景与双阶段关系：[runtime/STAGE_A_STAGE_B.md](../runtime/STAGE_A_STAGE_B.md)

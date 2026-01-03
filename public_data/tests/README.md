@@ -55,7 +55,7 @@ bash tests/run_tests.sh
 ```
 
 ### ✅ Test 4: Qwen3-VL Format Compliance
-- 验证输出格式符合 DATA_AND_DATASETS.md 规范
+- 验证输出格式符合 `docs/data/DATA_AND_DATASETS.md` 规范
 - 检查必需字段：`images`, `objects`, `width`, `height`
 - 验证几何类型：`bbox_2d`, `poly`（N点多边形）
 - 验证 `poly_points` 字段一致性

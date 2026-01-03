@@ -1,10 +1,16 @@
 # Unified Fusion Dataset - Design and Implementation
 
+Status: Active
+Scope: Fusion dataset design, sampling policies, and metadata semantics.
+Owners: Data Pipeline + Training
+Last updated: 2026-01-02
+Related: [DATA_AND_DATASETS.md](DATA_AND_DATASETS.md), [DATA_JSONL_CONTRACT.md](DATA_JSONL_CONTRACT.md), [training/REFERENCE.md](../training/REFERENCE.md)
+
 ## Executive Summary
 
 This document describes the investigation, root cause analysis, and solution for the Out-Of-Memory (OOM) issue that occurred when training with fused datasets (BBU + LVIS) using GKD (Generalized Knowledge Distillation) with `llm_kd_weight > 0`.
 
-**Solution**: Replaced `MultiSourceFusionDataset` (which cloned templates) with `FusionCaptionDataset` (formerly `UnifiedFusionDataset`, single shared template with dynamic prompt selection) and later refined it to restore per-source policies (prompt priority, augmentation/curriculum gating, object caps, deterministic per-epoch resampling, optional source eval). Source JSONLs are assumed to come from the offline converters (`data_conversion/` for BBU/RRU, `public_data/` for LVIS/others) that already match `docs/data/DATA_JSONL_CONTRACT.md`.
+**Solution**: Replaced `MultiSourceFusionDataset` (which cloned templates) with `FusionCaptionDataset` (formerly `UnifiedFusionDataset`, single shared template with dynamic prompt selection) and later refined it to restore per-source policies (prompt priority, augmentation/curriculum gating, object caps, deterministic per-epoch resampling, optional source eval). Source JSONLs are assumed to come from the offline converters (`data_conversion/` for BBU/RRU, `public_data/` for LVIS/others) that already match [docs/data/DATA_JSONL_CONTRACT.md](DATA_JSONL_CONTRACT.md).
 
 **New (multi-target)**: Fusion now accepts multiple target datasets. Targets can optionally carry `ratio`; per-epoch quotas follow `quota_i = round(len_i * ratio_i)` with `ratio_i` defaulting to `1.0` (ratio < 1 downsamples, ratio > 1 upsamples with replacement; no ratios → full coverage). Source quotas are still `round(source_ratio * total_target_quota)` with optional per-source `sample_without_replacement` (uses unique draws when the quota fits in the pool, otherwise falls back to replacement deterministically).
 
@@ -231,12 +237,12 @@ The `FusionCaptionDataset` (alias `UnifiedFusionDataset`) is automatically used 
 
 ```yaml
 custom:
-  fusion_config: configs/dataset_mix/bbu_with_lvis.yaml
+  fusion_config: configs/dataset_mix/bbu_rru_dense_new_schema_1024.yaml
 ```
 
 #### Summary fusion + irrelevant negatives
 
-For summary-mode SFT, you can mix a small "irrelevant image" negative pool as an additional **target** stream (so `ratio` scales by that pool's own size). The default summary fusion config `configs/dataset_mix/summary_lang_chat_0p2.yaml` includes `irrelevant_summary` backed by `data/irrelevant_summary/train.jsonl` (built from `data/irrelevant_summary/images/*.jpg|*.jpeg`).
+For summary-mode SFT, you can mix a small "irrelevant image" negative pool as an additional **target** stream (so `ratio` scales by that pool's own size). The summary fusion config `configs/dataset_mix/bbu_rru_summary_new_schema_1024.yaml` includes `irrelevant_summary` backed by `data/irrelevant_summary/train.jsonl` (built from `data/irrelevant_summary/images/*.jpg|*.jpeg`).
 
 Generate and validate the JSONL:
 
@@ -320,8 +326,9 @@ if custom_config.fusion_config:
 
 - **Implementation**: `src/datasets/unified_fusion_dataset.py`
 - **Verification Script**: `check_mask_labels_simple.py`
-- **Fusion Config**: `configs/dataset_mix/bbu_with_lvis.yaml`
-- **Summary Fusion Config**: `configs/dataset_mix/summary_lang_chat_0p2.yaml`
+- **Fusion Config**: `configs/dataset_mix/bbu_rru_dense_new_schema_1024.yaml`
+- **Summary Fusion Config**: `configs/dataset_mix/bbu_rru_summary_new_schema_1024.yaml`
+- **Summary GRPO Fusion Config**: `configs/dataset_mix/bbu_rru_summary_grpo_new_schema_1024.yaml`
 - **Irrelevant JSONL Helper**: `scripts/build_irrelevant_summary_jsonl.py`
 - **Training Integration**: `src/sft.py`
 

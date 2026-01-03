@@ -15,7 +15,7 @@
 - Training entry `src/sft.py` (wiring, config parsing).
 - Datasets: `BaseCaptionDataset`, `FusionCaptionDataset` schedule/permutation and metadata for sample IDs.
 - Callbacks: new `HardSampleDynamicCallback` (token_acc tracking, epoch-end selection, schedule update) that aggregates on rank0 to stay DDP/DeepSpeed safe.
-- Config schema + docs (`docs/TRAINING_PLAYBOOK.md`, `docs/UNIFIED_FUSION_DATASET.md`), optional design note; mining applies to fusion target only.
+- Config schema + docs (`docs/training/TRAINING_PLAYBOOK.md`, `docs/UNIFIED_FUSION_DATASET.md`), optional design note; mining applies to fusion target only.
 
 ## Non-Goals
 - Changing model loss functions or adding new heads.

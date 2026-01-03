@@ -26,7 +26,7 @@
 2. **Feature capture**: register forward hooks on `model.model.visual` (final merger output) and its `deepstack_merger_list` modules for both student and teacher so we can reuse activations from the normal forward pass (no duplicate vision compute).
 3. **Loss computation**: when enabled, compute the chosen distance between teacher and student features for each requested target, normalize by token count, multiply by `weight`, and add to `total_loss`. Keep gradients on student only; teacher stays `no_grad`.
 4. **Telemetry**: append `train/vision_kd_loss`, `eval/vision_kd_loss` to the metrics aggregator. Ensure NaNs surface as warnings (consistent with existing KL logging).
-5. **Docs & Recipes**: add a Stage-3 overlay example showing how to activate the feature and document trade-offs in `docs/REFERENCE.md`.
+5. **Docs & Recipes**: add a Stage-3 overlay example showing how to activate the feature and document trade-offs in `docs/training/REFERENCE.md`.
 
 ## Validation Plan
 - Unit tests that run a tiny forward pass with synthetic multimodal batch to assert hooks fire, the loss is computed, and gradients flow to aligner parameters only.

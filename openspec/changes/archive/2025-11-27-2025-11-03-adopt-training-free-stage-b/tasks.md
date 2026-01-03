@@ -27,7 +27,7 @@
 ## Testing & Documentation
 
 - [x] **Add unit tests in `tests/stage_b/`**: Added unit tests for experience parsing logic (`test_experience_parsing.py`), simplified reflection action parsing (`test_reflection_parsing.py`), label_trust signal computation (`test_label_trust.py`), updated guidance repository schema (`test_guidance_repository.py`), and prompt formatting with numbered experiences (`test_prompt_formatting.py`). Added integration smoke test covering proposal accept/reject paths (`test_reflection_integration.py`).
-- [x] **Document the operator workflow in `docs/REFERENCE.md`**: Updated documentation to reflect numbered experiences format, simplified reflection workflow, and new schema terminology (step instead of version).
+- [x] **Document the operator workflow in `docs/training/REFERENCE.md`**: Updated documentation to reflect numbered experiences format, simplified reflection workflow, and new schema terminology (step instead of version).
 
 ## Additional Implementation Details
 

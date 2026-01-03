@@ -53,7 +53,7 @@ def validate_grpo_config(config: TrainingConfig) -> None:
     if reward_weights is not None and reward_funcs is None:
         raise ValueError("rlhf.reward_weights requires rlhf.reward_funcs")
 
-    if reward_funcs:
+    if reward_funcs is not None:
         legacy_used = [
             name for name in reward_funcs if name in LEGACY_SUMMARY_REWARD_NAMES
         ]

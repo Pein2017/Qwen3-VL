@@ -9,7 +9,7 @@ Stage-B SHALL rely on frozen checkpoints and orchestrated sampling rather than p
 ### Requirement: Stage-B SHALL emit reproducible verdict artifacts that satisfy existing downstream contracts.
 Stage-B SHALL emit deterministic verdict artifacts while preserving the established three-line format (verdict, rationale, confidence) and JSONL schema documented for downstream integrations, even when processing multiple epochs with shuffled inputs, and SHALL refuse to export when required metadata (signals, guidance step, reflection id) is missing.
 #### Scenario: Selection completes for a mission batch
-- When Stage-B selects final verdicts, then the system SHALL persist a deterministic selection record keyed by `group_id` (and epoch index when `epochs>1`), including the three-line response and supporting metadata (deterministic signals, provenance) so `docs/REFERENCE.md` workflows remain valid.
+- When Stage-B selects final verdicts, then the system SHALL persist a deterministic selection record keyed by `group_id` (and epoch index when `epochs>1`), including the three-line response and supporting metadata (deterministic signals, provenance) so `docs/training/REFERENCE.md` workflows remain valid.
 - The workflow SHALL provide an export step that writes JSONL artifacts under `{output.root}/{run_name}/{mission}/` with stable schema and configurable destination, without mutating prior runs when re-executed with the same seed and shuffle configuration.
 
 ### Requirement: Stage-B SHALL persist mission guidance and trajectory logs as fail-fast file artifacts for reuse.

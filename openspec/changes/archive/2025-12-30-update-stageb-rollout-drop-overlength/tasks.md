@@ -4,6 +4,6 @@
 - [x] Add strict prompt-length handling in reflection engine (`src/stage_b/reflection/engine.py`) for legacy reflection mode.
 - [x] Update all Stage-B configs (`configs/stage_b/*.yaml`) to set `train_sampler.max_prompt_tokens` and `eval_sampler.max_prompt_tokens` to 4096, keep `max_token_length: 12000`.
 - [x] Add/adjust logging to report overlength drops and prompt budgets.
-- [x] Update docs: `docs/training/REFERENCE.md`, `docs/runtime/STAGE_B_RUNTIME.md`, `docs/runtime/STAGE_A_STAGE_B.md`, `docs/stage-B-knowledge-Chinese.md`.
+- [x] Update docs: `docs/training/REFERENCE.md`, `docs/runtime/STAGE_B_RUNTIME.md`, `docs/runtime/STAGE_A_STAGE_B.md`, `docs/reference/stage-B-knowledge-Chinese.md`.
 - [ ] (If needed) Add a small unit test for overlength drop behavior.
 - [x] Run: `openspec validate update-stageb-rollout-drop-overlength --strict`.

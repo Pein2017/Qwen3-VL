@@ -1,0 +1,6 @@
+- [x] Review existing skills and doc map to ensure routing coverage aligns with `docs/README.md`.
+- [x] Create new `auto-context-router` skill with SKILL.md and `references/context_map.yaml`.
+- [x] Update router-facing skill descriptions to improve trigger coverage for complex feature work.
+- [x] Add a brief note in `docs/README.md` that the auto-context router uses its directory map as source of truth.
+- [x] Verify `stageb-guidance-audit` remains in Chinese (no translation of the skill body).
+- [x] Run `openspec validate add-auto-context-router --strict` and fix any issues.

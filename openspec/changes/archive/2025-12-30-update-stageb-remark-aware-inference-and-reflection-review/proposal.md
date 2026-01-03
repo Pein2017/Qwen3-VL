@@ -85,4 +85,4 @@
 ## 需要同步更新的文档（至少）
 - `docs/training/REFERENCE.md`：Stage‑B 运行/产物/护栏与反思‑need‑review 的数据流说明
 - `docs/runtime/STAGE_A_STAGE_B.md`：Stage‑A summary → Stage‑B 判定的协议与 fail‑first/备注处理策略
-- `docs/stage-B-knowledge-Chinese.md`：中文业务知识与“需复核备注”“待确认信号”“证据不足默认不通过”的解释
+- `docs/reference/stage-B-knowledge-Chinese.md`：中文业务知识与“需复核备注”“待确认信号”“证据不足默认不通过”的解释

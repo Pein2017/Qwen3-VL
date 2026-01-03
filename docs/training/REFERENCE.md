@@ -1,5 +1,11 @@
 # Training & Inference Reference
 
+Status: Active
+Scope: Detailed reference for training, inference, configs, and troubleshooting.
+Owners: Training + Runtime
+Last updated: 2026-01-02
+Related: [TRAINING_PLAYBOOK.md](TRAINING_PLAYBOOK.md), [runtime/STAGE_A_STAGE_B.md](../runtime/STAGE_A_STAGE_B.md), [reference/PROMPTS_REFERENCE.md](../reference/PROMPTS_REFERENCE.md)
+
 Comprehensive guide for training, inference, deployment, and advanced topics.
 
 **Source**: `src/sft.py`, `src/stage_a/`, `src/stage_b/`, `scripts/`, `configs/`
@@ -19,9 +25,9 @@ Comprehensive guide for training, inference, deployment, and advanced topics.
 ## Architecture & Implementation
 
 ### Inspection Pipeline (Stage‑1 → Stage‑2)
-- **Stage‑1 / Stage‑A (Basic Object Recognition)**: `src/stage_a/` emits per-image evidence/rare-object summaries used as inputs to Stage‑2. Runbook: `docs/runtime/STAGE_A_RUNTIME.md`.
-- **Stage‑2 / Stage‑B (Group Ticket Verification)**: `src/stage_b/` ingests Stage‑A JSONL + labels and runs **prompt-only rollouts** under a strict two-line binary contract (`Verdict: 通过|不通过` + `Reason: ...`; no third-state wording). Stage‑B only supports **rule_search** (reflection as rule proposer + large-scale rollout metric gating; produces `rule_candidates.jsonl`/`benchmarks.jsonl` + audit trails). No CriticEngine. Runbook: `docs/runtime/STAGE_B_RUNTIME.md` and business context in `docs/runtime/STAGE_A_STAGE_B.md`.
-- **Offline preprocessing (optional)**: `data_conversion/` normalizes annotation exports into train/val/tiny JSONL and QA reports. Guide: `docs/data/DATA_PREPROCESSING_PIPELINE.md`.
+- **Stage‑1 / Stage‑A (Basic Object Recognition)**: `src/stage_a/` emits per-image evidence/rare-object summaries used as inputs to Stage‑2. Runbook: [runtime/STAGE_A_RUNTIME.md](../runtime/STAGE_A_RUNTIME.md).
+- **Stage‑2 / Stage‑B (Group Ticket Verification)**: `src/stage_b/` ingests Stage‑A JSONL + labels and runs **prompt-only rollouts** under a strict two-line binary contract (`Verdict: 通过|不通过` + `Reason: ...`; no third-state wording). Stage‑B only supports **rule_search** (reflection as rule proposer + large-scale rollout metric gating; produces `rule_candidates.jsonl`/`benchmarks.jsonl` + audit trails). No CriticEngine. Runbook: [runtime/STAGE_B_RUNTIME.md](../runtime/STAGE_B_RUNTIME.md) and business context in [runtime/STAGE_A_STAGE_B.md](../runtime/STAGE_A_STAGE_B.md).
+- **Offline preprocessing (optional)**: `data_conversion/` normalizes annotation exports into train/val/tiny JSONL and QA reports. Guide: [data/DATA_PREPROCESSING_PIPELINE.md](../data/DATA_PREPROCESSING_PIPELINE.md).
 
 ### Source Code Layout
 
@@ -35,7 +41,7 @@ Comprehensive guide for training, inference, deployment, and advanced topics.
 - `src/datasets/builders/jsonlines.py` - `JSONLinesBuilder` (message formatting)
 - `src/datasets/preprocessors/` - Validation, augmentation preprocessing
 - `src/datasets/collators.py` - Tensor preparation (padding)
-- Canonical schema doc: `docs/data/DATA_JSONL_CONTRACT.md`
+- Canonical schema doc: [data/DATA_JSONL_CONTRACT.md](../data/DATA_JSONL_CONTRACT.md)
 
 **Geometry & Augmentation**:
 - `src/datasets/geometry.py` - Core geometry transforms (bbox, poly, line)
@@ -48,11 +54,11 @@ Comprehensive guide for training, inference, deployment, and advanced topics.
 - `src/callbacks/save_delay_callback.py` - `SaveDelayCallback` (checkpoint throttling)
 
 ### Doc ↔ Code Cross-References
-- **Stage‑1 inference**: `src/stage_a/` ↔ `docs/runtime/STAGE_A_RUNTIME.md`
-- **Stage‑2 verdict loop**: `src/stage_b/` ↔ `docs/runtime/STAGE_B_RUNTIME.md`, `docs/runtime/STAGE_A_STAGE_B.md`
-- **Data preprocessing**: `data_conversion/` ↔ `docs/data/DATA_PREPROCESSING_PIPELINE.md`, `docs/data/DATA_AND_DATASETS.md` (conversion section)
-- **Fusion dataset**: `src/datasets/unified_fusion_dataset.py` ↔ `docs/data/UNIFIED_FUSION_DATASET.md`
-- **Training & config**: `src/sft.py`, `src/config/` ↔ `docs/training/TRAINING_PLAYBOOK.md`
+- **Stage‑1 inference**: `src/stage_a/` ↔ [runtime/STAGE_A_RUNTIME.md](../runtime/STAGE_A_RUNTIME.md)
+- **Stage‑2 verdict loop**: `src/stage_b/` ↔ [runtime/STAGE_B_RUNTIME.md](../runtime/STAGE_B_RUNTIME.md), [runtime/STAGE_A_STAGE_B.md](../runtime/STAGE_A_STAGE_B.md)
+- **Data preprocessing**: `data_conversion/` ↔ [data/DATA_PREPROCESSING_PIPELINE.md](../data/DATA_PREPROCESSING_PIPELINE.md), [data/DATA_AND_DATASETS.md](../data/DATA_AND_DATASETS.md) (conversion section)
+- **Fusion dataset**: `src/datasets/unified_fusion_dataset.py` ↔ [data/UNIFIED_FUSION_DATASET.md](../data/UNIFIED_FUSION_DATASET.md)
+- **Training & config**: `src/sft.py`, `src/config/` ↔ [training/TRAINING_PLAYBOOK.md](TRAINING_PLAYBOOK.md)
 
 ### Key Components Deep Dive
 
@@ -230,10 +236,10 @@ Core SFT/LoRA recipes, KL anchoring overlays, augmentation telemetry, and troubl
 - Advanced topics (LR schedulers, DeepSpeed configs, augmentation FAQs, common issues, aligner tuning)
 
 **Token-type telemetry (optional)**  
-- Config: `custom.token_type_metrics.enabled` (default `false`), `include` (default `['target','lvis']`), `exclude` (default `['coig_lang_chat']`).  
+- Config: `custom.token_type_metrics.enabled` (default `true` in `configs/fusion_train/sft_base.yaml`), `include` (default `['bbu','rru','lvis']`), `exclude` (default `['lang_chat']`).  
 - Behavior: collator reconstructs assistant JSON, tokenizes with the active template, aligns token types (1=desc, 2=coord numbers, 3=format), and pads/truncates to supervised positions; rows outside `include` get IGNORE.  
 - Metrics: per dataset label, logs `{label}_token_acc` (all supervised tokens, naturally weighted), type-sliced accuracies `{label}_{desc|coord|format}_token_acc`.  
-- Validation: smoke run on 2025-12-04 with `configs/smoke/group_metrics.yaml` (4B checkpoint, tiny fusion `configs/dataset_mix/bbu_rru_lvis_coig_tiny.yaml`, `logging_steps=1`, `eval_steps=1`, `save_strategy=no`, `max_steps=20`) produced the expected token-type metrics; see `output/smoke/group_metrics/v0-20251204-062817/smoke_group_metrics_4b/logging.jsonl`.
+- Validation: smoke run on 2025-12-04 with `configs/smoke/group_metrics.yaml` (4B checkpoint, fusion `configs/dataset_mix/bbu_rru_dense_new_schema_1024.yaml`, `logging_steps=1`, `eval_steps=1`, `save_strategy=no`, `max_steps=20`) produced the expected token-type metrics; see `output/smoke/group_metrics/v0-20251204-062817/smoke_group_metrics_4b/logging.jsonl`.
 
 Keep configs under `configs/` in sync with the playbook when making behavioral changes.
 
@@ -247,8 +253,8 @@ Keep configs under `configs/` in sync with the playbook when making behavioral c
 - **Stage-A runtime composition**: system prompt = summary task base + 全局“非现场/图纸”规则；user prompt = summary instruction + BBU/RRU 场景提示块 + 可选任务重点。
 
 ### Summary GRPO Post-Training (Format Stabilization)
-- **Config example**: `configs/fusion_train/bbu_rru_summary_grpo_new_schema_1024.yaml` (merged summary-SFT checkpoint in, LoRA adapter out).
-- **Base template**: `configs/grpo/summary_grpo_base.yaml` (inherits `configs/fusion_train/sft_base.yaml`; edit checkpoint + epochs/LRs).
+- **Config example**: `configs/grpo/summary_grpo_base.yaml` (uses `configs/dataset_mix/bbu_rru_summary_grpo_new_schema_1024.yaml`; edit checkpoint + epochs/LRs).
+- **Base template**: `configs/grpo/summary_grpo_base.yaml` (extends `configs/fusion_train/sft_base.yaml`).
   - **Required knobs**:
     - `rlhf.rlhf_type=grpo`
     - `rlhf.reward_funcs=[summary.format, summary.header, summary.strict, summary.parse, summary.no_dup_keys, summary.dataset, summary.objects_total_lb, summary.category_recall, summary.content_structured_tversky, summary.text_bbu, summary.notes_bbu, summary.group_stats_presence]`
@@ -265,7 +271,7 @@ Keep configs under `configs/` in sync with the playbook when making behavioral c
 
 Runtime/deployment instructions for Stage-A summaries and the Stage-B verdict loop live in [STAGE_A_RUNTIME.md](../runtime/STAGE_A_RUNTIME.md) and [STAGE_B_RUNTIME.md](../runtime/STAGE_B_RUNTIME.md):
 
-**Top urgency (Stage-A batching)**: Stage-A uses **batched generation** (not packing). For Qwen3-VL **decoder-only** models with variable-length VL prompts, callers MUST use **left padding** (`tokenizer.padding_side="left"`). Right padding can cause unstable/garbage prefixes (e.g., random English tokens) in batched inference; see the “Critical: Batched Generation Requires Left Padding” section in `docs/runtime/STAGE_A_RUNTIME.md`.
+**Top urgency (Stage-A batching)**: Stage-A uses **batched generation** (not packing). For Qwen3-VL **decoder-only** models with variable-length VL prompts, callers MUST use **left padding** (`tokenizer.padding_side="left"`). Right padding can cause unstable/garbage prefixes (e.g., random English tokens) in batched inference; see the “Critical: Batched Generation Requires Left Padding” section in [runtime/STAGE_A_RUNTIME.md](../runtime/STAGE_A_RUNTIME.md).
 - Adapter vs merged checkpoints, export commands, and decoding tips
 - Dense captioning usage examples
 - Stage-A CLI guardrails and output schemas
@@ -281,10 +287,7 @@ Operational FAQs (LR schedulers, DeepSpeed presets, augmentation pipelines, temp
 
 - **Training**: [TRAINING_PLAYBOOK.md](TRAINING_PLAYBOOK.md)
 - **Stage-A & Stage-B runtime**: [STAGE_B_RUNTIME.md](../runtime/STAGE_B_RUNTIME.md)
-- **Data preprocessing & contract**: [DATA_PREPROCESSING_PIPELINE.md](DATA_PREPROCESSING_PIPELINE.md), [DATA_JSONL_CONTRACT.md](DATA_JSONL_CONTRACT.md)
-- **Data formats & augmentation**: [DATA_AND_DATASETS.md](DATA_AND_DATASETS.md), [DATA_AUGMENTATION.md](DATA_AUGMENTATION.md)
-- **Archived docs**: `docs/archive/` (historical references, detailed technical guides)
+- **Data preprocessing & contract**: [DATA_PREPROCESSING_PIPELINE.md](../data/DATA_PREPROCESSING_PIPELINE.md), [DATA_JSONL_CONTRACT.md](../data/DATA_JSONL_CONTRACT.md)
+- **Data formats & augmentation**: [DATA_AND_DATASETS.md](../data/DATA_AND_DATASETS.md), [DATA_AUGMENTATION.md](../data/DATA_AUGMENTATION.md)
 
 ---
-
-**Last Updated**: 2026-01-02 (Summary GRPO rewards + docs refreshed; token-type telemetry previously validated via smoke run on 2025-12-04)

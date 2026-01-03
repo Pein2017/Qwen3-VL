@@ -1,8 +1,12 @@
 # Stage-A Runtime Guide
 
-Single-image summarization runbook for generating the evidence JSONL that Stage-B consumes. Use this file as the engineer-facing reference for commands, inputs, outputs, and common flags.
+Status: Active
+Scope: Stage-A inference runbook for generating per-image summaries consumed by Stage-B.
+Owners: Runtime
+Last updated: 2026-01-02
+Related: [runtime/STAGE_A_STAGE_B.md](STAGE_A_STAGE_B.md), [runtime/STAGE_B_RUNTIME.md](STAGE_B_RUNTIME.md), [reference/stage-B-knowledge-Chinese.md](../reference/stage-B-knowledge-Chinese.md)
 
----
+Single-image summarization runbook for generating the evidence JSONL that Stage-B consumes. Use this file as the engineer-facing reference for commands, inputs, outputs, and common flags.
 
 ## Purpose
 - Produce per-image summaries with strong rare/long-tail coverage for downstream group-level verdicts.
@@ -16,7 +20,7 @@ mission=挡风板安装检查 gpus=0 verify_inputs=true \
   bash scripts/stage_a.sh
 
 # Override defaults (checkpoint/input/output) + optional postprocess
-checkpoint=/path/to/ckpt input_dir=/path/to/groups output_dir=/path/to/out \
+checkpoint=path/to/ckpt input_dir=path/to/groups output_dir=path/to/out \
   mission=挡风板安装检查 postprocess=true gpus=0 \
   bash scripts/stage_a.sh
 
@@ -36,7 +40,7 @@ mission=BBU安装方式检查（正装） gpus=0 pass_group_number=500 fail_grou
 
 ## Outputs
 - JSONL at `<output_dir>/<mission>_stage_a.jsonl` with keys `group_id`, `mission`, `label`, `images`, and normalized `per_image` entries (`image_1`, `image_2`, ...).
-- Format aligns with the canonical schema in `../data/DATA_JSONL_CONTRACT.md`.
+- Format aligns with the Stage-A → Stage-B contract described in `./STAGE_A_STAGE_B.md`.
 - In multi-GPU mode:
   - `sharding_mode=per_group`: each rank writes to `<mission>_stage_a.rank{rank}.jsonl` temporarily; rank 0 merges into the final `<mission>_stage_a.jsonl` and removes temp files.
   - `sharding_mode=per_image`: each rank writes to `<mission>_stage_a.images.rank{rank}.jsonl` temporarily; rank 0 merges into the final `<mission>_stage_a.jsonl` and deletes intermediates by default.

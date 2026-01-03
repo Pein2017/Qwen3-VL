@@ -41,14 +41,14 @@ The polished prompt must be:
 When you have access to the repo, ground the prompt by pointing to relevant anchors such as:
 - **Top-level layout**: `src/`, `configs/`, `scripts/`, `docs/`, `tests/`, `data_conversion/`, `data/`, `output/`
 - **Project instructions / governance**: `AGENTS.md` (triggers + workflow), `openspec/AGENTS.md` (proposal/spec process)
-- **Docs entrypoints**: `docs/README.md`, `docs/PROMPTS_REFERENCE.md`, `scripts/README.md`
+- **Docs entrypoints**: `docs/README.md`, `docs/reference/PROMPTS_REFERENCE.md`, `scripts/README.md`
 - **Data pipeline**: `docs/data/DATA_PREPROCESSING_PIPELINE.md` → `docs/data/DATA_JSONL_CONTRACT.md` → `docs/data/DATA_AND_DATASETS.md` → `docs/data/DATA_AUGMENTATION.md` → `docs/data/UNIFIED_FUSION_DATASET.md` → `docs/data/PUBLIC_DATA.md` → `docs/data/POLYGON_SUPPORT.md`
 - **Training pipeline**: `docs/training/TRAINING_PLAYBOOK.md`, `docs/training/REFERENCE.md`, `scripts/train.sh`, `src/sft.py`
-- **Inference pipeline**: `docs/runtime/STAGE_A_RUNTIME.md`, `docs/runtime/STAGE_B_RUNTIME.md`, `docs/runtime/STAGE_A_STAGE_B.md`, `docs/stage_b/DIAGNOSIS_AND_REVIEW.md`, `scripts/stage_a.sh`, `scripts/stage_b.sh`
+- **Inference pipeline**: `docs/runtime/STAGE_A_RUNTIME.md`, `docs/runtime/STAGE_B_RUNTIME.md`, `docs/runtime/STAGE_A_STAGE_B.md`, `docs/reference/DIAGNOSIS_AND_REVIEW.md`, `scripts/stage_a.sh`, `scripts/stage_b.sh`
 - **Config & validation**: `configs/`, `src/config/schema.py`, `scripts/validate_dense_jsonl_contract.py`, `scripts/validate_sft_config.py`
 - **Key code surfaces**: `src/stage_a/`, `src/stage_b/`, `src/datasets/`, `src/trainers/`, `src/rlhf/`, `src/prompts/`, `src/utils/`
 - **Data conversion / tooling**: `data_conversion/`
-- **Ops references**: `docs/deployment.md`, `docs/platform/UPSTREAM_DEPENDENCIES.md`, `docs/setup/CODEX_MCP_INSTALLATION.md`, `docs/stage-B-knowledge-Chinese.md`
+- **Ops references**: `docs/ops/deployment.md`, `docs/ops/UPSTREAM_DEPENDENCIES.md`, `docs/ops/CODEX_MCP_INSTALLATION.md`, `docs/reference/stage-B-knowledge-Chinese.md`
 If you cannot verify paths, keep them generic (e.g., “the relevant config file under `configs/`”).
 
 ## Repo glossary (project terms; use only when relevant)

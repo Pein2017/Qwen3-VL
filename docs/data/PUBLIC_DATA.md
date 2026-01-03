@@ -1,11 +1,17 @@
 # Public Data Module (`public_data/`) Overview
 
+Status: Active
+Scope: High-level overview of `public_data/` conversion workflows and integration.
+Owners: Data Pipeline
+Last updated: 2026-01-02
+Related: [DATA_JSONL_CONTRACT.md](DATA_JSONL_CONTRACT.md), [UNIFIED_FUSION_DATASET.md](UNIFIED_FUSION_DATASET.md), [public_data/README.md](../../public_data/README.md)
+
 This document introduces the **public data** submodule under `public_data/` at the repo root.
 
 The goal of this module is to provide **geometry-aware, tested pipelines** for turning public detection/segmentation datasets (starting with **LVIS**) into JSONL files that match the Qwen3-VL training contract and can be used as **auxiliary datasets** in training and fusion.
 
 > For how these auxiliary datasets are fused with BBU training, see:
-> `openspec/changes/update-geometry-poly-fusion/design.md` ("`public_data/` Integration" section).
+> [docs/data/UNIFIED_FUSION_DATASET.md](UNIFIED_FUSION_DATASET.md).
 
 ---
 
@@ -34,7 +40,7 @@ At the project level, `public_data/` plays three roles:
 
 In training configs under `configs/`, these JSONL files are referenced via `custom.train_jsonl` / `custom.val_jsonl`. For multi-dataset fusion (BBU + LVIS as auxiliary), the detailed behavior is specified in:
 
-- `openspec/changes/update-geometry-poly-fusion/design.md` (see the "`public_data/` Integration" section) and the dataset wrapper registry under `src/datasets/wrappers`, which binds each auxiliary dataset to its domain, default template, and augmentation policy.
+- [docs/data/UNIFIED_FUSION_DATASET.md](UNIFIED_FUSION_DATASET.md) and the dataset wrapper registry under `src/datasets/wrappers`, which binds each auxiliary dataset to its domain, default template, and augmentation policy.
 
 ---
 
@@ -42,7 +48,7 @@ In training configs under `configs/`, these JSONL files are referenced via `cust
 
 This document is a **high-level overview** for the main repo. For concrete commands, directory layout, and troubleshooting, see:
 
-- `public_data/README.md` – the single source of truth for:
+- [public_data/README.md](../../public_data/README.md) – the single source of truth for:
   - LVIS download and conversion commands
   - JSONL schema details (bbox + polygon)
   - Sampling / validation workflows

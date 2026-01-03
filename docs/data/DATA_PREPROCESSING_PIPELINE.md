@@ -1,5 +1,11 @@
 # Data Preprocessing & Intake (Annotation → Training JSONL)
 
+Status: Active
+Scope: Offline conversion pipeline from annotation exports to training JSONL + QA artifacts.
+Owners: Data Pipeline
+Last updated: 2026-01-02
+Related: [DATA_JSONL_CONTRACT.md](DATA_JSONL_CONTRACT.md), [DATA_AND_DATASETS.md](DATA_AND_DATASETS.md), [BBU_RRU_BUSINESS_KNOWLEDGE.md](BBU_RRU_BUSINESS_KNOWLEDGE.md)
+
 Purpose-built guide for the optional offline preprocessing stage that turns human-annotated exports into training-ready JSONL plus QA artifacts.
 
 See also:

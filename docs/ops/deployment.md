@@ -1,5 +1,10 @@
+# Deployment API Contract
 
----
+Status: Active
+Scope: Runtime deployment contract for `deployment/inference.py::predict()` and server expectations.
+Owners: Ops + Runtime
+Last updated: 2026-01-02
+Related: [deployment/inference.py](../../deployment/inference.py), [deployment/server.py](../../deployment/server.py), [runtime/STAGE_A_STAGE_B.md](../runtime/STAGE_A_STAGE_B.md)
 
 ## Standardized deployment API: `inference.py::predict()`
 

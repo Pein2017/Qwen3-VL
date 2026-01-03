@@ -1,12 +1,16 @@
 # Upstream Dependencies
 
-Background on the two primary libraries this project builds on: Hugging Face's Qwen3-VL implementation and the ms-swift training framework. Use this as a quick reference when you need to trace behavior into upstream code or reason about configuration limits.
+Status: Active
+Scope: Reference notes for upstream libraries (Transformers Qwen3-VL and ms-swift).
+Owners: Ops + Training
+Last updated: 2026-01-02
+Related: [training/REFERENCE.md](../training/REFERENCE.md), [overview/ARCHITECTURE.md](../overview/ARCHITECTURE.md)
 
----
+Background on the two primary libraries this project builds on: Hugging Face's Qwen3-VL implementation and the ms-swift training framework. Use this as a quick reference when you need to trace behavior into upstream code or reason about configuration limits.
 
 ## Hugging Face Qwen3-VL Model
 
-_Source: `transformers.models.qwen3_vl` (installed under `/root/miniconda3/envs/ms/lib/python3.12/site-packages/transformers/models/qwen3_vl/`)._
+_Source: `transformers.models.qwen3_vl` (Python package `transformers`)._
 
 ### Architecture Highlights
 - **Config class**: `Qwen3VLConfig` glues together a text config (`Qwen3VLTextConfig`) and a vision config (`Qwen3VLVisionConfig`). It also stores multimodal token ids (`vision_start_token_id`, `vision_end_token_id`, `image_token_id`, `video_token_id`).
@@ -32,7 +36,7 @@ _Source: `transformers.models.qwen3_vl` (installed under `/root/miniconda3/envs/
 
 ## ms-swift Training Framework
 
-_Source: `/data/ms-swift/swift/` (notably `swift/llm/train/sft.py` and `swift/llm/argument/train_args.py`)._
+_Source: local ms-swift repository (notably `swift/llm/train/sft.py` and `swift/llm/argument/train_args.py`)._
 
 ### SwiftSft Pipeline
 - **Entry point**: `SwiftSft` (inherits `SwiftPipeline` + `TunerMixin`) orchestrates loading the model/processor, template, datasets, collator, and trainer.
@@ -55,7 +59,6 @@ _Source: `/data/ms-swift/swift/` (notably `swift/llm/train/sft.py` and `swift/ll
 ### Streaming Mode
 - Streaming datasets use `EncodePreprocessor` to tokenize on the fly while respecting template logic. Packing is removed; only padded or padding-free (template-controlled) batching remains.
 
-### Callbacks & Metrics
 ### RLHF & GKD
 
 - **GKD (Generalized Knowledge Distillation)** is provided by TRL/ms-swift. In this repo we:
@@ -74,5 +77,3 @@ _Source: `/data/ms-swift/swift/` (notably `swift/llm/train/sft.py` and `swift/ll
 - If adding new LoRA targets or freezing logic, confirm the actual module names in `modeling_qwen3_vl.py` and update YAML accordingly.
 - For new training modes, verify ms-swift already supports them (`swift/llm/train/` contains SFT, PT, RLHF, KTO). Extend SwiftSft only if the functionality is absent.
 - Keep this document updated when upstream versions change (e.g., Transformer release bumps or ms-swift upgrades).
-
-**Last Reviewed:** 2025-10-28

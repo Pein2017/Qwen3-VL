@@ -17,7 +17,7 @@
   - [x] 验证 `cleanup_low_confidence(...)` 可在短周期内剔除低质量规则
 - [x] 更新文档（至少）：
   - [x] `docs/runtime/STAGE_B_RUNTIME.md`（need‑review 新语义与工件）
-  - [x] `docs/stage-B-knowledge-Chinese.md`（业务侧复核入口调整）
+  - [x] `docs/reference/stage-B-knowledge-Chinese.md`（业务侧复核入口调整）
 - [x] 增加最小测试/回归检查（按现有测试框架选择合适位置）：
   - [x] “硬故障不进 need‑review”
   - [x] “候选池无任何候选支持 gt → 入 need‑review”

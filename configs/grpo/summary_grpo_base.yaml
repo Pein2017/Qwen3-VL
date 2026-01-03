@@ -19,9 +19,8 @@ training:
   effective_batch_size: 24
   metric_for_best_model: eval_reward
   logging_steps: 10
-  logging_first_step: true
   # because step=1 is a single batch and later logs are windowed/averaged.
-  logging_first_step: false
+  logging_first_step: true
   eval_steps: 100
   # eval_strategy: 'no'
   warmup_ratio: 0.05
@@ -65,7 +64,7 @@ rlhf:
   # vLLM Configuration - Colocate Mode (internal vLLM)
   use_vllm: true
   vllm_mode: colocate
-  vllm_gpu_memory_utilization: 0.55
+  vllm_gpu_memory_utilization: 0.53
   vllm_enable_prefix_caching: true
   vllm_enable_lora: false
   # async_generate: true

@@ -2,6 +2,6 @@
 - [x] Fail fast in entrypoints (`scripts/train.sh`, `src/sft.py`, trainer resolution) when `training.packing` is true or packing knobs are present; remove packing imports/flags.
 - [x] Delete or quarantine packing code paths (`src/packing/*`, grouped packing collator/mixin, cached-length helpers) so padded batching is the only path; move legacy code to `archive/packing/` outside runtime imports.
 - [x] Clean configs to padding-only: set `packing: false` in `configs/base.yaml`, drop packing-related keys/caches from all shipped configs (fused, stage configs, overlays).
-- [x] Remove packing documentation/design details and add a short “packing removed” notice to `docs/REFERENCE.md` and `docs/TRAINING_PLAYBOOK.md`.
+- [x] Remove packing documentation/design details and add a short “packing removed” notice to `docs/training/REFERENCE.md` and `docs/training/TRAINING_PLAYBOOK.md`.
 - [x] Remove packing-specific tests; ensure padded-path smoke/telemetry tests remain and still pass.
 - [x] Run `openspec validate remove-packing-path --strict` and targeted lint/test (padding path) after code changes.

@@ -8,5 +8,5 @@
 
 - [x] Add loader unit tests for default/positive/negative `llm_kd_weight` handling.
 - [x] Add `rlhf.llm_kd_weight` examples to `configs/stage_1_gkd.yaml` and `configs/stage_2_llm_lora_gkd.yaml`.
-- [x] Update `docs/REFERENCE.md` to list `llm_kd_weight` under TrainArguments toggles and confirm metrics reflect weighting.
+- [x] Update `docs/training/REFERENCE.md` to list `llm_kd_weight` under TrainArguments toggles and confirm metrics reflect weighting.
 - [x] Fail fast when KD is requested without a teacher: loader validation must raise immediately; add regression coverage to prevent reintroducing silent fallbacks.

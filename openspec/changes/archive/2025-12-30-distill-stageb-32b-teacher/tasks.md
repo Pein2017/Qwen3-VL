@@ -24,5 +24,5 @@
 
 6. **Validation & Docs**
    - [ ] Run a small‑scale distill SFT 实验（tiny JSONL + few epochs），对比 Stage‑B 上 label_match 与误放行率（尤其 label=fail 时 `verdict=pass` 比例）在 dense+summary vs dense+summary+distill 两个模型下的变化。
-   - [ ] Update `docs/runtime/STAGE_A_STAGE_B.md` 和 `docs/stage-B-knowledge-Chinese.md`，描述 Teacher 蒸馏流程与统一模型的角色分工。
+   - [ ] Update `docs/runtime/STAGE_A_STAGE_B.md` 和 `docs/reference/stage-B-knowledge-Chinese.md`，描述 Teacher 蒸馏流程与统一模型的角色分工。
    - [ ] Optionally，在 `docs/experiments/` 记录一次蒸馏实验结果与推荐超参。

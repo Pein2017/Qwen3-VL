@@ -4,5 +4,5 @@
 - [ ] Update reflection to only consume explainable mismatches, emit ≤3 micro-guidance ops, and append to mission guidance in run dir.
 - [ ] Write new artifacts (`manual_review_queue.jsonl`, `failure_malformed.jsonl`) alongside guidance/trajectories/reflection.
 - [ ] Remove critic integration and related config/plumbing from Stage-B runtime and docs.
-- [ ] Refresh docs: `docs/STAGE_B_RUNTIME.md`, `docs/STAGE_A_STAGE_B.md`, `stage-B-knowledge-Chinese.md`, `docs/REFERENCE.md` to match simplified flow and artifacts.
+- [ ] Refresh docs: `docs/runtime/STAGE_B_RUNTIME.md`, `docs/runtime/STAGE_A_STAGE_B.md`, `docs/reference/stage-B-knowledge-Chinese.md`, `docs/training/REFERENCE.md` to match simplified flow and artifacts.
 - [ ] Validate with `openspec validate refactor-stage-b-simple-guidance --strict` and adjust as needed.

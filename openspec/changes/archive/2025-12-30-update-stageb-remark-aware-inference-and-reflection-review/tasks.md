@@ -21,5 +21,5 @@
 - [x] 更新文档：
   - [x] `docs/training/REFERENCE.md`
   - [x] `docs/runtime/STAGE_A_STAGE_B.md`
-  - [x] `docs/stage-B-knowledge-Chinese.md`
+  - [x] `docs/reference/stage-B-knowledge-Chinese.md`
 - [x] 运行 `openspec validate update-stageb-remark-aware-inference-and-reflection-review --strict` 并修正格式问题。

@@ -1,8 +1,12 @@
 # Stage-B Runtime Guide
 
-Technical runbook for the Stage-B prompt-only verdict loop. Stage-A summarization is covered separately in `./STAGE_A_RUNTIME.md`.
+Status: Active
+Scope: Stage-B rule-search runbook and artifact reference.
+Owners: Runtime
+Last updated: 2026-01-02
+Related: [runtime/STAGE_A_STAGE_B.md](STAGE_A_STAGE_B.md), [runtime/STAGE_A_RUNTIME.md](STAGE_A_RUNTIME.md), [reference/DIAGNOSIS_AND_REVIEW.md](../reference/DIAGNOSIS_AND_REVIEW.md)
 
----
+Technical runbook for the Stage-B prompt-only verdict loop. Stage-A summarization is covered separately in `./STAGE_A_RUNTIME.md`.
 
 ## Stage-B Runtime (group verdicts)
 

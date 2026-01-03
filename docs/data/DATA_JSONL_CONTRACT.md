@@ -1,5 +1,11 @@
 # Data JSONL Contract (Global)
 
+Status: Active
+Scope: Global JSONL schema for all datasets consumed by training/eval pipelines.
+Owners: Data Pipeline
+Last updated: 2026-01-02
+Related: [DATA_AND_DATASETS.md](DATA_AND_DATASETS.md), [DATA_PREPROCESSING_PIPELINE.md](DATA_PREPROCESSING_PIPELINE.md), [DATA_AUGMENTATION.md](DATA_AUGMENTATION.md)
+
 This document defines the universal JSONL format consumed by all training/eval datasets (BBU, LVIS, and future domains). Every record MUST adhere to this contract so that a single chat template pipeline can process all sources.
 
 See also:
@@ -25,7 +31,7 @@ Each object MUST contain exactly one geometry field plus a non-empty `desc`.
   - **Fixed value compression (BBU/RRU)**: non‑free‑text values are normalized to compact forms (e.g., `可见性=完整/部分`, `符合性=符合/不符合`, `挡风板需求=免装/空间充足需安装`, `保护措施=有保护/无保护`, `弯曲半径=半径合理/半径不合理<4cm或成环`, `安装状态=合格/不合格`, `标签=有标签/无标签`, `套管保护=有套管/无套管`).
 - One geometry (required, mutually exclusive):
   - `bbox_2d`: `[x1, y1, x2, y2]` pixel coordinates.
-  - `poly`: flat list `[x1, y1, x2, y2, ...]` (even length, ≥6 values / ≥3 points). Optional `poly_points` (int) should equal `len(poly)/2` when present.
+  - `poly`: flat list `[x1, y1, x2, y2, ...]` (even length, ≥8 values / ≥4 points; current runtime validation). Optional `poly_points` (int) should equal `len(poly)/2` when present.
   - `line`: flat list `[x1, y1, ..., xn, yn]`. Optional `line_points` (int) should equal `len(line)/2` when present.
 - No additional geometry fields are allowed on the same object.
 - **Groups (RRU only)**: There is **no top-level `groups` key**. Group membership is encoded directly in `desc` as `组=<id>` (multiple groups joined with `|`). BBU MUST NOT include `组`. Conversion fail-fast rejects samples where a declared group contains only one object.

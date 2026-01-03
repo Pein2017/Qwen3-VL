@@ -1,12 +1,15 @@
 # ms-swift GRPO Training Pipeline (Code-Derived)
 
-Status: Internal reference for Qwen3-VL GRPO usage with ms-swift.
+Status: Active
+Scope: Code-derived GRPO pipeline notes for ms-swift integration (internal reference).
+Owners: Training
+Last updated: 2026-01-02
+Related: [REFERENCE.md](REFERENCE.md), [configs/grpo/summary_grpo_base.yaml](../../configs/grpo/summary_grpo_base.yaml)
 
 ## Scope and Sources
-- Source of truth: ms-swift repository at `/data/ms-swift`.
+- Source of truth: local ms-swift repository (external to this repo; see [docs/ops/UPSTREAM_DEPENDENCIES.md](../ops/UPSTREAM_DEPENDENCIES.md)).
 - This document only records behavior observed in code; external dependencies (e.g., TRL / Transformers) are noted where applicable.
-- Operational notes (launch patterns, weight-sync caveats) reference ms-swift documentation in
-  `/data/ms-swift/docs/source_en/Instruction/GRPO/GetStarted/GRPO.md`.
+- Operational notes (launch patterns, weight-sync caveats) reference the ms-swift GRPO guide (see upstream doc pointers in [docs/ops/UPSTREAM_DEPENDENCIES.md](../ops/UPSTREAM_DEPENDENCIES.md)).
 
 Key code anchors (non-exhaustive):
 - GRPO argument defaults and validation: `swift/trainers/rlhf_arguments.py:77-110`
@@ -181,7 +184,7 @@ reductions, override DeepSpeed config to disable `zero_optimization.reduce_scatt
   - Location: `swift/trainers/rlhf_trainer/rollout_mixin.py:153-170`
 - vLLM capacity is sized from training batch and `steps_per_generation` (see Batch Size Semantics).
 - Memory relief knobs (from ms-swift docs): `sleep_level`, `offload_optimizer`, `offload_model`, and lower
-  `vllm_gpu_memory_utilization`. See `/data/ms-swift/docs/source_en/Instruction/GRPO/GetStarted/GRPO.md`.
+  `vllm_gpu_memory_utilization`. See the ms-swift GRPO guide referenced in [docs/ops/UPSTREAM_DEPENDENCIES.md](../ops/UPSTREAM_DEPENDENCIES.md).
 
 ### Server (external `swift rollout`)
 - `vllm_server_host` or `vllm_server_base_url` forces `vllm_mode=server`; missing host forces `colocate`.
@@ -196,7 +199,7 @@ reductions, override DeepSpeed config to disable `zero_optimization.reduce_scatt
     --vllm_tensor_parallel_size 2 \
     --vllm_data_parallel_size 1
   ```
-  - Source: `/data/ms-swift/docs/source_en/Instruction/GRPO/GetStarted/GRPO.md`
+  - Source: ms-swift GRPO guide (see [docs/ops/UPSTREAM_DEPENDENCIES.md](../ops/UPSTREAM_DEPENDENCIES.md))
 - Training side connects via `vllm_server_host` / `vllm_server_port` / `vllm_server_timeout`.
   - Location: `swift/llm/argument/rlhf_args.py:303-313`
 - `vllm_max_model_len` set in training config is ignored in server mode; set it on `swift rollout`.
@@ -207,12 +210,12 @@ reductions, override DeepSpeed config to disable `zero_optimization.reduce_scatt
 
 ### Server-mode guardrails (from ms-swift docs)
 - `use_async_engine` with only DP may fail; use both TP and DP or upgrade vLLM.
-  - Source: `/data/ms-swift/docs/source_en/Instruction/GRPO/GetStarted/GRPO.md`
+  - Source: ms-swift GRPO guide (see [docs/ops/UPSTREAM_DEPENDENCIES.md](../ops/UPSTREAM_DEPENDENCIES.md))
 - Weight-sync acceleration for LoRA:
   - Rollout: `--vllm_enable_lora true --vllm_max_lora_rank <lora_rank>`
   - Colocate: `--vllm_enable_lora true`
   - Not supported when training multimodal ViT layers or MoE models.
-  - Source: `/data/ms-swift/docs/source_en/Instruction/GRPO/GetStarted/GRPO.md`
+  - Source: ms-swift GRPO guide (see [docs/ops/UPSTREAM_DEPENDENCIES.md](../ops/UPSTREAM_DEPENDENCIES.md))
 
 ## `num_generations` Semantics (Grouping vs Sampling)
 
@@ -356,6 +359,10 @@ Locations:
 - Requirement for reward source: `swift/trainers/rlhf_trainer/grpo_trainer.py:86-87`
 - Divisibility checks: `swift/trainers/rlhf_arguments.py:89-110`
 - Eval strategy check: `swift/trainers/rlhf_arguments.py:111-121`
+
+### `configs/grpo/summary_grpo_server.yaml`
+- Extends `summary_grpo_base.yaml` and switches vLLM to server mode.
+- Sets `rlhf.vllm_mode: server` plus server host/port/timeouts and tensor parallel sizing.
 
 ## External Dependencies (Not in ms-swift Tree)
 - Non-sequence-parallel training sampler behavior depends on the TRL/Transformers GRPO trainer base class.

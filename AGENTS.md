@@ -30,15 +30,15 @@ Keep this managed block so 'openspec update' can refresh the instructions.
 
 ## Pipeline Docs (Entry Links)
 - Data pipeline: `docs/data/DATA_PREPROCESSING_PIPELINE.md` → `docs/data/DATA_JSONL_CONTRACT.md` → `docs/data/DATA_AND_DATASETS.md` → `docs/data/DATA_AUGMENTATION.md` → `docs/data/UNIFIED_FUSION_DATASET.md` → `docs/data/PUBLIC_DATA.md` → `docs/data/POLYGON_SUPPORT.md`.
-- Training pipeline: `docs/training/TRAINING_PLAYBOOK.md` → `docs/training/REFERENCE.md` → `docs/PROMPTS_REFERENCE.md`.
-- Inference pipeline: `docs/runtime/STAGE_A_RUNTIME.md` → `docs/runtime/STAGE_B_RUNTIME.md` → `docs/runtime/STAGE_A_STAGE_B.md` → `docs/stage_b/DIAGNOSIS_AND_REVIEW.md`.
+- Training pipeline: `docs/training/TRAINING_PLAYBOOK.md` → `docs/training/REFERENCE.md` → `docs/reference/PROMPTS_REFERENCE.md`.
+- Inference pipeline: `docs/runtime/STAGE_A_RUNTIME.md` → `docs/runtime/STAGE_B_RUNTIME.md` → `docs/runtime/STAGE_A_STAGE_B.md` → `docs/reference/DIAGNOSIS_AND_REVIEW.md`.
 
 ## Operations & References
-- Scripts index: `docs/README.md` (Script & Tooling Inventory) + `scripts/README.md`.
-- Deployment contract: `docs/deployment.md`.
-- Upstream dependencies: `docs/platform/UPSTREAM_DEPENDENCIES.md`.
-- Stage-B business knowledge (CN): `docs/stage-B-knowledge-Chinese.md`.
-- Tooling setup: `docs/setup/CODEX_MCP_INSTALLATION.md`.
+- Scripts index: `scripts/README.md` (canonical inventory); `docs/README.md` for the global doc map.
+- Deployment contract: `docs/ops/deployment.md`.
+- Upstream dependencies: `docs/ops/UPSTREAM_DEPENDENCIES.md`.
+- Stage-B business knowledge (CN): `docs/reference/stage-B-knowledge-Chinese.md`.
+- Tooling setup: `docs/ops/CODEX_MCP_INSTALLATION.md`.
 
 ## Local Libraries (Installed Paths)
 - `transformers`: `/root/miniconda3/envs/ms/lib/python3.12/site-packages/transformers`.

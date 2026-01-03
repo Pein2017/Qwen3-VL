@@ -3,5 +3,5 @@
 - [x] Add eligibility gating for冲突/部分正确 bundles; disable non-JSON fallbacks; ensure failed parses do not mutate guidance.
 - [x] Implement guidance dedup/compact reindex (G0..Gn) post-reflection; enforce text/format whitelist before write.
 - [x] Persist per-stage artifacts (summary/critique/batch_update) and make reruns reuse existing files when intact.
-- [x] Update specs/docs (stage-b-training-free, docs/STAGE_B_RUNTIME.md & stage-B-knowledge-Chinese) and add targeted tests/validations.
+- [x] Update specs/docs (stage-b-training-free, docs/runtime/STAGE_B_RUNTIME.md & stage-B-knowledge-Chinese) and add targeted tests/validations.
 - [x] Run `openspec validate add-stageb-3step-reflection --strict`.
