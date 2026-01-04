@@ -237,12 +237,12 @@ The `FusionCaptionDataset` (alias `UnifiedFusionDataset`) is automatically used 
 
 ```yaml
 custom:
-  fusion_config: configs/dataset_mix/bbu_rru_dense_new_schema_1024.yaml
+  fusion_config: configs/fusion/variants/bbu_rru_dense_1024.yaml
 ```
 
 #### Summary fusion + irrelevant negatives
 
-For summary-mode SFT, you can mix a small "irrelevant image" negative pool as an additional **target** stream (so `ratio` scales by that pool's own size). The summary fusion config `configs/dataset_mix/bbu_rru_summary_new_schema_1024.yaml` includes `irrelevant_summary` backed by `data/irrelevant_summary/train.jsonl` (built from `data/irrelevant_summary/images/*.jpg|*.jpeg`).
+For summary-mode SFT, you can mix a small "irrelevant image" negative pool as an additional **target** stream (so `ratio` scales by that pool's own size). The summary fusion config `configs/fusion/variants/bbu_rru_summary_1024.yaml` includes `irrelevant_summary` backed by `data/irrelevant_summary/train.jsonl` (built from `data/irrelevant_summary/images/*.jpg|*.jpeg`).
 
 Generate and validate the JSONL:
 
@@ -326,9 +326,9 @@ if custom_config.fusion_config:
 
 - **Implementation**: `src/datasets/unified_fusion_dataset.py`
 - **Verification Script**: `check_mask_labels_simple.py`
-- **Fusion Config**: `configs/dataset_mix/bbu_rru_dense_new_schema_1024.yaml`
-- **Summary Fusion Config**: `configs/dataset_mix/bbu_rru_summary_new_schema_1024.yaml`
-- **Summary GRPO Fusion Config**: `configs/dataset_mix/bbu_rru_summary_grpo_new_schema_1024.yaml`
+- **Fusion Config**: `configs/fusion/variants/bbu_rru_dense_1024.yaml`
+- **Summary Fusion Config**: `configs/fusion/variants/bbu_rru_summary_1024.yaml`
+- **Summary GRPO Fusion Config**: `configs/fusion/variants/bbu_rru_summary_grpo_1024.yaml`
 - **Irrelevant JSONL Helper**: `scripts/build_irrelevant_summary_jsonl.py`
 - **Training Integration**: `src/sft.py`
 

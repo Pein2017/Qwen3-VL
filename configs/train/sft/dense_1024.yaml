@@ -1,0 +1,6 @@
+extends:
+  - dense_base.yaml
+
+custom:
+  fusion_config: configs/fusion/variants/bbu_rru_dense_1024.yaml
+  use_summary: false

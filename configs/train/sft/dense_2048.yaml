@@ -1,0 +1,16 @@
+extends:
+  - dense_base.yaml
+
+training:
+  output_dir: ./output/1-4/2048_res_dense
+  run_name: epoch_40-lrs_2_1_6
+  num_train_epochs: 40
+  per_device_train_batch_size: 2
+  per_device_eval_batch_size: 4
+  save_steps: 80
+  save_total_limit: 3
+  logging_dir: ./tb/1-4/2048_res_dense
+
+custom:
+  fusion_config: configs/fusion/variants/bbu_rru_dense_2048.yaml
+  use_summary: false

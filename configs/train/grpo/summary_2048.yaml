@@ -1,0 +1,5 @@
+extends:
+  - summary_base.yaml
+
+custom:
+  fusion_config: configs/fusion/variants/bbu_rru_summary_grpo_2048.yaml

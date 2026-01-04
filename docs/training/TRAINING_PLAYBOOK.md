@@ -45,18 +45,18 @@ sft.prepare_model(...)
 
 ❌ **Common mistake**: Forgetting `prepare_model()` → full model saved instead of adapter
 
-### Config catalog (Dec 2025)
+### Config catalog (Jan 2026)
 
 - `configs/base.yaml` — Non-tunable runtime defaults only (dtype, attention impl, template); no hyperparameters live here.
-- `configs/prompts/*.txt` — Stage-B reflection and rule_search prompt templates (proposer/reflection/ops/decision).
-- `configs/fusion_train/sft_base.yaml` — Core multi-domain DoRA/LoRA recipe (extends `configs/base.yaml`); defines training hyperparameters, augmentation defaults, and token-type metrics.
-- `configs/fusion_train/bbu_rru_dense_new_schema_1024.yaml` — Dense fusion run; sets `custom.fusion_config` to `configs/dataset_mix/bbu_rru_dense_new_schema_1024.yaml`.
-- `configs/fusion_train/bbu_rru_summary_new_schema_1024.yaml` — Summary fusion run; sets `custom.fusion_config` to `configs/dataset_mix/bbu_rru_summary_new_schema_1024.yaml` and summary-specific augmentation.
-- `configs/grpo/summary_grpo_base.yaml` — Summary GRPO base (extends `configs/fusion_train/sft_base.yaml`, uses `configs/dataset_mix/bbu_rru_summary_grpo_new_schema_1024.yaml`).
-- `configs/grpo/summary_grpo_server.yaml` — vLLM server-mode override for GRPO.
-- `configs/dlora/distill.yaml` — Stage-B verdict distillation SFT (text-only ChatML), uses `configs/dataset_mix/stage_b_distill.yaml`.
-- `configs/dataset_mix/*.yaml` — Offline fusion builder configs for `scripts/fuse_datasets.py` (dense, summary, GRPO-only summary, Stage-B distill).
-- `configs/stage_b/*.yaml` — Stage-B runtime configs (bbu_*.yaml for entry configs)
+- `configs/components/` — Reusable blocks (model, tuner, training, data loader, custom, rlhf, deepspeed, prompts).
+- `configs/train/sft/dense_1024.yaml` — Dense fusion SFT preset; sets `custom.fusion_config` to `configs/fusion/variants/bbu_rru_dense_1024.yaml`.
+- `configs/train/sft/summary_1024.yaml` — Summary fusion SFT preset; sets `custom.fusion_config` to `configs/fusion/variants/bbu_rru_summary_1024.yaml` and summary-specific augmentation.
+- `configs/train/grpo/summary_2048.yaml` — Summary GRPO preset (uses `configs/fusion/variants/bbu_rru_summary_grpo_2048.yaml`).
+- `configs/train/grpo/summary_server.yaml` — vLLM server-mode override for GRPO.
+- `configs/train/stage_b/distill.yaml` — Stage-B verdict distillation SFT (text-only ChatML), uses `configs/fusion/stage_b_distill.yaml`.
+- `configs/fusion/base/*.yaml` + `configs/fusion/variants/*.yaml` — Fusion dataset mixes with inheritance (dense/summary/GRPO, 1024/2048 overlays).
+- `configs/smoke/*.yaml` — smoke presets that extend `configs/debug.yaml` or `configs/train/*`.
+- `configs/stage_b/*.yaml` — Stage-B runtime configs (bbu_*.yaml for entry configs).
 - Upstream data for these configs is normally produced by the annotation converter (`data_conversion/convert_dataset.sh`, see `../data/DATA_PREPROCESSING_PIPELINE.md`) or by public converters in `public_data/`. Ensure converted JSONL matches `../data/DATA_JSONL_CONTRACT.md` before training.
 
 ### Training Modes
@@ -130,7 +130,7 @@ training:
 
 Use Generalized Knowledge Distillation (GKD) when dense-caption SFT starts hallucinating away from the base checkpoint.
 
-- **Activation**: apply the following overlay to a fusion training config under `configs/fusion_train/` (no preset GKD overlays are tracked in-tree). The overlay only adds:
+- **Activation**: apply the following overlay to an SFT preset under `configs/train/sft/` (no preset GKD overlays are tracked in-tree). The overlay only adds:
   ```yaml
   rlhf:
     rlhf_type: gkd
@@ -151,7 +151,7 @@ Use Generalized Knowledge Distillation (GKD) when dense-caption SFT starts hallu
 
 Use GRPO to stabilize summary outputs (two-line header + JSON for BBU/RRU, single-line `无关图片` for irrelevant).
 
-- **Activation**: start from `configs/grpo/summary_grpo_base.yaml` (extends `configs/fusion_train/sft_base.yaml` and uses `configs/dataset_mix/bbu_rru_summary_grpo_new_schema_1024.yaml`), or use `configs/grpo/summary_grpo_server.yaml` for vLLM server mode.
+- **Activation**: start from `configs/train/grpo/summary_2048.yaml` (extends `configs/train/grpo/summary_base.yaml` and uses `configs/fusion/variants/bbu_rru_summary_grpo_2048.yaml`), or use `configs/train/grpo/summary_server.yaml` for vLLM server mode.
 - **Reward funcs** (summary mode):
   - Core contract + safety: `summary.format` (irrelevant must be single-line `无关图片`), `summary.header`, `summary.strict` (penalize extra lines / wrong header), `summary.parse` (JSON parse penalty).
   - Hard JSON correctness: `summary.no_dup_keys` (hard-penalize duplicate JSON keys, including nested dicts).
@@ -219,7 +219,7 @@ custom:
 - **Effect**: anchors student vision/aligner activations to the frozen teacher while leaving KL + CE to supervise the language tower.
 - **Metrics**: trainer logs `train/vision_kd_loss` / `eval/vision_kd_loss` (post-weight) so you can monitor the regularizer alongside `llm_kd_loss` and `sft_loss` contributions.
 - **Images only**: batches without `pixel_values` automatically skip the term; no special handling is required for summary-only validation shards.
-- **Preset overlay**: create a small overlay under `configs/fusion_train/` when enabling visual KD; keep it limited to `custom.visual_kd` so it can be layered on top of `sft_base.yaml`.
+- **Preset overlay**: create a small overlay under `configs/train/sft/` when enabling visual KD; keep it limited to `custom.visual_kd` so it can be layered on top of `configs/train/sft/dense_base.yaml`.
 
 #### Forward-only KD (recommended for domain migration)
 
@@ -249,7 +249,7 @@ Notes:
 - `train/llm_kd_loss` steady or slowly decreasing → healthy anchoring.
   - `train/sft_loss` aligns with prior SFT runs → no regression.
 - `eval/llm_kd_loss` jump → teacher/template mismatch (fix tokenizer/template).
-- **Smoke Test**: set `custom.sample_limit: 32` and `training.save_steps: 5` in a temporary overlay, then run `python -m src.sft --config configs/fusion_train/<gkd-overlay>.yaml` (create the overlay by layering the GKD block on top of `configs/fusion_train/sft_base.yaml`). Verify `logging.jsonl` includes `train/llm_kd_loss`, `train/vision_kd_loss`, `train/sft_loss`, and the output directory writes checkpoints.
+- **Smoke Test**: set `custom.sample_limit: 32` and `training.save_steps: 5` in a temporary overlay, then run `python -m src.sft --config configs/train/sft/<gkd-overlay>.yaml` (create the overlay by layering the GKD block on top of `configs/train/sft/dense_base.yaml`). Verify `logging.jsonl` includes `train/llm_kd_loss`, `train/vision_kd_loss`, `train/sft_loss`, and the output directory writes checkpoints.
 
 ### Packing
 

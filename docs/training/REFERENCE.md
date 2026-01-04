@@ -236,10 +236,10 @@ Core SFT/LoRA recipes, KL anchoring overlays, augmentation telemetry, and troubl
 - Advanced topics (LR schedulers, DeepSpeed configs, augmentation FAQs, common issues, aligner tuning)
 
 **Token-type telemetry (optional)**  
-- Config: `custom.token_type_metrics.enabled` (default `true` in `configs/fusion_train/sft_base.yaml`), `include` (default `['bbu','rru','lvis']`), `exclude` (default `['lang_chat']`).  
+- Config: `custom.token_type_metrics.enabled` (default `true` in `configs/train/sft/dense_base.yaml`), `include` (default `['bbu','rru','lvis']`), `exclude` (default `['lang_chat']`).  
 - Behavior: collator reconstructs assistant JSON, tokenizes with the active template, aligns token types (1=desc, 2=coord numbers, 3=format), and pads/truncates to supervised positions; rows outside `include` get IGNORE.  
 - Metrics: per dataset label, logs `{label}_token_acc` (all supervised tokens, naturally weighted), type-sliced accuracies `{label}_{desc|coord|format}_token_acc`.  
-- Validation: smoke run on 2025-12-04 with `configs/smoke/group_metrics.yaml` (4B checkpoint, fusion `configs/dataset_mix/bbu_rru_dense_new_schema_1024.yaml`, `logging_steps=1`, `eval_steps=1`, `save_strategy=no`, `max_steps=20`) produced the expected token-type metrics; see `output/smoke/group_metrics/v0-20251204-062817/smoke_group_metrics_4b/logging.jsonl`.
+- Validation: smoke run on 2025-12-04 with `configs/smoke/group_metrics.yaml` (4B checkpoint, fusion `configs/fusion/variants/bbu_rru_dense_1024.yaml`, `logging_steps=1`, `eval_steps=1`, `save_strategy=no`, `max_steps=20`) produced the expected token-type metrics; see `output/smoke/group_metrics/v0-20251204-062817/smoke_group_metrics_4b/logging.jsonl`.
 
 Keep configs under `configs/` in sync with the playbook when making behavioral changes.
 
@@ -253,8 +253,8 @@ Keep configs under `configs/` in sync with the playbook when making behavioral c
 - **Stage-A runtime composition**: system prompt = summary task base + 全局“非现场/图纸”规则；user prompt = summary instruction + BBU/RRU 场景提示块 + 可选任务重点。
 
 ### Summary GRPO Post-Training (Format Stabilization)
-- **Config example**: `configs/grpo/summary_grpo_base.yaml` (uses `configs/dataset_mix/bbu_rru_summary_grpo_new_schema_1024.yaml`; edit checkpoint + epochs/LRs).
-- **Base template**: `configs/grpo/summary_grpo_base.yaml` (extends `configs/fusion_train/sft_base.yaml`).
+- **Config example**: `configs/train/grpo/summary_2048.yaml` (uses `configs/fusion/variants/bbu_rru_summary_grpo_2048.yaml`; edit checkpoint + epochs/LRs).
+- **Base template**: `configs/train/grpo/summary_base.yaml` (composed from `configs/components/*` + `configs/base.yaml`).
   - **Required knobs**:
     - `rlhf.rlhf_type=grpo`
     - `rlhf.reward_funcs=[summary.format, summary.header, summary.strict, summary.parse, summary.no_dup_keys, summary.dataset, summary.category_recall, summary.content_structured_tversky, summary.text_bbu, summary.notes_bbu, summary.group_stats_presence]`

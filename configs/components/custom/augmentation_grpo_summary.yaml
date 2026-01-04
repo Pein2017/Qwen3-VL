@@ -1,0 +1,22 @@
+custom:
+  augmentation:
+    enabled: true
+    # Tiny, always-on augmentation (no curriculum).
+    bypass_prob: 0.1
+    ops:
+      # Geometry: keep extremely mild to avoid changing semantics (no flips/crops).
+      - name: rotate
+        params: { max_deg: 2.0, prob: 0.12 }
+      - name: resize_by_scale
+        params: { lo: 0.98, hi: 1.02, align_multiple: 32, prob: 0.20 }
+      # Image quality: mild distortions that preserve semantics but add realism.
+      - name: auto_contrast
+        params: { cutoff: 1, prob: 0.08 }
+      - name: color_jitter
+        params: { brightness: [0.95, 1.05], contrast: [0.95, 1.05], saturation: [0.95, 1.05], prob: 0.15 }
+      - name: sharpness
+        params: { factor: [0.9, 1.1], prob: 0.10 }
+      - name: gamma
+        params: { gamma: [0.97, 1.03], prob: 0.08 }
+
+  augmentation_curriculum: null

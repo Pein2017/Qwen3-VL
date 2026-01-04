@@ -10,9 +10,9 @@ from random import Random
 from typing import Any, Dict, List
 
 import matplotlib.pyplot as plt
-import yaml
 from PIL import Image
 
+from src.config import ConfigLoader
 from src.datasets.augmentation.base import Compose
 from src.datasets.augmentation.builder import build_compose_from_config
 from src.datasets.augmentation.ops import (
@@ -206,8 +206,7 @@ def _build_pipeline_from_yaml(cfg: VisConfig) -> PipelineSpec:
     if not os.path.isfile(cfg.config_yaml):
         raise FileNotFoundError(f"config_yaml file not found: {cfg.config_yaml}")
 
-    with open(cfg.config_yaml, "r", encoding="utf-8") as f:
-        conf = yaml.safe_load(f)
+    conf = ConfigLoader.load_yaml_with_extends(cfg.config_yaml)
     custom = (conf or {}).get("custom") or {}
     aug_cfg = custom.get("augmentation") or {}
     curriculum_cfg = aug_cfg.get("curriculum") or custom.get("augmentation_curriculum")
@@ -803,7 +802,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--config-yaml",
-        default="configs/1024/sft_base.yaml",
+        default="configs/train/sft/dense_1024.yaml",
         help="Training YAML with custom.augmentation config.",
     )
     parser.add_argument(
@@ -841,7 +840,7 @@ if __name__ == "__main__":
     elif args.mode == "zoom":
         out_dir = "vis_out/augment_zoom_small_object"
     else:
-        out_dir = "vis_out/augment_curriculum_dlora_sft_base"
+        out_dir = "vis_out/augment_curriculum_dense_1024"
 
     base_kwargs = dict(
         jsonl_path=args.jsonl,

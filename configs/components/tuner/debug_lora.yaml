@@ -1,0 +1,13 @@
+tuner:
+  train_type: lora
+  use_swift_lora: false
+  freeze_llm: false
+  freeze_vit: true
+  freeze_aligner: true
+  target_modules: [all-linear]
+  target_regex: null
+  modules_to_save: []
+  lora_rank: 8
+  lora_alpha: 16
+  lora_dropout: 0.0
+  lora_bias: none
