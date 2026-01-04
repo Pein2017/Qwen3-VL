@@ -29,20 +29,20 @@ def _parse_summary_json(text: str) -> dict[str, object] | None:
         return None
     if not isinstance(obj, dict):
         return None
-    required = {"dataset", "统计", "objects_total"}
+    required = {"dataset", "统计"}
     if not required.issubset(obj.keys()):
         return None
     return obj
 
 
 def _format_summary_json(obj: dict[str, object]) -> str:
-    preferred_order = ["objects_total", "统计", "备注", "分组统计"]
+    preferred_order = ["dataset", "统计", "备注", "分组统计"]
     ordered: dict[str, object] = {}
     for key in preferred_order:
         if key in obj:
             ordered[key] = obj[key]
     for key, value in obj.items():
-        if key == "format_version" or key == "dataset":
+        if key == "format_version":
             continue
         if key not in ordered:
             ordered[key] = value
@@ -88,6 +88,68 @@ def _summary_has_label_text(obj: dict[str, object]) -> bool:
     if isinstance(readability, dict):
         return any(str(k).strip() and str(k) != "不可读" for k in readability.keys())
     return False
+
+
+def _estimate_object_count_from_summary(obj: dict[str, object]) -> int:
+    """Best-effort object count estimate derived from `统计` (no `objects_total` key)."""
+
+    entries = _summary_entries(obj)
+
+    def _to_int(value: object) -> int | None:
+        if isinstance(value, bool) or value is None:
+            return None
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float) and value.is_integer():
+            return int(value)
+        if isinstance(value, str):
+            stripped = value.strip()
+            if stripped.isdigit():
+                try:
+                    return int(stripped)
+                except Exception:
+                    return None
+        return None
+
+    def _sum_counts(value: object) -> int:
+        if isinstance(value, dict):
+            total = 0
+            for count_raw in value.values():
+                count = _to_int(count_raw)
+                if count is None or count <= 0:
+                    continue
+                total += int(count)
+            return total
+        if isinstance(value, list):
+            return len([v for v in value if v is not None])
+        if value is None:
+            return 0
+        return 1
+
+    def _estimate_category(entry: dict[str, object]) -> int:
+        category = entry.get("类别")
+        cat = category.strip() if isinstance(category, str) else ""
+
+        max_attr_total = 0
+        label_text_total = 0
+        label_readability_total = 0
+
+        for key, val in entry.items():
+            if key in {"类别", "异常"}:
+                continue
+            total = _sum_counts(val)
+            max_attr_total = max(max_attr_total, total)
+            if key == "文本":
+                label_text_total = total
+            elif key == "可读性":
+                label_readability_total = total
+
+        if cat == "标签":
+            combined = label_text_total + label_readability_total
+            return max(1, max_attr_total, combined)
+        return max(1, max_attr_total)
+
+    return int(sum(_estimate_category(entry) for entry in entries))
 
 
 def _sanitize_stage_a_summary_for_prompt(text: str) -> str:
@@ -334,16 +396,15 @@ def _render_summaries(stage_a_summaries: dict[str, str]) -> str:
 
 
 def _estimate_object_count(text: str) -> int:
+    simplified = to_simplified(text or "")
+    simplified = normalize_spaces(simplified).strip()
+    if simplified == "无关图片":
+        return 0
+
     summary_obj = _parse_summary_json(text)
     if summary_obj is not None:
-        count = summary_obj.get("objects_total")
-        if isinstance(count, int):
-            return count
-        if isinstance(count, str) and count.isdigit():
-            return int(count)
+        return _estimate_object_count_from_summary(summary_obj)
 
-    simplified = to_simplified(text or "")
-    simplified = normalize_spaces(simplified)
     # Fallback: count coarse entries separated by Chinese comma.
     entries = [seg.strip() for seg in simplified.split("，") if seg.strip()]
     return len(entries) if entries else (1 if simplified else 0)

@@ -155,9 +155,8 @@ Use GRPO to stabilize summary outputs (two-line header + JSON for BBU/RRU, singl
 - **Reward funcs** (summary mode):
   - Core contract + safety: `summary.format` (irrelevant must be single-line `无关图片`), `summary.header`, `summary.strict` (penalize extra lines / wrong header), `summary.parse` (JSON parse penalty).
   - Hard JSON correctness: `summary.no_dup_keys` (hard-penalize duplicate JSON keys, including nested dicts).
-  - Lower-bound content alignment (strict-format gated; missing annotated facts > spurious extras):
+  - Content alignment (strict-format gated; missing annotated facts > spurious extras):
     - `summary.dataset` (domain token matches)
-    - `summary.objects_total_lb` (undercount-heavy; overcount free up to `ref+2`)
     - `summary.category_recall` (category recall over `统计[*].类别`)
     - `summary.content_structured_tversky` (recall-biased structured facts; BBU excludes `文本/备注`; RRU is stricter)
   - BBU free-text handling:

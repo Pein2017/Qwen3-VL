@@ -93,7 +93,7 @@ Dense mode validation requires at least one object with geometry; summary mode v
 
 Format requirements (aligned with training/inference prompts):
 - Summary is a **single-line JSON string** (no newlines, no trailing punctuation), except irrelevant-image samples which keep `summary: 无关图片`.
-- Required keys: `dataset`, `objects_total`, `统计`.
+- Required keys: `dataset`, `统计`.
 - `统计` is a list; each item contains `类别` plus any observed attribute counts (`{value: count}`).
 - BBU summaries include a top-level `备注` list when non-empty; RRU summaries omit `备注` and may include `分组统计` when present.
 - `异常` is included only when any error counters/examples are non-zero.
@@ -124,7 +124,7 @@ BBU/RRU converters normalize fixed (non‑free‑text) values to compact forms. 
 - RRU summaries are built from key=value descs; `站点距离` appears as `类别=站点距离,站点距离=<int>` in desc (current exports yield digits) and becomes a `统计` entry with key `站点距离`.
 - Train summary-mode runs via `configs/fusion_train/bbu_rru_summary_new_schema_1024.yaml` (dataset mix in `configs/dataset_mix/bbu_rru_summary_new_schema_1024.yaml`). To focus on RRU only, edit the mix to keep just the RRU summary stream.
 
-**Example**: `{"dataset": "BBU", "objects_total": 2, "统计": [{"类别": "BBU设备", "品牌": {"华为": 1}}, {"类别": "标签", "文本": {"NR900-BBU": 1}}]}`
+**Example**: `{"dataset": "BBU", "统计": [{"类别": "BBU设备", "品牌": {"华为": 1}}, {"类别": "标签", "文本": {"NR900-BBU": 1}}]}`
 
 ---
 
@@ -289,7 +289,7 @@ For the universal JSONL record contract shared by all domains, see `./DATA_JSONL
 ```text
 # Assistant message: single summary string (JSON), with optional prefix line.
 <DOMAIN=BBU>, <TASK=SUMMARY>
-{"dataset": "BBU", "objects_total": 3, "统计": [{"类别": "BBU设备", "品牌": {"华为": 1}}]}
+{"dataset": "BBU", "统计": [{"类别": "BBU设备", "品牌": {"华为": 1}}]}
 ```
 
 **Key Behavior**:

@@ -18,7 +18,7 @@ See also:
 - `objects` (list[object], required): Structured annotations (see below).
 - `width` (int, required): Image width in pixels (original or post-resize if applied offline).
 - `height` (int, required): Image height in pixels.
-- `summary` (str, optional): Single-line **JSON string** summary (present on BBU/RRU; may be absent on public sources). For BBU/RRU converters, the summary JSON includes `dataset`, `objects_total`, `统计`, and optional `异常` (only when non-zero), with optional `备注` (BBU only, non-empty) or `分组统计` (RRU only, when present). Summary statistics only include observed values (no missing counts). Irrelevant-image streams may use the literal string `无关图片` instead of JSON. Conversion is fail-fast: missing objects, empty `desc`, or invalid/unknown/conflict markers raise `ValueError` during build.
+- `summary` (str, optional): Single-line **JSON string** summary (present on BBU/RRU; may be absent on public sources). For BBU/RRU converters, the summary JSON includes `dataset`, `统计`, and optional `异常` (only when non-zero), with optional `备注` (BBU only, non-empty) or `分组统计` (RRU only, when present). Summary statistics only include observed values (no missing counts). Irrelevant-image streams may use the literal string `无关图片` instead of JSON. Conversion is fail-fast: missing objects, empty `desc`, or invalid/unknown/conflict markers raise `ValueError` during build.
 - `metadata` (object, optional): Free-form metadata; fusion injects `_fusion_source`, `_fusion_template`, `_fusion_domain` here at load time.
 
 ## Record Variants
@@ -51,7 +51,7 @@ Each object MUST contain exactly one geometry field plus a non-empty `desc`.
     {"poly": [12, 34, 56, 34, 56, 78, 12, 78], "poly_points": 4, "desc": "类别=设备,属性=属性A"},
     {"bbox_2d": [100, 120, 180, 200], "desc": "类别=标签,文本=黄色"}
   ],
-  "summary": "{\"dataset\": \"BBU\", \"objects_total\": 2, \"统计\": [{\"类别\": \"设备\", \"属性\": {\"属性A\": 1}}, {\"类别\": \"标签\", \"文本\": {\"黄色\": 1}}]}",
+  "summary": "{\"dataset\": \"BBU\", \"统计\": [{\"类别\": \"设备\", \"属性\": {\"属性A\": 1}}, {\"类别\": \"标签\", \"文本\": {\"黄色\": 1}}]}",
   "width": 768,
   "height": 512
 }

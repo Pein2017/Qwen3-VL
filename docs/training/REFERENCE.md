@@ -257,7 +257,7 @@ Keep configs under `configs/` in sync with the playbook when making behavioral c
 - **Base template**: `configs/grpo/summary_grpo_base.yaml` (extends `configs/fusion_train/sft_base.yaml`).
   - **Required knobs**:
     - `rlhf.rlhf_type=grpo`
-    - `rlhf.reward_funcs=[summary.format, summary.header, summary.strict, summary.parse, summary.no_dup_keys, summary.dataset, summary.objects_total_lb, summary.category_recall, summary.content_structured_tversky, summary.text_bbu, summary.notes_bbu, summary.group_stats_presence]`
+    - `rlhf.reward_funcs=[summary.format, summary.header, summary.strict, summary.parse, summary.no_dup_keys, summary.dataset, summary.category_recall, summary.content_structured_tversky, summary.text_bbu, summary.notes_bbu, summary.group_stats_presence]`
     - `rlhf.num_generations` (must divide `rlhf.generation_batch_size`)
     - `rlhf.max_completion_length=2048`
     - `training.effective_batch_size` (backward global batch), `rlhf.generation_batch_size` (rollout global trajectories)
@@ -265,7 +265,7 @@ Keep configs under `configs/` in sync with the playbook when making behavioral c
     - Tune `rlhf.temperature` based on contract stability vs exploration.
 - **Metadata contract**: summary-mode rows attach `metadata.summary_ref` (ground-truth JSON) and `metadata._fusion_domain_token` (BBU/RRU) for reward functions; irrelevant rows keep `_fusion_source=irrelevant_summary` and suppress assistant prefixes so labels remain single-line `无关图片`.
 - **Dry-run recipe**: clone the example config, set `training.max_steps: 2`, `training.eval_strategy: "no"`, `training.save_strategy: "no"`, `custom.train_sample_limit: 2`, `custom.val_sample_limit: 2`, then launch via `scripts/train.sh config=<new-config.yaml> gpus=0 debug=true`.
-  - **Success criteria**: job starts, reward metrics appear (format/header/strict/parse + dup-key penalty + lower-bound content rewards), and 1–2 steps complete without dataset or format exceptions.
+  - **Success criteria**: job starts, reward metrics appear (format/header/strict/parse + dup-key penalty + structured content rewards), and 1–2 steps complete without dataset or format exceptions.
 
 ## Inference
 

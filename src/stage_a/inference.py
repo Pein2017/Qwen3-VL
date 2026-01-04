@@ -163,7 +163,7 @@ def _is_summary_json(obj: dict[str, object]) -> bool:
     """Heuristic: identify summary JSON schema."""
     if not isinstance(obj, dict):
         return False
-    required = {"dataset", "统计", "objects_total"}
+    required = {"dataset", "统计"}
     return required.issubset(obj.keys())
 
 
@@ -178,11 +178,12 @@ def sanitize_single_image_summary(text: str) -> str:
 
     obj = _maybe_parse_json_object(summary_text)
     if obj is not None and _is_summary_json(obj):
-        if "format_version" in obj:
-            obj = dict(obj)
-            obj.pop("format_version", None)
-            return json.dumps(obj, ensure_ascii=False, separators=(", ", ": "))
-        return summary_text
+        if "format_version" not in obj and "objects_total" not in obj:
+            return summary_text
+        normalized = dict(obj)
+        normalized.pop("format_version", None)
+        normalized.pop("objects_total", None)
+        return json.dumps(normalized, ensure_ascii=False, separators=(", ", ": "))
     if obj is not None:
         if "统计" in obj:
             return summary_text
@@ -248,7 +249,12 @@ def sanitize_summary_by_dataset(text: str, dataset: str) -> str:
 
     obj = _maybe_parse_json_object(summary_text)
     if obj is not None and _is_summary_json(obj):
-        return summary_text
+        if "format_version" not in obj and "objects_total" not in obj:
+            return summary_text
+        normalized = dict(obj)
+        normalized.pop("format_version", None)
+        normalized.pop("objects_total", None)
+        return json.dumps(normalized, ensure_ascii=False, separators=(", ", ": "))
 
     obj = _maybe_parse_json_object(summary_text)
     if obj is not None and "统计" in obj:
@@ -271,6 +277,7 @@ def sanitize_summary_by_dataset(text: str, dataset: str) -> str:
             obj.pop("备注", None)
         else:
             obj.pop("分组统计", None)
+        obj.pop("objects_total", None)
         obj["dataset"] = dataset.upper()
         return json.dumps(obj, ensure_ascii=False, separators=(", ", ": "))
 

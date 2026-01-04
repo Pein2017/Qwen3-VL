@@ -859,24 +859,79 @@ class ReflectionEngine:
     @staticmethod
     def _estimate_obj_count(text: str) -> int:
         stripped = (text or "").strip()
+        simplified = to_simplified(text or "")
+        simplified = normalize_spaces(simplified).strip()
+        if simplified == "无关图片":
+            return 0
+
         if stripped.startswith("{") and stripped.endswith("}"):
             try:
                 obj = json.loads(stripped)
             except Exception:  # pragma: no cover - defensive
                 obj = None
-            if isinstance(obj, dict) and {
-                "dataset",
-                "统计",
-                "objects_total",
-            }.issubset(obj.keys()):
-                total = obj.get("objects_total")
-                if isinstance(total, int):
-                    return total
-                if isinstance(total, str) and total.isdigit():
-                    return int(total)
+            if isinstance(obj, dict) and {"dataset", "统计"}.issubset(obj.keys()):
+                entries = obj.get("统计")
+                if not isinstance(entries, list):
+                    entries = []
 
-        simplified = to_simplified(text or "")
-        simplified = normalize_spaces(simplified)
+                def _to_int(value: object) -> int | None:
+                    if isinstance(value, bool) or value is None:
+                        return None
+                    if isinstance(value, int):
+                        return value
+                    if isinstance(value, float) and value.is_integer():
+                        return int(value)
+                    if isinstance(value, str):
+                        stripped_value = value.strip()
+                        if stripped_value.isdigit():
+                            try:
+                                return int(stripped_value)
+                            except Exception:
+                                return None
+                    return None
+
+                def _sum_counts(value: object) -> int:
+                    if isinstance(value, dict):
+                        total = 0
+                        for count_raw in value.values():
+                            count = _to_int(count_raw)
+                            if count is None or count <= 0:
+                                continue
+                            total += int(count)
+                        return total
+                    if isinstance(value, list):
+                        return len([v for v in value if v is not None])
+                    if value is None:
+                        return 0
+                    return 1
+
+                total_estimate = 0
+                for entry in entries:
+                    if not isinstance(entry, dict):
+                        continue
+                    category = entry.get("类别")
+                    cat = category.strip() if isinstance(category, str) else ""
+
+                    max_attr_total = 0
+                    label_text_total = 0
+                    label_readability_total = 0
+                    for key, val in entry.items():
+                        if key in {"类别", "异常"}:
+                            continue
+                        attr_total = _sum_counts(val)
+                        max_attr_total = max(max_attr_total, attr_total)
+                        if key == "文本":
+                            label_text_total = attr_total
+                        elif key == "可读性":
+                            label_readability_total = attr_total
+
+                    if cat == "标签":
+                        combined = label_text_total + label_readability_total
+                        total_estimate += max(1, max_attr_total, combined)
+                    else:
+                        total_estimate += max(1, max_attr_total)
+                return int(total_estimate)
+
         entries = [seg.strip() for seg in simplified.split("，") if seg.strip()]
         return len(entries) if entries else (1 if simplified else 0)
 
@@ -904,11 +959,7 @@ class ReflectionEngine:
                 obj = json.loads(stripped)
             except Exception:
                 obj = None
-            if isinstance(obj, dict) and {
-                "dataset",
-                "统计",
-                "objects_total",
-            }.issubset(obj.keys()):
+            if isinstance(obj, dict) and {"dataset", "统计"}.issubset(obj.keys()):
                 return True
 
         lowered = (text or "").lower()

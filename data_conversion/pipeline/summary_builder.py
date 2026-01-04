@@ -195,7 +195,6 @@ def build_summary_from_objects(
 
     summary_obj: Dict[str, Any] = {
         "dataset": dataset.upper(),
-        "objects_total": len(objects),
         "统计": [],
     }
 

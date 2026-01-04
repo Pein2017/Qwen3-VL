@@ -28,7 +28,7 @@ def _sample_dense_record():
 def _sample_summary_record():
     record = _sample_dense_record()
     record["summary"] = (
-        '{"dataset": "BBU", "objects_total": 2, '
+        '{"dataset": "BBU", '
         '"统计": [{"类别": "BBU设备", "品牌": {"华为": 1}}, '
         '{"类别": "光纤", "保护措施": {"有保护": 1}}]}'
     )

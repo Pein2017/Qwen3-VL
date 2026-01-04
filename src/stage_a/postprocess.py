@@ -62,16 +62,13 @@ def sanitize_summary_by_dataset(text: str, dataset: str) -> str:
             obj = json.loads(summary_text)
         except Exception:
             obj = None
-        if isinstance(obj, dict) and {
-            "dataset",
-            "统计",
-            "objects_total",
-        }.issubset(obj.keys()):
-            if "format_version" in obj:
-                obj = dict(obj)
-                obj.pop("format_version", None)
-                return json.dumps(obj, ensure_ascii=False, separators=(", ", ": "))
-            return summary_text
+        if isinstance(obj, dict) and {"dataset", "统计"}.issubset(obj.keys()):
+            if "format_version" not in obj and "objects_total" not in obj:
+                return summary_text
+            obj = dict(obj)
+            obj.pop("format_version", None)
+            obj.pop("objects_total", None)
+            return json.dumps(obj, ensure_ascii=False, separators=(", ", ": "))
 
     if summary_text.startswith("{") and summary_text.endswith("}"):
         try:
@@ -96,6 +93,7 @@ def sanitize_summary_by_dataset(text: str, dataset: str) -> str:
                 obj.pop("备注", None)
             else:
                 obj.pop("分组统计", None)
+            obj.pop("objects_total", None)
             obj["dataset"] = dataset.upper()
             return json.dumps(obj, ensure_ascii=False, separators=(", ", ": "))
 
