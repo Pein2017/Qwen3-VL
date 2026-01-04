@@ -167,6 +167,55 @@ def _is_summary_json(obj: dict[str, object]) -> bool:
     return required.issubset(obj.keys())
 
 
+def _format_summary_json(obj: dict[str, object]) -> str:
+    """Normalize summary JSON objects to a single-line string.
+
+    - Removes optional `format_version` key when present.
+    - Uses the canonical separators (", ", ": ") to match prompt/contract.
+    """
+    if "format_version" in obj:
+        obj = dict(obj)
+        obj.pop("format_version", None)
+    return json.dumps(obj, ensure_ascii=False, separators=(", ", ": "))
+
+
+def _extract_summary_json_line(text: str) -> str | None:
+    """Extract summary-statistics JSON from model output text.
+
+    Stage-A summary-mode models may emit:
+    - Single-line JSON: {"dataset": "...", "objects_total": ..., "统计": [...]}
+    - Two-line output: "<DOMAIN=...>, <TASK=...>" + JSON on the next line
+
+    This helper finds the JSON object and returns a normalized single-line JSON
+    string, or None when the input does not contain a valid summary JSON.
+    """
+    stripped = (text or "").strip()
+    if not stripped:
+        return None
+
+    obj = _maybe_parse_json_object(stripped)
+    if obj is not None and _is_summary_json(obj):
+        return _format_summary_json(obj)
+
+    # Multi-line outputs: search per-line (reverse to favor the JSON tail).
+    lines = [line.strip() for line in stripped.splitlines() if line.strip()]
+    for line in reversed(lines):
+        candidate = _maybe_parse_json_object(line)
+        if candidate is not None and _is_summary_json(candidate):
+            return _format_summary_json(candidate)
+
+    # Fallback: extract the first {...} block from the full text.
+    start = stripped.find("{")
+    end = stripped.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        candidate_text = stripped[start : end + 1].strip()
+        candidate = _maybe_parse_json_object(candidate_text)
+        if candidate is not None and _is_summary_json(candidate):
+            return _format_summary_json(candidate)
+
+    return None
+
+
 def sanitize_single_image_summary(text: str) -> str:
     """Extract and sanitize the summary for a single image.
 
@@ -176,13 +225,16 @@ def sanitize_single_image_summary(text: str) -> str:
     """
     summary_text = text.strip()
 
+    if summary_text.startswith("无关图片"):
+        return "无关图片"
+
+    extracted = _extract_summary_json_line(summary_text)
+    if extracted is not None:
+        return extracted
+
     obj = _maybe_parse_json_object(summary_text)
     if obj is not None and _is_summary_json(obj):
-        if "format_version" in obj:
-            obj = dict(obj)
-            obj.pop("format_version", None)
-            return json.dumps(obj, ensure_ascii=False, separators=(", ", ": "))
-        return summary_text
+        return _format_summary_json(obj)
     if obj is not None:
         if "统计" in obj:
             return summary_text
@@ -245,6 +297,10 @@ def sanitize_summary_by_dataset(text: str, dataset: str) -> str:
     summary_text = text.strip()
     if not summary_text:
         return summary_text
+
+    extracted = _extract_summary_json_line(summary_text)
+    if extracted is not None:
+        summary_text = extracted
 
     obj = _maybe_parse_json_object(summary_text)
     if obj is not None and _is_summary_json(obj):

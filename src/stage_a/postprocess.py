@@ -43,6 +43,51 @@ _RRU_CATEGORIES = {
 }
 
 
+def _format_summary_json(obj: dict[str, object]) -> str:
+    if "format_version" in obj:
+        obj = dict(obj)
+        obj.pop("format_version", None)
+    return json.dumps(obj, ensure_ascii=False, separators=(", ", ": "))
+
+
+def _extract_summary_json_line(text: str) -> str | None:
+    stripped = (text or "").strip()
+    if not stripped:
+        return None
+
+    def _maybe_parse_obj(candidate: str) -> dict[str, object] | None:
+        c = candidate.strip()
+        if not (c.startswith("{") and c.endswith("}")):
+            return None
+        try:
+            obj = json.loads(c)
+        except Exception:
+            return None
+        return obj if isinstance(obj, dict) else None
+
+    def _is_summary(obj: dict[str, object]) -> bool:
+        return {"dataset", "统计", "objects_total"}.issubset(obj.keys())
+
+    obj = _maybe_parse_obj(stripped)
+    if obj is not None and _is_summary(obj):
+        return _format_summary_json(obj)
+
+    lines = [line.strip() for line in stripped.splitlines() if line.strip()]
+    for line in reversed(lines):
+        obj = _maybe_parse_obj(line)
+        if obj is not None and _is_summary(obj):
+            return _format_summary_json(obj)
+
+    start = stripped.find("{")
+    end = stripped.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        obj = _maybe_parse_obj(stripped[start : end + 1])
+        if obj is not None and _is_summary(obj):
+            return _format_summary_json(obj)
+
+    return None
+
+
 def _strip_remark(item: str) -> str:
     return _REMARK_RE.sub("", item).strip(" ，")
 
@@ -57,6 +102,10 @@ def sanitize_summary_by_dataset(text: str, dataset: str) -> str:
     if not summary_text:
         return summary_text
 
+    extracted = _extract_summary_json_line(summary_text)
+    if extracted is not None:
+        summary_text = extracted
+
     if summary_text.startswith("{"):
         try:
             obj = json.loads(summary_text)
@@ -67,11 +116,7 @@ def sanitize_summary_by_dataset(text: str, dataset: str) -> str:
             "统计",
             "objects_total",
         }.issubset(obj.keys()):
-            if "format_version" in obj:
-                obj = dict(obj)
-                obj.pop("format_version", None)
-                return json.dumps(obj, ensure_ascii=False, separators=(", ", ": "))
-            return summary_text
+            return _format_summary_json(obj)
 
     if summary_text.startswith("{") and summary_text.endswith("}"):
         try:
