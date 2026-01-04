@@ -230,6 +230,7 @@ class ConfigLoader:
         tuner_section = dict(config.tuner)
         training_section = dict(config.training)
         rlhf_section_original = dict(config.rlhf)
+        rlhf_type = rlhf_section_original.get("rlhf_type")
         rlhf_section = dict(rlhf_section_original)
         llm_kd_weight_raw = rlhf_section.pop("llm_kd_weight", None)
         if llm_kd_weight_raw is None:
@@ -344,10 +345,12 @@ class ConfigLoader:
             template_section,
             tuner_section,
             training_section,
-            rlhf_section,
         ):
             if section:
                 args_dict.update(section)
+
+        if rlhf_type:
+            args_dict.update(rlhf_section)
 
         if config.deepspeed and config.deepspeed.enabled:
             args_dict["deepspeed"] = config.deepspeed.config
