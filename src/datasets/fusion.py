@@ -13,7 +13,6 @@ from typing import Any
 from src.utils import get_logger
 
 from .fusion_types import AuxiliarySpec, DatasetSpec, TargetSpec
-from .assistant_prefix import resolve_domain_token
 from .wrappers import build_dataset_spec
 from .utils import load_jsonl
 
@@ -244,9 +243,6 @@ def _annotate_record(record: Mapping[str, Any], spec: DatasetSpec) -> dict[str, 
     metadata["_fusion_source"] = spec.name
     metadata["_fusion_template"] = spec.template
     metadata["_fusion_domain"] = spec.domain
-    domain_token = resolve_domain_token(spec.key)
-    if domain_token:
-        metadata["_fusion_domain_token"] = domain_token
     annotated["metadata"] = metadata
     return annotated
 

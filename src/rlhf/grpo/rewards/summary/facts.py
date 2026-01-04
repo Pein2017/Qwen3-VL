@@ -58,7 +58,7 @@ def extract_summary_fact_counts(
             if not category:
                 continue
             for attr_raw, val in entry.items():
-                if attr_raw in {"类别", "异常"}:
+                if attr_raw == "类别":
                     continue
                 attr = str(attr_raw).strip()
                 if not attr:

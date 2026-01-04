@@ -12,7 +12,7 @@ Related: [runtime/STAGE_A_STAGE_B.md](../runtime/STAGE_A_STAGE_B.md), [runtime/S
 - Stage-A：逐图片的客观事实归纳（摘要）
 - Stage-B：基于多图摘要与业务规则的组级判定与反思更新
 
-Stage-B 现为“prompt-only”流程：推理输出**严格两行二分类**（`Verdict: 通过|不通过` + `Reason: ...`），且最终输出中**禁止任何第三状态词面**（例如复核/证据不足/待定等）。
+Stage-B 现为“prompt-only”流程：推理输出**严格两行二分类**（`Verdict: 通过|不通过` + `Reason: ...`）。
 
 异常与人工复核的边界：
 - Stage‑B 仅运行 rule-search；解析失败的候选会在统计时视为无效样本，不再写入人工复核队列。
@@ -33,7 +33,7 @@ Stage-B 现为“prompt-only”流程：推理输出**严格两行二分类**（
 - 描述语义：desc 使用 `key=value` 逗号分隔；条件属性仅在父属性满足时出现；`备注` 为自由文本备注
 
 生产摘要（Stage-A与Stage-B共用）的格式规范见 [data/DATA_AND_DATASETS.md](../data/DATA_AND_DATASETS.md)：
-- 单行 JSON 字符串；包含 `dataset/统计`，`异常` 仅在非零时出现（BBU 额外含 `备注`，RRU 可含 `分组统计`）
+- 单行 JSON 字符串；包含 `统计`（BBU 额外含 `备注`，RRU 可含 `分组统计`）。训练语料不得包含 `dataset`。
 - `统计` 为类别+属性值计数（`{value: count}`），仅统计可见值，不输出缺失/遮挡
 - 无坐标数组；OCR 保留原文（去空格，保留 `-`/`/`），不可读写 `可读性=不可读`
 
@@ -67,7 +67,7 @@ Stage-B 现为“prompt-only”流程：推理输出**严格两行二分类**（
 
 对应的 Stage-A 输出示例（位于 `./output_post/stage_a`）：
 ```json
-{"group_id": "QC-TEMP-20241206-0015502", "mission": "挡风板安装检查", "label": "fail", "images": ["QC-TEMP-20241206-0015502_4348975.jpeg"], "per_image": {"image_1": "{\"dataset\": \"BBU\", \"统计\": [{\"类别\": \"BBU设备\", \"品牌\": {\"华为\": 2}, \"可见性\": {\"完整\": 2}, \"挡风板需求\": {\"未按要求配备\": 2}}, {\"类别\": \"BBU安装螺丝\", \"符合性\": {\"符合\": 3}}, {\"类别\": \"光纤\", \"保护措施\": {\"有保护\": 2}}, {\"类别\": \"挡风板\", \"安装方向\": {\"正确\": 1}}], \"备注\": [\"无法判断品牌和是否足够空间安装挡风板\"]}"}}
+{"group_id": "QC-TEMP-20241206-0015502", "mission": "挡风板安装检查", "label": "fail", "images": ["QC-TEMP-20241206-0015502_4348975.jpeg"], "per_image": {"image_1": "{\"统计\": [{\"类别\": \"BBU设备\", \"品牌\": {\"华为\": 2}, \"可见性\": {\"完整\": 2}, \"挡风板需求\": {\"未按要求配备\": 2}}, {\"类别\": \"BBU安装螺丝\", \"符合性\": {\"符合\": 3}}, {\"类别\": \"光纤\", \"保护措施\": {\"有保护\": 2}}, {\"类别\": \"挡风板\", \"安装方向\": {\"正确\": 1}}], \"备注\": [\"无法判断品牌和是否足够空间安装挡风板\"]}"}}
 ```
 
 结合当前 `bbu_full_768_poly` 词表，可以大致把摘要里的对象理解为“类别 + 属性值计数”的模式（示意，非穷举）：
@@ -131,7 +131,7 @@ Stage‑B system prompt 不再包含领域提示；领域知识上移到 Stage�
 1) Ingest：读取 Stage-A JSONL，规范化成组级工单（GroupTicket）
 2) Rollout：system prompt 固定为两行判决契约 + 规则/软硬信号；user prompt 仅包含 guidance（S*/G0/G*）+ Stage‑A 摘要（领域提示已上移到 Stage‑A user prompt）。按解码网格（温度、top_p、max_new_tokens 等）对每组生成候选判定，每个候选都遵守两行输出协议（Verdict/Reason）。规则默认 AND（S* 与 G* 必须同时满足；仅当规则文本明确写“或/例外条件”才允许 OR），缺证据即判不通过；超长提示直接 drop，不截断。
 3) Signals：为候选附加确定性信号（如与历史标签的一致性 `label_match`、在候选集合中的自洽度 self_consistency 等），不再调用 CriticEngine。
-4) Selection：基于多数表决 + fail-first 策略选择最终判定；并叠加 **mission-scoped fail-first** 确定性护栏（仅当负项与当前 mission 的 `G0` 相关时触发整组不通过；支持 pattern-first `不符合/<issue>`）。若护栏覆盖采样 verdict，则必须重写最终 `Reason` 以与最终 `Verdict` 一致，且仍不得出现第三状态词面。
+4) Selection：基于多数表决 + fail-first 策略选择最终判定；并叠加 **mission-scoped fail-first** 确定性护栏（仅当负项与当前 mission 的 `G0` 相关时触发整组不通过；支持 pattern-first `不符合/<issue>`）。若护栏覆盖采样 verdict，则必须重写最终 `Reason` 以与最终 `Verdict` 一致。
 5) Reflection：对近期包含标签冲突或部分正确的轨迹进行批处理，比较模型判定与 GT 差异，构造 JSON-only 的 guidance 变更提案（增加/更新/删除经验规则），并先输出可证伪 hypothesis 进入候选池，跨批次证据累积后再晋升为 `G*` 规则。
 6) Guidance Repository：对提案进行应用/留存，并以快照形式记录每次变更，支持回滚与再训练使用。
 - rule_search 模式：在少量错例上提出 1–N 条候选操作（upsert/update/merge/remove），并对 update/merge/remove 施加 fp/acc 改善与 `max_fp_rate_increase` 约束；train pool gate 通过后才纳入 guidance，eval pool 指标仅用于审计记录。
@@ -167,7 +167,7 @@ Stage‑B system prompt 不再包含领域提示；领域知识上移到 Stage�
 
 ## 判定规则示例（对齐属性映射）
 
-> 说明：以下示例用于提示 LLM 聚焦的关键对象，不再作为硬编码规则执行。Stage-B 以 prompt + guidance 为主，历史标签只作为冲突标记与反思信号；推理阶段**只输出“通过/不通过”两类**，不输出任何第三状态。`备注` 与“无法确认/模糊/部分”等属于软信号：不得作为硬触发词直接否决，但若无法从摘要/备注/多图证据给出覆盖当前 mission `G0` 关键点的通过证据，则按安全约束判为“不通过”。
+> 说明：以下示例用于提示 LLM 聚焦的关键对象，不再作为硬编码规则执行。Stage-B 以 prompt + guidance 为主，历史标签只作为冲突标记与反思信号；推理阶段**只输出“通过/不通过”两类**。`备注` 与“无法确认/模糊/部分”等属于软信号：不得作为硬触发词直接否决，但若无法从摘要/备注/多图证据给出覆盖当前 mission `G0` 关键点的通过证据，则按安全约束判为“不通过”。
 
 将“先验要求”具体化为可执行检查（基于 Stage-A 摘要）：
 - BBU安装（正装）：必须同时出现“BBU设备/完整”与“螺丝、光纤插头/BBU安装螺丝/完整/符合”；若摘要出现“不符合/未拧紧/露铜/复接/生锈”，则直接“不通过”

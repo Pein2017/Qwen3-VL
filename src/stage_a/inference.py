@@ -163,8 +163,7 @@ def _is_summary_json(obj: dict[str, object]) -> bool:
     """Heuristic: identify summary JSON schema."""
     if not isinstance(obj, dict):
         return False
-    required = {"dataset", "统计"}
-    return required.issubset(obj.keys())
+    return "统计" in obj
 
 
 def _format_summary_json(obj: dict[str, object]) -> str:
@@ -174,9 +173,12 @@ def _format_summary_json(obj: dict[str, object]) -> str:
     - Uses the canonical separators (", ", ": ") to match prompt/contract.
     """
     ordered: dict[str, object] = {}
-    for key in ("dataset", "统计", "备注", "分组统计", "异常"):
+    for key in ("统计", "备注", "分组统计"):
         if key in obj:
             ordered[key] = obj[key]
+    for key, value in obj.items():
+        if key not in ordered:
+            ordered[key] = value
     return json.dumps(ordered, ensure_ascii=False, separators=(", ", ": "))
 
 
@@ -184,7 +186,7 @@ def _extract_summary_json_line(text: str) -> str | None:
     """Extract summary-statistics JSON from model output text.
 
     Stage-A summary-mode models may emit:
-    - Single-line JSON: {"dataset": "...", "统计": [...]}
+    - Single-line JSON: {"统计": [...]}
     - Two-line output: "<DOMAIN=...>, <TASK=...>" + JSON on the next line
 
     This helper finds the JSON object and returns a normalized single-line JSON
@@ -290,108 +292,9 @@ _RRU_CATEGORIES = {
 
 
 def sanitize_summary_by_dataset(text: str, dataset: str) -> str:
-    """Normalize summary text with dataset-specific constraints.
-
-    For RRU, drop non-domain items (e.g., BBU-only objects). If nothing remains,
-    return "无关图片". Preserve label/station OCR content.
-    """
-    summary_text = text.strip()
-    if not summary_text:
-        return summary_text
-
-    extracted = _extract_summary_json_line(summary_text)
-    if extracted is not None:
-        summary_text = extracted
-
-    obj = _maybe_parse_json_object(summary_text)
-    if obj is not None and _is_summary_json(obj):
-        return _format_summary_json(obj)
-
-    obj = _maybe_parse_json_object(summary_text)
-    if obj is not None and "统计" in obj:
-        allowed = _RRU_CATEGORIES if dataset.lower() == "rru" else _BBU_CATEGORIES
-        entries = obj.get("统计")
-        if isinstance(entries, list):
-            filtered = [
-                entry
-                for entry in entries
-                if isinstance(entry, dict) and entry.get("类别") in allowed
-            ]
-        else:
-            filtered = []
-
-        if not filtered:
-            return "无关图片"
-
-        obj["统计"] = filtered
-        if dataset.lower() == "rru":
-            obj.pop("备注", None)
-        else:
-            obj.pop("分组统计", None)
-        obj["dataset"] = dataset.upper()
-        return json.dumps(obj, ensure_ascii=False, separators=(", ", ": "))
-
-    parts = [p.strip() for p in summary_text.split("，") if p.strip()]
-    if not parts:
-        return summary_text
-
-    def _normalize_irrelevant_only(items: list[str]) -> list[str]:
-        cleaned = []
-        for item in items:
-            if item.startswith("无关图片"):
-                continue
-            cleaned.append(item)
-        return cleaned
-
-    if dataset.lower() != "rru":
-        cleaned = _normalize_irrelevant_only(parts)
-        return "无关图片" if not cleaned else "，".join(cleaned)
-
-    allowed_prefixes = (
-        "标签/",
-        "站点距离/",
-        "RRU设备",
-        "RRU接地端",
-        "地排接地端螺丝",
-        "紧固件",
-        "尾纤",
-        "接地线",
-    )
-
-    cleaned: list[str] = []
-    for item in parts:
-        if item.startswith("无关图片"):
-            continue
-        normalized = _GROUP_PREFIX_OF_RE.sub(r"组\1:", item.replace("：", ":")).strip()
-        if not normalized:
-            continue
-        group_prefix = ""
-        match = _GROUP_PREFIX_RE.match(normalized)
-        core = normalized
-        if match:
-            group_prefix = match.group(0)
-            core = normalized[len(group_prefix) :]
-
-        if not core.startswith("标签/"):
-            core = re.sub(r"备注[:：].*$", "", core).strip()
-            core = re.sub(r"[，,、;；]+$", "", core).strip()
-            if not core:
-                continue
-
-        if core.startswith("RRU设备/"):
-            normalized_core = "RRU设备"
-            cleaned.append(
-                f"{group_prefix}{normalized_core}" if group_prefix else normalized_core
-            )
-            continue
-
-        if core.startswith(allowed_prefixes):
-            cleaned.append(f"{group_prefix}{core}" if group_prefix else core)
-            continue
-
-    if not cleaned:
-        return "无关图片"
-    return "，".join(cleaned)
+    """Return summary text without dataset-specific injection or filtering."""
+    _ = dataset
+    return sanitize_single_image_summary(text)
 
 
 

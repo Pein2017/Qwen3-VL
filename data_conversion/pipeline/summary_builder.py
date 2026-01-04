@@ -194,7 +194,6 @@ def build_summary_from_objects(
                 value_counts[value] = value_counts.get(value, 0) + 1
 
     summary_obj: Dict[str, Any] = {
-        "dataset": dataset.upper(),
         "统计": [],
     }
 

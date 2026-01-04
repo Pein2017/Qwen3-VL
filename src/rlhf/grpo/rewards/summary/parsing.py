@@ -164,8 +164,6 @@ def canonicalize(obj: Any, *, key: str | None = None) -> Any:
     if isinstance(obj, dict):
         items: dict[str, Any] = {}
         for k, v in obj.items():
-            if k == "异常":
-                continue
             items[str(k)] = canonicalize(v, key=str(k))
         return {k: items[k] for k in sorted(items.keys())}
     if isinstance(obj, list):
@@ -182,6 +180,8 @@ def canonicalize(obj: Any, *, key: str | None = None) -> Any:
 
 def normalize_summary(obj: Any, domain_token: str | None) -> tuple[Any | None, bool]:
     if not isinstance(obj, dict):
+        return None, False
+    if "dataset" in obj:
         return None, False
     if domain_token == "RRU" and "备注" in obj:
         return None, False

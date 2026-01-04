@@ -139,6 +139,8 @@ class SummaryDatasetReward(SummaryReward):
             return 0.0
         if sample.domain_token is None:
             return 0.0
+        if not sample.strict_json_line:
+            return 0.0
         if not sample.lines:
             return 0.0
         header = sample.lines[0].strip()

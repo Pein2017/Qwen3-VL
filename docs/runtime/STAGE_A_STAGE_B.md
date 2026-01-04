@@ -73,7 +73,7 @@ Note: The same `group_id` may appear in both label folders for resubmitted batch
 | What | Business Interpretation |
 | ---- | ---------------------- |
 | Input | Stage-A summaries + ground-truth labels + current mission guidance. |
-| Process | Prompt-only rollouts（system prompt 固定为两行判决契约 + 规则/软硬信号；user prompt 仅包含 guidance（S*/G0/G*）+ Stage‑A 摘要，不含 GT；领域提示已上移到 Stage‑A user prompt；S* 为只读结构不变量，G0+ 为可学习规则，**默认 AND 关系**；仅当规则明确写“或/例外条件”时允许 OR；缺证据即判不通过）；推理输出必须严格两行二分类：`Verdict: 通过|不通过` + `Reason: ...`，且最终输出禁止任何第三状态词面。rollout/proposer/reflection 超长提示不截断，直接 drop。Stage‑B 仅支持 `rule_search`：reflection 在少量错例上提出 1–N 条候选操作，随后在 **train pool** 上做 A/B gate（相对错误率下降 + bootstrap + max_changed_fraction），并对 update/merge/remove 施加 fp/acc 改善与 `max_fp_rate_increase` 约束；eval pool 指标仅用于审计记录，通过者才纳入 guidance。重跑同一 run_name 时重建 per-run artifacts 与 reflection_cache，指导沿用上次快照（除非显式 reset）。 |
+| Process | Prompt-only rollouts（system prompt 固定为两行判决契约 + 规则/软硬信号；user prompt 仅包含 guidance（S*/G0/G*）+ Stage‑A 摘要，不含 GT；领域提示已上移到 Stage‑A user prompt；S* 为只读结构不变量，G0+ 为可学习规则，**默认 AND 关系**；仅当规则明确写“或/例外条件”时允许 OR；缺证据即判不通过）；推理输出必须严格两行二分类：`Verdict: 通过|不通过` + `Reason: ...`。rollout/proposer/reflection 超长提示不截断，直接 drop。Stage‑B 仅支持 `rule_search`：reflection 在少量错例上提出 1–N 条候选操作，随后在 **train pool** 上做 A/B gate（相对错误率下降 + bootstrap + max_changed_fraction），并对 update/merge/remove 施加 fp/acc 改善与 `max_fp_rate_increase` 约束；eval pool 指标仅用于审计记录，通过者才纳入 guidance。重跑同一 run_name 时重建 per-run artifacts 与 reflection_cache，指导沿用上次快照（除非显式 reset）。 |
 | Output | `rule_candidates.jsonl` / `benchmarks.jsonl`（候选规则 train/eval 评估与增益轨迹）、`rule_search_hard_cases.jsonl` / `rule_search_candidate_regressions.jsonl`（错例与回归溯源）、mission guidance snapshots；可选 `distill_chatml.jsonl`（rule-search 早停后导出）。 |
 
 **Experiences = living policy**

@@ -13,7 +13,6 @@ from ..types import GroupTicket, MissionGuidance
 from ..utils.chinese import normalize_spaces, to_simplified
 
 _INDEX_RE = re.compile(r"(\d+)$")
-_REVIEW_MARKER_RE = re.compile(r"(?:\u590d\u6838)", re.IGNORECASE)
 _STATION_DISTANCE_RE = re.compile(r"站点距离[=/](\d+)")
 
 
@@ -70,7 +69,7 @@ def _parse_summary_json(text: str) -> dict[str, object] | None:
 
 
 def _format_summary_json(obj: dict[str, object]) -> str:
-    preferred_order = ["dataset", "统计", "备注", "分组统计", "异常"]
+    preferred_order = ["统计", "备注", "分组统计"]
     allowed = set(preferred_order)
     ordered: dict[str, object] = {}
     for key in preferred_order:
@@ -170,7 +169,7 @@ def _estimate_object_count_from_summary(obj: dict[str, object]) -> int:
         label_readability_total = 0
 
         for key, val in entry.items():
-            if key in {"类别", "异常"}:
+            if key == "类别":
                 continue
             total = _sum_counts(val)
             max_attr_total = max(max_attr_total, total)
@@ -188,11 +187,8 @@ def _estimate_object_count_from_summary(obj: dict[str, object]) -> int:
 
 
 def _sanitize_stage_a_summary_for_prompt(text: str) -> str:
-    """Sanitize Stage-A summary strings for Stage-B prompting.
+    """Drop summary headers and return the payload unchanged for prompting."""
 
-    Stage-B forbids any third-state wording; summaries containing such markers
-    are rejected to avoid silent sanitization.
-    """
     if not text:
         return ""
     stripped = text.strip()
@@ -508,9 +504,6 @@ def build_user_prompt(ticket: GroupTicket, guidance: MissionGuidance) -> str:
         guidance_section += f"可学习规则：\n{mutable_block}\n\n"
 
     stage_a_summaries = ticket.summaries.as_dict()
-    for text in stage_a_summaries.values():
-        if "\u590d\u6838" in text:
-            raise ValueError("Stage-A summary contains review marker")
 
     summaries_text = _render_summaries(stage_a_summaries)
     stats_text = _render_image_stats(stage_a_summaries)

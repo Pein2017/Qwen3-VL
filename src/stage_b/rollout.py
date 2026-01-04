@@ -68,17 +68,12 @@ def _trim_assistant_prefix(text: str) -> str:
 
 
 def _normalize_verdict(text: str) -> GroupLabel | None:
-    cleaned = text.strip().replace(" ", "").lower()
+    cleaned = normalize_spaces(to_simplified(text or "")).strip()
+    cleaned = cleaned.replace(" ", "").lower()
     if cleaned in {"通过", "pass", "通过。"}:
         return "pass"
     if cleaned in {"不通过", "fail", "未通过", "不通过。"}:
         return "fail"
-    # Third-state / pending phrases are forbidden in Stage-B inference outputs.
-    if any(
-        term in cleaned
-        for term in ["\u590d\u6838", "不确定", "无法判断", "无法判定", "\u5f85\u590d\u6838"]
-    ):
-        return None
     return None
 
 
@@ -114,16 +109,6 @@ def _parse_two_line_response(
         return False, None, None
     reason = reason_parts[1].strip()
     if not reason:
-        return False, None, None
-
-    forbidden = (
-        "\u590d\u6838",  # review placeholder
-        "待定",
-        "证据不足",
-        "\u4eba\u5de5\u590d\u6838",  # manual review
-    )
-    simplified_reason = normalize_spaces(to_simplified(reason))
-    if any(term in simplified_reason for term in forbidden):
         return False, None, None
 
     return True, verdict, reason
@@ -383,28 +368,15 @@ class RolloutSampler:
                     candidate_index = counters[ticket_key]
                     counters[ticket_key] += 1
 
-                    # Normalize response text (convert to simplified Chinese and normalize spaces)
-                    normalized_response_text = to_simplified(response_text)
-                    normalized_response_text = normalize_spaces(
-                        normalized_response_text
-                    )
-
                     base = Trajectory(
                         group_id=ticket.group_id,
                         mission=ticket.mission,
                         candidate_index=candidate_index,
                         decode=decode,
-                        response_text=normalized_response_text,
+                        response_text=response_text,
                         created_at=current_time,
                     )
-                    format_ok, verdict, reason = _parse_two_line_response(
-                        normalized_response_text
-                    )
-
-                    # Convert traditional Chinese to simplified Chinese and normalize spaces
-                    if reason:
-                        reason = to_simplified(reason)
-                        reason = normalize_spaces(reason)
+                    format_ok, verdict, reason = _parse_two_line_response(response_text)
 
                     per_group[ticket_key].append(
                         ParsedTrajectory(
