@@ -6,7 +6,7 @@ Instructions for AI coding assistants using OpenSpec for spec-driven development
 
 - Search existing work: `openspec spec list --long`, `openspec list` (use `rg` only for full-text search)
 - Decide scope: new capability vs modify existing capability
-- Pick a unique `change-id`: kebab-case, verb-led (`add-`, `update-`, `remove-`, `refactor-`)
+- Pick a unique `change-id`: `YYYY-MM-DD-<name>` where `<name>` is kebab-case and verb-led (`add-`, `update-`, `remove-`, `refactor-`). Use today's date (`date +%F`).
 - Scaffold: `proposal.md`, `tasks.md`, `design.md` (only if needed), and delta specs per affected capability
 - Write deltas: use `## ADDED|MODIFIED|REMOVED|RENAMED Requirements`; include at least one `#### Scenario:` per requirement
 - Validate: `openspec validate [change-id] --strict` and fix issues
@@ -50,7 +50,7 @@ Skip proposal for:
 
 **Workflow**
 1. Review `openspec/project.md`, `openspec list`, and `openspec list --specs` to understand current context.
-2. Choose a unique verb-led `change-id` and scaffold `proposal.md`, `tasks.md`, optional `design.md`, and spec deltas under `openspec/changes/<id>/`.
+2. Choose a unique `change-id` in `YYYY-MM-DD-<name>` format (use today's date, `date +%F`) and scaffold `proposal.md`, `tasks.md`, optional `design.md`, and spec deltas under `openspec/changes/<id>/`.
 3. Draft spec deltas using `## ADDED|MODIFIED|REMOVED Requirements` with at least one `#### Scenario:` per requirement.
 4. Run `openspec validate <id> --strict` and resolve any issues before sharing the proposal.
 
@@ -138,7 +138,7 @@ openspec/
 │       ├── spec.md         # Requirements and scenarios
 │       └── design.md       # Technical patterns
 ├── changes/                # Proposals - what SHOULD change
-│   ├── [change-name]/
+│   ├── YYYY-MM-DD-[change-name]/
 │   │   ├── proposal.md     # Why, what, impact
 │   │   ├── tasks.md        # Implementation checklist
 │   │   ├── design.md       # Technical decisions (optional; see criteria)
@@ -164,7 +164,7 @@ New request?
 
 ### Proposal Structure
 
-1. **Create directory:** `changes/[change-id]/` (kebab-case, verb-led, unique)
+1. **Create directory:** `changes/YYYY-MM-DD-<name>/` (use today's date, `date +%F`; `<name>` is kebab-case and verb-led)
 
 2. **Write proposal.md:** capture why, what changes, and impact in a short markdown file.
 

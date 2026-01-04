@@ -6,12 +6,12 @@
 - Focus: dense captioning with structured geometry (bbox/poly/line) plus augmentation and visualization tooling.
 
 ## Spec Status
-- Active, production-ready specs: `specs/sft-training`, `specs/fusion-dataset`, `specs/multi-dataset-fusion`, `specs/grpo-integration`, `specs/summary-grpo-post-training`, `specs/llm-kd-config`, `specs/data-augmentation`, `specs/detection-preprocessor`, `specs/hard-sample-mining`, `specs/stage-b-training-free`, `specs/chatml-stageb`, `specs/llm-free-reflection`.
+- Active, production-ready specs: `specs/auto-context-router`, `specs/documentation-system`, `specs/sft-training`, `specs/fusion-dataset`, `specs/multi-dataset-fusion`, `specs/grpo-integration`, `specs/summary-grpo-post-training`, `specs/llm-kd-config`, `specs/data-augmentation`, `specs/detection-preprocessor`, `specs/hard-sample-mining`, `specs/stage-b-training-free`, `specs/chatml-stageb`, `specs/llm-free-reflection`.
 - Summary-mode GRPO post-training is fully specified by `specs/summary-grpo-post-training` (supersedes summary guidance in `specs/grpo-integration`).
-- Padding-only runtime: `training.packing` is not supported; legacy packing changes are archived in `openspec/archive/changes/` (`2025-12-02-add-grouped-packing-wrapper`, `2025-12-02-add-packing-optimizations`, `add-unpacked-group-telemetry`) and `openspec/changes/archive/2025-12-30-remove-packing-path`.
+- Padding-only runtime: `training.packing` is not supported; legacy packing changes are archived in `openspec/changes/archive/` (`2025-12-02-add-grouped-packing-wrapper`, `2025-12-02-add-packing-optimizations`, `add-unpacked-group-telemetry`) and `openspec/changes/archive/2025-12-30-remove-packing-path`.
 - Legacy (not supported): `specs/packing-optimizations` kept for traceability only; padding-only runtime supersedes it.
-- Active change proposals: *(none; bulk archived on 2025-12-30 - see `openspec/changes/archive/2025-12-30-*`)*.
-- Archived/deprecated changes: legacy bundles in `openspec/changes/archive/2025-01-27-deprecated-specs` and `openspec/changes/archive/2025-12-16-deprecated-specs`, plus older history under `openspec/archive/changes/`.
+- Active change proposals: *(none; most recent archives 2026-01-03 - see `openspec/changes/archive/2026-01-03-*`)*.
+- Archived/deprecated changes: legacy bundles in `openspec/changes/archive/2025-01-27-deprecated-specs` and `openspec/changes/archive/2025-12-16-deprecated-specs`, plus older history under `openspec/changes/archive/`.
 - Use `openspec list` and `openspec list --specs` for current status before editing specs or configs.
 
 ## Quick Orientation
