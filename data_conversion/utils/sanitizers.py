@@ -79,6 +79,14 @@ _LEARNING_NOTE_PATTERN = re.compile(
     r"(?:[，,])?这里已经帮助修改,请注意参考学习(?:[，,])?"
 )
 
+_NOISE_REMARK_TOKENS = (
+    "请参考学习",
+    "建议看下操作手册中螺丝、插头的标注规范",
+)
+_NOISE_REMARK_PATTERN = re.compile(
+    "|".join(re.escape(tok) for tok in _NOISE_REMARK_TOKENS)
+)
+
 
 def sanitize_free_text_value(value: Optional[str]) -> Optional[str]:
     """Preserve free text (OCR/备注) while removing whitespace and known notes."""
@@ -86,6 +94,7 @@ def sanitize_free_text_value(value: Optional[str]) -> Optional[str]:
         return value
     s = re.sub(r"\s+", "", value.replace("\u3000", ""))
     s = _LEARNING_NOTE_PATTERN.sub(",", s)
+    s = _NOISE_REMARK_PATTERN.sub("", s)
     s = re.sub(r"[，,]{2,}", ",", s)
     s = s.strip("，,")
     return s

@@ -106,7 +106,7 @@ The pipeline is organized around `UnifiedProcessor` (`data_conversion/pipeline/u
    - `data_conversion/pipeline/summary_builder.py` produces a **JSON-string** `summary` with per-category stats:
      - required keys: `dataset`, `objects_total`, `统计`
      - `异常` is included only when non-zero; BBU includes `备注` only when non-empty; RRU may include `分组统计`
-   - Only observed values are counted (no missing/需复核/遮挡 placeholders).
+   - Only observed values are counted (no missing/third-state/遮挡 placeholders).
    - OCR/备注 are free text: whitespace removed only; punctuation preserved; unreadable → `可读性=不可读`.
    - Fail-fast if objects are missing or any `desc` is empty; irrelevant-image samples keep `summary: 无关图片` and bypass the builder.
 
@@ -135,7 +135,7 @@ Key invariants (contract-level):
 - Top-level keys: `images`, `objects`, `width`, `height`, optional `summary`, optional `metadata`.
 - Dense mode requires a non-empty `objects` list; each object must include `desc` and **exactly one** geometry key among `bbox_2d`, `poly`, `line` (flat even-length list of x/y values). `quad` is rejected in favor of `poly`.
 - Summary mode requires a non-empty `summary` JSON string (single line) or the literal `无关图片`; `objects` may be present but is not required for summary-only training.
-- `desc` must be a non-empty string with no control newlines/tabs. For BBU/RRU it uses comma‑separated `key=value` pairs with **no spaces** and `类别` first. `文本`/`备注` are free text: whitespace removed only; punctuation (including `,|=`) is preserved; unreadable → `可读性=不可读`. `需复核/遮挡` are not emitted.
+- `desc` must be a non-empty string with no control newlines/tabs. For BBU/RRU it uses comma‑separated `key=value` pairs with **no spaces** and `类别` first. `文本`/`备注` are free text: whitespace removed only; punctuation (including `,|=`) is preserved; unreadable → `可读性=不可读`. Any third-state placeholders are not emitted.
 - **Groups (RRU only)**: group membership is encoded directly in `desc` as `组=<id>` (multiple groups joined with `|` if present). BBU MUST NOT include `组`. There is **no top‑level** `groups` field.
 - **Station distance (RRU only)**: represented as `类别=站点距离,站点距离=<int>` and carried through to summary stats as `站点距离`.
 - Assistant outputs are serialized with separators `", "` and `": "` to retain spaces in coordinate lists and JSON summaries (tokenizer stability).
@@ -414,7 +414,7 @@ Each ticket is prompted with a system+user pair:
   - per‑image summaries (sanitized), plus a derived `ImageN(obj=...)` statistic,
   - optional aggregation blocks for RRU missions (installation/position/cable summaries by station distance).
 
-Stage‑A summaries are expected to contain **no third‑state markers** (e.g., 需复核/遮挡). Any stray forbidden tokens are stripped before Stage‑B prompting to avoid third‑state leakage.
+Stage‑A summaries are expected to contain **no third‑state markers**. Any stray forbidden tokens are rejected before Stage‑B prompting to avoid third‑state leakage.
 
 **Output contract (strict two lines):**
 - `Verdict: 通过|不通过` (binary only)

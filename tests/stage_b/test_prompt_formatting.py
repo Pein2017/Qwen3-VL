@@ -81,15 +81,15 @@ def test_build_user_prompt_with_experiences():
     assert "任务: 挡风板安装检查" in prompt
 
 
-def test_build_user_prompt_sanitizes_need_review_marker():
-    """Stage-B user prompt must not leak '需复核' tokens from Stage-A summaries."""
+def test_build_user_prompt_rejects_review_marker():
+    """Stage-B user prompt must reject third-state review markers in Stage-A summaries."""
     ticket = GroupTicket(
         group_id="QC-NEED-REVIEW-001",
         mission="挡风板安装检查",
         label="pass",  # type: ignore[arg-type]
         summaries=StageASummaries(
             per_image={
-                "image_1": "BBU设备/需复核,备注:无法判断品牌，标签/无法识别",
+                "image_1": "BBU设备/复核,备注:无法判断品牌，标签/无法识别",
             }
         ),
     )
@@ -101,9 +101,8 @@ def test_build_user_prompt_sanitizes_need_review_marker():
         updated_at=datetime.now(timezone.utc),
     )
 
-    prompt = build_user_prompt(ticket, guidance)
-    assert "需复核" not in prompt
-    assert "备注" in prompt
+    with pytest.raises(ValueError):
+        build_user_prompt(ticket, guidance)
 
 
 def test_build_user_prompt_empty_experiences_raises_error():

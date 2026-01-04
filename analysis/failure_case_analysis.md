@@ -30,7 +30,7 @@
    - **Analysis**: **Model missed detail** - When wind guard is only partially visible, it might not be sufficient to confirm correct installation. Model should be more cautious.
 
 4. **"无法判断" cases** (Model says pass but Stage-A shows uncertainty):
-   - QC-TEMP-20241028-0015135: Model says pass, but Stage-A shows "无法判断品牌" and "需复核"
+   - QC-TEMP-20241028-0015135: Model says pass, but Stage-A shows "无法判断品牌" and "待人工确认"
    - **Analysis**: **Model missed detail** - According to G6, if BBU space cannot be determined, should be "fail". Model violated learned rule.
 
 ### Category 2: GT="pass", Model="fail" (Model too strict / GT noise suspected)
@@ -93,7 +93,7 @@
 
 1. **QC-TEMP-20241028-0015135** (GT=fail, Model=pass)
    - Model reason: "检测到BBU设备且无需安装挡风板"
-   - Stage-A: Shows "BBU设备/需复核,备注:无法判断品牌×1"
+   - Stage-A: Shows "BBU设备/待人工确认,备注:无法判断品牌×1"
    - **Issue**: Model should have applied G6 rule (if cannot determine space, should be fail)
    - **Verdict**: Model missed the "无法判断" signal. Should be "fail".
 

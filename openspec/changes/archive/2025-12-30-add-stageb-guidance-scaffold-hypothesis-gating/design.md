@@ -91,7 +91,7 @@ Decision prompt:
 
 Ops prompt:
 - outputs hypotheses (and optionally immediate operations).
-- enforces binary rule text; forbids “复核/不应直接/佐证/证据不足/待定/need-review” and their common variants.
+- enforces binary rule text; forbids “复核/不应直接/佐证/证据不足/待定”等第三态词面及常见变体。
 - provides a stable phrasing template to reduce de-dup friction in signature normalization.
 
 ## Observability / Artifacts
@@ -101,7 +101,7 @@ New mission-scoped artifacts under `{output.root}/{mission}/{run_name}/`:
 - `hypothesis_events.jsonl`: append-only events (proposed/promoted/rejected) with cycle metadata and evidence ticket_keys
 
 Notes:
-- `need_review_queue.jsonl` is the only stop-gradient queue; no manual-review queue artifacts.
+- Stop-gradient queue artifacts are consolidated into a single queue file; no manual-review queue artifacts.
 - `dimension` is optional and must not be used for brand-specific gating.
 
 These artifacts are purely for optimization traceability and do not affect rollout protocol.

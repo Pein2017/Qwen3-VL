@@ -76,7 +76,7 @@ When Stage-B encounters issues (malformed responses, low trust scores, etc.), it
 #### Scenario: Warning is triggered during selection or reflection
 - The system SHALL log warnings with `group_id`, reason, guidance step, and (when reflection is skipped) `ineligible_reason` for problematic tickets.
 - The pipeline SHALL continue processing all tickets; warnings are informational only.
-- Export artifacts SHALL include warning flags, `summary`, `critique`, and `ineligible_reason` (when present) so downstream quality control can identify tickets that may need review.
+- Export artifacts SHALL include warning flags, `summary`, `critique`, and `ineligible_reason` (when present) so downstream quality control can identify tickets that may need manual follow-up.
 
 ### Requirement: Stage-B SHALL include an LLM-based CriticEngine for per-candidate evaluations.
 Stage-B SHALL produce human-auditable per-candidate evaluations using the CriticEngine, which outputs strict-JSON fields consumed by reflection and exports.

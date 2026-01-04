@@ -36,9 +36,10 @@ def normalize_verdict(verdict: str | GroupLabel | None) -> GroupLabel | None:
     if cleaned in {"不通过", "未通过", "不通过。"}:
         return "fail"
     # Third-state / pending phrases are forbidden in Stage-B inference outputs; treat as unrecognized.
-    if cleaned in {"需复核", "需要复核", "无法判断", "无法判定", "待复核"}:
-        return None
-    if cleaned in {"通过需复核", "通过需要复核", "通过需要复核。", "通过需复核。"}:
+    if any(
+        term in cleaned
+        for term in ["\u590d\u6838", "不确定", "无法判断", "无法判定", "\u5f85\u590d\u6838"]
+    ):
         return None
 
     # English variants

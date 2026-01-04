@@ -1,4 +1,4 @@
-- [x] 盘点提示词与摘要表述：梳理“需复核/无法判断”等不确定词面，列出 mission 关键/非关键属性示例，用于 prompt 提示与信号解析。
+- [x] 盘点提示词与摘要表述：梳理“不确定/无法判断”等软不确定词面，列出 mission 关键/非关键属性示例，用于 prompt 提示与信号解析。
 - [x] 调整 prompt（sampling/critic/reflection）：强化“任务要点只关注关键属性”“非关键不确定可忽略，但需标注”的指引；避免硬规则。
 - [x] 更新选拔策略：移除 rule_fail 硬优先，仅保留 label=fail 兜底；在标签冲突或关键属性不确定时标记 conflict_flag/needs_manual_review。
 - [x] 不确定性处理：解析不确定词面，结合 mission 相关性决定是否仅提示 vs. 人工复核；保持 Reason/输出透明。
