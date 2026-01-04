@@ -276,6 +276,7 @@ Runtime/deployment instructions for Stage-A summaries and the Stage-B verdict lo
 - Dense captioning usage examples
 - Stage-A CLI guardrails and output schemas
 - Stage-B 仅支持 `rule_search`（baseline rollout → proposer 产出 1–N 条候选操作 → **train pool** A/B gate → 通过者更新 guidance；eval pool 指标仅用于审计）。system prompt 固定为两行判决契约 + 规则/软硬信号；user prompt 仅包含 guidance（S*/G0/G*）+ Stage-A 摘要（不含 GT）。领域提示已上移到 Stage‑A user prompt。**规则默认 AND 关系**（未显式写“或/例外”的规则必须全部满足；缺证据即不通过），推理输出严格两行二分类（`Verdict: 通过|不通过` + `Reason: ...`）且禁止任何第三状态词面。rollout/proposer/reflection 超长提示不截断，直接 drop；全局配置建议：rollout `max_prompt_tokens=4096`，proposer/reflection `max_token_length=12000`。`rule_search` 会写入 `rule_candidates.jsonl`、`benchmarks.jsonl`、`rule_search_hard_cases.jsonl`、`rule_search_candidate_regressions.jsonl`。重跑同一 run_name 重建 per-run artifacts，指导沿用上次快照。另：可用 `jump_reflection=true`（或 `--jump-reflection` / YAML `jump_reflection: true`）跳过 proposer/reflection，仅跑 baseline rollout 并导出 `baseline_metrics.json` / `baseline_ticket_stats.jsonl` 以便人工分析后再手动修改 `initial_guidance.json`。
+- RRU 任务口径：RRU安装/位置/线缆相互独立；仅依据本任务 G0/S* 要素。RRU位置/线缆的标签要求为“可读文本”，不强制包含特定字样。
 - Stage-B 可选导出 `distill_chatml.jsonl` 供后训练使用（低温采样、随机抽样 `distill_size`）。
 - 生产约束：Stage‑A 与 Stage‑B 在最终环境中共用同一个 Qwen3‑VL 模型（同一组权重 / LoRA 组合），通过不同 prompt 和 config 切换任务；训练 summary‑mode 或添加新 LoRA 时，需要显式评估对 Stage‑B rollout/verdict 行为的影响。
 

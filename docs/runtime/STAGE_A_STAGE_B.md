@@ -81,6 +81,7 @@ Note: The same `group_id` may appear in both label folders for resubmitted batch
 - Rule-search proposer analyzes recent mismatches and requests incremental edits (add, revise, retire rules).
 - Each applied change records rationale, evidence ticket_keys, and candidate_id for traceability; rule-search gating metrics are logged for audit.
 - Guidance updates are applied to mission-specific files; promotion to global guidance requires manual review and deployment.
+- RRU missions are orthogonal: RRU安装/位置/线缆 must not borrow other-mission negatives. Label readability for RRU位置/线缆 requires readable text only (no mandatory keywords).
 
 **Business value**
 - Enables weekly policy refresh without model retraining.

@@ -243,15 +243,19 @@ def _aggregate_rru_position_points(stage_a_summaries: dict[str, str]) -> str:
                 continue
             entries = _summary_entries(summary_obj)
             categories = {entry.get("类别") for entry in entries}
-            has_rru = "RRU设备" in categories
+            has_ground_terminal = "RRU接地端" in categories
             has_ground = "接地线" in categories
             has_label = _summary_has_label_text(summary_obj)
             has_ground_label = has_ground and has_label
-            if not (has_rru or has_ground_label):
+            if not (has_ground_terminal or has_ground_label):
                 continue
             for dist in distances:
-                entry = stats.setdefault(dist, {"rru": False, "ground_label": False})
-                entry["rru"] = entry["rru"] or has_rru
+                entry = stats.setdefault(
+                    dist, {"ground_terminal": False, "ground_label": False}
+                )
+                entry["ground_terminal"] = (
+                    entry["ground_terminal"] or has_ground_terminal
+                )
                 entry["ground_label"] = entry["ground_label"] or has_ground_label
             continue
 
@@ -259,18 +263,22 @@ def _aggregate_rru_position_points(stage_a_summaries: dict[str, str]) -> str:
         distances = _STATION_DISTANCE_RE.findall(simplified)
         if not distances:
             continue
-        has_rru = bool(re.search(r"\bRRU\b", simplified) or "RRU设备" in simplified)
+        has_ground_terminal = "RRU接地端" in simplified
         has_ground = "接地线" in simplified
         has_label = _has_readable_label(simplified)
         # Only surface evidence-bearing points to reduce confusion:
-        # - RRU evidence: has_rru
+        # - RRU evidence: has_ground_terminal
         # - Ground evidence: has_ground + readable label
         has_ground_label = has_ground and has_label
-        if not (has_rru or has_ground_label):
+        if not (has_ground_terminal or has_ground_label):
             continue
         for dist in distances:
-            entry = stats.setdefault(dist, {"rru": False, "ground_label": False})
-            entry["rru"] = entry["rru"] or has_rru
+            entry = stats.setdefault(
+                dist, {"ground_terminal": False, "ground_label": False}
+            )
+            entry["ground_terminal"] = (
+                entry["ground_terminal"] or has_ground_terminal
+            )
             entry["ground_label"] = entry["ground_label"] or has_ground_label
 
     if not stats:
@@ -283,7 +291,7 @@ def _aggregate_rru_position_points(stage_a_summaries: dict[str, str]) -> str:
             return 0
 
     lines = [
-        f"- 站点距离={dist}: RRU={'有' if flags['rru'] else '无'}, 接地线(可识别标签)={'有' if flags['ground_label'] else '无'}"
+        f"- 站点距离={dist}: RRU接地端={'有' if flags['ground_terminal'] else '无'}, 接地线(可读标签)={'有' if flags['ground_label'] else '无'}"
         for dist, flags in sorted(stats.items(), key=lambda item: _dist_key(item[0]))
     ]
     return "安装点汇总（按站点距离合并）：\n" + "\n".join(lines)
@@ -314,12 +322,21 @@ def _aggregate_rru_cable_points(stage_a_summaries: dict[str, str]) -> str:
                         key not in {"没有保护", "无保护"} and count
                         for key, count in tube_map.items()
                     )
-            if not (has_tail or has_tube):
+            has_label = _summary_has_label_text(summary_obj)
+            if not (has_tail or has_tube or has_label):
                 continue
             for dist in distances:
-                entry = stats.setdefault(dist, {"tail": False, "tube": False})
+                entry = stats.setdefault(
+                    dist,
+                    {
+                        "tail": False,
+                        "tube": False,
+                        "label": False,
+                    },
+                )
                 entry["tail"] = entry["tail"] or has_tail
                 entry["tube"] = entry["tube"] or has_tube
+                entry["label"] = entry["label"] or has_label
             continue
 
         simplified = _sanitize_stage_a_summary_for_prompt(text)
@@ -328,13 +345,22 @@ def _aggregate_rru_cable_points(stage_a_summaries: dict[str, str]) -> str:
             continue
         has_tail = "尾纤" in simplified
         has_tube = "套管" in simplified or "套管保护" in simplified
+        has_label = _has_readable_label(simplified)
         # Avoid listing empty install points (RRU-only / no evidence).
-        if not (has_tail or has_tube):
+        if not (has_tail or has_tube or has_label):
             continue
         for dist in distances:
-            entry = stats.setdefault(dist, {"tail": False, "tube": False})
+            entry = stats.setdefault(
+                dist,
+                {
+                    "tail": False,
+                    "tube": False,
+                    "label": False,
+                },
+            )
             entry["tail"] = entry["tail"] or has_tail
             entry["tube"] = entry["tube"] or has_tube
+            entry["label"] = entry["label"] or has_label
 
     if not stats:
         return ""
@@ -346,7 +372,7 @@ def _aggregate_rru_cable_points(stage_a_summaries: dict[str, str]) -> str:
             return 0
 
     lines = [
-        f"- 站点距离={dist}: 尾纤={'有' if flags['tail'] else '无'}, 套管={'有' if flags['tube'] else '无'}"
+        f"- 站点距离={dist}: 尾纤={'有' if flags['tail'] else '无'}, 套管={'有' if flags['tube'] else '无'}, 标签文本={'有' if flags['label'] else '无'}"
         for dist, flags in sorted(stats.items(), key=lambda item: _dist_key(item[0]))
     ]
     return "安装点汇总（按站点距离合并）：\n" + "\n".join(lines)
