@@ -48,7 +48,7 @@ def test_summary_dataset_reward_matches_domain_token():
 
 def test_summary_dataset_reward_mismatch_is_zero():
     reward = SummaryDatasetReward()
-    completion = _completion_with_json('{"dataset":"RRU","统计":[]}')
+    completion = _completion_with_json({统计:[]}, domain="RRU")
     meta = {
         "_fusion_source": "bbu_summary",
         "_fusion_domain_token": "BBU",

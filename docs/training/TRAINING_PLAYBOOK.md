@@ -359,7 +359,7 @@ custom:
       - name: color_jitter
         params: { brightness: [0.85, 1.15], prob: 0.3 }
       # Size enforcement
-      - name: pad_to_multiple
+      - name: expand_to_fit_affine
         params: { multiple: 32 }
 ```
 
@@ -694,7 +694,7 @@ Alternatives (when full-param aligner overfits or needs better dynamics):
 
 Augmentation guidance for grounding tasks:
 - Conservative geometric (small rotate/scale); aggressive appearance (color/gamma/CLAHE)
-- Keep `pad_to_multiple` to stabilize image grid and token counts
+- Keep `expand_to_fit_affine` as the final op to stabilize 32× alignment and token counts
 
 Monitoring: track bbox/poly/line metrics separately; reduce geometric ops if poly/line drifts.
 

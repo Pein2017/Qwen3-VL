@@ -923,8 +923,9 @@ class ReflectionEngine:
 
     @staticmethod
     def _estimate_obj_count(text: str) -> int:
-        stripped = (text or "").strip()
-        simplified = to_simplified(text or "")
+        payload = ReflectionEngine._sanitize_stage_a_summary_for_prompt(text)
+        stripped = (payload or "").strip()
+        simplified = to_simplified(payload or "")
         simplified = normalize_spaces(simplified).strip()
         if simplified == "无关图片":
             return 0

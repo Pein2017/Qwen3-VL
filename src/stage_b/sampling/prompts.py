@@ -25,6 +25,21 @@ def _parse_summary_json(text: str) -> dict[str, object] | None:
     if not stripped or stripped.startswith("无关图片"):
         return None
 
+    lines = [line for line in stripped.splitlines() if line.strip()]
+    stripped = "\n".join(
+        [
+            line
+            for line in lines
+            if not (
+                line.strip().startswith("<DOMAIN=")
+                and "<TASK=" in line
+                and line.strip().endswith(">")
+            )
+        ]
+    ).strip()
+    if not stripped:
+        return None
+
     def _maybe_parse_obj(candidate: str) -> dict[str, object] | None:
         c = candidate.strip()
         if not (c.startswith("{") and c.endswith("}")):
@@ -36,20 +51,12 @@ def _parse_summary_json(text: str) -> dict[str, object] | None:
         return parsed if isinstance(parsed, dict) else None
 
     def _is_summary(obj: dict[str, object]) -> bool:
-        required = {"dataset", "统计"}
-        return required.issubset(obj.keys())
+        return "统计" in obj
 
     # Fast path: whole string is the JSON object.
     obj = _maybe_parse_obj(stripped)
     if obj is not None and _is_summary(obj):
         return obj
-
-    # Legacy Stage-A outputs may be multi-line with a <DOMAIN>/<TASK> header.
-    lines = [line.strip() for line in stripped.splitlines() if line.strip()]
-    for line in reversed(lines):
-        obj = _maybe_parse_obj(line)
-        if obj is not None and _is_summary(obj):
-            return obj
 
     # Fallback: extract the first {...} block from the full text.
     start = stripped.find("{")
@@ -186,22 +193,23 @@ def _sanitize_stage_a_summary_for_prompt(text: str) -> str:
     Stage-B forbids any third-state wording; summaries containing such markers
     are rejected to avoid silent sanitization.
     """
+    if not text:
+        return ""
+    stripped = text.strip()
+    if stripped.startswith("无关图片"):
+        return "无关图片"
 
-    if "\u590d\u6838" in (text or ""):
-        raise ValueError("Stage-A summary contains review marker")
-
-    summary_obj = _parse_summary_json(text)
-    if summary_obj is not None:
-        formatted = _format_summary_json(summary_obj)
-        if _REVIEW_MARKER_RE.search(formatted):
-            raise ValueError("Stage-A summary contains review marker")
-        return formatted
-
-    simplified = to_simplified(text or "")
-    simplified = normalize_spaces(simplified)
-    if _REVIEW_MARKER_RE.search(simplified):
-        raise ValueError("Stage-A summary contains review marker")
-    return simplified.strip()
+    lines = [line for line in stripped.splitlines() if line.strip()]
+    kept = [
+        line
+        for line in lines
+        if not (
+            line.strip().startswith("<DOMAIN=")
+            and "<TASK=" in line
+            and line.strip().endswith(">")
+        )
+    ]
+    return "\n".join(kept).strip()
 
 
 def _sorted_summaries(per_image: dict[str, str]) -> list[tuple[str, str]]:

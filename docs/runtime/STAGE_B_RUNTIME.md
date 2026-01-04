@@ -48,6 +48,7 @@ jump_reflection=true config=rru_position gpus=0,1,2,3,4,5,6,7 \
 - Rule-search proposer uses reflection prompts for candidate rule generation; decision/ops passes are not executed in this mode.
 - `jump_reflection=true` (or `--jump-reflection`, or `jump_reflection: true` in YAML) skips proposer/reflection entirely and only runs a baseline rollout + dumps for manual analysis.
 - `stage_a_paths` must point to Stage-A JSONL files containing `mission`, `group_id`, `label` (`pass|fail`), and `per_image`; keys are normalized to `image_{n}`.
+- Stage-B drops the Stage-A summary header line (`<DOMAIN=...>, <TASK=SUMMARY>`) and passes the remaining payload through unchanged; schema validation is not enforced and extra keys/free text are tolerated.
 - Resubmissions are allowed: the same `group_id` may appear multiple times as long as `label` differs. Stage-B treats `(group_id, label)` as the unique ticket identity and emits `ticket_key = "{group_id}::{label}"` in outputs to avoid collisions.
 
 ##### Config Breakdown (`src/stage_b/config.py`)

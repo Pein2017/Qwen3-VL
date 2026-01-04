@@ -132,24 +132,18 @@ class SummaryContentEqReward(SummaryReward):
 
 
 class SummaryDatasetReward(SummaryReward):
-    """Checks JSON `dataset` matches the expected domain token (BBU/RRU)."""
+    """Checks header domain matches the expected token (BBU/RRU)."""
 
     def score(self, sample: SummarySample) -> float:
         if sample.is_irrelevant:
             return 0.0
         if sample.domain_token is None:
             return 0.0
-        pred_json = sample.pred_json()
-        if not isinstance(pred_json, dict):
+        if not sample.lines:
             return 0.0
-        dataset_raw = pred_json.get("dataset")
-        if not isinstance(dataset_raw, str) or not dataset_raw.strip():
-            return 0.0
-        return (
-            1.0
-            if dataset_raw.strip().upper() == sample.domain_token.strip().upper()
-            else 0.0
-        )
+        header = sample.lines[0].strip()
+        expected_prefix = f"<DOMAIN={sample.domain_token}>"
+        return 1.0 if header.startswith(expected_prefix) else 0.0
 
 
 class SummaryNoDupKeysPenalty(SummaryReward):

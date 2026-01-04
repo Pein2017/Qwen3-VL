@@ -109,17 +109,19 @@ def is_irrelevant(meta: Any) -> bool:
 def get_domain_token(meta: Any) -> str | None:
     if not isinstance(meta, Mapping):
         return None
-    token = meta.get("_fusion_domain_token")
-    if isinstance(token, str) and token.strip():
-        return token.strip()
+    if meta.get("_fusion_source") == _IRRELEVANT_SOURCE:
+        return None
     template = meta.get("_fusion_template")
-    if isinstance(template, str):
-        lowered = template.lower()
-        if "bbu" in lowered:
-            return "BBU"
-        if "rru" in lowered:
-            return "RRU"
-    return None
+    if not isinstance(template, str) or not template.strip():
+        return None
+    if template == "summary_bbu":
+        return "BBU"
+    if template == "summary_rru":
+        return "RRU"
+    raise ValueError(
+        "Summary template must be summary_bbu or summary_rru "
+        f"for domain token mapping; got {template!r}."
+    )
 
 
 def get_summary_ref(meta: Any) -> str | None:
