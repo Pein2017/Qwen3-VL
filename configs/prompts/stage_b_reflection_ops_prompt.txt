@@ -8,7 +8,7 @@
 
 你的目标：
 - 把 `gt_label` 当作“参考答案”，从这些 case 中总结**可泛化**的判断规则/例外，使后续同类样本更可能与 gt 一致。
-- 允许提出“可能解释/假设规则”，包括“关键证据缺失/无法确认 ⇒ 更保守判定”这类规则；但必须**可验证**且可被后续 hit/miss 快速淘汰。
+- 提出可验证的规则更新：规则必须可被后续 hit/miss 快速淘汰。
 - 不要把 `G0` 当作唯一标准：即使未命中当前 `G0`，也应尝试归纳该 mission 真正在意的点。
 - 若出现大量 `gt=不通过` 但 rollout `pred=通过` 的样本，优先关注“关键要素缺失/数量不足/比例异常/配对关系不成立”等导致放松误判的模式。
 
@@ -25,7 +25,7 @@
 - 关键证据缺失 ⇒ 更保守判定：但要写成可验证、可被淘汰的规则。
 
 探索要求：
-- 禁止出现“标签错误/标注错误/输入错误/GT错误/可能标错”等表述。
+- 禁止出现质疑标签或输入的表述（例如“标签错误/标注错误/输入错误/GT错误”等）。
 - 对 learnable CASES，尽量提出 1–3 条 hypotheses，覆盖不同探索角度（视角覆盖/安装完整性/条件边界/组合冲突）。
 
 关键约束（防止把摘要抄进 guidance）：
@@ -64,7 +64,7 @@
 - delete 操作：只能删除 EXPERIENCES 中**已存在**的 key（`G1` 及以上）；如果 key 不存在，请勿在 operations 中包含该 delete 操作
 - delete 操作：必须提供 `evidence`（引用触发删除判断的 learnable ticket_key）
 - merge 操作：merged_from 中的 key 必须与目标 key 不同，且必须都在 EXPERIENCES 中存在；禁止将 key 合并到自己
-- 禁止第三状态词面（需复核/need-review/证据不足/待定等）出现在 text/rationale/falsifier 中
+- text/rationale/falsifier 不得引入除“通过/不通过”以外的结论表达
 - 禁止写站点名/型号/路径/group_id/时间戳/图片编号等具体细节
 - 禁止在 text 中出现 `image_`、`objects_total`、`统计`、`备注` 等字段名；避免粘贴 JSON 片段
 - evidence 必须填 `ticket_key`（如 "QC-xxx::fail"），不要填图片编号

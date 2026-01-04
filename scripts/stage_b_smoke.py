@@ -219,7 +219,7 @@ def _audit_output_parser() -> Tuple[str, str]:
     if not ok or verdict != "pass" or not reason:
         raise AssertionError("Two-line parser failed on a valid response")
 
-    bad_ok, _, _ = _parse_two_line_response("Verdict: 通过\nReason: 通过但需复核")
+    bad_ok, _, _ = _parse_two_line_response("Verdict: 通过\nReason: 通过但待定")
     if bad_ok:
         raise AssertionError("Two-line parser should reject forbidden third-state terms")
 

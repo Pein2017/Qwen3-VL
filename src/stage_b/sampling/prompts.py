@@ -13,7 +13,9 @@ from ..types import GroupTicket, MissionGuidance
 from ..utils.chinese import normalize_spaces, to_simplified
 
 _INDEX_RE = re.compile(r"(\d+)$")
-_NEED_REVIEW_MARKER_RE = re.compile(r"需复核\s*[，,]?\s*备注[:：]")
+_REVIEW_MARKER_RE = re.compile(
+    r"(?:\u590d\u6838|\u9700\u590d\u6838|\bneed[_ -]?review\b)", re.IGNORECASE
+)
 _STATION_DISTANCE_RE = re.compile(r"站点距离[=/](\d+)")
 
 
@@ -120,23 +122,25 @@ def _summary_has_label_text(obj: dict[str, object]) -> bool:
 def _sanitize_stage_a_summary_for_prompt(text: str) -> str:
     """Sanitize Stage-A summary strings for Stage-B prompting.
 
-    Stage-B inference output forbids third-state wording (e.g., "需复核").
-    However, Stage-A summaries may include structured markers like "需复核,备注:".
-    We remove the marker while preserving the remark content so the model can
-    still use the evidence without echoing forbidden tokens.
+    Stage-B forbids any third-state wording; summaries containing such markers
+    are rejected to avoid silent sanitization.
     """
+
+    if "\u590d\u6838" in (text or ""):
+        raise ValueError("Stage-A summary contains review marker")
 
     summary_obj = _parse_summary_json(text)
     if summary_obj is not None:
-        return _format_summary_json(summary_obj)
+        formatted = _format_summary_json(summary_obj)
+        if _REVIEW_MARKER_RE.search(formatted):
+            raise ValueError("Stage-A summary contains review marker")
+        return formatted
 
     simplified = to_simplified(text or "")
     simplified = normalize_spaces(simplified)
-    # Preserve the "need review" signal in a safe, non-forbidden phrasing for Stage-B.
-    simplified = _NEED_REVIEW_MARKER_RE.sub("备注(待确认):", simplified)
-    simplified = simplified.replace("需复核", "")
-    simplified = normalize_spaces(simplified).strip()
-    return simplified
+    if _REVIEW_MARKER_RE.search(simplified):
+        raise ValueError("Stage-A summary contains review marker")
+    return simplified.strip()
 
 
 def _sorted_summaries(per_image: dict[str, str]) -> list[tuple[str, str]]:
@@ -436,6 +440,10 @@ def build_user_prompt(ticket: GroupTicket, guidance: MissionGuidance) -> str:
         guidance_section += f"可学习规则：\n{mutable_block}\n\n"
 
     stage_a_summaries = ticket.summaries.as_dict()
+    for text in stage_a_summaries.values():
+        if "\u590d\u6838" in text:
+            raise ValueError("Stage-A summary contains review marker")
+
     summaries_text = _render_summaries(stage_a_summaries)
     stats_text = _render_image_stats(stage_a_summaries)
     image_count = len(stage_a_summaries)

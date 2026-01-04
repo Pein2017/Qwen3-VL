@@ -9,7 +9,7 @@ Stage-B uses a **two-pass** reflection design:
 The Stage-B runner is responsible for:
 - gradient-candidate selection,
 - enforcing learnability closure and bounded retries,
-- routing stop-gradient tickets to need-review artifacts,
+- routing stop-gradient tickets to a quarantine queue,
 - applying operations and buffering rule feedback.
 """
 
@@ -50,19 +50,13 @@ _SCAFFOLD_KEY_RE = re.compile(r"S\d+")
 _GUIDANCE_SIMILARITY_THRESHOLD = 0.9
 
 _FORBIDDEN_THIRD_STATE_PHRASES = (
-    "复核",
-    "需复核",
-    "需要复核",
-    "需人工复核",
-    "人工复核",
-    "need-review",
-    "needreview",
-    "need review",
-    "need_review",
-    "needs review",
-    "needs_review",
-    "证据不足",
+    "\u590d\u6838",  # review placeholder
+    "\u4eba\u5de5\u590d\u6838",  # manual review
+    "\u7b2c\u4e09\u6001",  # third state
     "待定",
+    "needreview",
+    "review needed",
+    "证据不足",
     "不应直接",
     "不建议直接",
     "不得直接",
@@ -71,8 +65,7 @@ _FORBIDDEN_THIRD_STATE_PHRASES = (
     "需要进一步",
     "进一步确认",
     "不写不通过",
-    "通过但需复核",
-    "通过但需人工复核",
+    "通过但",
 )
 
 _FORBIDDEN_AMBIGUOUS_NEGATION_PHRASES = (
@@ -378,6 +371,8 @@ class ReflectionEngine:
     @classmethod
     def _contains_forbidden_phrase(cls, text: str) -> bool:
         normalized = cls._normalize_forbidden_check(text)
+        if "第三态" in normalized or "\u590d\u6838" in normalized:
+            return True
         return any(term in normalized for term in _FORBIDDEN_THIRD_STATE_PHRASES)
 
     @classmethod
@@ -744,6 +739,8 @@ class ReflectionEngine:
             text = str(text_raw).strip() if text_raw is not None else ""
             if not text:
                 raise ValueError("hypotheses.text must be non-empty")
+            if "\u7b2c\u4e09\u6001" in text or "\u590d\u6838" in text:
+                raise ValueError("hypotheses.text contains forbidden third-state wording")
             if self._reject_experience_text(text):
                 raise ValueError("hypotheses.text appears to copy summary chains")
             if self._contains_forbidden_phrase(text):
@@ -919,8 +916,8 @@ class ReflectionEngine:
         ]
         simplified = to_simplified(" ".join(lines))
         simplified = normalize_spaces(simplified)
-        simplified = re.sub(r"需复核\s*[，,]?\s*备注[:：]", "备注(待确认):", simplified)
-        simplified = simplified.replace("需复核", "")
+        if "\u590d\u6838" in simplified:
+            raise ValueError("Stage-A summary contains review marker")
         simplified = normalize_spaces(simplified).strip()
         return simplified
 
@@ -986,7 +983,7 @@ class ReflectionEngine:
                 "合格",
                 "不合格",
                 "无法判断",
-                "需复核",
+                "\\u590d\\u6838",
             )
         )
 

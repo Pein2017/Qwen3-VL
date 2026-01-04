@@ -86,10 +86,10 @@ Stage‑B currently expects **exactly one mission per run**. Artifacts are writt
 ##### Manual Review & Failures
 
 - 没有 CriticEngine；只有主模型生成严格两行输出（`Verdict/Reason`）。
-- rule_search 不输出 need-review 队列；解析失败的样本在统计中按无效候选处理。
+- rule_search 不输出人工复核队列；解析失败的样本在统计中按无效候选处理。
 
 ##### Guardrails & Label Alignment
 
 - Deterministic fail-first guardrails are removed; rule-search guidance drives decision behavior.
-- Stage-A 摘要中的“部分/无法判断”等软信号仅作为提示，不作为硬触发词（需复核已移除）。
+- Stage-A 摘要中的“部分/无法判断”等软信号仅作为提示，不作为硬触发词（已移除第三态占位）。
 - 推理 user prompt 会提供每张图的 `ImageN(obj=...)` 统计（来自摘要 JSON 的 `objects_total`），用于帮助模型推断全局图/局部特写图并进行多图协同判断。

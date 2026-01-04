@@ -97,7 +97,7 @@ Format requirements (aligned with training/inference prompts):
 - `统计` is a list; each item contains `类别` plus any observed attribute counts (`{value: count}`).
 - BBU summaries include a top-level `备注` list when non-empty; RRU summaries omit `备注` and may include `分组统计` when present.
 - `异常` is included only when any error counters/examples are non-zero.
-- Only observed values are counted; do not emit missing/需复核/遮挡 placeholders.
+- Only observed values are counted; do not emit missing/review/遮挡 placeholders.
 - OCR/备注 are free text: remove whitespace only (preserve `,|=` and other symbols); unreadable → `可读性=不可读` (no “可以识别/无法识别”). Any stray comma tokens without `key=` are folded into `备注`, and `这里已经帮助修改,请注意参考学习` is stripped if present.
 - Conversion is fail-fast: if a sample has no objects or all `desc` are空/缺失，`build_summary_from_objects` raises `ValueError` and the sample is rejected.
 - Conversion also raises when invalid/unknown/conflict markers are detected in desc; fix raw annotations rather than emitting placeholder `异常` fields.

@@ -28,8 +28,8 @@ Stage‑B 的 reflection 当前会直接把“本批次”归纳到的规则写�
    - 达到门槛（如“至少 2 个不同反思批次 + 至少 K 个不同 group_id 支持”）后，才将 hypothesis 晋升为 `G*` 经验写入 `guidance.json`。
 
 3) **把第三状态彻底挡在 guidance 外**
-   - `hypotheses[*].text` 与任何可晋升的规则文本 MUST 禁止出现 “复核/不应直接/佐证/证据不足/待定/need-review” 等第三状态表达（含常见变体）。
-   - 如果某个样本只能导出第三状态结论，应由 decision pass 进入 stop‑gradient `need_review`，而非进入 hypothesis 或 guidance。
+   - `hypotheses[*].text` 与任何可晋升的规则文本 MUST 禁止出现 “复核/不应直接/佐证/证据不足/待定”等第三状态表达（含常见变体）。
+   - 如果某个样本只能导出第三状态结论，应由 decision pass 进入 stop‑gradient 队列，而非进入 hypothesis 或 guidance。
 
 ## Impact
 

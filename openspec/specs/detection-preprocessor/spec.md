@@ -20,7 +20,7 @@ All target and source detection converters SHALL emit the canonical BBU-style JS
 #### Scenario: BBU vs. RRU desc contract
 - **WHEN** a BBU converter emits object descriptions
 - **THEN** desc includes `备注` when present and MUST NOT include `组`
-- **AND** `需复核` is never emitted
+- **AND** any review-state placeholder is forbidden
 - **WHEN** an RRU converter emits object descriptions
 - **THEN** desc MAY include `组=<id>` and MUST NOT include `备注`
 
@@ -135,4 +135,3 @@ The preprocessor SHALL log scale factors and warn on aggressive downscales.
 - **GIVEN** an image that requires >2× downscale to satisfy `max_pixels`
 - **WHEN** processed
 - **THEN** it logs original vs. final dimensions and the scale factor, with a remediation hint to adjust `max_pixels` or upstream image sizes.
-

@@ -1,0 +1,8 @@
+- [ ] Inventory all occurrences of legacy review markers (code, configs, prompts, docs, sample data); keep a living checklist of touched files.
+- [ ] Spec updates: add deltas for detection-preprocessor and stage-b-training-free to reject review placeholders instead of sanitizing them.
+- [ ] Data conversion: remove review_flagger flow; make converters/validators fail on review markers; regenerate any shipped sample JSONL and update `docs/data` accordingly.
+- [ ] Stage-A/Stage-B prompts: strip references in prompt templates and message builders; ensure prompt instructions remain binary-only.
+- [ ] Stage-B runtime: delete review/third-state sanitization in rollout, verdict parsing, reflection; adjust config defaults and remove any review-queue handling; update unit tests.
+- [ ] Docs: refresh data/training/runtime/prompt references (e.g., `technical_report.md`, `docs/data/DATA_AND_DATASETS.md`, `docs/runtime/STAGE_B_RUNTIME.md`, `docs/reference/stage-B-knowledge-Chinese.md`).
+- [ ] Cleanup analysis artifacts or move them to an archive path so tracked files no longer contain the key.
+- [ ] Validation: run `pytest tests/stage_b/test_prompt_formatting.py tests/stage_b/test_hypotheses_validation.py`; run `python scripts/stage_b_smoke.py --dry-run` (or equivalent) to confirm Stage-B surfaces reject review markers; ensure `rg` for legacy markers returns no hits in tracked files.

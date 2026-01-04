@@ -12,10 +12,10 @@ Related: [runtime/STAGE_A_STAGE_B.md](../runtime/STAGE_A_STAGE_B.md), [runtime/S
 - Stage-A：逐图片的客观事实归纳（摘要）
 - Stage-B：基于多图摘要与业务规则的组级判定与反思更新
 
-Stage-B 现为“prompt-only”流程：推理输出**严格两行二分类**（`Verdict: 通过|不通过` + `Reason: ...`），且最终输出中**禁止任何第三状态词面**（例如“需复核/证据不足/待定/need-review”等）。
+Stage-B 现为“prompt-only”流程：推理输出**严格两行二分类**（`Verdict: 通过|不通过` + `Reason: ...`），且最终输出中**禁止任何第三状态词面**（例如复核/证据不足/待定等）。
 
 异常与人工复核的边界：
-- Stage‑B 仅运行 rule-search；解析失败的候选会在统计时视为无效样本，不再写入 need-review 队列。
+- Stage‑B 仅运行 rule-search；解析失败的候选会在统计时视为无效样本，不再写入人工复核队列。
 - `manual_review_queue.jsonl` 已移除（不再生成）。
 
 业务目标：
@@ -34,7 +34,7 @@ Stage-B 现为“prompt-only”流程：推理输出**严格两行二分类**（
 
 生产摘要（Stage-A与Stage-B共用）的格式规范见 [data/DATA_AND_DATASETS.md](../data/DATA_AND_DATASETS.md)：
 - 单行 JSON 字符串；包含 `dataset/objects_total/统计`，`异常` 仅在非零时出现（BBU 额外含 `备注`，RRU 可含 `分组统计`）
-- `统计` 为类别+属性值计数（`{value: count}`），仅统计可见值，不输出缺失/需复核/遮挡
+- `统计` 为类别+属性值计数（`{value: count}`），仅统计可见值，不输出缺失/复核标记/遮挡
 - 无坐标数组；OCR 保留原文（去空格，保留 `-`/`/`），不可读写 `可读性=不可读`
 
 保持“属性映射”与“摘要规范”的一致，是保证训练数据、Stage-A 摘要与 Stage-B 判定互相兼容的基础。

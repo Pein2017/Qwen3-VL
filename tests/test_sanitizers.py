@@ -27,6 +27,11 @@ def test_sanitize_free_text_value_drops_learning_note() -> None:
     assert sanitize_free_text_value(text) == "备注1,备注2"
 
 
+def test_sanitize_free_text_value_drops_noise_tokens() -> None:
+    text = "备注1,请参考学习,备注2,建议看下操作手册中螺丝、插头的标注规范"
+    assert sanitize_free_text_value(text) == "备注1,备注2"
+
+
 def test_fold_free_text_into_remark() -> None:
     desc = "类别=BBU设备,品牌=华为,可见性=完整,挡风板需求=免装,无法判断品牌"
     assert (

@@ -15,7 +15,7 @@ Stage-B tooling SHALL provide a Python entrypoint `run_all(config, ...)` that or
 Stage-B MUST generate one or more candidates per ticket using mission guidance plus Stage-A summaries (without exposing GT labels to the rollout prompt). The decoded output MUST be strictly two lines:
 - `Verdict: 通过|不通过`
 - `Reason: <single-line Chinese rationale>`
-The final output MUST NOT contain any third-state wording (e.g., “需复核/待定/证据不足/need-review”).
+The final output MUST NOT contain any third-state wording (e.g., review/待定/证据不足).
 
 #### Scenario: Rollout produces parseable candidates per ticket
 - **WHEN** Stage-B runs rollout for a mission with a configured decode grid and `samples_per_decode`.
@@ -176,4 +176,3 @@ Stage-B prompt assembly SHALL describe irrelevant summaries without imposing a l
 - **GIVEN** a summary rendered as two lines where line 2 is `无关图片`
 - **WHEN** Stage-B prompt text is assembled
 - **THEN** the prompt treats the image as irrelevant and does not imply a format violation.
-

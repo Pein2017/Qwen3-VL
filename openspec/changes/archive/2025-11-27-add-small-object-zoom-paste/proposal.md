@@ -2,7 +2,7 @@
 
 ## Context
 - Current augmentation stack (see `docs/DATA_AUGMENTATION.md`) covers global affines, crops, resize, and color jitter with geometry preservation, but lacks a targeted small-object recall booster.
-- Data review (`data/bbu_full_768_poly-need_review/all_samples.jsonl`) shows many tiny screws/optical connectors and cable endpoints that are easily missed.
+- Data review (`data/bbu_full_768_poly/all_samples.jsonl`) shows many tiny screws/optical connectors and cable endpoints that are easily missed.
 - Existing spec (`data-augmentation`) requires geometry-safe ops but has no requirement for selective small-object duplication/enlargement within the same image.
 
 ## Problem

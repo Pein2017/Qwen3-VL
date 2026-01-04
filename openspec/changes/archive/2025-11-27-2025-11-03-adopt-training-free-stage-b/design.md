@@ -50,7 +50,7 @@ The final result after reflection is a formatted text block (e.g., `"[G0]. ...\n
 6. **Selection, Warnings & Export**
    - `select_for_group` prioritises GT-aligned candidates with trust-weighted tie-breakers; if every candidate disagrees with guidance and verifier trust is low, the group is logged with a warning (no complex exception queue).
    - Warnings are logged with `group_id`, reason, and guidance step. All tickets continue to be processed; warnings are informational only.
-   - `export_trajectories`, `export_selections`, and the new `export_reflection_inputs` include deterministic signals, confidence, guidance step, reflection id, warning flags, and the CriticEngine’s critic fields (`summary`, `critique`, optional `root_cause`/`issues`/`uncertainty_note`) so downstream QC can identify tickets that may need review.
+   - `export_trajectories`, `export_selections`, and the new `export_reflection_inputs` include deterministic signals, confidence, guidance step, reflection id, warning flags, and the CriticEngine’s critic fields (`summary`, `critique`, optional `root_cause`/`issues`/`uncertainty_note`) so downstream QC can identify tickets that may need manual follow-up.
 
 7. **Interfaces & Package Layout**
    - `src/stage_b/ingest.py`: load Stage-A outputs, hydrate prompt guidance, enforce run-dir setup, and fail fast when prerequisites are missing.

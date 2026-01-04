@@ -65,7 +65,7 @@ LIMIT="${LIMIT:-}"
 case "$DATASET" in
   bbu)
     DEFAULT_INPUT="raw_ds/bbu_scene_2.0/bbu_scene_2.0"
-    DEFAULT_NAME="bbu_full_1024_poly-need_review"
+    DEFAULT_NAME="bbu_full_1024_poly"
     ;;
   rru)
     DEFAULT_INPUT="raw_ds/rru_scene"

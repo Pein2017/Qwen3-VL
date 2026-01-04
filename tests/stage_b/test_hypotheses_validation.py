@@ -107,13 +107,13 @@ def _engine(tmp_path: Path) -> ReflectionEngine:
             "conflicts with scaffold",
         ),
         (
-            {"hypotheses": [{"text": "需复核时通过。", "falsifier": "x", "evidence": ["g1::pass"]}]},
+            {"hypotheses": [{"text": "出现第三态时通过。", "falsifier": "x", "evidence": ["g1::pass"]}]},
             "forbidden",
         ),
         (
             {
                 "hypotheses": [
-                    {"text": "need review 时通过。", "falsifier": "x", "evidence": ["g1::pass"]}
+                    {"text": "出现第三态时通过。", "falsifier": "x", "evidence": ["g1::pass"]}
                 ]
             },
             "forbidden",

@@ -75,5 +75,4 @@ Under `{output.root}/{mission}/{run_name}/`:
 
 ## Compatibility
 - `legacy_reflection` mode remains available for existing workflows.
-- `rule_search` mode disables stop-gradient / need_review routing and does not run decision/ops reflection passes.
-
+- `rule_search` mode disables stop-gradient queue routing and does not run decision/ops reflection passes.

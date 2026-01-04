@@ -4,7 +4,7 @@
 
 ### Requirement: Stage‑B SHALL perform two-pass reflection to update mission guidance from gradient candidates.
 Stage‑B MUST support two execution modes selected by config:
-- `legacy_reflection`: the existing two-pass decision/ops reflection flow (including stop-gradient `need_review` routing).
+- `legacy_reflection`: the existing two-pass decision/ops reflection flow (including stop-gradient queue routing).
 - `rule_search`: a rule-search (tree-growth) flow where reflection is only a lightweight **rule proposer**, and **all guidance changes are gated by large-scale rollout metrics**.
 
 In `legacy_reflection` mode, Stage‑B MUST preserve the existing semantics:
@@ -24,14 +24,14 @@ In `rule_search` mode, Stage‑B MUST:
 - **AND THEN** Stage‑B MUST evaluate each candidate rule on a large validation set using rollout-only inference (no extra LLM passes beyond proposing rules).
 - **AND THEN** Stage‑B MUST accept a rule only if it passes the gate (relative error reduction + bootstrap + changed_fraction).
 
-### Requirement: Stage‑B SHALL route `need_review` as stop-gradient-only after decision pass.
-In `legacy_reflection` mode, Stage‑B MUST treat `need_review_queue.jsonl` / `need_review.json` as the stop-gradient queue as currently specified.
+### Requirement: Stage‑B SHALL route stop-gradient tickets only after decision pass.
+In `legacy_reflection` mode, Stage‑B MUST treat the stop-gradient quarantine queue (`*_queue.jsonl` / aggregated JSON) as the only stop-gradient sink.
 
-In `rule_search` mode, Stage‑B MUST NOT run a stop-gradient decision pass and MUST NOT emit `need_review` artifacts as part of the learning loop.
+In `rule_search` mode, Stage‑B MUST NOT run a stop-gradient decision pass and MUST NOT emit quarantine artifacts as part of the learning loop.
 
-#### Scenario: rule_search mode does not write need_review artifacts
+#### Scenario: rule_search mode does not write quarantine artifacts
 - **WHEN** Stage‑B runs with `mode=rule_search`.
-- **THEN** Stage‑B MUST NOT create or update `need_review_queue.jsonl` / `need_review.json` as part of rule learning.
+- **THEN** Stage‑B MUST NOT create or update stop-gradient queue artifacts as part of rule learning.
 
 ## ADDED Requirements
 
@@ -53,4 +53,3 @@ In `rule_search` mode, Stage‑B MUST gate candidate rule admission using rollou
 #### Scenario: Candidate rule fails RER or bootstrap → rejected
 - **WHEN** a candidate rule does not meet the gate thresholds (RER, changed_fraction, bootstrap).
 - **THEN** Stage‑B MUST NOT add the rule to mission guidance and MUST record the rejection in `rule_candidates.jsonl`.
-

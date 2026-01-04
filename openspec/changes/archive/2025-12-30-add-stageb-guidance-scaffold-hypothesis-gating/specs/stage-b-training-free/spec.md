@@ -26,7 +26,7 @@ Hypotheses MUST be:
 - binary (only “通过/不通过” conclusions),
 - generalizable (no sample identifiers / object-chain copy),
 - falsifiable (include a short falsifier condition),
-- free of third-state wording (including common variants of “复核/佐证/不应直接/证据不足/待定/need-review”).
+- free of third-state wording (including common variants of “复核/佐证/不应直接/证据不足/待定”等).
 - `dimension` is optional; if present, it MUST NOT be `brand` (or brand-equivalent).
 
 #### Scenario: Hypothesis is promoted only after repeated support across cycles
@@ -88,7 +88,7 @@ Notes:
 - `coverage` is optional and MUST be treated as advisory (system-computed sets are source of truth).
 - `S*` scaffold keys MUST be treated as read-only and MUST NOT be targeted by ops.
 - `G0+` MUST be mutable (add/update/delete/merge allowed), with the exception that `G0` MUST always exist and MUST NOT be removed.
-- `need_review_queue.jsonl` is the only stop-gradient queue; no manual-review queue artifacts are produced.
+- A single stop-gradient queue file is produced; no manual-review queue artifacts are produced.
 
 Strict evidence requirements:
 - Every operation (including `delete`) MUST include non-empty `evidence`.

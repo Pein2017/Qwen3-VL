@@ -75,10 +75,9 @@ def _normalize_verdict(text: str) -> GroupLabel | None:
         return "fail"
     # Third-state / pending phrases are forbidden in Stage-B inference outputs.
     if any(
-        term in cleaned for term in ["复核", "不确定", "无法判断", "无法判定", "待复核"]
+        term in cleaned
+        for term in ["\u590d\u6838", "不确定", "无法判断", "无法判定", "\u5f85\u590d\u6838"]
     ):
-        return None
-    if cleaned in {"通过需复核", "通过需要复核", "通过需要复核。", "通过需复核。"}:
         return None
     return None
 
@@ -118,14 +117,11 @@ def _parse_two_line_response(
         return False, None, None
 
     forbidden = (
-        "需复核",
-        "需人工复核",
-        "need-review",
+        "\u590d\u6838",  # review placeholder
         "needreview",
-        "证据不足",
         "待定",
-        "通过但需复核",
-        "通过但需人工复核",
+        "证据不足",
+        "\u4eba\u5de5\u590d\u6838",  # manual review
     )
     simplified_reason = normalize_spaces(to_simplified(reason))
     if any(term in simplified_reason for term in forbidden):
