@@ -857,23 +857,82 @@ class ReflectionEngine:
         )
 
     @staticmethod
-    def _estimate_obj_count(text: str) -> int:
+    def _parse_stage_a_summary_json(text: str) -> dict[str, object] | None:
         stripped = (text or "").strip()
-        if stripped.startswith("{") and stripped.endswith("}"):
+        if not stripped or stripped.startswith("无关图片"):
+            return None
+
+        required = {"dataset", "统计", "objects_total"}
+
+        def _maybe_parse_obj(candidate: str) -> dict[str, object] | None:
+            c = candidate.strip()
+            if not (c.startswith("{") and c.endswith("}")):
+                return None
             try:
-                obj = json.loads(stripped)
-            except Exception:  # pragma: no cover - defensive
-                obj = None
-            if isinstance(obj, dict) and {
-                "dataset",
-                "统计",
-                "objects_total",
-            }.issubset(obj.keys()):
-                total = obj.get("objects_total")
-                if isinstance(total, int):
-                    return total
-                if isinstance(total, str) and total.isdigit():
-                    return int(total)
+                parsed = json.loads(c)
+            except Exception:
+                return None
+            return parsed if isinstance(parsed, dict) else None
+
+        obj = _maybe_parse_obj(stripped)
+        if obj is not None and required.issubset(obj.keys()):
+            return obj
+
+        # Legacy Stage-A may contain a header line "<DOMAIN=...>, <TASK=...>".
+        lines = [line.strip() for line in stripped.splitlines() if line.strip()]
+        for line in reversed(lines):
+            obj = _maybe_parse_obj(line)
+            if obj is not None and required.issubset(obj.keys()):
+                return obj
+
+        start = stripped.find("{")
+        end = stripped.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            obj = _maybe_parse_obj(stripped[start : end + 1])
+            if obj is not None and required.issubset(obj.keys()):
+                return obj
+
+        return None
+
+    @staticmethod
+    def _sanitize_stage_a_summary_for_prompt(text: str) -> str:
+        stripped = (text or "").strip()
+        if not stripped:
+            return stripped
+        if stripped.startswith("无关图片"):
+            return "无关图片"
+
+        obj = ReflectionEngine._parse_stage_a_summary_json(stripped)
+        if obj is not None:
+            if "format_version" in obj:
+                obj = dict(obj)
+                obj.pop("format_version", None)
+            return json.dumps(obj, ensure_ascii=False, separators=(", ", ": "))
+
+        # Fallback: normalize to a single line and scrub forbidden markers.
+        lines = [line.strip() for line in stripped.splitlines() if line.strip()]
+        # Drop the assistant prefix line when present.
+        lines = [
+            line
+            for line in lines
+            if not (line.startswith("<DOMAIN=") and "<TASK=" in line and line.endswith(">"))
+        ]
+        simplified = to_simplified(" ".join(lines))
+        simplified = normalize_spaces(simplified)
+        simplified = re.sub(r"需复核\s*[，,]?\s*备注[:：]", "备注(待确认):", simplified)
+        simplified = simplified.replace("需复核", "")
+        simplified = normalize_spaces(simplified).strip()
+        return simplified
+
+    @staticmethod
+    def _estimate_obj_count(text: str) -> int:
+        obj = ReflectionEngine._parse_stage_a_summary_json(text or "")
+        if obj is not None:
+            total = obj.get("objects_total")
+            if isinstance(total, int):
+                return total
+            if isinstance(total, str) and total.isdigit():
+                return int(total)
 
         simplified = to_simplified(text or "")
         simplified = normalize_spaces(simplified)
@@ -899,17 +958,8 @@ class ReflectionEngine:
     def _reject_experience_text(text: str) -> bool:
         """Heuristic to block Stage-A style summaries leaking into guidance."""
         stripped = (text or "").strip()
-        if stripped.startswith("{") and stripped.endswith("}"):
-            try:
-                obj = json.loads(stripped)
-            except Exception:
-                obj = None
-            if isinstance(obj, dict) and {
-                "dataset",
-                "统计",
-                "objects_total",
-            }.issubset(obj.keys()):
-                return True
+        if ReflectionEngine._parse_stage_a_summary_json(stripped) is not None:
+            return True
 
         lowered = (text or "").lower()
         slash_count = text.count("/")
@@ -1058,8 +1108,14 @@ class ReflectionEngine:
 
             summaries = ticket.summaries.as_dict()
             if summaries:
-                ordered = self._sorted_stage_a_summaries(summaries)
-                counts = [(key, self._estimate_obj_count(value)) for key, value in ordered]
+                ordered_raw = self._sorted_stage_a_summaries(summaries)
+                ordered = [
+                    (key, self._sanitize_stage_a_summary_for_prompt(value))
+                    for key, value in ordered_raw
+                ]
+                counts = [
+                    (key, self._estimate_obj_count(value)) for key, value in ordered
+                ]
                 if counts:
                     global_key, global_count = max(counts, key=lambda item: item[1])
                     stats_inline = ", ".join(

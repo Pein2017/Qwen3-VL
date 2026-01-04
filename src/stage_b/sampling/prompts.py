@@ -20,29 +20,56 @@ _STATION_DISTANCE_RE = re.compile(r"站点距离[=/](\d+)")
 def _parse_summary_json(text: str) -> dict[str, object] | None:
     if not text:
         return None
+
     stripped = text.strip()
-    if not (stripped.startswith("{") and stripped.endswith("}")):
+    if not stripped or stripped.startswith("无关图片"):
         return None
-    try:
-        obj = json.loads(stripped)
-    except Exception:
-        return None
-    if not isinstance(obj, dict):
-        return None
-    required = {"dataset", "统计", "objects_total"}
-    if not required.issubset(obj.keys()):
-        return None
-    return obj
+
+    def _maybe_parse_obj(candidate: str) -> dict[str, object] | None:
+        c = candidate.strip()
+        if not (c.startswith("{") and c.endswith("}")):
+            return None
+        try:
+            parsed = json.loads(c)
+        except Exception:
+            return None
+        return parsed if isinstance(parsed, dict) else None
+
+    def _is_summary(obj: dict[str, object]) -> bool:
+        required = {"dataset", "统计", "objects_total"}
+        return required.issubset(obj.keys())
+
+    # Fast path: whole string is the JSON object.
+    obj = _maybe_parse_obj(stripped)
+    if obj is not None and _is_summary(obj):
+        return obj
+
+    # Legacy Stage-A outputs may be multi-line with a <DOMAIN>/<TASK> header.
+    lines = [line.strip() for line in stripped.splitlines() if line.strip()]
+    for line in reversed(lines):
+        obj = _maybe_parse_obj(line)
+        if obj is not None and _is_summary(obj):
+            return obj
+
+    # Fallback: extract the first {...} block from the full text.
+    start = stripped.find("{")
+    end = stripped.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        obj = _maybe_parse_obj(stripped[start : end + 1])
+        if obj is not None and _is_summary(obj):
+            return obj
+
+    return None
 
 
 def _format_summary_json(obj: dict[str, object]) -> str:
-    preferred_order = ["objects_total", "统计", "备注", "分组统计"]
+    preferred_order = ["dataset", "objects_total", "统计", "备注", "分组统计"]
     ordered: dict[str, object] = {}
     for key in preferred_order:
         if key in obj:
             ordered[key] = obj[key]
     for key, value in obj.items():
-        if key == "format_version" or key == "dataset":
+        if key == "format_version":
             continue
         if key not in ordered:
             ordered[key] = value

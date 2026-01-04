@@ -211,3 +211,30 @@ def test_build_user_prompt_json_summary_uses_objects_total():
     prompt = build_user_prompt(ticket, guidance)
     assert "Image1(obj=3)" in prompt
     assert "\"dataset\": \"BBU\"" in prompt
+
+
+def test_build_user_prompt_strips_stage_a_header_and_keeps_json():
+    summary = (
+        "<DOMAIN=BBU>, <TASK=SUMMARY>\n"
+        "{\"dataset\":\"BBU\",\"objects_total\":5,"
+        "\"统计\":[{\"类别\":\"标签\",\"文本\":{\"NR900-BBU\":1}}]}\n"
+    )
+    ticket = GroupTicket(
+        group_id="QC-JSON-HEADER-001",
+        mission="挡风板安装检查",
+        label="pass",  # type: ignore[arg-type]
+        summaries=StageASummaries(per_image={"image_1": summary}),
+    )
+
+    guidance = MissionGuidance(
+        mission="挡风板安装检查",
+        experiences={"G0": "至少需要检测到BBU设备并判断挡风板是否按要求"},
+        step=1,
+        updated_at=datetime.now(timezone.utc),
+    )
+
+    prompt = build_user_prompt(ticket, guidance)
+    assert "<DOMAIN=" not in prompt
+    assert "<TASK=" not in prompt
+    assert "Image1(obj=5)" in prompt
+    assert "\"dataset\": \"BBU\"" in prompt
