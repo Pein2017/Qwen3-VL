@@ -57,15 +57,18 @@ def test_summary_dataset_reward_mismatch_is_zero():
     assert reward([completion], metadata=[meta])[0] == 0.0
 
 
-def test_summary_dataset_key_invalidates_content_rewards():
+def test_summary_dataset_key_penalizes_structured_reward():
     reward = SummaryStructuredContentTverskyReward()
-    completion = _completion_with_json('{"dataset":"BBU","统计":[]}')
+    completion = _completion_with_json(
+        '{"dataset":"BBU","统计":[{"类别":"BBU设备","品牌":{"华为":1}}]}'
+    )
     meta = {
         "_fusion_source": "bbu_summary",
         "_fusion_template": "summary_bbu",
-        "summary_ref": '{"统计":[]}',
+        "summary_ref": '{"统计":[{"类别":"BBU设备","品牌":{"华为":1}}]}',
     }
-    assert reward([completion], metadata=[meta])[0] == 0.0
+    score = reward([completion], metadata=[meta])[0]
+    assert score == pytest.approx(1.0 / 1.3)
 
 
 def test_summary_category_recall_reward_partial_overlap():

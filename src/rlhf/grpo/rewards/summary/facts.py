@@ -25,8 +25,13 @@ def extract_summary_fact_counts(
         return None
     if domain_token == "BBU" and "分组统计" in obj:
         return None
-
     counts: dict[Tuple[str, ...], int] = {}
+
+    dataset = obj.get("dataset")
+    if dataset is not None:
+        dataset_str = normalize_free_text(str(dataset))
+        if dataset_str:
+            counts[("dataset", dataset_str)] = 1
 
     notes = obj.get("备注")
     if isinstance(notes, list):

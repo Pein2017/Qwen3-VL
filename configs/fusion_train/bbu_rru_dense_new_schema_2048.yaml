@@ -7,8 +7,8 @@ training:
   output_dir: ./output/1-4/2048_res_dense
   run_name: epoch_40-lrs_2_1_6
   num_train_epochs: 40
-  per_device_train_batch_size: 1
-  per_device_eval_batch_size: 2
+  per_device_train_batch_size: 2
+  per_device_eval_batch_size: 4
   effective_batch_size: 32
   learning_rate: 2.0e-4
   vit_lr: 1.0e-4

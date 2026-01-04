@@ -181,8 +181,6 @@ def canonicalize(obj: Any, *, key: str | None = None) -> Any:
 def normalize_summary(obj: Any, domain_token: str | None) -> tuple[Any | None, bool]:
     if not isinstance(obj, dict):
         return None, False
-    if "dataset" in obj:
-        return None, False
     if domain_token == "RRU" and "备注" in obj:
         return None, False
     if domain_token == "BBU" and "分组统计" in obj:

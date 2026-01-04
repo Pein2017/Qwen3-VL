@@ -62,11 +62,7 @@ class SummarySample:
                 self._pred_json = None
             else:
                 try:
-                    parsed = json.loads(self.strict_json_line)
-                    if isinstance(parsed, dict) and "dataset" in parsed:
-                        self._pred_json = None
-                    else:
-                        self._pred_json = parsed
+                    self._pred_json = json.loads(self.strict_json_line)
                 except Exception:
                     self._pred_json = None
         return None if self._pred_json is _UNSET else self._pred_json
@@ -77,11 +73,7 @@ class SummarySample:
                 self._ref_json = None
             else:
                 try:
-                    parsed = json.loads(self.summary_ref)
-                    if isinstance(parsed, dict) and "dataset" in parsed:
-                        self._ref_json = None
-                    else:
-                        self._ref_json = parsed
+                    self._ref_json = json.loads(self.summary_ref)
                 except Exception:
                     self._ref_json = None
         return None if self._ref_json is _UNSET else self._ref_json

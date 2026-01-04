@@ -70,7 +70,7 @@ rlhf:
   # async_generate: true
 
 custom:
-  fusion_config: configs/dataset_mix/bbu_rru_summary_grpo_new_schema_1024.yaml
+  fusion_config: configs/dataset_mix/bbu_rru_summary_grpo_new_schema_2048.yaml
   use_summary: true
   val_sample_limit: 200
   assistant_prefix_format: "<DOMAIN={domain}>, <TASK={task}>"

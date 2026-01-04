@@ -321,14 +321,13 @@ class ConfigLoader:
                 )
             template_section["truncation_strategy"] = "raise"
 
-            if rlhf_section.get("vllm_max_model_len") is None:
+            if rlhf_type and rlhf_section.get("vllm_max_model_len") is None:
                 rlhf_section["vllm_max_model_len"] = config.global_max_length
 
         if "system" not in template_section and config.prompts.system:
             template_section["system"] = config.prompts.system
 
         teacher_model_path = rlhf_section_original.get("teacher_model")
-        rlhf_type = rlhf_section_original.get("rlhf_type")
         llm_kd_active = rlhf_type == "gkd" and llm_kd_weight > 0
         kd_requested = llm_kd_active or config.custom.visual_kd.enabled
         if kd_requested and not teacher_model_path:
@@ -359,7 +358,7 @@ class ConfigLoader:
             raw_save_delay_steps, raw_save_delay_epochs
         )
 
-        args_cls = RLHFArguments if args_dict.get("rlhf_type") else TrainArguments
+        args_cls = RLHFArguments if rlhf_type else TrainArguments
         train_args = args_cls(**args_dict)
 
         try:
