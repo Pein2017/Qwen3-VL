@@ -1,5 +1,5 @@
 stage_a_paths:
-  - output_post/stage_a_bbu_rru_summary_12-22/RRU位置检查_stage_a.jsonl
+  - output_post/stage_a_grpo-1-4/RRU位置检查_stage_a.jsonl
 
 ticket_filter:
   # Exclude fail-labeled tickets whose GT fail reasons are not observable in Stage-A summaries
@@ -11,8 +11,7 @@ default_domain: rru
 jump_reflection: true
 
 model:
-  model_name_or_path: model_cache/models/Qwen/Qwen3-VL-8B-Instruct
-  # model_name_or_path: output/12-23/summary_merged/epoch_2-bbu_rru-more_irrelevant-ocr
+  model_name_or_path: output/1-1/grpo-merged/checkpoint-500
   torch_dtype: bfloat16
   device_map: auto
   attn_implementation: flash_attention_2  # Enable Flash Attention 2 for faster inference (requires flash-attn package)
@@ -25,7 +24,7 @@ guidance:
 
 output:
   root: output_post/stage_b
-  run_name: 12-23-rru-position-rule-search
+  run_name: 1-4-grpo-ckpt500
 
 rule_search:
   proposer_prompt_path: configs/prompts/stage_b_rule_search_proposer_prompt.txt
