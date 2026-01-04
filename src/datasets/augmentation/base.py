@@ -131,7 +131,7 @@ class ImageAugmenter(Protocol):
        - Implement: apply(images, geoms, ...) -> (images, geoms)
        - Deferred until after all affines are flushed (geometry unchanged)
 
-    3. **Barrier Ops** (kind="barrier"): ResizeByScale, PadToMultiple, ExpandToFitAffine
+    3. **Barrier Ops** (kind="barrier"): ResizeByScale, ExpandToFitAffine
        - Implement: apply(images, geoms, ...) -> (images, geoms)
        - Optionally: pre_flush_hook(M_total, width, height, rng) -> (M_total, width, height)
        - Barrier forces affine flush before and after; may change canvas size

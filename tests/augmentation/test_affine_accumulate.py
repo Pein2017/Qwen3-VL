@@ -6,7 +6,15 @@ from typing import List, Dict, Any
 from PIL import Image
 
 from src.datasets.augmentation.base import Compose
-from src.datasets.augmentation.ops import HFlip, Rotate, Scale, PadToMultiple, ColorJitter, Gamma, ResizeByScale
+from src.datasets.augmentation.ops import (
+    ColorJitter,
+    ExpandToFitAffine,
+    Gamma,
+    HFlip,
+    ResizeByScale,
+    Rotate,
+    Scale,
+)
 from src.datasets.geometry import apply_affine, compose_affine
 
 
@@ -66,7 +74,7 @@ def test_barrier_pad_mid_pipeline():
     w, h = 63, 50
     img = _make_img(w, h)
     geoms = _geom_samples()
-    pipe = Compose([Rotate(10.0, 1.0), PadToMultiple(32), Scale(0.95, 1.05, 1.0)])
+    pipe = Compose([Rotate(10.0, 1.0), ExpandToFitAffine(32), Scale(0.95, 1.05, 1.0)])
     out_imgs, out_geoms = pipe.apply([img], geoms, width=w, height=h, rng=rng)
     w2, h2 = out_imgs[0].width, out_imgs[0].height
     assert w2 % 32 == 0 and h2 % 32 == 0
@@ -112,4 +120,3 @@ def test_determinism_same_rng():
     # Pixel-by-pixel equality may not hold due to floating resample; sizes and geoms should match
     assert i1[0].size == i2[0].size
     assert g1 == g2
-

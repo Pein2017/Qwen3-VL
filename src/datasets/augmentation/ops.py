@@ -180,34 +180,6 @@ class ColorJitter(ColorOp):
         return out_imgs, geoms
 
 
-@register("pad_to_multiple")
-@final
-class PadToMultiple(CurriculumMixin, ImageAugmenter):
-    def __init__(self, multiple: int = 32):
-        if multiple <= 0:
-            raise ValueError(f"multiple must be > 0, got {multiple}")
-        self.multiple = int(multiple)
-        self.kind = "barrier"
-        self.curriculum_param_names = ("multiple",)
-
-    @override
-    def apply(
-        self,
-        images: list[Image.Image],
-        geoms: list[dict[str, object]],
-        *,
-        width: int,
-        height: int,
-        rng: RngLike,
-    ):
-        out_imgs: list[Image.Image] = []
-        for img in images:
-            im = _pil(img)
-            out_imgs.append(_pad_to_multiple(im, mult=self.multiple))
-        # Geometry remains the same in pixel coordinates; padding appends zeros to the right/bottom
-        return out_imgs, geoms
-
-
 @register("expand_to_fit_affine")
 @final
 class ExpandToFitAffine(CurriculumMixin, ImageAugmenter):
@@ -746,62 +718,6 @@ class AutoContrast(ColorOp):
         return out_imgs, geoms
 
 
-@register("solarize")
-@final
-class Solarize(ColorOp):
-    curriculum_param_names = ("threshold", "prob")
-
-    def __init__(self, threshold: int = 128, prob: float = 0.3):
-        self.threshold = int(threshold)
-        self.prob = float(prob)
-
-    @override
-    def apply(
-        self,
-        images: list[Image.Image],
-        geoms: list[dict[str, object]],
-        *,
-        width: int,
-        height: int,
-        rng: RngLike,
-    ):
-        if rng.random() >= self.prob:
-            return images, geoms
-        out_imgs: list[Image.Image] = []
-        for img in images:
-            im = _pil(img).convert("RGB")
-            out_imgs.append(ImageOps.solarize(im, threshold=self.threshold))
-        return out_imgs, geoms
-
-
-@register("posterize")
-@final
-class Posterize(ColorOp):
-    curriculum_param_names = ("bits", "prob")
-
-    def __init__(self, bits: int = 4, prob: float = 0.3):
-        self.bits = int(bits)
-        self.prob = float(prob)
-
-    @override
-    def apply(
-        self,
-        images: list[Image.Image],
-        geoms: list[dict[str, object]],
-        *,
-        width: int,
-        height: int,
-        rng: RngLike,
-    ):
-        if rng.random() >= self.prob:
-            return images, geoms
-        out_imgs: list[Image.Image] = []
-        for img in images:
-            im = _pil(img).convert("RGB")
-            out_imgs.append(ImageOps.posterize(im, bits=self.bits))
-        return out_imgs, geoms
-
-
 @register("sharpness")
 @final
 class Sharpness(ColorOp):
@@ -830,144 +746,6 @@ class Sharpness(ColorOp):
         for img in images:
             im = _pil(img).convert("RGB")
             out_imgs.append(ImageEnhance.Sharpness(im).enhance(f))
-        return out_imgs, geoms
-
-
-@register("albumentations_color")
-@final
-class AlbumentationsColor(ColorOp):
-    curriculum_param_names = ("prob",)
-
-    def __init__(self, preset: str = "strong", prob: float = 1.0):
-        self.preset = str(preset)
-        self.prob = float(prob)
-
-    def _build_pipeline(self):
-        try:
-            import albumentations as A  # type: ignore
-        except Exception as e:
-            raise RuntimeError(
-                "AlbumentationsColor requires 'albumentations'. Install it with 'opencv-python-headless' in the 'ms' env."
-            ) from e
-        if self.preset == "strong":
-            return A.ReplayCompose(
-                [
-                    A.OneOf(
-                        [
-                            A.ColorJitter(
-                                brightness=0.4,
-                                contrast=0.4,
-                                saturation=0.4,
-                                hue=0.1,
-                                p=1.0,
-                            ),
-                            A.RandomBrightnessContrast(
-                                brightness_limit=0.35, contrast_limit=0.35, p=1.0
-                            ),
-                            A.RandomGamma(gamma_limit=(60, 180), p=1.0),
-                        ],
-                        p=0.9,
-                    ),
-                    A.OneOf(
-                        [
-                            A.HueSaturationValue(
-                                hue_shift_limit=15,
-                                sat_shift_limit=30,
-                                val_shift_limit=30,
-                                p=1.0,
-                            ),
-                            A.RGBShift(
-                                r_shift_limit=20,
-                                g_shift_limit=20,
-                                b_shift_limit=20,
-                                p=1.0,
-                            ),
-                        ],
-                        p=0.7,
-                    ),
-                    A.OneOf(
-                        [
-                            A.CLAHE(clip_limit=3.0, tile_grid_size=(8, 8), p=1.0),
-                            A.Equalize(p=1.0),
-                        ],
-                        p=0.5,
-                    ),
-                    A.ChannelShuffle(p=0.1),
-                ],
-                p=1.0,
-            )
-        elif self.preset == "extreme":
-            return A.ReplayCompose(
-                [
-                    A.ColorJitter(
-                        brightness=0.6, contrast=0.6, saturation=0.6, hue=0.2, p=0.9
-                    ),
-                    A.RandomGamma(gamma_limit=(40, 220), p=0.7),
-                    A.HueSaturationValue(
-                        hue_shift_limit=20,
-                        sat_shift_limit=40,
-                        val_shift_limit=40,
-                        p=0.9,
-                    ),
-                    A.OneOf(
-                        [
-                            A.CLAHE(clip_limit=4.0, tile_grid_size=(8, 8), p=1.0),
-                            A.Equalize(p=1.0),
-                            A.Solarize(threshold=128, p=1.0),
-                            A.Posterize(num_bits=4, p=1.0),
-                        ],
-                        p=0.7,
-                    ),
-                    A.ChannelShuffle(p=0.2),
-                ],
-                p=1.0,
-            )
-        else:
-            raise ValueError(f"Unknown albumentations preset: {self.preset}")
-
-    @override
-    def apply(
-        self,
-        images: list[Image.Image],
-        geoms: list[dict[str, object]],
-        *,
-        width: int,
-        height: int,
-        rng: RngLike,
-    ):
-        if rng.random() >= self.prob:
-            return images, geoms
-        try:
-            import numpy as _np  # type: ignore
-            import albumentations as A  # type: ignore
-            import random as _random
-        except Exception as e:
-            raise RuntimeError(
-                "AlbumentationsColor requires 'albumentations' and 'opencv-python-headless' in the 'ms' env."
-            ) from e
-
-        pipeline = self._build_pipeline()
-
-        # Deterministic per-call across images
-        seed = rng.randint(0, 2**31 - 1)
-        py_state = _random.getstate()
-        np_state = _np.random.get_state()
-        _random.seed(seed)
-        _np.random.seed(seed)
-        try:
-            first = _pil(images[0]).convert("RGB")
-            bgr0 = _np.asarray(first)[:, :, ::-1]
-            res0 = pipeline(image=bgr0)
-            replay = res0["replay"]
-            out_imgs: list[Image.Image] = [Image.fromarray(res0["image"][:, :, ::-1])]
-            for img in images[1:]:
-                im = _pil(img).convert("RGB")
-                bgr = _np.asarray(im)[:, :, ::-1]
-                res = A.ReplayCompose.replay(replay, image=bgr)
-                out_imgs.append(Image.fromarray(res["image"][:, :, ::-1]))
-        finally:
-            _random.setstate(py_state)
-            _np.random.set_state(np_state)
         return out_imgs, geoms
 
 
@@ -1132,15 +910,17 @@ class SmallObjectZoomPaste(PatchOp):
     def _class_allowed(self, desc: str) -> bool:
         if not self.class_whitelist:
             return True
-        head = ""
-        for token in desc.split(","):
-            token = token.strip()
-            if token.startswith("类别="):
-                head = token.split("=", 1)[1].strip()
-                break
-        if not head:
-            head = desc.split("/", 1)[0].split(",", 1)[0].strip()
-        return any(head.startswith(t) for t in self.class_whitelist)
+
+        # Match against the full desc string (substrings), so users can whitelist by:
+        # - 类别 name: "类别=BBU安装螺丝" / "BBU安装螺丝"
+        # - attribute tokens: "可见性=部分", "标签=有标签", etc.
+        # - free text fields: 备注/文本 fragments
+        haystack = "".join(str(desc).split()).lower()
+        for raw in self.class_whitelist:
+            needle = "".join(str(raw).split()).lower()
+            if needle and needle in haystack:
+                return True
+        return False
 
     def _transform_geom(
         self,
@@ -1540,15 +1320,13 @@ __all__ = [
     "Rotate",
     "Scale",
     "ColorJitter",
+    "ResizeByScale",
     "Gamma",
     "HueSaturationValue",
     "CLAHE",
     "AutoContrast",
-    "Solarize",
-    "Posterize",
     "Sharpness",
-    "AlbumentationsColor",
-    "PadToMultiple",
+    "ExpandToFitAffine",
     "SmallObjectZoomPaste",
     "RandomCrop",
 ]

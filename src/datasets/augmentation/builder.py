@@ -19,7 +19,7 @@ def build_compose_from_config(cfg: dict[str, Any]) -> Compose:
           params: { prob: 0.5 }
         - name: color_jitter
           params: { brightness: [0.8, 1.2], contrast: [0.8, 1.2], saturation: [0.8, 1.2], prob: 0.5 }
-        - name: pad_to_multiple
+        - name: expand_to_fit_affine
           params: { multiple: 32 }
 
     Returns:

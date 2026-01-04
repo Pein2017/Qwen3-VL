@@ -251,7 +251,7 @@ No additional logging is emitted by default; the training loop applies the share
 - **CLAHE**: `tile_grid_size` accepts a list `[8, 8]` in YAML (automatically converted to tuple internally). Both list and tuple formats are supported.
 
 ### 3. Barrier Operators (`kind="barrier"`)
-**Examples**: `ExpandToFitAffine`, `ResizeByScale`, `PadToMultiple`
+**Examples**: `ExpandToFitAffine`, `ResizeByScale`
 
 **How they work**:
 - Forces affine flush before and after
@@ -344,7 +344,7 @@ normalized = (pixel/255 - 0.5) / 0.5 = 2*(pixel/255) - 1
 - **Better than white (255,255,255)**: White normalizes to +1.0, equally problematic
 
 **Implementation locations**:
-1. `_pad_to_multiple()`: Padding to 32-multiple for ViT requirements
+1. `_pad_to_multiple()`: Internal 32-multiple padding helper (used by offline scripts / utilities)
 2. `Image.transform()`: Fill color for affine warps (rotation, scale)
 3. Canvas expansion: Background for expanded areas
 
@@ -573,9 +573,9 @@ Outputs to `vis_out/augment_stage3_exact/` showing original vs augmented with ov
 
 # Bad: barriers interrupt accumulation
 - hflip
-- pad_to_multiple       # Barrier
+- resize_by_scale       # Barrier
 - rotate
-- pad_to_multiple       # Barrier (redundant)
+- resize_by_scale       # Barrier (redundant)
 ```
 
 ### Crop always skipping (high skip rate)

@@ -1159,7 +1159,7 @@ class CoordinateManager:
 
     @staticmethod
     def extract_bbox_from_geometry(
-        geometry_input: Union[List[float], Dict[str, Any]]
+        geometry_input: Union[List[float], Dict[str, Any]],
     ) -> List[float]:
         """
         Extract bounding box from any geometry type.
@@ -1541,16 +1541,6 @@ class CoordinateManager:
                 if first_x == last_x and first_y == last_y:
                     raw_coords = raw_coords[:-2]
 
-            # After removing closing point, validate we still have at least 8 coordinates (4 points)
-            # If not, this is likely a triangle or invalid polygon - reject it
-            if len(raw_coords) < 8:
-                logger.warning(
-                    f"Degenerate polygon detected: has less than 4 unique points after removing closing point "
-                    f"({len(raw_coords)} coordinates = {len(raw_coords) // 2} points). "
-                    f"Original had {len(raw_coords) + 2} coordinates. Rejecting degenerate polygon."
-                )
-                return []
-
             # Check for duplicate vertices (degenerate quad: triangle stored as quad with duplicate vertex)
             points_list = [
                 (raw_coords[i], raw_coords[i + 1]) for i in range(0, len(raw_coords), 2)
@@ -1560,7 +1550,18 @@ class CoordinateManager:
             if len(unique_points) < len(points_list):
                 logger.warning(
                     f"Degenerate polygon detected: {len(points_list)} points but only {len(unique_points)} unique points. "
-                    f"This is likely a triangle stored as a quad with duplicate vertex. Rejecting degenerate polygon."
+                    f"This is likely a triangle stored as a quad with duplicate vertex. Deduplicating vertices."
+                )
+                # Remove duplicate points and reconstruct raw_coords
+                raw_coords = [coord for point in unique_points for coord in point]
+                points_list = unique_points
+
+            # After removing closing point and deduplication, validate we have at least 4 points
+            # If not, this is an invalid polygon (too few vertices)
+            if len(points_list) < 4:
+                logger.warning(
+                    f"Invalid polygon: has less than 4 unique points "
+                    f"({len(points_list)} points). Rejecting degenerate polygon."
                 )
                 return []
 

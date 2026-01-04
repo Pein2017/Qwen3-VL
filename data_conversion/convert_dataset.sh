@@ -45,7 +45,7 @@ DATASET="${DATASET:-bbu}"
 # Processing parameters
 VAL_RATIO="${VAL_RATIO:-0.2}"
 RESIZE="${RESIZE:-true}"
-MAX_PIXELS="${MAX_PIXELS:-1048576}" # 768: 786432
+MAX_PIXELS="${MAX_PIXELS:-2097152}" # 768: 786432
 IMAGE_FACTOR="${IMAGE_FACTOR:-32}"
 LOG_LEVEL="${LOG_LEVEL:-INFO}"
 SEED="${SEED:-17}"
@@ -65,11 +65,11 @@ LIMIT="${LIMIT:-}"
 case "$DATASET" in
   bbu)
     DEFAULT_INPUT="raw_ds/bbu_scene_2.0/bbu_scene_2.0"
-    DEFAULT_NAME="bbu_full_1024_poly"
+    DEFAULT_NAME="bbu_full_2048_poly"
     ;;
   rru)
     DEFAULT_INPUT="raw_ds/rru_scene"
-    DEFAULT_NAME="rru_full_1024_poly"
+    DEFAULT_NAME="rru_full_2048_poly"
     ;;
   *)
     echo "❌ Unknown DATASET: $DATASET (expected 'bbu' or 'rru')"
@@ -90,7 +90,7 @@ if [ "$MODE" = "smoke" ]; then
     LIMIT="2"
   fi
 else
-  OUTPUT_DIR="${OUTPUT_DIR:-data}"
+  OUTPUT_DIR="${OUTPUT_DIR:-data_new_schema}"
   DATASET_NAME="${DATASET_NAME:-$DEFAULT_NAME}"
   LIMIT="${LIMIT:--1}"
 fi

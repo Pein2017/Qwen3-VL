@@ -4,7 +4,9 @@ import copy
 import random
 import re
 from collections.abc import Mapping, MutableMapping
-from typing import cast
+from typing import Any, cast
+
+from PIL import Image as PILImage
 
 from ...utils.logger import get_logger
 from ..augmentation.curriculum import NumericParam, _build_base_ops
@@ -83,14 +85,17 @@ class AugmentationPreprocessor(BasePreprocessor):
         # Only plugin registry path is supported
         try:
             from ..augmentation.base import Compose
-            from ..augmentation.registry import get as _get
         except Exception:
             Compose = None  # type: ignore
             _get = None  # type: ignore
 
         rec_map = cast(MutableMapping[str, object], cast(object, rec))
-        images = rec_map.get("images") or []
-        objs = rec_map.get("objects") or []
+        images: list[str | PILImage.Image] = cast(
+            list[str | PILImage.Image], rec_map.get("images") or []
+        )
+        objs: list[dict[str, object]] = cast(
+            list[dict[str, object]], rec_map.get("objects") or []
+        )
 
         # Extract geometries and keep an index mapping back to the object list.
         # This lets us append new duplicated objects when PatchOps increase geometry count
@@ -98,8 +103,13 @@ class AugmentationPreprocessor(BasePreprocessor):
         per_obj_geoms: list[dict[str, object]] = []
         obj_idx_with_geom: list[int] = []
         for idx, obj in enumerate(objs):
-            g = extract_geometry(obj)
+            g = cast(dict[str, object], extract_geometry(obj))
             if g:
+                # Attach desc metadata for class-aware PatchOps (e.g., small_object_zoom_paste).
+                # This enables whitelist matching against the full desc string, including 备注/文本.
+                desc = obj.get("desc")
+                if desc is not None:
+                    g["desc"] = str(desc)
                 per_obj_geoms.append(g)
                 obj_idx_with_geom.append(idx)
 
@@ -189,7 +199,7 @@ class AugmentationPreprocessor(BasePreprocessor):
 
                 # Update completeness field if below threshold
                 if cov < completeness_threshold:
-                    desc = obj.get("desc", "")
+                    desc = str(obj.get("desc", ""))
                     if "可见性=完整" in desc:
                         obj["desc"] = desc.replace("可见性=完整", "可见性=部分")
                         completeness_updates += 1
@@ -288,7 +298,7 @@ class AugmentationPreprocessor(BasePreprocessor):
             return
         step = state.get("step")
         try:
-            step = int(step) if step is not None else 0
+            step = int(cast(Any, step)) if step is not None else 0
         except (TypeError, ValueError):
             step = 0
         if self._curriculum_last_step == step:
@@ -296,7 +306,7 @@ class AugmentationPreprocessor(BasePreprocessor):
         bypass = state.get("bypass_prob")
         if bypass is not None:
             try:
-                value = float(bypass)
+                value = float(cast(Any, bypass))
             except (TypeError, ValueError) as exc:
                 raise ValueError(
                     f"Curriculum bypass_prob must be numeric; got {bypass}"
@@ -328,9 +338,9 @@ class AugmentationPreprocessor(BasePreprocessor):
             if isinstance(current, bool):
                 return bool(new_value)
             if isinstance(current, int):
-                return int(round(new_value))
+                return int(round(cast(Any, new_value)))
             if isinstance(current, float):
-                return float(new_value)
+                return float(cast(Any, new_value))
             if isinstance(current, tuple):
                 if not isinstance(new_value, (list, tuple)):
                     raise TypeError("tuple override must be list/tuple")
