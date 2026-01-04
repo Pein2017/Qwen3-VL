@@ -109,17 +109,19 @@ def is_irrelevant(meta: Any) -> bool:
 def get_domain_token(meta: Any) -> str | None:
     if not isinstance(meta, Mapping):
         return None
-    token = meta.get("_fusion_domain_token")
-    if isinstance(token, str) and token.strip():
-        return token.strip()
+    if meta.get("_fusion_source") == _IRRELEVANT_SOURCE:
+        return None
     template = meta.get("_fusion_template")
-    if isinstance(template, str):
-        lowered = template.lower()
-        if "bbu" in lowered:
-            return "BBU"
-        if "rru" in lowered:
-            return "RRU"
-    return None
+    if not isinstance(template, str) or not template.strip():
+        return None
+    if template == "summary_bbu":
+        return "BBU"
+    if template == "summary_rru":
+        return "RRU"
+    raise ValueError(
+        "Summary template must be summary_bbu or summary_rru "
+        f"for domain token mapping; got {template!r}."
+    )
 
 
 def get_summary_ref(meta: Any) -> str | None:
@@ -162,8 +164,6 @@ def canonicalize(obj: Any, *, key: str | None = None) -> Any:
     if isinstance(obj, dict):
         items: dict[str, Any] = {}
         for k, v in obj.items():
-            if k == "异常":
-                continue
             items[str(k)] = canonicalize(v, key=str(k))
         return {k: items[k] for k in sorted(items.keys())}
     if isinstance(obj, list):
@@ -180,6 +180,8 @@ def canonicalize(obj: Any, *, key: str | None = None) -> Any:
 
 def normalize_summary(obj: Any, domain_token: str | None) -> tuple[Any | None, bool]:
     if not isinstance(obj, dict):
+        return None, False
+    if "dataset" in obj:
         return None, False
     if domain_token == "RRU" and "备注" in obj:
         return None, False

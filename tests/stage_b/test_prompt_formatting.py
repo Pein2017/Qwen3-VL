@@ -82,8 +82,8 @@ def test_build_user_prompt_with_experiences():
     assert "任务: 挡风板安装检查" in prompt
 
 
-def test_build_user_prompt_rejects_review_marker():
-    """Stage-B user prompt must reject third-state review markers in Stage-A summaries."""
+def test_build_user_prompt_allows_review_marker():
+    """Stage-B user prompt preserves Stage-A summaries even with review markers."""
     ticket = GroupTicket(
         group_id="QC-NEED-REVIEW-001",
         mission="挡风板安装检查",
@@ -102,8 +102,8 @@ def test_build_user_prompt_rejects_review_marker():
         updated_at=datetime.now(timezone.utc),
     )
 
-    with pytest.raises(ValueError):
-        build_user_prompt(ticket, guidance)
+    prompt = build_user_prompt(ticket, guidance)
+    assert "复核" in prompt
 
 
 def test_build_user_prompt_empty_experiences_raises_error():
@@ -191,7 +191,7 @@ def test_build_user_prompt_headline_and_list_start_at_g1():
 
 def test_build_user_prompt_json_summary_derives_obj_count_from_stats():
     summary = (
-        '{"dataset":"BBU",'
+        '{'
         '"统计":[{"类别":"BBU设备","品牌":{"华为":1}}]}'
     )
     ticket = GroupTicket(
@@ -210,14 +210,13 @@ def test_build_user_prompt_json_summary_derives_obj_count_from_stats():
 
     prompt = build_user_prompt(ticket, guidance)
     assert "Image1(obj=1)" in prompt
-    assert re.search(r'"dataset"\s*:\s*"BBU"', prompt)
+    assert "\"统计\"" in prompt
 
 
 def test_build_user_prompt_strips_stage_a_header_and_keeps_json():
     summary = (
         "<DOMAIN=BBU>, <TASK=SUMMARY>\n"
-        "{\"dataset\":\"BBU\","
-        "\"统计\":[{\"类别\":\"标签\",\"文本\":{\"NR900-BBU\":1}}]}\n"
+        "{\"统计\":[{\"类别\":\"标签\",\"文本\":{\"NR900-BBU\":1}}]}\n"
     )
     ticket = GroupTicket(
         group_id="QC-JSON-HEADER-001",
@@ -237,4 +236,26 @@ def test_build_user_prompt_strips_stage_a_header_and_keeps_json():
     assert "<DOMAIN=" not in prompt
     assert "<TASK=" not in prompt
     assert "Image1(obj=1)" in prompt
-    assert re.search(r'"dataset"\s*:\s*"BBU"', prompt)
+    assert "\"统计\"" in prompt
+
+
+def test_build_user_prompt_strips_header_and_keeps_non_json_payload():
+    summary = "<DOMAIN=BBU>, <TASK=SUMMARY>\n无需解析的自由文本摘要"
+    ticket = GroupTicket(
+        group_id="QC-NONJSON-001",
+        mission="挡风板安装检查",
+        label="pass",  # type: ignore[arg-type]
+        summaries=StageASummaries(per_image={"image_1": summary}),
+    )
+
+    guidance = MissionGuidance(
+        mission="挡风板安装检查",
+        experiences={"G0": "至少需要检测到BBU设备并判断挡风板是否按要求"},
+        step=1,
+        updated_at=datetime.now(timezone.utc),
+    )
+
+    prompt = build_user_prompt(ticket, guidance)
+    assert "<DOMAIN=" not in prompt
+    assert "<TASK=" not in prompt
+    assert "无需解析的自由文本摘要" in prompt

@@ -113,7 +113,7 @@ FusionCaptionDataset
 - Object caps: applied after augmentation and before encoding; deterministic with the dataset/epoch/worker seed.
 - Evaluation: target eval by default; optional source `val_jsonl` included (no shuffle) when present and prepared offline (no splitting inside the loader).
 - Telemetry: `last_sample_debug` reports dataset, prompt source, augmentation on/off, cap applied/limit, input length; `epoch_plan` summarizes per-epoch counts/policies.
-- Metadata tags: `_fusion_source`, `_fusion_template`, `_fusion_domain`, `_fusion_domain_token` (BBU/RRU), `_fusion_mode`; summary mode attaches `metadata.summary_ref` for reward/QA consumers.
+- Metadata tags: `_fusion_source`, `_fusion_template`, `_fusion_domain`, `_fusion_mode`; summary mode attaches `metadata.summary_ref` for reward/QA consumers.
 - No online smart-resize guard; resizing only via explicit augmentation ops and offline preprocessing.
 
 ### Implementation Details

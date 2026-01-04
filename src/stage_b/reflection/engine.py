@@ -858,7 +858,7 @@ class ReflectionEngine:
         if not stripped or stripped.startswith("无关图片"):
             return None
 
-        required = {"dataset", "统计"}
+        required = {"统计"}
 
         def _maybe_parse_obj(candidate: str) -> dict[str, object] | None:
             c = candidate.strip()
@@ -898,28 +898,17 @@ class ReflectionEngine:
         if stripped.startswith("无关图片"):
             return "无关图片"
 
-        obj = ReflectionEngine._parse_stage_a_summary_json(stripped)
-        if obj is not None:
-            ordered: dict[str, object] = {}
-            for key in ("dataset", "统计", "备注", "分组统计", "异常"):
-                if key in obj:
-                    ordered[key] = obj[key]
-            return json.dumps(ordered, ensure_ascii=False, separators=(", ", ": "))
-
-        # Fallback: normalize to a single line and scrub forbidden markers.
-        lines = [line.strip() for line in stripped.splitlines() if line.strip()]
-        # Drop the assistant prefix line when present.
-        lines = [
+        lines = [line for line in stripped.splitlines() if line.strip()]
+        kept = [
             line
             for line in lines
-            if not (line.startswith("<DOMAIN=") and "<TASK=" in line and line.endswith(">"))
+            if not (
+                line.strip().startswith("<DOMAIN=")
+                and "<TASK=" in line
+                and line.strip().endswith(">")
+            )
         ]
-        simplified = to_simplified(" ".join(lines))
-        simplified = normalize_spaces(simplified)
-        if "\u590d\u6838" in simplified:
-            raise ValueError("Stage-A summary contains review marker")
-        simplified = normalize_spaces(simplified).strip()
-        return simplified
+        return "\n".join(kept).strip()
 
     @staticmethod
     def _estimate_obj_count(text: str) -> int:
@@ -934,7 +923,7 @@ class ReflectionEngine:
                 obj = json.loads(stripped)
             except Exception:  # pragma: no cover - defensive
                 obj = None
-            if isinstance(obj, dict) and {"dataset", "统计"}.issubset(obj.keys()):
+            if isinstance(obj, dict) and {"统计"}.issubset(obj.keys()):
                 entries = obj.get("统计")
                 if not isinstance(entries, list):
                     entries = []
@@ -981,7 +970,7 @@ class ReflectionEngine:
                     label_text_total = 0
                     label_readability_total = 0
                     for key, val in entry.items():
-                        if key in {"类别", "异常"}:
+                        if key == "类别":
                             continue
                         attr_total = _sum_counts(val)
                         max_attr_total = max(max_attr_total, attr_total)

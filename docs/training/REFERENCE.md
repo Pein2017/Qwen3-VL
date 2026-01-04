@@ -263,7 +263,7 @@ Keep configs under `configs/` in sync with the playbook when making behavioral c
     - `training.effective_batch_size` (backward global batch), `rlhf.generation_batch_size` (rollout global trajectories)
     - `prompts.profile=summary_runtime`, `custom.assistant_prefix_format`, `custom.fusion_config`
     - Tune `rlhf.temperature` based on contract stability vs exploration.
-- **Metadata contract**: summary-mode rows attach `metadata.summary_ref` (ground-truth JSON) and `metadata._fusion_domain_token` (BBU/RRU) for reward functions; irrelevant rows keep `_fusion_source=irrelevant_summary` and suppress assistant prefixes so labels remain single-line `无关图片`.
+- **Metadata contract**: summary-mode rows attach `metadata.summary_ref` (ground-truth JSON) and `_fusion_template` for header-domain rewards; irrelevant rows keep `_fusion_source=irrelevant_summary` and suppress assistant prefixes so labels remain single-line `无关图片`.
 - **Dry-run recipe**: clone the example config, set `training.max_steps: 2`, `training.eval_strategy: "no"`, `training.save_strategy: "no"`, `custom.train_sample_limit: 2`, `custom.val_sample_limit: 2`, then launch via `scripts/train.sh config=<new-config.yaml> gpus=0 debug=true`.
   - **Success criteria**: job starts, reward metrics appear (format/header/strict/parse + dup-key penalty + structured content rewards), and 1–2 steps complete without dataset or format exceptions.
 

@@ -309,9 +309,6 @@ class FusionCaptionDataset(BaseCaptionDataset):
         metadata["_fusion_source"] = spec.name
         metadata["_fusion_template"] = spec.template
         metadata["_fusion_domain"] = spec.domain
-        domain_token = resolve_domain_token(spec.key)
-        if domain_token:
-            metadata["_fusion_domain_token"] = domain_token
         metadata["_fusion_mode"] = mode
         annotated["metadata"] = metadata
         return annotated
@@ -694,17 +691,6 @@ class FusionCaptionDataset(BaseCaptionDataset):
         # Build conversation
         mode = policy.mode
         assistant_prefix = None
-        if self._assistant_prefix_format and policy.spec.domain == "target":
-            domain_token = resolve_domain_token(policy.spec.key)
-            if domain_token is None:
-                raise ValueError(
-                    f"assistant_prefix_format configured but unsupported dataset key '{policy.spec.key}'."
-                )
-            assistant_prefix = build_assistant_prefix(
-                fmt=self._assistant_prefix_format,
-                domain=domain_token,
-                task=resolve_task_token(mode),
-            )
         prompts = policy.prompts
         prompt_source = prompts.source
         prompt_template = policy.spec.template
@@ -747,6 +733,41 @@ class FusionCaptionDataset(BaseCaptionDataset):
                 prompt_source = "domain"
                 prompt_template = alt_template
                 metadata["_fusion_template"] = alt_template
+
+        if self._assistant_prefix_format and policy.spec.domain == "target":
+            if mode == "summary":
+                metadata = record.get("metadata")
+                if not isinstance(metadata, dict):
+                    metadata = {}
+                    record["metadata"] = metadata
+                if metadata.get("_fusion_source") != self._IRRELEVANT_SOURCE:
+                    template_name = metadata.get("_fusion_template")
+                    if template_name == "summary_bbu":
+                        domain_token = "BBU"
+                    elif template_name == "summary_rru":
+                        domain_token = "RRU"
+                    else:
+                        raise ValueError(
+                            "Summary template must be summary_bbu or summary_rru "
+                            f"for header construction; got {template_name!r}."
+                        )
+                    assistant_prefix = build_assistant_prefix(
+                        fmt=self._assistant_prefix_format,
+                        domain=domain_token,
+                        task=resolve_task_token(mode),
+                    )
+            else:
+                domain_token = resolve_domain_token(policy.spec.key)
+                if domain_token is None:
+                    raise ValueError(
+                        f"assistant_prefix_format configured but unsupported dataset key {policy.spec.key}."
+                    )
+                assistant_prefix = build_assistant_prefix(
+                    fmt=self._assistant_prefix_format,
+                    domain=domain_token,
+                    task=resolve_task_token(mode),
+                )
+
         builder = JSONLinesBuilder(
             user_prompt=user_prompt,
             emit_norm=self.emit_norm,
