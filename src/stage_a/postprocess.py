@@ -44,9 +44,10 @@ _RRU_CATEGORIES = {
 
 
 def _format_summary_json(obj: dict[str, object]) -> str:
-    if "format_version" in obj:
+    if "format_version" in obj or "objects_total" in obj:
         obj = dict(obj)
         obj.pop("format_version", None)
+        obj.pop("objects_total", None)
     return json.dumps(obj, ensure_ascii=False, separators=(", ", ": "))
 
 
@@ -66,7 +67,7 @@ def _extract_summary_json_line(text: str) -> str | None:
         return obj if isinstance(obj, dict) else None
 
     def _is_summary(obj: dict[str, object]) -> bool:
-        return {"dataset", "统计", "objects_total"}.issubset(obj.keys())
+        return {"dataset", "统计"}.issubset(obj.keys())
 
     obj = _maybe_parse_obj(stripped)
     if obj is not None and _is_summary(obj):
@@ -111,11 +112,7 @@ def sanitize_summary_by_dataset(text: str, dataset: str) -> str:
             obj = json.loads(summary_text)
         except Exception:
             obj = None
-        if isinstance(obj, dict) and {
-            "dataset",
-            "统计",
-            "objects_total",
-        }.issubset(obj.keys()):
+        if isinstance(obj, dict) and {"dataset", "统计"}.issubset(obj.keys()):
             return _format_summary_json(obj)
 
     if summary_text.startswith("{") and summary_text.endswith("}"):
@@ -141,6 +138,7 @@ def sanitize_summary_by_dataset(text: str, dataset: str) -> str:
                 obj.pop("备注", None)
             else:
                 obj.pop("分组统计", None)
+            obj.pop("objects_total", None)
             obj["dataset"] = dataset.upper()
             return json.dumps(obj, ensure_ascii=False, separators=(", ", ": "))
 

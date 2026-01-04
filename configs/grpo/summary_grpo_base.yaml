@@ -39,8 +39,8 @@ prompts:
 
 rlhf:
   rlhf_type: grpo
-  reward_funcs: [summary.format, summary.header, summary.strict, summary.parse, summary.no_dup_keys, summary.dataset, summary.objects_total_lb, summary.category_recall, summary.content_structured_tversky, summary.text_bbu, summary.notes_bbu, summary.group_stats_presence]
-  reward_weights: [1.0, 2.0, 2.0, 1.5, 2.0, 0.5, 1.0, 0.5, 1.8, 0.8, 0.3, 0.2]
+  reward_funcs: [summary.format, summary.header, summary.strict, summary.parse, summary.no_dup_keys, summary.dataset, summary.category_recall, summary.content_structured_tversky, summary.text_bbu, summary.notes_bbu, summary.group_stats_presence]
+  reward_weights: [1.0, 2.0, 2.0, 1.5, 2.0, 0.5, 0.5, 1.8, 0.8, 0.3, 0.2]
   # Make core GRPO knobs explicit (avoid relying on library defaults).
   beta: 0.04
   # Prefer ms-swift>=3.10 "AdvancedResearch" variants over vanilla GRPO:

@@ -1,5 +1,6 @@
 """Unit tests for prompt formatting with numbered experiences."""
 
+import re
 from datetime import datetime, timezone
 
 import pytest
@@ -188,9 +189,9 @@ def test_build_user_prompt_headline_and_list_start_at_g1():
     assert "1. 若挡风板缺失则判定不通过" in prompt
 
 
-def test_build_user_prompt_json_summary_uses_objects_total():
+def test_build_user_prompt_json_summary_derives_obj_count_from_stats():
     summary = (
-        '{"dataset":"BBU","objects_total":3,'
+        '{"dataset":"BBU",'
         '"统计":[{"类别":"BBU设备","品牌":{"华为":1}}]}'
     )
     ticket = GroupTicket(
@@ -208,14 +209,14 @@ def test_build_user_prompt_json_summary_uses_objects_total():
     )
 
     prompt = build_user_prompt(ticket, guidance)
-    assert "Image1(obj=3)" in prompt
-    assert "\"dataset\": \"BBU\"" in prompt
+    assert "Image1(obj=1)" in prompt
+    assert re.search(r'"dataset"\s*:\s*"BBU"', prompt)
 
 
 def test_build_user_prompt_strips_stage_a_header_and_keeps_json():
     summary = (
         "<DOMAIN=BBU>, <TASK=SUMMARY>\n"
-        "{\"dataset\":\"BBU\",\"objects_total\":5,"
+        "{\"dataset\":\"BBU\","
         "\"统计\":[{\"类别\":\"标签\",\"文本\":{\"NR900-BBU\":1}}]}\n"
     )
     ticket = GroupTicket(
@@ -235,5 +236,5 @@ def test_build_user_prompt_strips_stage_a_header_and_keeps_json():
     prompt = build_user_prompt(ticket, guidance)
     assert "<DOMAIN=" not in prompt
     assert "<TASK=" not in prompt
-    assert "Image1(obj=5)" in prompt
-    assert "\"dataset\": \"BBU\"" in prompt
+    assert "Image1(obj=1)" in prompt
+    assert re.search(r'"dataset"\s*:\s*"BBU"', prompt)

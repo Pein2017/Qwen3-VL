@@ -163,7 +163,7 @@ def _is_summary_json(obj: dict[str, object]) -> bool:
     """Heuristic: identify summary JSON schema."""
     if not isinstance(obj, dict):
         return False
-    required = {"dataset", "统计", "objects_total"}
+    required = {"dataset", "统计"}
     return required.issubset(obj.keys())
 
 
@@ -171,11 +171,13 @@ def _format_summary_json(obj: dict[str, object]) -> str:
     """Normalize summary JSON objects to a single-line string.
 
     - Removes optional `format_version` key when present.
+    - Removes legacy `objects_total` key when present.
     - Uses the canonical separators (", ", ": ") to match prompt/contract.
     """
-    if "format_version" in obj:
+    if "format_version" in obj or "objects_total" in obj:
         obj = dict(obj)
         obj.pop("format_version", None)
+        obj.pop("objects_total", None)
     return json.dumps(obj, ensure_ascii=False, separators=(", ", ": "))
 
 
@@ -304,7 +306,12 @@ def sanitize_summary_by_dataset(text: str, dataset: str) -> str:
 
     obj = _maybe_parse_json_object(summary_text)
     if obj is not None and _is_summary_json(obj):
-        return summary_text
+        if "format_version" not in obj and "objects_total" not in obj:
+            return summary_text
+        normalized = dict(obj)
+        normalized.pop("format_version", None)
+        normalized.pop("objects_total", None)
+        return json.dumps(normalized, ensure_ascii=False, separators=(", ", ": "))
 
     obj = _maybe_parse_json_object(summary_text)
     if obj is not None and "统计" in obj:
@@ -327,6 +334,7 @@ def sanitize_summary_by_dataset(text: str, dataset: str) -> str:
             obj.pop("备注", None)
         else:
             obj.pop("分组统计", None)
+        obj.pop("objects_total", None)
         obj["dataset"] = dataset.upper()
         return json.dumps(obj, ensure_ascii=False, separators=(", ", ": "))
 

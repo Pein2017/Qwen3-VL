@@ -342,7 +342,6 @@ Implication:
   - Hard JSON correctness: `summary.no_dup_keys` (hard-penalize duplicate JSON keys, including nested dicts)
   - Core content alignment (strict-format gated, GT treated as lower bound):
     - `summary.dataset` (domain token matches)
-    - `summary.objects_total_lb` (undercount-heavy; overcount is free up to `ref+2`)
     - `summary.category_recall` (category recall over `统计[*].类别`)
     - `summary.content_structured_tversky` (recall-biased Tversky on structured facts; BBU excludes `文本/备注`; RRU is stricter)
   - BBU free-text handling:
