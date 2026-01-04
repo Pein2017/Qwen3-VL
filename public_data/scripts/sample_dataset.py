@@ -44,18 +44,18 @@ def analyze_dataset(samples: List[Dict[str, Any]]) -> Dict[str, Any]:
     Returns:
         {
             "total_samples": int,
-            "total_objects": int,
+            "object_count": int,
             "category_counts": {category: count},
             "samples_by_category": {category: [sample_indices]}
         }
     """
     category_counts = Counter()
     samples_by_category = defaultdict(list)
-    total_objects = 0
+    object_count = 0
     
     for idx, sample in enumerate(samples):
         objects = sample.get("objects", [])
-        total_objects += len(objects)
+        object_count += len(objects)
         
         # Track which categories appear in this sample
         categories_in_sample = set()
@@ -70,7 +70,7 @@ def analyze_dataset(samples: List[Dict[str, Any]]) -> Dict[str, Any]:
     
     return {
         "total_samples": len(samples),
-        "total_objects": total_objects,
+        "object_count": object_count,
         "category_counts": dict(category_counts),
         "samples_by_category": dict(samples_by_category),
         "num_categories": len(category_counts)
@@ -93,12 +93,12 @@ def sample_stratified(
     
     category_counts = analysis["category_counts"]
     samples_by_category = analysis["samples_by_category"]
-    total_objects = analysis["total_objects"]
+    object_count = analysis["object_count"]
     
     # Calculate target samples per category based on frequency
     target_per_category = {}
     for cat, count in category_counts.items():
-        proportion = count / total_objects
+        proportion = count / object_count
         target_per_category[cat] = max(1, int(num_samples * proportion))
     
     # Sample from each category
@@ -203,9 +203,9 @@ def print_stats(samples: List[Dict[str, Any]], title: str = "Dataset") -> None:
     print(f"{title} Statistics")
     print(f"{'='*60}")
     print(f"  Total samples: {analysis['total_samples']}")
-    print(f"  Total objects: {analysis['total_objects']}")
+    print(f"  Object count: {analysis['object_count']}")
     print(f"  Unique categories: {analysis['num_categories']}")
-    print(f"  Avg objects/sample: {analysis['total_objects'] / max(analysis['total_samples'], 1):.2f}")
+    print(f"  Avg objects/sample: {analysis['object_count'] / max(analysis['total_samples'], 1):.2f}")
     
     # Category frequency distribution
     counts = list(analysis['category_counts'].values())
@@ -383,10 +383,9 @@ Examples:
     # Quick validation
     sample_analysis = analyze_dataset(sampled)
     print(f"Categories: {sample_analysis['num_categories']}")
-    print(f"Objects: {sample_analysis['total_objects']}")
+    print(f"Objects: {sample_analysis['object_count']}")
     print("="*60 + "\n")
 
 
 if __name__ == "__main__":
     main()
-

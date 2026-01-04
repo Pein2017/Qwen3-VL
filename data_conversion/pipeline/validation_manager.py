@@ -124,7 +124,7 @@ class ValidationManager:
 
         # Statistics tracking
         self.total_samples_processed = 0
-        self.total_objects_processed = 0
+        self.objects_processed = 0
         self.valid_samples = 0
         self.invalid_samples = 0
         self.validation_reports: List[ValidationReport] = []
@@ -163,7 +163,7 @@ class ValidationManager:
         if "objects" in sample and isinstance(sample["objects"], list):
             for i, obj in enumerate(sample["objects"]):
                 self._validate_object(obj, i, report, image_width, image_height)
-                self.total_objects_processed += 1
+                self.objects_processed += 1
 
         # Update statistics
         if report.is_valid:
@@ -638,7 +638,7 @@ class ValidationManager:
         return {
             "validation_summary": {
                 "total_samples_processed": self.total_samples_processed,
-                "total_objects_processed": self.total_objects_processed,
+                "objects_processed": self.objects_processed,
                 "valid_samples": self.valid_samples,
                 "invalid_samples": self.invalid_samples,
                 "validation_success_rate": self.valid_samples

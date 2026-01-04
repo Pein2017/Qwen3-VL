@@ -44,11 +44,11 @@ _RRU_CATEGORIES = {
 
 
 def _format_summary_json(obj: dict[str, object]) -> str:
-    if "format_version" in obj or "objects_total" in obj:
-        obj = dict(obj)
-        obj.pop("format_version", None)
-        obj.pop("objects_total", None)
-    return json.dumps(obj, ensure_ascii=False, separators=(", ", ": "))
+    ordered: dict[str, object] = {}
+    for key in ("dataset", "统计", "备注", "分组统计", "异常"):
+        if key in obj:
+            ordered[key] = obj[key]
+    return json.dumps(ordered, ensure_ascii=False, separators=(", ", ": "))
 
 
 def _extract_summary_json_line(text: str) -> str | None:
@@ -134,13 +134,12 @@ def sanitize_summary_by_dataset(text: str, dataset: str) -> str:
             if not filtered:
                 return "无关图片"
             obj["统计"] = filtered
-            if dataset.lower() == "rru":
-                obj.pop("备注", None)
-            else:
-                obj.pop("分组统计", None)
-            obj.pop("objects_total", None)
-            obj["dataset"] = dataset.upper()
-            return json.dumps(obj, ensure_ascii=False, separators=(", ", ": "))
+        if dataset.lower() == "rru":
+            obj.pop("备注", None)
+        else:
+            obj.pop("分组统计", None)
+        obj["dataset"] = dataset.upper()
+        return json.dumps(obj, ensure_ascii=False, separators=(", ", ": "))
 
     parts = [p.strip() for p in summary_text.split("，") if p.strip()]
     if not parts:

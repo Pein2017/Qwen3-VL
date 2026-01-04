@@ -170,22 +170,21 @@ def _is_summary_json(obj: dict[str, object]) -> bool:
 def _format_summary_json(obj: dict[str, object]) -> str:
     """Normalize summary JSON objects to a single-line string.
 
-    - Removes optional `format_version` key when present.
-    - Removes legacy `objects_total` key when present.
+    - Keeps only the canonical top-level keys used by the summary contract.
     - Uses the canonical separators (", ", ": ") to match prompt/contract.
     """
-    if "format_version" in obj or "objects_total" in obj:
-        obj = dict(obj)
-        obj.pop("format_version", None)
-        obj.pop("objects_total", None)
-    return json.dumps(obj, ensure_ascii=False, separators=(", ", ": "))
+    ordered: dict[str, object] = {}
+    for key in ("dataset", "统计", "备注", "分组统计", "异常"):
+        if key in obj:
+            ordered[key] = obj[key]
+    return json.dumps(ordered, ensure_ascii=False, separators=(", ", ": "))
 
 
 def _extract_summary_json_line(text: str) -> str | None:
     """Extract summary-statistics JSON from model output text.
 
     Stage-A summary-mode models may emit:
-    - Single-line JSON: {"dataset": "...", "objects_total": ..., "统计": [...]}
+    - Single-line JSON: {"dataset": "...", "统计": [...]}
     - Two-line output: "<DOMAIN=...>, <TASK=...>" + JSON on the next line
 
     This helper finds the JSON object and returns a normalized single-line JSON
@@ -306,12 +305,7 @@ def sanitize_summary_by_dataset(text: str, dataset: str) -> str:
 
     obj = _maybe_parse_json_object(summary_text)
     if obj is not None and _is_summary_json(obj):
-        if "format_version" not in obj and "objects_total" not in obj:
-            return summary_text
-        normalized = dict(obj)
-        normalized.pop("format_version", None)
-        normalized.pop("objects_total", None)
-        return json.dumps(normalized, ensure_ascii=False, separators=(", ", ": "))
+        return _format_summary_json(obj)
 
     obj = _maybe_parse_json_object(summary_text)
     if obj is not None and "统计" in obj:
@@ -334,7 +328,6 @@ def sanitize_summary_by_dataset(text: str, dataset: str) -> str:
             obj.pop("备注", None)
         else:
             obj.pop("分组统计", None)
-        obj.pop("objects_total", None)
         obj["dataset"] = dataset.upper()
         return json.dumps(obj, ensure_ascii=False, separators=(", ", ": "))
 

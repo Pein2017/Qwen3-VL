@@ -118,7 +118,6 @@ def _parse_two_line_response(
 
     forbidden = (
         "\u590d\u6838",  # review placeholder
-        "needreview",
         "待定",
         "证据不足",
         "\u4eba\u5de5\u590d\u6838",  # manual review

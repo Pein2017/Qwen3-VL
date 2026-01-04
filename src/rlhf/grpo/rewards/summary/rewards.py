@@ -14,8 +14,6 @@ from .facts import (
     f1_from_fact_counts,
     f1_from_sets,
     filter_fact_counts,
-    score_objects_total,
-    score_objects_total_lower_bound,
     tversky_from_fact_counts,
 )
 from .parsing import (
@@ -154,28 +152,6 @@ class SummaryDatasetReward(SummaryReward):
         )
 
 
-class SummaryObjectsTotalReward(SummaryReward):
-    """Dense reward for matching JSON `objects_total` (1.0 when equal, decays with abs diff)."""
-
-    def score(self, sample: SummarySample) -> float:
-        if sample.is_irrelevant:
-            return 0.0
-        pred_json = sample.pred_json()
-        if not isinstance(pred_json, dict):
-            return 0.0
-        summary_ref = sample.summary_ref
-        if not summary_ref or summary_ref == _IRRELEVANT_TEXT:
-            return 0.0
-        ref_json = sample.ref_json()
-        if not isinstance(ref_json, dict):
-            return 0.0
-        return float(
-            score_objects_total(
-                pred_json.get("objects_total"), ref_json.get("objects_total")
-            )
-        )
-
-
 class SummaryNoDupKeysPenalty(SummaryReward):
     """Hard penalty when JSON contains duplicate keys (including nested dicts)."""
 
@@ -191,28 +167,6 @@ class SummaryNoDupKeysPenalty(SummaryReward):
         except Exception:
             return 0.0
         return 0.0
-
-
-class SummaryObjectsTotalLowerBoundReward(SummaryReward):
-    """Lower-bound objects_total reward: undercount is costly; overcount is free up to +2."""
-
-    def score(self, sample: SummarySample) -> float:
-        if sample.is_irrelevant:
-            return 0.0
-        pred_json = sample.pred_json()
-        if not isinstance(pred_json, dict):
-            return 0.0
-        summary_ref = sample.summary_ref
-        if not summary_ref or summary_ref == _IRRELEVANT_TEXT:
-            return 0.0
-        ref_json = sample.ref_json()
-        if not isinstance(ref_json, dict):
-            return 0.0
-        return float(
-            score_objects_total_lower_bound(
-                pred_json.get("objects_total"), ref_json.get("objects_total")
-            )
-        )
 
 
 def _extract_categories(obj: dict[str, Any]) -> set[str]:
@@ -536,8 +490,6 @@ __all__ = [
     "SummaryNoDupKeysPenalty",
     "SummaryNotesBBUReward",
     "SummaryNotesPresenceReward",
-    "SummaryObjectsTotalLowerBoundReward",
-    "SummaryObjectsTotalReward",
     "SummaryParsePenalty",
     "SummaryStrictPenaltyReward",
     "SummaryStructuredContentTverskyReward",

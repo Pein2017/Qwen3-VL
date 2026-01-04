@@ -46,8 +46,6 @@ New identifiers use a dot namespace:
 - `summary.parse`
 - `summary.no_dup_keys`
 - `summary.dataset`
-- `summary.objects_total`
-- `summary.objects_total_lb`
 - `summary.category_recall`
 - `summary.category_f1`
 - `summary.content_eq` (exact JSON equivalence)

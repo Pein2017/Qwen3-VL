@@ -104,7 +104,7 @@ The pipeline is organized around `UnifiedProcessor` (`data_conversion/pipeline/u
 
 6. **Summary generation**
    - `data_conversion/pipeline/summary_builder.py` produces a **JSON-string** `summary` with per-category stats:
-     - required keys: `dataset`, `objects_total`, `统计`
+     - required keys: `dataset`, `统计`
      - `异常` is included only when non-zero; BBU includes `备注` only when non-empty; RRU may include `分组统计`
    - Only observed values are counted (no missing/third-state/遮挡 placeholders).
    - OCR/备注 are free text: whitespace removed only; punctuation preserved; unreadable → `可读性=不可读`.
@@ -143,7 +143,7 @@ Key invariants (contract-level):
 #### Example: minimal (demo) record
 
 ```json
-{"images":["../images/QC-20230106-0000211_16517.jpeg"],"objects":[{"bbox_2d":[48, 76, 312, 428],"desc":"类别=BBU设备,品牌=示例,可见性=部分,挡风板需求=免装"},{"poly":[360, 120, 480, 120, 480, 260, 360, 260],"poly_points":4,"desc":"类别=标签,文本=NR900-BBU"}],"summary":"{\"dataset\": \"BBU\", \"objects_total\": 2, \"统计\": [{\"类别\": \"BBU设备\", \"品牌\": {\"示例\": 1}, \"可见性\": {\"部分\": 1}, \"挡风板需求\": {\"免装\": 1}}, {\"类别\": \"标签\", \"文本\": {\"NR900-BBU\": 1}}]}","width":532,"height":728}
+{"images":["../images/QC-20230106-0000211_16517.jpeg"],"objects":[{"bbox_2d":[48, 76, 312, 428],"desc":"类别=BBU设备,品牌=示例,可见性=部分,挡风板需求=免装"},{"poly":[360, 120, 480, 120, 480, 260, 360, 260],"poly_points":4,"desc":"类别=标签,文本=NR900-BBU"}],"summary":"{\"dataset\": \"BBU\", \"统计\": [{\"类别\": \"BBU设备\", \"品牌\": {\"示例\": 1}, \"可见性\": {\"部分\": 1}, \"挡风板需求\": {\"免装\": 1}}, {\"类别\": \"标签\", \"文本\": {\"NR900-BBU\": 1}}]}","width":532,"height":728}
 ```
 
 #### Example: BBU record with mixed geometry + summary
@@ -171,7 +171,7 @@ Key invariants (contract-level):
       "desc": "类别=标签,文本=5GBBU接地线"
     }
   ],
-  "summary": "{\"dataset\": \"BBU\", \"objects_total\": 4, \"统计\": [{\"类别\": \"BBU设备\", \"品牌\": {\"华为\": 1}, \"可见性\": {\"部分\": 1}, \"挡风板需求\": {\"免装\": 1}}, {\"类别\": \"BBU安装螺丝\", \"符合性\": {\"符合\": 1}}, {\"类别\": \"电线\", \"捆扎\": {\"整齐\": 1}}, {\"类别\": \"标签\", \"文本\": {\"5GBBU接地线\": 1}}], \"备注\": [\"无法判断品牌\"]}",
+  "summary": "{\"dataset\": \"BBU\", \"统计\": [{\"类别\": \"BBU设备\", \"品牌\": {\"华为\": 1}, \"可见性\": {\"部分\": 1}, \"挡风板需求\": {\"免装\": 1}}, {\"类别\": \"BBU安装螺丝\", \"符合性\": {\"符合\": 1}}, {\"类别\": \"电线\", \"捆扎\": {\"整齐\": 1}}, {\"类别\": \"标签\", \"文本\": {\"5GBBU接地线\": 1}}], \"备注\": [\"无法判断品牌\"]}",
   "width": 768,
   "height": 1024
 }
@@ -190,7 +190,7 @@ Key invariants (contract-level):
     { "line": [40, 1111, 16, 833, 165, 540, 138, 118], "desc": "类别=尾纤,标签=有标签,套管保护=有套管,组=1" },
     { "poly": [128, 840, 86, 852, 104, 954, 149, 941], "desc": "类别=标签,文本=900M-RRU2-接地,组=2" }
   ],
-  "summary": "{\"dataset\": \"RRU\", \"objects_total\": 4, \"统计\": [{\"类别\": \"站点距离\", \"站点距离\": {\"98\": 1}}, {\"类别\": \"接地线\", \"标签\": {\"有标签\": 1}}, {\"类别\": \"尾纤\", \"标签\": {\"有标签\": 1}, \"套管保护\": {\"有套管\": 1}}, {\"类别\": \"标签\", \"文本\": {\"900M-RRU2-接地\": 1}}], \"分组统计\": [{\"组\": 1, \"objects_total\": 1}, {\"组\": 2, \"objects_total\": 2}]}",
+  "summary": "{\"dataset\": \"RRU\", \"统计\": [{\"类别\": \"站点距离\", \"站点距离\": {\"98\": 1}}, {\"类别\": \"接地线\", \"标签\": {\"有标签\": 1}}, {\"类别\": \"尾纤\", \"标签\": {\"有标签\": 1}, \"套管保护\": {\"有套管\": 1}}, {\"类别\": \"标签\", \"文本\": {\"900M-RRU2-接地\": 1}}], \"分组统计\": {\"1\": 1, \"2\": 2}}",
   "width": 672,
   "height": 1504
 }
@@ -354,9 +354,9 @@ Example record:
     "QC-20231218-0025165_4127784.jpeg"
   ],
   "per_image": {
-    "image_1": "<DOMAIN=BBU>, <TASK=SUMMARY>\\n{\"dataset\": \"BBU\", \"objects_total\": 3, \"统计\": [{\"类别\": \"BBU设备\", \"品牌\": {\"华为\": 1}, \"可见性\": {\"部分\": 1}}, {\"类别\": \"BBU安装螺丝\", \"符合性\": {\"符合\": 1}}, {\"类别\": \"标签\", \"文本\": {\"5GBBU接地线\": 1}}]}",
-    "image_2": "<DOMAIN=BBU>, <TASK=SUMMARY>\\n{\"dataset\": \"BBU\", \"objects_total\": 2, \"统计\": [{\"类别\": \"电线\", \"捆扎\": {\"整齐\": 1}}, {\"类别\": \"标签\", \"文本\": {\"NR900-BBU\": 1}}]}",
-    "image_3": "<DOMAIN=BBU>, <TASK=SUMMARY>\\n{\"dataset\": \"BBU\", \"objects_total\": 1, \"统计\": [{\"类别\": \"挡风板\", \"安装方向\": {\"方向正确\": 1}}]}"
+    "image_1": "<DOMAIN=BBU>, <TASK=SUMMARY>\\n{\"dataset\": \"BBU\", \"统计\": [{\"类别\": \"BBU设备\", \"品牌\": {\"华为\": 1}, \"可见性\": {\"部分\": 1}}, {\"类别\": \"BBU安装螺丝\", \"符合性\": {\"符合\": 1}}, {\"类别\": \"标签\", \"文本\": {\"5GBBU接地线\": 1}}]}",
+    "image_2": "<DOMAIN=BBU>, <TASK=SUMMARY>\\n{\"dataset\": \"BBU\", \"统计\": [{\"类别\": \"电线\", \"捆扎\": {\"整齐\": 1}}, {\"类别\": \"标签\", \"文本\": {\"NR900-BBU\": 1}}]}",
+    "image_3": "<DOMAIN=BBU>, <TASK=SUMMARY>\\n{\"dataset\": \"BBU\", \"统计\": [{\"类别\": \"挡风板\", \"安装方向\": {\"方向正确\": 1}}]}"
   }
 }
 ```

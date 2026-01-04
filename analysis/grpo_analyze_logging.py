@@ -104,7 +104,6 @@ def _plot_components(df: pd.DataFrame, title: str, out_path: Path) -> None:
         "rewards/SummaryHeaderReward/mean",
         "rewards/SummaryParsePenalty/mean",
         "rewards/SummaryDatasetReward/mean",
-        "rewards/SummaryObjectsTotalReward/mean",
         "rewards/SummaryContentF1Reward/mean",
     ]
     existing = [c for c in component_cols if c in df.columns]
@@ -270,4 +269,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

@@ -64,7 +64,7 @@ All target and source detection converters SHALL emit the canonical BBU-style JS
 
 #### Scenario: Summary JSON schema keys
 - **WHEN** a BBU or RRU converter writes summaries
-- **THEN** the JSON string includes `dataset`, `objects_total`, and `统计`
+- **THEN** the JSON string includes `dataset` and `统计`
 - **AND** `统计` is a list of per-category objects each containing `类别` plus any observed attribute counts
 - **AND** BBU summaries include a `备注` list of strings (may be empty)
 - **AND** RRU summaries MAY include `分组统计` (group id → count) and per-category `组` counts

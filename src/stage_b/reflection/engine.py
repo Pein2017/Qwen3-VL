@@ -54,7 +54,6 @@ _FORBIDDEN_THIRD_STATE_PHRASES = (
     "\u4eba\u5de5\u590d\u6838",  # manual review
     "\u7b2c\u4e09\u6001",  # third state
     "待定",
-    "needreview",
     "review needed",
     "证据不足",
     "不应直接",
@@ -901,11 +900,11 @@ class ReflectionEngine:
 
         obj = ReflectionEngine._parse_stage_a_summary_json(stripped)
         if obj is not None:
-            if "format_version" in obj or "objects_total" in obj:
-                obj = dict(obj)
-                obj.pop("format_version", None)
-                obj.pop("objects_total", None)
-            return json.dumps(obj, ensure_ascii=False, separators=(", ", ": "))
+            ordered: dict[str, object] = {}
+            for key in ("dataset", "统计", "备注", "分组统计", "异常"):
+                if key in obj:
+                    ordered[key] = obj[key]
+            return json.dumps(ordered, ensure_ascii=False, separators=(", ", ": "))
 
         # Fallback: normalize to a single line and scrub forbidden markers.
         lines = [line.strip() for line in stripped.splitlines() if line.strip()]

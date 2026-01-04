@@ -39,7 +39,7 @@ class JSONLValidator:
         self.stats = {
             "total_lines": 0,
             "valid_samples": 0,
-            "total_objects": 0,
+            "object_count": 0,
             "missing_images": 0,
             "invalid_bboxes": 0,
             "categories": set()
@@ -166,7 +166,7 @@ class JSONLValidator:
             ))
             sample_valid = False
         else:
-            self.stats["total_objects"] += len(objects)
+            self.stats["object_count"] += len(objects)
             for obj_idx, obj in enumerate(objects):
                 if not self.validate_object(obj, line_num, obj_idx, width, height):
                     sample_valid = False
@@ -281,11 +281,11 @@ class JSONLValidator:
         print("\n✓ Statistics:")
         print(f"  Total lines: {self.stats['total_lines']}")
         print(f"  Valid samples: {self.stats['valid_samples']}")
-        print(f"  Total objects: {self.stats['total_objects']}")
+        print(f"  Object count: {self.stats['object_count']}")
         print(f"  Unique categories: {len(self.stats['categories'])}")
         
         if self.stats['valid_samples'] > 0:
-            avg_obj = self.stats['total_objects'] / self.stats['valid_samples']
+            avg_obj = self.stats['object_count'] / self.stats['valid_samples']
             print(f"  Avg objects/sample: {avg_obj:.2f}")
         
         # Errors
@@ -389,4 +389,3 @@ Examples:
 
 if __name__ == "__main__":
     main()
-

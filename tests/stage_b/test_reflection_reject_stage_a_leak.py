@@ -10,7 +10,7 @@ def test_reject_stage_a_object_chain_without_multiplier():
 def test_reject_stage_a_two_line_json_summary_leak():
     leaked = (
         "<DOMAIN=BBU>, <TASK=SUMMARY>\n"
-        "{\"dataset\":\"BBU\",\"objects_total\":1,\"统计\":[]}"
+        "{\"dataset\":\"BBU\",\"统计\":[]}"
     )
     assert ReflectionEngine._reject_experience_text(leaked) is True
 

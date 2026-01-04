@@ -172,36 +172,6 @@ def tversky_from_fact_counts(
     return float(overlap) / float(denom)
 
 
-def score_objects_total(pred_value: Any, ref_value: Any) -> float:
-    pred = parse_non_negative_int(pred_value)
-    ref = parse_non_negative_int(ref_value)
-    if pred is None or ref is None:
-        return 0.0
-    diff = abs(pred - ref)
-    return 1.0 / (1.0 + float(diff))
-
-
-def score_objects_total_lower_bound(pred_value: Any, ref_value: Any) -> float:
-    """Lower-bound objects_total score with +2 free slack."""
-
-    pred = parse_non_negative_int(pred_value)
-    ref = parse_non_negative_int(ref_value)
-    if pred is None or ref is None:
-        return 0.0
-
-    if pred < ref:
-        under = ref - pred
-        scale_under = max(3.0, 0.3 * float(ref))
-        return float(math.exp(-float(under) / scale_under))
-
-    if pred <= ref + 2:
-        return 1.0
-
-    over = pred - (ref + 2)
-    scale_over = max(6.0, 0.5 * float(ref))
-    return float(math.exp(-float(over) / scale_over))
-
-
 def filter_fact_counts(
     counts: Mapping[Tuple[str, ...], int],
     *,
@@ -225,7 +195,5 @@ __all__ = [
     "f1_from_fact_counts",
     "f1_from_sets",
     "filter_fact_counts",
-    "score_objects_total",
-    "score_objects_total_lower_bound",
     "tversky_from_fact_counts",
 ]

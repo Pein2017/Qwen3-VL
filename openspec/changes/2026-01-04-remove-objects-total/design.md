@@ -1,13 +1,13 @@
-# Design: Removing `objects_total` From Summary JSON
+# Design: Removing Legacy Total-Count Field From Summary JSON
 
 ## Goals
-- Remove `objects_total` from the summary JSON contract to reduce token waste and early-commit errors.
+- Remove the legacy total-count field from the summary JSON contract to reduce token waste and early-commit errors.
 - Keep summary-mode training focused on structured per-value counts under `统计`.
 - Preserve Stage-B prompt robustness without requiring an LLM-authored global count.
 
 ## Non-Goals
 - Introducing a new counting reward or changing `统计` semantics.
-- Providing backward-compatible training inputs that still include `objects_total`.
+- Providing backward-compatible training inputs that still include a total-count field.
 
 ## New Summary JSON Schema
 
@@ -20,14 +20,14 @@
 - `分组统计` (RRU-only; dict of group_id → count; may be absent)
 
 ### Removed key
-- `objects_total` is removed from the schema and from training targets.
+- The legacy total-count field is removed from the schema and from training targets.
 
 ## Stage-B “image complexity” hint (replacement)
 Some Stage-B prompts include `ImageN(obj=...)` as a soft signal.
 
 Options:
 1) **Remove the hint** entirely.
-2) **Derive an estimate** from the structured summary without requiring `objects_total`.
+2) **Derive an estimate** from the structured summary without requiring a total-count field.
 
 Default approach for this change: **derive an estimate** so Stage-B retains the signal without token cost.
 
@@ -43,9 +43,9 @@ Proposed estimator (deterministic, best-effort):
 This intentionally trades exactness for robustness; it is only used as a soft signal in Stage-B prompts.
 
 ## Training / Reward Implications
-- Remove `summary.objects_total` and `summary.objects_total_lb` from the default GRPO reward stack used by summary GRPO configs.
+- Remove legacy total-count rewards from the default GRPO reward stack used by summary GRPO configs.
 - Keep `summary.content_structured_tversky` as the primary count-weighted structured objective under `统计`.
 
 ## Migration Plan
-- No backward-compatibility is provided for training corpora: JSONL files MUST be regenerated so `summary` omits `objects_total`.
+- No backward-compatibility is provided for training corpora: JSONL files MUST be regenerated so `summary` omits the total-count field.
 - data_conversion emits the new schema by default.

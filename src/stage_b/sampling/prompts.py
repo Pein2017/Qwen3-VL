@@ -13,9 +13,7 @@ from ..types import GroupTicket, MissionGuidance
 from ..utils.chinese import normalize_spaces, to_simplified
 
 _INDEX_RE = re.compile(r"(\d+)$")
-_REVIEW_MARKER_RE = re.compile(
-    r"(?:\u590d\u6838|\u9700\u590d\u6838|\bneed[_ -]?review\b)", re.IGNORECASE
-)
+_REVIEW_MARKER_RE = re.compile(r"(?:\u590d\u6838)", re.IGNORECASE)
 _STATION_DISTANCE_RE = re.compile(r"站点距离[=/](\d+)")
 
 
@@ -65,15 +63,16 @@ def _parse_summary_json(text: str) -> dict[str, object] | None:
 
 
 def _format_summary_json(obj: dict[str, object]) -> str:
-    preferred_order = ["dataset", "统计", "备注", "分组统计"]
+    preferred_order = ["dataset", "统计", "备注", "分组统计", "异常"]
+    allowed = set(preferred_order)
     ordered: dict[str, object] = {}
     for key in preferred_order:
         if key in obj:
             ordered[key] = obj[key]
     for key, value in obj.items():
-        if key in {"format_version", "objects_total"}:
+        if key == "format_version":
             continue
-        if key not in ordered:
+        if key not in ordered and key in allowed:
             ordered[key] = value
     return json.dumps(ordered, ensure_ascii=False, separators=(", ", ": "))
 
@@ -120,7 +119,7 @@ def _summary_has_label_text(obj: dict[str, object]) -> bool:
 
 
 def _estimate_object_count_from_summary(obj: dict[str, object]) -> int:
-    """Best-effort object count estimate derived from `统计` (no `objects_total` key)."""
+    """Best-effort object count estimate derived from `统计`."""
 
     entries = _summary_entries(obj)
 

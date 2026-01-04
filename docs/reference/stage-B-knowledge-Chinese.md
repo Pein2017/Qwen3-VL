@@ -34,7 +34,7 @@ Stage-B 现为“prompt-only”流程：推理输出**严格两行二分类**（
 
 生产摘要（Stage-A与Stage-B共用）的格式规范见 [data/DATA_AND_DATASETS.md](../data/DATA_AND_DATASETS.md)：
 - 单行 JSON 字符串；包含 `dataset/统计`，`异常` 仅在非零时出现（BBU 额外含 `备注`，RRU 可含 `分组统计`）
-- `统计` 为类别+属性值计数（`{value: count}`），仅统计可见值，不输出缺失/需复核/遮挡
+- `统计` 为类别+属性值计数（`{value: count}`），仅统计可见值，不输出缺失/遮挡
 - 无坐标数组；OCR 保留原文（去空格，保留 `-`/`/`），不可读写 `可读性=不可读`
 
 保持“属性映射”与“摘要规范”的一致，是保证训练数据、Stage-A 摘要与 Stage-B 判定互相兼容的基础。

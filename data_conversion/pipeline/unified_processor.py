@@ -1218,7 +1218,7 @@ class UnifiedProcessor:
         label_vocabulary = {
             "metadata": {
                 "total_samples": len(all_samples),
-                "total_objects": sum(
+                "object_count": sum(
                     len(sample.get("objects", [])) for sample in all_samples
                 ),
                 "language": "chinese",
