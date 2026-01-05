@@ -1,6 +1,9 @@
 # Ignore everything by default
 *
 
+!AGENTS.md
+!pyrightconfig.json
+
 # But track these specific folders
 !src/
 !configs/

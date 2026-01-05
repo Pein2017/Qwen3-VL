@@ -50,7 +50,7 @@ Keep this managed block so 'openspec update' can refresh the instructions.
 ## Serena MCP Usage (for efficiency)
 **Prioritize Serena MCP first** for semantic navigation and symbol-level edits (`get_symbols_overview`, `find_symbol`, `find_referencing_symbols`, `replace_symbol_body`). Only use standard tools for simple file reads, bulk searches, or shell commands when Serena MCP is not applicable.
 Prefer repo-relative paths in Serena MCP tool arguments; use absolute paths only for outside sources (e.g., `/root/miniconda3/envs/ms/lib/python3.12/site-packages/transformers`, `/data/ms-swift`).
-**DO NOT use Serena MCP's `execute_shell_command` tool.** 
+**DO NOT use Serena MCP's `execute_shell_command` and `read_file`tool.** 
 
 
 ## Codex Skill: python-lint-loop
