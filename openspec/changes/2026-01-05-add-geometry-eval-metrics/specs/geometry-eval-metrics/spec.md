@@ -33,13 +33,42 @@ The evaluator SHALL treat `bbox_2d` and convex-quad `poly` as filled regions and
 - **AND** the result is used for matching decisions exactly the same way as same-type region IoU
 
 ### Requirement: Line overlap ruler (TubeIoU)
-The evaluator SHALL evaluate `line` objects using a mask-wise TubeIoU defined by a fixed buffer tolerance in norm1000 units.
+The evaluator SHALL evaluate `line` objects using a mask-wise TubeIoU defined by a configurable buffer tolerance in norm1000 units.
 
 #### Scenario: TubeIoU for polylines
 - **GIVEN** a GT polyline and a predicted polyline
 - **WHEN** line overlap is computed with tolerance `tol`
 - **THEN** each polyline is converted to a tube mask by rasterizing a stroke of width `round(2 * tol)` on the norm1000 grid
 - **AND** the overlap score is computed as mask IoU: `|A ∩ B| / |A ∪ B|`
+
+#### Scenario: Tolerance is configurable and reported
+- **WHEN** evaluation is executed with a specified TubeIoU tolerance value
+- **THEN** that tolerance is used for all line overlap computations
+- **AND** the tolerance value is included in the machine-readable evaluation artifact for reproducibility
+- **WHEN** evaluation is executed without explicitly specifying a TubeIoU tolerance value
+- **THEN** the evaluator selects a default tolerance
+- **AND** the selected default tolerance is included in the machine-readable evaluation artifact for reproducibility
+
+### Requirement: Greedy 1-to-1 matching (intersection-over-union)
+The evaluator SHALL match GT objects to predictions using greedy 1‑to‑1 assignment based on the overlap score, with deterministic tie-breaking.
+
+#### Scenario: Candidate generation by overlap and label constraints
+- **GIVEN** a chosen evaluation mode (localization-only, phase-aware, or category-aware) and an overlap threshold `t`
+- **WHEN** candidate pairs are generated for matching
+- **THEN** a GT object and a predicted object are eligible to form a candidate pair only when:
+  - both objects belong to compatible geometry families
+  - the mode’s label constraint is satisfied (if enabled)
+  - the overlap score is `>= t`
+
+#### Scenario: Greedy assignment and deterministic tie-breaking
+- **GIVEN** a set of candidate pairs `(score, gt_index, pred_index)` for a fixed threshold `t`
+- **WHEN** 1‑to‑1 matching is computed
+- **THEN** candidate pairs are sorted by:
+  - `score` descending
+  - `gt_index` ascending
+  - `pred_index` ascending
+- **AND** pairs are selected greedily in that order, skipping any pair where either index is already matched
+- **AND** the evaluator ignores any prediction confidence scores (matching is geometry/label driven only)
 
 ### Requirement: Matching modes and metrics
 The evaluator SHALL support localization-only and category-aware evaluation modes and report COCO-like threshold sweeps.
@@ -54,11 +83,27 @@ The evaluator SHALL support localization-only and category-aware evaluation mode
 - **AND** reports a mean-F1 across the threshold sweep
 - **AND** includes per-geometry breakdowns for `bbox_2d`, `poly`, and `line`
 
+### Requirement: Required outputs and parameter reporting
+The evaluator SHALL emit a human-readable console summary and a machine-readable artifact that records both metrics and the parameters used to compute them.
+
+#### Scenario: Emit console summary and JSON artifact
+- **WHEN** evaluation runs on a dump file
+- **THEN** the evaluator prints a console summary that includes, at minimum:
+  - the dump path (or identifier)
+  - the number of evaluated images/records
+  - aggregate Precision/Recall/F1 for a primary threshold
+  - mean-F1 over the COCO-like threshold sweep
+- **AND** the evaluator produces a machine-readable JSON artifact containing:
+  - all reported metrics (including per-geometry breakdowns)
+  - the full threshold sweep list used
+  - the TubeIoU tolerance value used for lines
+  - the matching algorithm identifier (greedy 1-to-1) and tie-break order
+  - the set of evaluation modes executed (localization-only, phase-aware, category-aware)
+
 ### Requirement: Deterministic outputs
 Evaluation outputs SHALL be deterministic for a fixed input dump and fixed evaluation parameters.
 
 #### Scenario: Deterministic matching and aggregation
 - **WHEN** the same dump is evaluated multiple times with identical parameters
-- **THEN** all reported aggregates are bitwise identical
+- **THEN** the console summary and the machine-readable artifact are bitwise identical
 - **AND** matching tie-breaking is deterministic (no randomness, stable sorting)
-
