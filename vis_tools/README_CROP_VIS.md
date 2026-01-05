@@ -192,6 +192,9 @@ conda run -n ms python vis_tools/eval_dump.py path/to/gt_vs_pred.jsonl \
 Notes:
 - `--output-json` is required (the command fails fast if omitted).
 - Only a single input JSONL file is supported for now; evaluate multiple dumps by running the command separately per file.
+- Geometry matching is family-based:
+  - `bbox_2d` and `poly` are both treated as filled regions and can match each other cross-type via region IoU (bbox converted to a rectangle polygon).
+  - `line` only matches `line` (distance-tolerant tube IoU / coverage-style score).
 
 This reports metrics under three modes:
 - `localization`: geometry-only matching

@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Any, Dict, List, Sequence, Tuple
+from typing import Dict, List, Sequence, Tuple, TypedDict, cast
 
+from src.datasets.contracts import DatasetObject
 from src.datasets.geometry import aabb_area, get_aabb, intersect_aabb
 
 
-GeometryObject = Dict[str, Any]
+class GeometryObject(TypedDict, total=False):
+    type: str
+    points: Sequence[float]
+    desc: str
 
 
 @dataclass(frozen=True)
@@ -29,7 +33,7 @@ class MatchResult:
     missing_gt_indices: List[int]
 
 
-def _to_geom_dict(obj: GeometryObject) -> Dict[str, List[float]]:
+def _to_geom_dict(obj: GeometryObject) -> DatasetObject:
     """Convert a vis_qwen3-style object to geometry dict used by src.datasets.geometry.
 
     Expected input schema per object:
@@ -37,18 +41,18 @@ def _to_geom_dict(obj: GeometryObject) -> Dict[str, List[float]]:
     Coordinates must already be in a single, consistent space (pixel or norm).
     """
 
-    gtype = obj.get("type")
-    pts = obj.get("points") or []
-    if not isinstance(pts, (list, tuple)):
-        pts = []
-    pts_f = [float(x) for x in pts]
+    gtype = obj.get("type", "")
+    pts_obj = obj.get("points")
+    if not isinstance(pts_obj, (list, tuple)):
+        pts_obj = ()
+    pts_f: List[float] = [float(x) for x in pts_obj]
 
     if gtype == "bbox_2d":
-        return {"bbox_2d": pts_f}
+        return cast(DatasetObject, {"bbox_2d": pts_f})
     if gtype == "poly":
-        return {"poly": pts_f}
+        return cast(DatasetObject, {"poly": pts_f})
     if gtype == "line":
-        return {"line": pts_f}
+        return cast(DatasetObject, {"line": pts_f})
 
     raise ValueError(f"Unknown geometry type for evaluation: {gtype!r}")
 
@@ -119,7 +123,7 @@ def _convex_clip(subject: Sequence[float], clip: Sequence[float]) -> List[float]
         py = (det1 * (y3 - y4) - (y1 - y2) * det2) / denom
         return px, py
 
-    output = subject_pts
+    output: List[Tuple[float, float]] = subject_pts
     for i in range(len(clip_pts)):
         a = clip_pts[i]
         b = clip_pts[(i + 1) % len(clip_pts)]
@@ -210,6 +214,75 @@ def _sample_polyline(points: Sequence[float], step: float = 2.0) -> List[Tuple[f
             t = k / n
             samples.append((x1 + t * dx, y1 + t * dy))
     return samples
+
+
+def _aabb_from_points(points: Sequence[float]) -> Tuple[float, float, float, float]:
+    """Return axis-aligned bounds (x1, y1, x2, y2) for flat [x0, y0, ...] points."""
+
+    xs = [float(x) for x in points[::2]]
+    ys = [float(y) for y in points[1::2]]
+    if not xs or not ys:
+        return 0.0, 0.0, 0.0, 0.0
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def _geom_family(gtype: object) -> str:
+    """Classify geometry types into families for cross-type matching.
+
+    - "region" family: bbox_2d and poly (both represent filled areas)
+    - "line" family: line (represents polylines/curves)
+
+    This enables matching between bbox_2d and poly objects, which represent
+    the same semantic concept (a filled region) but with different representations.
+    """
+    if gtype in ("bbox_2d", "poly"):
+        return "region"
+    if gtype == "line":
+        return "line"
+    return ""
+
+
+def _ensure_polygon_order(points: Sequence[float]) -> List[float]:
+    """Return points ordered cyclically around centroid (stable for convex quads)."""
+    pts = _pair_points(points)
+    if len(pts) < 3:
+        return [float(p) for p in points]
+    cx = sum(x for x, _ in pts) / len(pts)
+    cy = sum(y for _, y in pts) / len(pts)
+
+    def _angle(p: Tuple[float, float]) -> float:
+        return math.atan2(p[1] - cy, p[0] - cx)
+
+    ordered = sorted(pts, key=_angle)
+    flat: List[float] = []
+    for x, y in ordered:
+        flat.extend([x, y])
+    return flat
+
+
+def _to_region_poly(obj: GeometryObject) -> List[float]:
+    """Convert a region-family object (bbox_2d or poly) to polygon representation.
+
+    This enables cross-type IoU computation between bbox_2d and poly objects.
+    """
+    gtype = obj.get("type", "")
+    pts_obj = obj.get("points")
+    if not isinstance(pts_obj, (list, tuple)):
+        return []
+    pts_f: List[float] = [float(x) for x in pts_obj]
+
+    if gtype == "bbox_2d" and len(pts_f) == 4:
+        x1, y1, x2, y2 = pts_f
+        # Normalize coordinates so x1 <= x2 and y1 <= y2
+        x1, x2 = (x1, x2) if x1 <= x2 else (x2, x1)
+        y1, y2 = (y1, y2) if y1 <= y2 else (y2, y1)
+        # Convert to 4-point polygon (clockwise from top-left)
+        return [x1, y1, x2, y1, x2, y2, x1, y2]
+
+    if gtype == "poly" and len(pts_f) >= 6 and len(pts_f) % 2 == 0:
+        return _ensure_polygon_order(pts_f)
+
+    return []
 
 
 def _polyline_coverage(
@@ -354,21 +427,84 @@ def iou_line(
     return 2.0 * cov_g * cov_p / (cov_g + cov_p)
 
 
-def compute_iou(obj_gt: GeometryObject, obj_pred: GeometryObject) -> float:
-    """Dispatch IoU computation based on geometry type.
+def iou_region(obj_gt: GeometryObject, obj_pred: GeometryObject) -> float:
+    """Cross-type IoU for region-family objects (bbox_2d and poly).
 
-    bbox_2d  -> exact rectangle IoU
-    poly     -> convex polygon IoU
-    line     -> coverage-based IoU-like score
+    Converts both objects to polygon representation and computes polygon IoU.
+    This enables matching between bbox_2d GT and poly predictions (or vice versa).
     """
+    poly_a = _to_region_poly(obj_gt)
+    poly_b = _to_region_poly(obj_pred)
+    if not poly_a or not poly_b:
+        return 0.0
 
-    gtype = obj_gt.get("type")
-    if gtype == "bbox_2d":
-        return iou_bbox(obj_gt, obj_pred)
-    if gtype == "poly":
-        return iou_poly(obj_gt, obj_pred)
-    if gtype == "line":
+    # Quick AABB rejection test.
+    aabb_a = _aabb_from_points(poly_a)
+    aabb_b = _aabb_from_points(poly_b)
+    if (
+        aabb_a[2] <= aabb_b[0]
+        or aabb_b[2] <= aabb_a[0]
+        or aabb_a[3] <= aabb_b[1]
+        or aabb_b[3] <= aabb_a[1]
+    ):
+        return 0.0
+
+    area_a = abs(_polygon_area(poly_a))
+    area_b = abs(_polygon_area(poly_b))
+    if area_a <= 0.0 or area_b <= 0.0:
+        return 0.0
+
+    inter_poly = _convex_clip(poly_a, poly_b)
+    if not inter_poly:
+        return 0.0
+    inter_area = abs(_polygon_area(inter_poly))
+    if inter_area <= 0.0:
+        return 0.0
+
+    union = area_a + area_b - inter_area
+    return (inter_area / union) if union > 0.0 else 0.0
+
+
+def compute_iou(obj_gt: GeometryObject, obj_pred: GeometryObject) -> float:
+    """Dispatch IoU computation based on geometry family.
+
+    Region family (bbox_2d, poly):
+        - Same type: use type-specific IoU (iou_bbox or iou_poly)
+        - Cross-type: use iou_region (converts both to polygon)
+    Line family:
+        - line -> coverage-based IoU-like score
+
+    This enables matching between bbox_2d and poly objects, which represent
+    the same semantic concept (a filled region) but with different representations.
+    """
+    gtype_gt = obj_gt.get("type")
+    gtype_pred = obj_pred.get("type")
+    fam_gt = _geom_family(gtype_gt)
+    fam_pred = _geom_family(gtype_pred)
+
+    # Different families cannot match.
+    if fam_gt != fam_pred:
+        return 0.0
+
+    # Unknown types: fall back to AABB IoU (legacy behavior).
+    if not fam_gt:
+        return iou_aabb(obj_gt, obj_pred)
+
+    # Region family: bbox_2d and poly
+    if fam_gt == "region":
+        # Same type: use type-specific IoU for efficiency
+        if gtype_gt == gtype_pred:
+            if gtype_gt == "bbox_2d":
+                return iou_bbox(obj_gt, obj_pred)
+            if gtype_gt == "poly":
+                return iou_poly(obj_gt, obj_pred)
+        # Cross-type (bbox_2d <-> poly): use region IoU
+        return iou_region(obj_gt, obj_pred)
+
+    # Line family
+    if fam_gt == "line":
         return iou_line(obj_gt, obj_pred)
+
     # Fallback: AABB IoU for unknown types
     return iou_aabb(obj_gt, obj_pred)
 
@@ -381,22 +517,27 @@ def match_geometries(
 ) -> MatchResult:
     """Greedy 1-1 matching between GT and predictions using geometry-aware IoU.
 
-    - Matches only objects with the same `type` (bbox_2d / poly / line).
+    - Matches objects within the same geometry family:
+      - Region family: bbox_2d and poly (cross-type matching supported)
+      - Line family: line
     - Uses type-specific IoU metrics (bbox, polygon, line coverage).
+    - Cross-type matching (bbox_2d <-> poly) uses polygon-based IoU.
     - Prediction scores are ignored; the best IoU matches are chosen first.
 
     This is designed to be pluggable into both visualization (vis_qwen3) and
     training eval loops: all it needs is two flat lists of geometry objects.
     """
 
-    # Build candidate pairs (IoU >= threshold) with type constraint
+    # Build candidate pairs (IoU >= threshold) with family constraint
     pairs: List[Tuple[float, int, int]] = []
     for gi, gt in enumerate(gt_objects):
         gtype = gt.get("type")
-        if gtype not in ("bbox_2d", "poly", "line"):
+        gfam = _geom_family(gtype)
+        if not gfam:
             continue
         for pi, pred in enumerate(pred_objects):
-            if pred.get("type") != gtype:
+            pfam = _geom_family(pred.get("type"))
+            if pfam != gfam:
                 continue
             iou = compute_iou(gt, pred)
             if iou >= iou_threshold:
@@ -433,7 +574,11 @@ def match_geometries(
 def _build_iou_matrix(
     gt_objects: Sequence[GeometryObject], pred_objects: Sequence[GeometryObject]
 ) -> Tuple[List[List[float]], List[str], List[str]]:
-    """Precompute IoUs once so we can sweep multiple thresholds efficiently."""
+    """Precompute IoUs once so we can sweep multiple thresholds efficiently.
+
+    Uses family-based matching to support cross-type matching between
+    bbox_2d and poly objects (both in the "region" family).
+    """
 
     num_gt = len(gt_objects)
     num_pred = len(pred_objects)
@@ -443,10 +588,12 @@ def _build_iou_matrix(
     matrix: List[List[float]] = [[0.0] * num_pred for _ in range(num_gt)]
     for gi, gt in enumerate(gt_objects):
         gtype = gt_types[gi]
-        if gtype not in ("bbox_2d", "poly", "line"):
+        gfam = _geom_family(gtype)
+        if not gfam:
             continue
         for pi, pred in enumerate(pred_objects):
-            if pred_types[pi] != gtype:
+            pfam = _geom_family(pred_types[pi])
+            if pfam != gfam:
                 continue
             matrix[gi][pi] = compute_iou(gt, pred)
     return matrix, gt_types, pred_types
@@ -485,6 +632,9 @@ def match_geometries_multi(
     This reuses a shared IoU matrix so callers can compute precision/recall per
     threshold without recomputing IoUs each time. Prediction scores are still
     ignored; you get thresholded counts, not AP.
+
+    Matching uses the same geometry-family logic as `match_geometries`, including
+    cross-type matching between bbox_2d and poly ("region" family).
     """
 
     thresholds = sorted(set(float(t) for t in iou_thresholds))
