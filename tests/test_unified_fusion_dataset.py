@@ -10,10 +10,9 @@ import pytest
 from src.config.prompts import (
     SYSTEM_PROMPT_AUX,
     SYSTEM_PROMPT_JSON,
-    SYSTEM_PROMPT_SUMMARY,
     USER_PROMPT_AUX,
     USER_PROMPT_JSON,
-    USER_PROMPT_SUMMARY,
+    get_template_prompts,
 )
 from src.datasets.fusion import FusionConfig
 from src.datasets.preprocessors.augmentation import AugmentationPreprocessor
@@ -188,8 +187,9 @@ def test_unified_fusion_mixed_modes(tmp_path: Path) -> None:
 
     target_sample = dataset[0]
     assert dataset.epoch_plan["target"]["mode"] == "summary"
-    assert target_sample["messages"][0]["content"] == SYSTEM_PROMPT_SUMMARY
-    assert target_sample["messages"][1]["content"][-1]["text"] == USER_PROMPT_SUMMARY
+    summary_system, summary_user = get_template_prompts("summary")
+    assert target_sample["messages"][0]["content"] == summary_system
+    assert target_sample["messages"][1]["content"][-1]["text"] == summary_user
     assert dataset.last_sample_debug["mode"] == "summary"
 
     source_sample = dataset[1]

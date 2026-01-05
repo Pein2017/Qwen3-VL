@@ -72,7 +72,7 @@ class ConfigLoader:
     def load_yaml_with_extends(
         config_path: str, _visited: set[str] | None = None
     ) -> dict[str, Any]:
-        """Load YAML and resolve inheritance via 'extends'/'inherit'.
+        """Load YAML and resolve inheritance via 'extends'.
 
         Supports a top-level key in the YAML:
           - extends: str | list[str]     # relative to the current file
