@@ -58,8 +58,8 @@ Each object MUST contain exactly one geometry field plus a non-empty `desc`.
 ```
 
 ## Current Sources (checked)
-- `data_new_schema/bbu_full_1024_poly_new_schema/all_samples.jsonl`: BBU domain (new-schema export); includes `summary`; objects use `poly`/`bbox_2d`/`line`. Train/val splits exist in the same directory.
-- `data_new_schema/rru_full_1024_poly_new_schema/all_samples.jsonl`: RRU domain (new-schema export); includes `summary`; objects use `bbox_2d`/`poly`/`line`, `desc` carries group membership via `组=<id>` and station distance as `类别=站点距离,站点距离=<int>` (digits). `summary` may include `分组统计`.
+- `data_new_schema/bbu_full_1024/all_samples.jsonl`: BBU domain (new-schema export); includes `summary`; objects use `poly`/`bbox_2d`/`line`. Train/val splits exist in the same directory.
+- `data_new_schema/rru_full_1024_poly/all_samples.jsonl`: RRU domain (new-schema export); includes `summary`; objects use `bbox_2d`/`poly`/`line`, `desc` carries group membership via `组=<id>` and station distance as `类别=站点距离,站点距离=<int>` (digits). `summary` may include `分组统计`.
 - `data/bbu_full_768_poly/train.jsonl`: legacy BBU dense+summary; objects use `poly` or `bbox_2d`.
 - `data/rru_full_1024_poly/all_samples.jsonl`: RRU domain (current training/eval); same structure as above.
 - `public_data/lvis/rescale_32_768_poly_max_12/train.jsonl`: same structure, no `summary`; objects may include `poly_points` metadata.

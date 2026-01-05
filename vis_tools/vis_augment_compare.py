@@ -15,6 +15,7 @@ from PIL import Image
 from src.config import ConfigLoader
 from src.datasets.augmentation.base import Compose
 from src.datasets.augmentation.builder import build_compose_from_config
+from src.datasets.augmentation.curriculum import AugmentationCurriculumScheduler
 from src.datasets.augmentation.ops import (
     ExpandToFitAffine,
     HFlip,
@@ -24,7 +25,6 @@ from src.datasets.augmentation.ops import (
     Scale,
     VFlip,
 )
-from src.datasets.augmentation.curriculum import AugmentationCurriculumScheduler
 from src.datasets.preprocessors.augmentation import AugmentationPreprocessor
 from vis_tools.vis_helper import create_legend, draw_objects, generate_colors
 
@@ -807,7 +807,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--jsonl",
-        default="data_new_schema/bbu_full_1024_poly_new_schema/train.jsonl",
+        default="data_new_schema/bbu_full_1024/train.jsonl",
         help="Input train JSONL with images/objects.",
     )
     parser.add_argument(

@@ -112,11 +112,11 @@ extends: ../base/dense.yaml
 
 targets:
   - name: bbu_dense
-    train_jsonl: data_new_schema/bbu_full_1024_poly_new_schema/train.jsonl
-    val_jsonl: data_new_schema/bbu_full_1024_poly_new_schema/val.jsonl
+    train_jsonl: data_new_schema/bbu_full_1024/train.jsonl
+    val_jsonl: data_new_schema/bbu_full_1024/val.jsonl
   - name: rru_dense
-    train_jsonl: data_new_schema/rru_full_1024_poly_new_schema/train.jsonl
-    val_jsonl: data_new_schema/rru_full_1024_poly_new_schema/val.jsonl
+    train_jsonl: data_new_schema/rru_full_1024_poly/train.jsonl
+    val_jsonl: data_new_schema/rru_full_1024_poly/val.jsonl
 ```
 
 ## Validation impact

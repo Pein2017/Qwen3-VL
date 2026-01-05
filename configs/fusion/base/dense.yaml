@@ -1,15 +1,15 @@
 targets:
   - name: bbu_dense
     dataset: bbu
-    train_jsonl: data_new_schema/bbu_full_1024_poly_new_schema/train.jsonl
-    val_jsonl: data_new_schema/bbu_full_1024_poly_new_schema/val.jsonl
+    train_jsonl: data_new_schema/bbu_full_1024/train.jsonl
+    val_jsonl: data_new_schema/bbu_full_1024/val.jsonl
     template: target_dense_bbu
     mode: dense
     ratio: 1.0
   - name: rru_dense
     dataset: rru
-    train_jsonl: data_new_schema/rru_full_1024_poly_new_schema/train.jsonl
-    val_jsonl: data_new_schema/rru_full_1024_poly_new_schema/val.jsonl
+    train_jsonl: data_new_schema/rru_full_1024_poly/train.jsonl
+    val_jsonl: data_new_schema/rru_full_1024_poly/val.jsonl
     template: target_dense_rru
     mode: dense
     ratio: 1.0
@@ -30,7 +30,7 @@ sources:
   # BBU summary mode for regularization
   - name: bbu_summary
     dataset: bbu
-    train_jsonl: data_new_schema/bbu_full_1024_poly_new_schema/train.jsonl
+    train_jsonl: data_new_schema/bbu_full_1024/train.jsonl
     ratio: 0.1
     template: summary_bbu
     mode: summary
@@ -41,7 +41,7 @@ sources:
   # RRU summary mode for regularization
   - name: rru_summary
     dataset: rru
-    train_jsonl: data_new_schema/rru_full_1024_poly_new_schema/train.jsonl
+    train_jsonl: data_new_schema/rru_full_1024_poly/train.jsonl
     ratio: 0.1
     template: summary_rru
     mode: summary

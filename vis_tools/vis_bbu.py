@@ -26,7 +26,7 @@ except Exception:  # pragma: no cover
 # ============================================================================
 # Configuration
 # ============================================================================
-input_path = "data_new_schema/bbu_full_1024_poly_new_schema/all_samples.jsonl"  # Path to JSONL (e.g., data_new_schema/bbu_full_1024_poly_new_schema/all_samples.jsonl)
+input_path = "data_new_schema/bbu_full_1024/all_samples.jsonl"  # Path to JSONL (e.g., data_new_schema/bbu_full_1024/all_samples.jsonl)
 output_dir = "vis_out/debug"  # Directory to save visualizations
 limit = 20  # Max number of samples to visualize (0 means all)
 dpi = 120  # Matplotlib savefig DPI

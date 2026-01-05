@@ -9,8 +9,8 @@ Related: [DATA_JSONL_CONTRACT.md](DATA_JSONL_CONTRACT.md), [reference/PROMPTS_RE
 本文面向**数据生产 / Prompt 设计 / Stage-A/B 规则**等场景，基于数据集样本中出现的字段与标签，抽取可快速索引的**业务背景 + 类别/属性词表 + 结构约定**。
 
 **数据来源（本次归纳的直接证据）**：
-- BBU：`data_new_schema/bbu_full_1024_poly_new_schema/all_samples.jsonl`（2745 张图，31333 个 objects；全部样本含 `summary`）
-- RRU：`data_new_schema/rru_full_1024_poly_new_schema/all_samples.jsonl`（1502 张图，4398 个 objects；全部样本含 `summary`）
+- BBU：`data_new_schema/bbu_full_1024/all_samples.jsonl`（2745 张图，31333 个 objects；全部样本含 `summary`）
+- RRU：`data_new_schema/rru_full_1024_poly/all_samples.jsonl`（1502 张图，4398 个 objects；全部样本含 `summary`）
 
 > 更通用的“全局 JSONL 合约”见：[docs/data/DATA_JSONL_CONTRACT.md](DATA_JSONL_CONTRACT.md)；本文只补齐 BBU/RRU 的业务语义与索引视角。
 
@@ -103,7 +103,7 @@ RRU summary 示例（截断）：
 <a id="bbu-index"></a>
 ## 3. BBU：类别/几何/属性索引
 
-> 统计与取值来自 `data_new_schema/bbu_full_1024_poly_new_schema/all_samples.jsonl`；若后续 taxonomy 扩展，请以实际导出的 `all_samples.jsonl` 为准重新生成。
+> 统计与取值来自 `data_new_schema/bbu_full_1024/all_samples.jsonl`；若后续 taxonomy 扩展，请以实际导出的 `all_samples.jsonl` 为准重新生成。
 
 ### 3.1 类别总览（10 类）
 
@@ -143,7 +143,7 @@ RRU summary 示例（截断）：
 <a id="rru-index"></a>
 ## 4. RRU：类别/几何/属性索引
 
-> 统计与取值来自 `data_new_schema/rru_full_1024_poly_new_schema/all_samples.jsonl`。
+> 统计与取值来自 `data_new_schema/rru_full_1024_poly/all_samples.jsonl`。
 
 ### 4.1 类别总览（8 类）
 
