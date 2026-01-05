@@ -39,6 +39,23 @@ Keep this managed block so 'openspec update' can refresh the instructions.
 - Upstream dependencies: `docs/ops/UPSTREAM_DEPENDENCIES.md`.
 - Stage-B business knowledge (CN): `docs/reference/stage-B-knowledge-Chinese.md`.
 - Tooling setup: `docs/ops/CODEX_MCP_INSTALLATION.md`.
+- **Schema Constitution**: `docs/reference/SCHEMA_CONSTITUTION.md` — rules for modeling non-trivial data.
+
+## Schema Constitution (Code Development)
+All code changes in `src/` must comply with the Schema Constitution (`docs/reference/SCHEMA_CONSTITUTION.md`).
+
+**Type selection rules** (in order of preference):
+1. **Pydantic BaseModel** — serving/CLI boundary schemas only.
+2. **dataclass (frozen=True)** — internal config/state; validate in `__post_init__`, parse via `from_mapping`.
+3. **TypedDict + validator** — mapping-shaped dataset rows (JSON/JSONL); use `validate_*` helper + `cast(...)`.
+4. **Explicitly unstructured** (escape hatch) — document in docstring, validate as `Mapping`/`Sequence`, isolate in `extra`/`raw` fields.
+
+**Key rules**:
+- Non-trivial dict/list in signatures/returns/attributes → use structured types.
+- Validate at boundaries; raise `TypeError` (type mismatch) or `ValueError` (invalid value) with full field path.
+- Prefer semantic groupings over loosely related parameters.
+- Naming: `XConfig`, `XParams`, `XOptions`, `XInput`, `XOutput`, `XRecord`, `XItem`.
+- Placement: schemas in `contracts/` or `schema/` modules per domain.
 
 ## Local Libraries (Installed Paths)
 - `transformers`: `/root/miniconda3/envs/ms/lib/python3.12/site-packages/transformers`.
