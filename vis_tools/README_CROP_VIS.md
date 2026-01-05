@@ -178,6 +178,26 @@ mv vis_out/augment_stage3_exact vis_out/test_center_crop
 ls -lh vis_out/test_*/
 ```
 
+## Geometry Evaluation (gt_vs_pred.jsonl)
+
+For objective, offline evaluation of dense captioning/detection dumps (`gt_vs_pred.jsonl`, `norm1000`), use:
+
+```bash
+conda run -n ms python vis_tools/eval_dump.py path/to/gt_vs_pred.jsonl \
+  --primary-threshold 0.50 \
+  --line-tol 8 \
+  --output-json output/geometry_eval.json
+```
+
+Notes:
+- `--output-json` is required (the command fails fast if omitted).
+- Only a single input JSONL file is supported for now; evaluate multiple dumps by running the command separately per file.
+
+This reports metrics under three modes:
+- `localization`: geometry-only matching
+- `phase`: require phase/head label match derived from `desc`
+- `category`: require fine category match derived from `desc` (supports legacy `螺丝、光纤插头/...` parsing)
+
 ## Example Output Analysis
 
 **Good filtering** (balanced):
@@ -226,5 +246,3 @@ custom:
           skip_if_line: true
           prob: 0.3
 ```
-
-
