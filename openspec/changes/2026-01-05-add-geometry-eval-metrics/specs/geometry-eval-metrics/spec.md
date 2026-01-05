@@ -52,6 +52,14 @@ The evaluator SHALL evaluate `line` objects using a mask-wise TubeIoU defined by
 ### Requirement: Greedy 1-to-1 matching (intersection-over-union)
 The evaluator SHALL match GT objects to predictions using greedy 1‑to‑1 assignment based on the overlap score, with deterministic tie-breaking.
 
+#### Scenario: Geometry family compatibility (region vs line)
+- **WHEN** the evaluator determines whether two objects are eligible to be compared for overlap
+- **THEN** it treats `bbox_2d` and `poly` as members of a single **region family**
+- **AND** it treats `line` as the only member of a **line family**
+- **AND** region-family objects (`bbox_2d`/`poly`) MAY be compared cross-type using the region overlap ruler
+- **AND** line-family objects (`line`) MAY only be compared to other line-family objects using TubeIoU
+- **AND** region-family and line-family objects SHALL NOT be compared or matched to each other
+
 #### Scenario: Candidate generation by overlap and label constraints
 - **GIVEN** a chosen evaluation mode (localization-only, phase-aware, or category-aware) and an overlap threshold `t`
 - **WHEN** candidate pairs are generated for matching
@@ -86,16 +94,25 @@ The evaluator SHALL support localization-only and category-aware evaluation mode
 ### Requirement: Required outputs and parameter reporting
 The evaluator SHALL emit a human-readable console summary and a machine-readable artifact that records both metrics and the parameters used to compute them.
 
+#### Scenario: Primary threshold is configurable and reported
+- **WHEN** evaluation is executed with an explicitly specified primary threshold value
+- **THEN** the evaluator uses that value as the primary threshold for the console summary
+- **AND** the primary threshold value is included in the machine-readable evaluation artifact for reproducibility
+- **WHEN** evaluation is executed without explicitly specifying a primary threshold value
+- **THEN** the evaluator selects a default primary threshold of `0.50`
+- **AND** the selected default primary threshold is included in the machine-readable evaluation artifact for reproducibility
+
 #### Scenario: Emit console summary and JSON artifact
 - **WHEN** evaluation runs on a dump file
 - **THEN** the evaluator prints a console summary that includes, at minimum:
   - the dump path (or identifier)
   - the number of evaluated images/records
-  - aggregate Precision/Recall/F1 for a primary threshold
+  - aggregate Precision/Recall/F1 for a primary threshold (including the primary threshold value used)
   - mean-F1 over the COCO-like threshold sweep
 - **AND** the evaluator produces a machine-readable JSON artifact containing:
   - all reported metrics (including per-geometry breakdowns)
   - the full threshold sweep list used
+  - the primary threshold value used for console reporting
   - the TubeIoU tolerance value used for lines
   - the matching algorithm identifier (greedy 1-to-1) and tie-break order
   - the set of evaluation modes executed (localization-only, phase-aware, category-aware)
