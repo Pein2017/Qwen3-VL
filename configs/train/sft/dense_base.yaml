@@ -1,0 +1,12 @@
+extends:
+  - ../../base.yaml
+  - ../../components/global/max_length_12000.yaml
+  - ../../components/model/qwen3_vl_4b.yaml
+  - ../../components/tuner/dora_full.yaml
+  - ../../components/training/sft_defaults.yaml
+  - ../../components/data/loader_defaults.yaml
+  - ../../components/prompts/summary_runtime_bbu.yaml
+  - ../../components/custom/common_fusion.yaml
+  - ../../components/custom/assistant_prefix.yaml
+  - ../../components/custom/augmentation_dense.yaml
+  - ../../components/deepspeed/zero2.yaml

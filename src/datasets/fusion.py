@@ -17,6 +17,159 @@ from .wrappers import build_dataset_spec
 from .utils import load_jsonl
 
 
+def _normalize_extends(value: object) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        return [str(item) for item in value]
+    return [str(value)]
+
+
+def _load_fusion_payload(path: Path) -> dict[str, Any]:
+    text = path.read_text(encoding="utf-8")
+    suffix = path.suffix.lower()
+    if suffix in {".yaml", ".yml"}:
+        try:
+            import yaml
+        except ImportError as exc:  # pragma: no cover
+            raise ImportError(
+                "pyyaml is required to parse fusion configs; install pyyaml"
+            ) from exc
+        payload = yaml.safe_load(text)
+    else:
+        payload = json.loads(text)
+    if payload is None:
+        return {}
+    if not isinstance(payload, Mapping):
+        raise ValueError("fusion config must be a mapping")
+    return dict(payload)
+
+
+def _merge_dicts(
+    base: Mapping[str, Any], override: Mapping[str, Any]
+) -> dict[str, Any]:
+    merged = dict(base)
+    for key, value in override.items():
+        existing = merged.get(key)
+        if isinstance(value, Mapping) and isinstance(existing, Mapping):
+            merged[key] = _merge_dicts(existing, value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _dataset_entry_key(entry: Mapping[str, Any], *, field_name: str) -> str:
+    name = entry.get("name") or entry.get("dataset")
+    if name is None:
+        raise ValueError(
+            f"{field_name} entry must include 'name' or 'dataset' for fusion merge"
+        )
+    return str(name)
+
+
+def _ensure_entry_list(
+    value: object, *, field_name: str
+) -> list[Mapping[str, Any]]:
+    if value is None:
+        return []
+    if not isinstance(value, Iterable) or isinstance(value, (str, bytes)):
+        raise ValueError(f"fusion {field_name} must be an iterable")
+    entries = list(value)
+    for entry in entries:
+        if not isinstance(entry, Mapping):
+            raise ValueError(f"{field_name} entry must be a mapping")
+    return entries
+
+
+def _merge_dataset_entries(
+    base_value: object, override_value: object, *, field_name: str
+) -> list[Mapping[str, Any]]:
+    if isinstance(override_value, list) and not override_value:
+        return []
+
+    base_entries = _ensure_entry_list(base_value, field_name=field_name)
+    override_entries = _ensure_entry_list(override_value, field_name=field_name)
+
+    if not base_entries:
+        return override_entries
+
+    base_map: dict[str, Mapping[str, Any]] = {}
+    for entry in base_entries:
+        key = _dataset_entry_key(entry, field_name=field_name)
+        if key in base_map:
+            raise ValueError(
+                f"Duplicate dataset name in base fusion config for {field_name}: {key}"
+            )
+        base_map[key] = entry
+
+    override_map: dict[str, Mapping[str, Any]] = {}
+    for entry in override_entries:
+        key = _dataset_entry_key(entry, field_name=field_name)
+        if key in override_map:
+            raise ValueError(
+                f"Duplicate dataset name in override fusion config for {field_name}: {key}"
+            )
+        override_map[key] = entry
+
+    merged_entries: list[Mapping[str, Any]] = []
+    for entry in base_entries:
+        key = _dataset_entry_key(entry, field_name=field_name)
+        if key in override_map:
+            merged_entries.append(_merge_dicts(entry, override_map[key]))
+        else:
+            merged_entries.append(entry)
+
+    for entry in override_entries:
+        key = _dataset_entry_key(entry, field_name=field_name)
+        if key not in base_map:
+            merged_entries.append(entry)
+
+    return merged_entries
+
+
+def _merge_fusion_payload(
+    base: Mapping[str, Any], override: Mapping[str, Any]
+) -> dict[str, Any]:
+    merged = dict(base)
+    for key, value in override.items():
+        if key in {"targets", "sources"}:
+            merged[key] = _merge_dataset_entries(
+                merged.get(key), value, field_name=key
+            )
+            continue
+        existing = merged.get(key)
+        if isinstance(value, Mapping) and isinstance(existing, Mapping):
+            merged[key] = _merge_dicts(existing, value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _load_fusion_with_extends(
+    path: Path, visited: set[Path] | None = None
+) -> Mapping[str, Any]:
+    abs_path = path.resolve()
+    visited = set() if visited is None else visited
+    if abs_path in visited:
+        raise ValueError(f"Cyclic fusion config inheritance detected at: {abs_path}")
+    visited.add(abs_path)
+
+    payload = _load_fusion_payload(abs_path)
+    if "inherit" in payload:
+        raise ValueError("Fusion config inheritance uses 'extends'; 'inherit' is not supported.")
+    extends_value = payload.pop("extends", None)
+
+    merged_base: dict[str, Any] = {}
+    for base_ref in _normalize_extends(extends_value):
+        base_path = Path(base_ref)
+        if not base_path.is_absolute():
+            base_path = (abs_path.parent / base_path).resolve()
+        base_payload = _load_fusion_with_extends(base_path, visited)
+        merged_base = _merge_fusion_payload(merged_base, base_payload)
+
+    return _merge_fusion_payload(merged_base, payload)
+
+
 @dataclass(frozen=True)
 class FusionConfig:
     targets: tuple[TargetSpec, ...]
@@ -24,32 +177,24 @@ class FusionConfig:
 
     @property
     def target(self) -> TargetSpec:
-        """Backward compatibility: first target."""
+        """Convenience alias for the first target."""
 
         return self.targets[0]
 
     @classmethod
     def from_file(cls, path: str) -> "FusionConfig":
         path_obj = Path(path)
-        text = path_obj.read_text(encoding="utf-8")
-        suffix = path_obj.suffix.lower()
-        if suffix in {".yaml", ".yml"}:
-            try:
-                import yaml
-            except ImportError as exc:  # pragma: no cover
-                raise ImportError(
-                    "pyyaml is required to parse fusion configs; install pyyaml"
-                ) from exc
-            payload = yaml.safe_load(text)
-        else:
-            payload = json.loads(text)
+        payload = _load_fusion_with_extends(path_obj)
         if not isinstance(payload, Mapping):
             raise ValueError("fusion config must be a mapping")
 
         targets_section = payload.get("targets")
         if targets_section is None:
-            legacy_target = payload.get("target")
-            targets_section = [legacy_target] if legacy_target is not None else []
+            if "target" in payload:
+                raise ValueError(
+                    "fusion config must define 'targets' (list); 'target' is not supported."
+                )
+            targets_section = []
         if not isinstance(targets_section, Iterable) or isinstance(
             targets_section, (str, bytes)
         ):

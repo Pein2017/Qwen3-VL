@@ -1,56 +1,10 @@
-extends: base.yaml
+extends:
+  - base.yaml
+  - components/model/qwen3_vl_4b.yaml
+  - components/tuner/debug_lora.yaml
+  - components/training/debug.yaml
+  - components/data/loader_debug.yaml
+  - components/custom/debug_data.yaml
 
 # Minimal debug config used by tests and quick smoke runs.
 # Targets fast config validation and single-GPU sanity checks.
-
-model:
-  model: model_cache/models/Qwen/Qwen3-VL-4B-Instruct
-
-tuner:
-  train_type: lora
-  use_swift_lora: false
-  freeze_llm: false
-  freeze_vit: true
-  freeze_aligner: true
-  target_modules: [all-linear]
-  target_regex: null
-  modules_to_save: []
-  lora_rank: 8
-  lora_alpha: 16
-  lora_dropout: 0.0
-  lora_bias: none
-
-training:
-  output_dir: output/smoke/sft_debug
-  logging_dir: tb/smoke/sft_debug
-  run_name: debug
-  num_train_epochs: 1
-  per_device_train_batch_size: 1
-  per_device_eval_batch_size: 1
-  gradient_accumulation_steps: 1
-  optimizer: multimodal
-  learning_rate: 1.0e-4
-  vit_lr: 1.0e-5
-  aligner_lr: 1.0e-4
-  packing: false
-  eval_strategy: "no"
-  save_strategy: "no"
-  logging_steps: 1
-  logging_first_step: true
-  add_version: true
-  save_safetensors: true
-
-data:
-  # Required by ms-swift validation; actual dataset comes from custom.*_jsonl.
-  dataset: ["dummy"]
-  val_dataset: ["dummy"]
-  dataset_num_proc: 1
-  dataloader_num_workers: 0
-  dataloader_pin_memory: false
-
-custom:
-  json_format: standard
-  emit_norm: norm1000
-  train_jsonl: demo/data/train_tiny.jsonl
-  val_jsonl: demo/data/val_tiny.jsonl
-  use_summary: false

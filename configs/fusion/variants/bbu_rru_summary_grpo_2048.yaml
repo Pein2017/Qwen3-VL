@@ -1,0 +1,9 @@
+extends: ../base/summary_grpo.yaml
+
+targets:
+  - name: bbu_summary
+    train_jsonl: data_new_schema/bbu_full_2048_poly/train.jsonl
+    val_jsonl: data_new_schema/bbu_full_2048_poly/val.jsonl
+  - name: rru_summary
+    train_jsonl: data_new_schema/rru_full_2048_poly/train.jsonl
+    val_jsonl: data_new_schema/rru_full_2048_poly/val.jsonl

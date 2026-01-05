@@ -5,7 +5,7 @@ set -euo pipefail
 
 # Allow passing key=value pairs as positional args (common launcher convention).
 # Example:
-#   bash scripts/grpo_server_train.sh server_gpus=0,1 train_gpus=2,3 config=configs/grpo/summary_grpo_server.yaml
+#   bash scripts/grpo_server_train.sh server_gpus=0,1 train_gpus=2,3 config=configs/train/grpo/summary_server.yaml
 for arg in "$@"; do
   if [[ "${arg}" != *=* ]]; then
     echo "[ERROR] Unknown argument: ${arg} (expected key=value)" >&2
@@ -25,7 +25,7 @@ SERVER_GPUS="${server_gpus:-0,1}"
 TRAIN_GPUS="${train_gpus:-2,3,4,5,6,7}"
 WAIT_TIMEOUT="${wait_timeout:-120}"
 WAIT_INTERVAL="${wait_interval:-2}"
-CONFIG_RAW="${config:-configs/grpo/summary_grpo_server.yaml}"
+CONFIG_RAW="${config:-configs/train/grpo/summary_server.yaml}"
 DEBUG="${debug:-false}"
 TRAIN_ENV="${train_env:-}"
 
@@ -102,9 +102,9 @@ def load_with_extends(path: Path, visited: set[Path] | None = None) -> dict:
     visited.add(abs_path)
 
     config = load_yaml(abs_path)
+    if "inherit" in config:
+        die("Config inheritance uses 'extends'; 'inherit' is not supported.")
     extends_value = config.pop("extends", None)
-    if extends_value is None:
-        extends_value = config.pop("inherit", None)
 
     merged_base: dict = {}
     for base_ref in normalize_to_list(extends_value):

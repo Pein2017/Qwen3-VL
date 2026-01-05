@@ -73,13 +73,13 @@ src/
 ### Configuration & Setup
 **Modules**: `config/loader.py`, `sft.py`
 
-1. **ConfigLoader** loads YAML, resolves `extends`/`inherit` chains, merges base/experiment configs, resolves prompts → `TrainArguments`
+1. **ConfigLoader** loads YAML, resolves `extends` chains, merges base/experiment configs, resolves prompts → `TrainArguments`
 2. **SwiftSft** initializes model, template, trainer with config
 3. **BaseCaptionDataset** constructs train/eval datasets with selected builder and augmentation
 
 ### Runner specifics (sft.py)
 - Pure YAML-driven: CLI only accepts `--config`, optional `--base_config`, and `--debug`.
-- Inherits and merges configs via `extends`/`inherit`; last wins, cycles fail fast.
+- Inherits and merges configs via `extends`; last wins, cycles fail fast.
 - Auto-sets `ROOT_IMAGE_DIR` to the directory of `custom.train_jsonl` when not provided.
 - Applies tuner/adapters with `sft.prepare_model(...)` before trainer creation.
 - Supports optional sample limiting: `custom.sample_limit`, `custom.train_sample_limit`, `custom.val_sample_limit`.
@@ -315,7 +315,7 @@ custom:
 
 ### Config inheritance rules
 
-- Top-level keys: `extends` or `inherit` (alias). Accepts a string or list.
+- Top-level key: `extends` (string or list).
 - Paths are resolved relative to the current YAML file. Absolute paths also work.
 - Merge order: earlier bases have lower precedence; current file wins.
 - Cycles are detected and raise an error.

@@ -122,7 +122,7 @@ BBU/RRU converters normalize fixed (non‑free‑text) values to compact forms. 
 #### RRU Summary Guidance
 
 - RRU summaries are built from key=value descs; `站点距离` appears as `类别=站点距离,站点距离=<int>` in desc (current exports yield digits) and becomes a `统计` entry with key `站点距离`.
-- Train summary-mode runs via `configs/fusion_train/bbu_rru_summary_new_schema_1024.yaml` (dataset mix in `configs/dataset_mix/bbu_rru_summary_new_schema_1024.yaml`). To focus on RRU only, edit the mix to keep just the RRU summary stream.
+- Train summary-mode runs via `configs/train/sft/summary_1024.yaml` (dataset mix in `configs/fusion/variants/bbu_rru_summary_1024.yaml`). To focus on RRU only, edit the mix to keep just the RRU summary stream.
 
 **Example**: `{"统计": [{"类别": "BBU设备", "品牌": {"华为": 1}}, {"类别": "标签", "文本": {"NR900-BBU": 1}}]}`
 
@@ -231,7 +231,7 @@ For summary-mode SFT regularization (reduce hallucinations on out-of-domain imag
 
 - Generate the JSONL from a folder of JPEGs (EXIF-aware width/height) and keep the global contract by emitting a single dummy full-frame bbox per image:
   - `conda run -n ms python scripts/build_irrelevant_summary_jsonl.py --images-dir data/irrelevant_summary/images --output-jsonl data/irrelevant_summary/train.jsonl`
-- Reference it as an additional **target** (target ratios scale by the dataset's own pool size; `ratio: 1` means each image appears once per epoch). See `configs/dataset_mix/bbu_rru_summary_new_schema_1024.yaml` for a concrete example.
+- Reference it as an additional **target** (target ratios scale by the dataset's own pool size; `ratio: 1` means each image appears once per epoch). See `configs/fusion/variants/bbu_rru_summary_1024.yaml` for a concrete example.
 
 Example fusion config:
 

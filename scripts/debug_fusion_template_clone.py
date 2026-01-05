@@ -141,7 +141,7 @@ def demo_corrupted_clone(base_template: Any, fusion_cfg: FusionConfig) -> None:
 
 
 def main() -> None:
-    fusion_path = REPO_ROOT / "configs/dataset_mix/bbu_with_lvis_tiny.yaml"
+    fusion_path = REPO_ROOT / "configs/fusion/variants/bbu_rru_dense_1024.yaml"
     fusion_cfg = FusionConfig.from_file(str(fusion_path))
 
     target_dir = fusion_cfg.target.train_jsonl.parent.resolve()

@@ -4,7 +4,7 @@ Status: Active
 Scope: Code-derived GRPO pipeline notes for ms-swift integration (internal reference).
 Owners: Training
 Last updated: 2026-01-02
-Related: [REFERENCE.md](REFERENCE.md), [configs/grpo/summary_grpo_base.yaml](../../configs/grpo/summary_grpo_base.yaml)
+Related: [REFERENCE.md](REFERENCE.md), [configs/train/grpo/summary_base.yaml](../../configs/train/grpo/summary_base.yaml)
 
 ## Scope and Sources
 - Source of truth: local ms-swift repository (external to this repo; see [docs/ops/UPSTREAM_DEPENDENCIES.md](../ops/UPSTREAM_DEPENDENCIES.md)).
@@ -333,7 +333,7 @@ Implication:
 
 ## Config Mapping (Qwen3-VL Examples)
 
-### `configs/grpo/summary_grpo_base.yaml`
+### `configs/train/grpo/summary_base.yaml`
 - `rlhf.rlhf_type: grpo` routes to `GRPOTrainer` / `GRPOConfig`.
 - `rlhf.reward_funcs` must be non-empty (or set `reward_model`).
 - `rlhf.reward_weights` length must match `reward_funcs`.
@@ -354,13 +354,13 @@ Implication:
 - `training.eval_strategy: no` bypasses GRPO eval batch divisibility checks.
 
 Locations:
-- Config file: `configs/grpo/summary_grpo_base.yaml:8-40`
+- Config file: `configs/train/grpo/summary_base.yaml`
 - Requirement for reward source: `swift/trainers/rlhf_trainer/grpo_trainer.py:86-87`
 - Divisibility checks: `swift/trainers/rlhf_arguments.py:89-110`
 - Eval strategy check: `swift/trainers/rlhf_arguments.py:111-121`
 
-### `configs/grpo/summary_grpo_server.yaml`
-- Extends `summary_grpo_base.yaml` and switches vLLM to server mode.
+### `configs/train/grpo/summary_server.yaml`
+- Extends `summary_2048.yaml` (which extends `summary_base.yaml`) and switches vLLM to server mode.
 - Sets `rlhf.vllm_mode: server` plus server host/port/timeouts and tensor parallel sizing.
 
 ## External Dependencies (Not in ms-swift Tree)

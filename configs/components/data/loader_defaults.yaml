@@ -1,0 +1,9 @@
+data:
+  # Required by ms-swift TrainArguments validation (actual datasets loaded via custom.*jsonl or fusion config)
+  dataset: ["dummy"]
+  val_dataset: ["dummy"]
+  dataset_num_proc: 8
+  dataloader_num_workers: 4
+  dataloader_pin_memory: true
+  dataloader_prefetch_factor: 2
+  dataloader_persistent_workers: true

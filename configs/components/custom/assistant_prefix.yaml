@@ -1,0 +1,2 @@
+custom:
+  assistant_prefix_format: "<DOMAIN={domain}>, <TASK={task}>"

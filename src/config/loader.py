@@ -72,11 +72,10 @@ class ConfigLoader:
     def load_yaml_with_extends(
         config_path: str, _visited: set[str] | None = None
     ) -> dict[str, Any]:
-        """Load YAML and resolve inheritance via 'extends'/'inherit'.
+        """Load YAML and resolve inheritance via 'extends'.
 
         Supports a top-level key in the YAML:
           - extends: str | list[str]     # relative to the current file
-          - inherit: str | list[str]     # alias of extends
 
         Bases are merged in order (earlier are lower precedence).
         The current file has the highest precedence.
@@ -94,9 +93,9 @@ class ConfigLoader:
         # Gather base paths from supported keys
         extends_value = None
         if isinstance(config, dict):
+            if "inherit" in config:
+                raise ValueError("Config inheritance uses 'extends'; 'inherit' is not supported.")
             extends_value = config.pop("extends", None)
-            if extends_value is None:
-                extends_value = config.pop("inherit", None)
 
         base_paths = ConfigLoader._normalize_to_list(extends_value)
 

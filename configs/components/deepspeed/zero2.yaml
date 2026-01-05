@@ -1,0 +1,3 @@
+deepspeed:
+  enabled: true
+  config: zero2

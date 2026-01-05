@@ -12,10 +12,16 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from src.config import ConfigLoader, TrainingConfig
 from src.config.grpo import validate_grpo_config
+from src.datasets.fusion import FusionConfig
 
 
 def main() -> None:
@@ -38,6 +44,12 @@ def main() -> None:
     training_cfg = TrainingConfig.from_mapping(raw, prompts)
 
     validate_grpo_config(training_cfg)
+    fusion_path = training_cfg.custom.fusion_config
+    if fusion_path:
+        fusion_file = Path(fusion_path)
+        if not fusion_file.is_file():
+            raise FileNotFoundError(f"Fusion config not found: {fusion_path}")
+        FusionConfig.from_file(str(fusion_file))
     custom = training_cfg.custom
     print("[OK] Parsed training config.")
     print(f"  output_variant: {custom.output_variant}")

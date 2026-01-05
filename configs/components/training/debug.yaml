@@ -1,0 +1,19 @@
+training:
+  output_dir: output/smoke/sft_debug
+  logging_dir: tb/smoke/sft_debug
+  run_name: debug
+  num_train_epochs: 1
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 1
+  gradient_accumulation_steps: 1
+  optimizer: multimodal
+  learning_rate: 1.0e-4
+  vit_lr: 1.0e-5
+  aligner_lr: 1.0e-4
+  packing: false
+  eval_strategy: "no"
+  save_strategy: "no"
+  logging_steps: 1
+  logging_first_step: true
+  add_version: true
+  save_safetensors: true

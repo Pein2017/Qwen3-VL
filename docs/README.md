@@ -33,7 +33,7 @@ Related: [overview/README.md](overview/README.md), [data/README.md](data/README.
 | `data_conversion/` | [data/DATA_PREPROCESSING_PIPELINE.md](data/DATA_PREPROCESSING_PIPELINE.md), [data/DATA_AND_DATASETS.md](data/DATA_AND_DATASETS.md) (Conversion section) | Offline preprocessing from annotation exports; taxonomy, resize, validation. |
 | `public_data/` | [data/PUBLIC_DATA.md](data/PUBLIC_DATA.md) | LVIS and auxiliary datasets (download, convert, sample, validate, visualize). |
 | `scripts/` | [scripts/README.md](../scripts/README.md), [training/TRAINING_PLAYBOOK.md](training/TRAINING_PLAYBOOK.md), [runtime/STAGE_B_RUNTIME.md](runtime/STAGE_B_RUNTIME.md) | Canonical entrypoints: training, inference, Stage‑A/B launchers, dataset fusion. |
-| `configs/` | [training/TRAINING_PLAYBOOK.md](training/TRAINING_PLAYBOOK.md), [training/REFERENCE.md](training/REFERENCE.md), [training/GRPO_MS_SWIFT_PIPELINE.md](training/GRPO_MS_SWIFT_PIPELINE.md) | YAML training presets and overlays (including `configs/grpo/` GRPO post‑training templates). |
+| `configs/` | [training/TRAINING_PLAYBOOK.md](training/TRAINING_PLAYBOOK.md), [training/REFERENCE.md](training/REFERENCE.md), [training/GRPO_MS_SWIFT_PIPELINE.md](training/GRPO_MS_SWIFT_PIPELINE.md) | YAML training presets and overlays (including `configs/train/grpo/` GRPO post‑training templates). |
 | `openspec/` | [openspec/AGENTS.md](../openspec/AGENTS.md), [openspec/project.md](../openspec/project.md) | Change-management specs and proposal workflow. |
 | `vis_tools/` | [data/DATA_AUGMENTATION.md](data/DATA_AUGMENTATION.md), [vis_tools/README_CROP_VIS.md](../vis_tools/README_CROP_VIS.md) | Visualization/debug scripts for augmentation and QA spot checks. |
 
