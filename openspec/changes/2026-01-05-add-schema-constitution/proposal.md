@@ -18,7 +18,7 @@ Establish a Schema Constitution document that standardizes how non-trivial data 
 
 ## Non-Goals
 - No refactoring outside `src/`.
-- No enforcement tooling changes (lint/CI) beyond documentation guidance.
+- No enforcement tooling changes (lint/CI) beyond documentation guidance; compliance is enforced via code review and the canonical checklist.
 - No new runtime behavior or configuration changes.
 
 ## Risks and Mitigations
@@ -26,9 +26,12 @@ Establish a Schema Constitution document that standardizes how non-trivial data 
   - **Mitigation:** Use a minimal non-trivial rubric with hard/soft triggers and explicit escape hatches.
 - **Risk:** Checklist duplication persists across docs.
   - **Mitigation:** Require a single canonical checklist and replace duplicates with references.
+- **Risk:** Refactor changes may break existing schemas or data paths.
+  - **Mitigation:** No backward-compatibility guarantees are provided; refactor is allowed to be breaking within `src/` and will be validated by tests and linting.
 
 ## Success Criteria
 - A Schema Constitution document exists, is indexed, and provides decision rules, examples, and validation guidance.
 - A single schema review checklist exists and is referenced by other checklists where schema compliance is required.
 - Documentation indices are updated and all links remain valid.
 - `src/` modules comply with the constitution (non-trivial data is modeled using structured types; raw dict/list usage is isolated to trivial or explicitly unstructured cases).
+- Pydantic usage is limited to serving/CLI boundary schemas; dataclass + `from_mapping` and TypedDict + validators remain the default internal/boundary patterns elsewhere.

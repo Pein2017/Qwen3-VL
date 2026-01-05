@@ -40,6 +40,7 @@ Use the smallest structured type that satisfies the contract.
 1) **Pydantic BaseModel** (boundary with complex validation)
 - Use for serving/CLI/request validation, cross-field constraints, or rich error reporting.
 - Prefer when validation or coercion is a requirement.
+- **Scope**: permitted only for serving/CLI boundary schemas unless a module already depends on Pydantic.
 
 2) **dataclass (frozen=True)** (internal structured state)
 - Use for internal domain/config/state objects.
@@ -147,3 +148,6 @@ Use this checklist in code reviews or when adding/modifying schemas:
 - Start at boundaries: replace raw mappings with `from_mapping` or validators.
 - Move shared structures into `schema/` or `contracts/` modules.
 - Keep `extra` for forward compatibility but avoid spreading unstructured payloads.
+
+## Backward-compatibility policy
+There are no backward-compatibility guarantees for the `src/` refactor. Internal call sites may change to align with the constitution.
