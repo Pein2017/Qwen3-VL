@@ -12,8 +12,11 @@ from swift.utils import get_dist_setting
 
 from .prompts import USER_PROMPT_JSON, USER_PROMPT_SUMMARY, build_dense_system_prompt
 from .schema import PromptOverrides, SaveDelayConfig, TrainingConfig
+from src.utils import require_mutable_mapping
+from src.utils.unstructured import UnstructuredMutableMapping
 
 logger = logging.getLogger(__name__)
+ConfigMapping = UnstructuredMutableMapping
 
 
 class ConfigLoader:
@@ -24,7 +27,7 @@ class ConfigLoader:
     """
 
     @staticmethod
-    def load_yaml(config_path: str) -> dict[str, Any]:
+    def load_yaml(config_path: str) -> ConfigMapping:
         """Load YAML file into dictionary.
 
         Args:
@@ -37,9 +40,8 @@ class ConfigLoader:
             config = yaml.safe_load(f)
         if config is None:
             return {}
-        if not isinstance(config, dict):
-            raise TypeError("Top-level YAML config must be a mapping")
-        return config
+        config = require_mutable_mapping(config, context="config")
+        return dict(config)
 
     @staticmethod
     def _normalize_to_list(value: object) -> list[str]:
@@ -71,7 +73,7 @@ class ConfigLoader:
     @staticmethod
     def load_yaml_with_extends(
         config_path: str, _visited: set[str] | None = None
-    ) -> dict[str, Any]:
+    ) -> ConfigMapping:
         """Load YAML and resolve inheritance via 'extends'.
 
         Supports a top-level key in the YAML:
@@ -100,7 +102,7 @@ class ConfigLoader:
         base_paths = ConfigLoader._normalize_to_list(extends_value)
 
         # Merge all bases in order
-        merged_base: dict[str, Any] = {}
+        merged_base: ConfigMapping = {}
         for base_ref in base_paths:
             base_path = Path(base_ref)
             if not base_path.is_absolute():
@@ -112,9 +114,7 @@ class ConfigLoader:
         return ConfigLoader.merge_configs(merged_base, config)
 
     @staticmethod
-    def merge_configs(
-        base: dict[str, Any], override: dict[str, Any]
-    ) -> dict[str, Any]:
+    def merge_configs(base: ConfigMapping, override: ConfigMapping) -> ConfigMapping:
         """Deep merge two config dictionaries.
 
         Args:
@@ -124,7 +124,7 @@ class ConfigLoader:
         Returns:
             Merged configuration
         """
-        merged = base.copy()
+        merged: dict[str, Any] = dict(base)
         for key, value in override.items():
             existing = merged.get(key)
             if isinstance(value, dict) and isinstance(existing, dict):
@@ -137,7 +137,7 @@ class ConfigLoader:
         return merged
 
     @staticmethod
-    def resolve_prompts(config: dict[str, Any]) -> PromptOverrides:
+    def resolve_prompts(config: ConfigMapping) -> PromptOverrides:
         # Lazy import to avoid circular dependency
         from ..prompts.summary_profiles import (
             DEFAULT_SUMMARY_PROFILE_TRAIN,
@@ -426,7 +426,7 @@ class ConfigLoader:
 
     @staticmethod
     def _materialize_training_config(
-        raw_config: dict[str, Any], prompts: PromptOverrides
+        raw_config: ConfigMapping, prompts: PromptOverrides
     ) -> TrainingConfig:
         try:
             return TrainingConfig.from_mapping(raw_config, prompts)

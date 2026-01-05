@@ -8,29 +8,35 @@ import math
 from multiprocessing import Manager
 import os
 import re
+from collections.abc import Callable
 from typing import Any, MutableMapping, Optional, TypeVar, Union, cast
-from collections.abc import Iterable
-
-T = TypeVar("T")
 
 from swift.llm.train.rlhf import SwiftRLHF
 from swift.llm.train.sft import SwiftSft
 from swift.trainers import TrainerFactory
 from swift.utils import get_dist_setting
 import torch
+from transformers import PreTrainedTokenizerBase
 from transformers.trainer_utils import SaveStrategy
 
 from .callbacks.fusion_epoch import FusionEpochCallback
 from .config import ConfigLoader, SaveDelayConfig
 from .config.grpo import validate_grpo_config
-from .data_collators.dataset_metrics import build_dataset_metrics_collator
+from .data_collators.dataset_metrics import (
+    BatchItem,
+    CollatedBatch,
+    build_dataset_metrics_collator,
+)
 from .datasets import BaseCaptionDataset
+from .datasets.dense_caption import TemplateProtocol
 from .datasets.augmentation.curriculum import AugmentationCurriculumScheduler
 from .datasets.fusion import FusionConfig
 from .metrics.dataset_metrics import DatasetMetricsMixin
 from .rlhf.grpo import register_grpo_rewards
 from .trainers import with_final_checkpoint
 from .utils import configure_logging, get_logger
+
+T = TypeVar("T")
 
 
 def resolve_trainer_cls(train_args: Any) -> type:
@@ -460,7 +466,7 @@ def main():
     else:
         dataset = BaseCaptionDataset.from_jsonl(
             train_jsonl,
-            template=sft.template,
+            template=cast(TemplateProtocol, sft.template),
             user_prompt=custom_config.user_prompt,
             emit_norm=custom_config.emit_norm,
             json_format=custom_config.json_format,
@@ -515,7 +521,7 @@ def main():
         else:
             chord_dataset = BaseCaptionDataset.from_jsonl(
                 train_jsonl,
-                template=sft.template,
+                template=cast(TemplateProtocol, sft.template),
                 user_prompt=custom_config.user_prompt,
                 emit_norm=custom_config.emit_norm,
                 json_format=custom_config.json_format,
@@ -744,7 +750,12 @@ def main():
             if hasattr(input_ids, "tolist"):
                 input_ids = input_ids.tolist()
 
-            raw_text = template.tokenizer.decode(input_ids, skip_special_tokens=False)
+            tokenizer = cast(
+                PreTrainedTokenizerBase | None, getattr(template, "tokenizer", None)
+            )
+            if tokenizer is None:
+                raise ValueError("Template tokenizer is unavailable for decode")
+            raw_text = tokenizer.decode(input_ids, skip_special_tokens=False)
 
             def _compress_image_pad(text: str) -> str:
                 def repl(match: re.Match[str]) -> str:
@@ -855,7 +866,7 @@ def main():
             logger.info(f"Loading validation dataset: {eval_path_fallback}")
             eval_dataset = BaseCaptionDataset.from_jsonl(
                 eval_path_fallback,
-                template=sft.template,
+                template=cast(TemplateProtocol, sft.template),
                 user_prompt=custom_config.user_prompt,
                 emit_norm=custom_config.emit_norm,
                 json_format=custom_config.json_format,
@@ -891,7 +902,9 @@ def main():
 
     # Setup trainer
     logger.info("Setting up trainer...")
-    base_collator = sft._get_data_collator()
+    base_collator = cast(
+        Callable[[list[BatchItem]], CollatedBatch], sft._get_data_collator()
+    )
     token_type_cfg = getattr(custom_config, "token_type_metrics", None)
     data_collator = build_dataset_metrics_collator(
         sft.template, base_collator, token_type_cfg=token_type_cfg

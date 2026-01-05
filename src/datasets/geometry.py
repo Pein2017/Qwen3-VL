@@ -3,7 +3,9 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Literal, cast
+
+from .contracts import DatasetObject
 
 
 def _pair_points(points: Sequence[float]) -> list[tuple[float, float]]:
@@ -635,7 +637,7 @@ class Polyline:
         return Polyline(tuple(pts))
 
 
-def geometry_from_dict(g: dict[str, Any]) -> "BBox | Polygon | Polyline":
+def geometry_from_dict(g: DatasetObject) -> "BBox | Polygon | Polyline":
     if "bbox_2d" in g:
         x1, y1, x2, y2 = map(float, g["bbox_2d"])
         return BBox(x1, y1, x2, y2)
@@ -658,7 +660,7 @@ def geometry_from_dict(g: dict[str, Any]) -> "BBox | Polygon | Polyline":
 # ============================================================================
 
 
-def get_aabb(geom: dict[str, Any]) -> list[float]:
+def get_aabb(geom: DatasetObject) -> list[float]:
     """
     Get axis-aligned bounding box [x1, y1, x2, y2] from any geometry type.
 
@@ -717,7 +719,7 @@ def aabb_area(bbox: list[float]) -> float:
     return width * height
 
 
-def _polygon_area(points: list[float]) -> float:
+def _polygon_area(points: Sequence[float]) -> float:
     if len(points) < 6:
         return 0.0
     area = 0.0
@@ -730,7 +732,7 @@ def _polygon_area(points: list[float]) -> float:
 
 
 def compute_polygon_coverage(
-    geom: dict[str, Any],
+    geom: DatasetObject,
     crop_bbox: list[float],
     *,
     fallback: Literal["bbox", "auto"] = "auto",
@@ -788,7 +790,7 @@ def compute_polygon_coverage(
     return coverage
 
 
-def compute_coverage(geom: dict[str, Any], crop_bbox: list[float]) -> float:
+def compute_coverage(geom: DatasetObject, crop_bbox: list[float]) -> float:
     """
     Compute fraction of geometry that falls inside crop region.
 
@@ -831,7 +833,7 @@ def compute_coverage(geom: dict[str, Any], crop_bbox: list[float]) -> float:
     return max(0.0, min(1.0, coverage))
 
 
-def translate_geometry(geom: dict[str, Any], dx: float, dy: float) -> dict[str, Any]:
+def translate_geometry(geom: DatasetObject, dx: float, dy: float) -> DatasetObject:
     """
     Translate geometry by offset (dx, dy).
 
@@ -868,13 +870,13 @@ def translate_geometry(geom: dict[str, Any], dx: float, dy: float) -> dict[str, 
 
 
 def transform_geometry(
-    g: dict[str, Any],
+    g: DatasetObject,
     M: list[list[float]],
     *,
     width: int,
     height: int,
     allow_poly: bool = False,
-) -> dict[str, Any]:
+) -> DatasetObject:
     """
     Single entrypoint for geometry transform with promotion, ordering, and clipping/rounding.
 
@@ -891,7 +893,7 @@ def transform_geometry(
         res = obj.apply_affine(M)
         if isinstance(res, BBox):
             bb = clamp_points([res.x1, res.y1, res.x2, res.y2], width, height)
-            return {**meta, "bbox_2d": bb}
+            return cast(DatasetObject, {**meta, "bbox_2d": bb})
         # BBox promoted to Polygon under general affine (rotation/shear)
         t = list(res.points)
         # Check if polygon is fully inside image bounds - if so, skip clipping to preserve exact rotation
@@ -903,7 +905,7 @@ def transform_geometry(
         if all_inside:
             # Polygon fully inside - use rotated points directly, just round/clamp
             q = clamp_points(to_clockwise(t), width, height)
-            return {**meta, "poly": q}
+            return cast(DatasetObject, {**meta, "poly": q})
         # Polygon needs clipping - use Sutherland-Hodgman
         clipped = sutherland_hodgman_clip(t, width, height)
         if len(clipped) // 2 >= 3:
@@ -911,10 +913,10 @@ def transform_geometry(
             if len(poly) // 2 != 4:
                 poly = min_area_rect(poly)
             q = clamp_points(poly, width, height)
-            return {**meta, "poly": q}
+            return cast(DatasetObject, {**meta, "poly": q})
         # fully outside: keep clamped transform to preserve geometry (degenerate possible)
         q = clamp_points(to_clockwise(t), width, height)
-        return {**meta, "poly": q}
+        return cast(DatasetObject, {**meta, "poly": q})
     if isinstance(obj, Polygon):
         t = list(obj.apply_affine(M).points)
         # Check if polygon is fully inside image bounds - if so, skip clipping to preserve exact rotation
@@ -926,7 +928,7 @@ def transform_geometry(
         if all_inside:
             # Polygon fully inside - use rotated points directly, just round/clamp
             q = clamp_points(to_clockwise(t), width, height)
-            return {**meta, "poly": q}
+            return cast(DatasetObject, {**meta, "poly": q})
         # Polygon needs clipping - use Sutherland-Hodgman
         clipped = sutherland_hodgman_clip(t, width, height)
         if len(clipped) // 2 >= 3:
@@ -934,9 +936,9 @@ def transform_geometry(
             if len(poly) // 2 != 4:
                 poly = min_area_rect(poly)
             q = clamp_points(poly, width, height)
-            return {**meta, "poly": q}
+            return cast(DatasetObject, {**meta, "poly": q})
         q = clamp_points(to_clockwise(t), width, height)
-        return {**meta, "poly": q}
+        return cast(DatasetObject, {**meta, "poly": q})
     # Polyline
     pl = obj.apply_affine(M)
     clipped = clip_polyline_to_rect(list(pl.points), width, height)
@@ -947,12 +949,15 @@ def transform_geometry(
         raw = clamp_points(list(pl.points), width, height)
         raw = dedupe_consecutive_points(raw)
         if len(raw) >= 4:
-            return {**meta, "line": raw[:4]}
+            return cast(DatasetObject, {**meta, "line": raw[:4]})
         # fallback to a point repeated
         if len(raw) >= 2:
-            return {**meta, "line": [raw[0], raw[1], raw[0], raw[1]]}
-        return {**meta, "line": [0, 0, 0, 0]}
-    return {**meta, "line": line_points}
+            return cast(
+                DatasetObject,
+                {**meta, "line": [raw[0], raw[1], raw[0], raw[1]]},
+            )
+        return cast(DatasetObject, {**meta, "line": [0, 0, 0, 0]})
+    return cast(DatasetObject, {**meta, "line": line_points})
 
 
 __all_typed__ = [

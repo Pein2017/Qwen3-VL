@@ -5,9 +5,12 @@ import torch
 
 from src.config.schema import TokenTypeMetricsConfig
 from src.data_collators.token_types import TokenType, compute_token_types
-from src.utils import get_logger
+from src.utils import get_logger, require_mapping, require_mutable_mapping
+from src.utils.unstructured import UnstructuredMapping, UnstructuredMutableMapping
 
 logger = get_logger(__name__)
+BatchItem = UnstructuredMapping
+CollatedBatch = UnstructuredMutableMapping
 
 
 def _resolve_label(row: Mapping[str, object]) -> str:
@@ -23,9 +26,9 @@ def _resolve_label(row: Mapping[str, object]) -> str:
 
 def build_dataset_metrics_collator(
     template: object,
-    base_collator: Callable[[list[dict[str, object]]], dict[str, object]] | None = None,
+    base_collator: Callable[[list[BatchItem]], CollatedBatch] | None = None,
     token_type_cfg: TokenTypeMetricsConfig | None = None,
-) -> Callable[[list[dict[str, object]]], dict[str, object]]:
+) -> Callable[[list[BatchItem]], CollatedBatch]:
     """Wrap the template collator to attach per-sample dataset labels (and lengths).
 
     Works with padded batches (no packing). Lengths are derived from attention_mask
@@ -34,13 +37,19 @@ def build_dataset_metrics_collator(
     """
 
     collate_fn = base_collator or cast(
-        Callable[[list[dict[str, object]]], dict[str, object]],
+        Callable[[list[BatchItem]], CollatedBatch],
         getattr(template, "data_collator"),
     )
 
-    def _collate(batch: list[dict[str, object]]) -> dict[str, object]:
+    def _collate(batch: list[BatchItem]) -> CollatedBatch:
+        batch = [
+            require_mapping(item, context="dataset_metrics.batch_item")
+            for item in batch
+        ]
         dataset_labels = [_resolve_label(row) for row in batch]
-        collated = collate_fn(batch)
+        collated = require_mutable_mapping(
+            collate_fn(batch), context="dataset_metrics.collated"
+        )
 
         # Derive per-sample lengths from attention_mask if present, else input_ids.
         segments: list[int]
@@ -82,8 +91,8 @@ def build_dataset_metrics_collator(
 
 def _maybe_attach_token_types(
     *,
-    collated: dict[str, object],
-    raw_batch: Sequence[Mapping[str, object]],
+    collated: CollatedBatch,
+    raw_batch: Sequence[BatchItem],
     dataset_labels: Sequence[str],
     template: object,
     cfg: TokenTypeMetricsConfig | None,

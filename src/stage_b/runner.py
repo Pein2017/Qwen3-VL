@@ -15,7 +15,7 @@ from dataclasses import replace
 from collections import Counter, defaultdict
 from collections.abc import Mapping, Sequence, Iterator
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, NotRequired, TypedDict, cast
 
 import torch
 from transformers import (
@@ -29,6 +29,8 @@ from transformers import (
 )
 
 from ..utils import configure_logging, get_logger
+from src.utils import require_mapping
+from src.utils.unstructured import UnstructuredMapping
 from .config import (
     SamplerConfig,
     StageBConfig,
@@ -74,6 +76,75 @@ from .utils.perf import enable_tf32
 from .utils.seed import seed_everything
 
 logger = get_logger("stage_b.runner")
+
+
+class RuleCandidatePayload(TypedDict):
+    op: str
+    text: str | None
+    rationale: str | None
+    signature: str | None
+    target_signature: str | None
+    target_signatures: list[str]
+    candidate_id: str
+    source: str
+    confidence: NotRequired[float]
+    operation: NotRequired[ExperienceOperation]
+    gate: NotRequired[GateStats]
+    cand_metrics: NotRequired[EvalMetrics]
+    eval_metrics: NotRequired[EvalMetrics | None]
+    eval_acc_drop: NotRequired[float | None]
+    relative_error_reduction: NotRequired[float]
+
+
+class ProposerFailurePayload(TypedDict, total=False):
+    timestamp: float
+    iteration: int
+    mission: str
+    examples: int
+    prompt_tokens: int | None
+    error: str
+    raw_response_prefix: NotRequired[str]
+    raw_response_suffix: NotRequired[str]
+
+
+class ReasonCountRow(TypedDict):
+    reason: str
+    count: int
+
+
+class HardCaseRow(TypedDict, total=False):
+    timestamp: float
+    iteration: int
+    mission: str
+    sampler: str
+    ticket_key: str | None
+    gt_label: object
+    majority_pred: object
+    majority_reason: str | None
+    pass_count: object
+    fail_count: object
+    invalid_count: object
+    total_samples: object
+    agreement: object
+    difficulty: object
+    hard_wrong: object
+    verdict_samples: list[object]
+    reason_samples: list[str | None]
+    reason_counts: list[ReasonCountRow]
+    rank: NotRequired[int]
+
+
+class CandidateRegressionRow(TypedDict, total=False):
+    ticket_key: object
+    gt_label: object
+    base_pred: object
+    cand_pred: object
+    base_agreement: object
+    cand_agreement: object
+    base_pass_count: object
+    base_fail_count: object
+    cand_pass_count: object
+    cand_fail_count: object
 
 
 def _load_excluded_ticket_keys(config: StageBConfig) -> set[str]:
@@ -637,7 +708,7 @@ def _propose_rules(
     iteration: int,
     rejected_candidate_ids: Sequence[str],
     log_dir: Path | None = None,
-) -> list[dict[str, object]]:
+) -> list[RuleCandidatePayload]:
     """Run proposer LLM once and return candidate operations (validated + de-duplicated)."""
 
     assert config.rule_search is not None
@@ -707,16 +778,17 @@ def _propose_rules(
         )
         if log_dir is not None:
             log_dir.mkdir(parents=True, exist_ok=True)
+            failure_payload: ProposerFailurePayload = {
+                "timestamp": time.time(),
+                "iteration": iteration,
+                "mission": mission,
+                "examples": len(example_list),
+                "prompt_tokens": prompt_tokens,
+                "error": "prompt_overlength",
+            }
             _append_jsonl(
                 log_dir / "rule_search_proposer_failures.jsonl",
-                {
-                    "timestamp": time.time(),
-                    "iteration": iteration,
-                    "mission": mission,
-                    "examples": len(example_list),
-                    "prompt_tokens": prompt_tokens,
-                    "error": "prompt_overlength",
-                },
+                failure_payload,
             )
         return []
 
@@ -770,18 +842,19 @@ def _propose_rules(
     except Exception as exc:  # noqa: BLE001
         if log_dir is not None:
             log_dir.mkdir(parents=True, exist_ok=True)
+            failure_payload: ProposerFailurePayload = {
+                "timestamp": time.time(),
+                "iteration": iteration,
+                "mission": mission,
+                "examples": len(example_list),
+                "prompt_tokens": prompt_tokens,
+                "error": str(exc),
+                "raw_response_prefix": raw_response[:400],
+                "raw_response_suffix": raw_response[-400:],
+            }
             _append_jsonl(
                 log_dir / "rule_search_proposer_failures.jsonl",
-                {
-                    "timestamp": time.time(),
-                    "iteration": iteration,
-                    "mission": mission,
-                    "examples": len(example_list),
-                    "prompt_tokens": prompt_tokens,
-                    "error": str(exc),
-                    "raw_response_prefix": raw_response[:400],
-                    "raw_response_suffix": raw_response[-400:],
-                },
+                failure_payload,
             )
         raise ValueError(
             f"No valid JSON found in rule_search proposer response (examples={len(example_list)}, prompt_tokens={prompt_tokens})"
@@ -809,7 +882,7 @@ def _propose_rules(
         normalize_rule_signature(v) for v in guidance.experiences.values()
     }
 
-    candidates: list[dict[str, object]] = []
+    candidates: list[RuleCandidatePayload] = []
     seen_signatures: set[str] = set()
     seen_candidate_ids: set[str] = set()
     rejected_set = {str(item).strip() for item in rejected_candidate_ids if item}
@@ -899,18 +972,17 @@ def _propose_rules(
         rationale_raw = entry.get("rationale")
         rationale = str(rationale_raw).strip() if rationale_raw is not None else ""
 
-        candidates.append(
-            {
-                "op": op,
-                "text": text or None,
-                "rationale": rationale or None,
-                "signature": signature or None,
-                "target_signature": target_signature,
-                "target_signatures": target_signatures,
-                "candidate_id": candidate_id,
-                "source": "proposer",
-            }
-        )
+        candidate: RuleCandidatePayload = {
+            "op": op,
+            "text": text or None,
+            "rationale": rationale or None,
+            "signature": signature or None,
+            "target_signature": target_signature,
+            "target_signatures": target_signatures,
+            "candidate_id": candidate_id,
+            "source": "proposer",
+        }
+        candidates.append(candidate)
         if len(candidates) >= int(config.rule_search.num_candidate_rules):
             break
 
@@ -957,7 +1029,7 @@ def _build_ablation_candidates(
     guidance: MissionGuidance,
     max_candidates: int,
     rejected_candidate_ids: Sequence[str],
-) -> list[dict[str, object]]:
+) -> list[RuleCandidatePayload]:
     if max_candidates <= 0:
         return []
     rejected_set = {str(item).strip() for item in rejected_candidate_ids if item}
@@ -977,21 +1049,20 @@ def _build_ablation_candidates(
         scored.append((confidence, key, signature))
 
     scored.sort(key=lambda item: (item[0], item[1]))
-    candidates: list[dict[str, object]] = []
+    candidates: list[RuleCandidatePayload] = []
     for confidence, _key, signature in scored[:max_candidates]:
-        candidates.append(
-            {
-                "op": "remove",
-                "text": None,
-                "rationale": "ablation_candidate",
-                "signature": None,
-                "target_signature": signature,
-                "target_signatures": [],
-                "candidate_id": f"remove:{signature}",
-                "source": "ablation",
-                "confidence": confidence,
-            }
-        )
+        candidate: RuleCandidatePayload = {
+            "op": "remove",
+            "text": None,
+            "rationale": "ablation_candidate",
+            "signature": None,
+            "target_signature": signature,
+            "target_signatures": [],
+            "candidate_id": f"remove:{signature}",
+            "source": "ablation",
+            "confidence": confidence,
+        }
+        candidates.append(candidate)
     return candidates
 
 
@@ -1125,7 +1196,7 @@ def _run_rule_search_mission(
                 )
 
             stats_by_ticket: dict[str, TicketRolloutStats] = {}
-            reason_samples_by_ticket: dict[str, list[str]] = {}
+            reason_samples_by_ticket: dict[str, list[str | None]] = {}
             for ticket in tickets_filtered:
                 if ticket.key not in base_payloads:
                     continue
@@ -1451,7 +1522,7 @@ def _run_rule_search_mission(
         stats_for_proposer: dict[str, TicketRolloutStats] = {}
         base_metrics = None
         reflect_keys: list[str] = []
-        candidates: list[dict[str, object]] = []
+        candidates: list[RuleCandidatePayload] = []
 
         if is_main_process():
             for ticket in train_pool_tickets:
@@ -1644,7 +1715,7 @@ def _run_rule_search_mission(
                 normalize_rule_signature(text): key
                 for key, text in current_guidance.experiences.items()
             }
-        best_candidate: dict[str, object] | None = None
+        best_candidate: RuleCandidatePayload | None = None
         for cand_idx, cand in enumerate(candidates, start=1):
             op = str(cand.get("op") or "upsert").strip().lower()
             if op not in {"upsert", "update", "merge", "remove"}:
@@ -1976,21 +2047,25 @@ def _run_rule_search_mission(
                     or gate_stats.relative_error_reduction
                     > _safe_float(best_candidate.get("relative_error_reduction", -1.0), -1.0)
                 ):
-                    best_candidate = {
-                        "candidate_index": cand_idx,
-                        "signature": cand_sig,
-                        "text": cand_text or None,
-                        "rationale": str(cand.get("rationale") or "").strip() or None,
-                        "gate": gate_stats,
-                        "cand_metrics": cand_metrics,
-                        "eval_metrics": eval_metrics,
-                        "eval_acc_drop": eval_acc_drop,
-                        "candidate_id": candidate_id,
-                        "op": op,
-                        "target_signature": target_signature or None,
-                        "target_signatures": target_signatures or None,
-                        "operation": candidate_operation,
-                    }
+                    best_candidate = cast(
+                        RuleCandidatePayload,
+                        {
+                            "candidate_index": cand_idx,
+                            "signature": cand_sig,
+                            "text": cand_text or None,
+                            "rationale": str(cand.get("rationale") or "").strip() or None,
+                            "gate": gate_stats,
+                            "cand_metrics": cand_metrics,
+                            "eval_metrics": eval_metrics,
+                            "eval_acc_drop": eval_acc_drop,
+                            "candidate_id": candidate_id,
+                            "op": op,
+                            "source": cand.get("source"),
+                            "target_signature": target_signature or None,
+                            "target_signatures": target_signatures,
+                            "operation": candidate_operation,
+                        },
+                    )
 
         # Apply best candidate if any.
         should_stop = False
@@ -2005,7 +2080,7 @@ def _run_rule_search_mission(
                 )
             else:
                 assert mission_guidance_repo is not None
-                op = best_candidate["operation"]
+                op = best_candidate.get("operation")
                 assert isinstance(op, ExperienceOperation)
                 reflection_id = uuid.uuid4().hex[:12]
                 proposal = ReflectionProposal(
@@ -2032,9 +2107,11 @@ def _run_rule_search_mission(
                     set(updated.experiences.keys()) - set(before.experiences.keys())
                 )
                 accepted_key = new_keys[0] if new_keys else None
-                gate: object = best_candidate["gate"]
-                cand_metrics = best_candidate["cand_metrics"]
-                assert isinstance(cand_metrics, EvalMetrics), "cand_metrics must be EvalMetrics"
+                gate: object = best_candidate.get("gate")
+                cand_metrics = best_candidate.get("cand_metrics")
+                assert isinstance(
+                    cand_metrics, EvalMetrics
+                ), "cand_metrics must be EvalMetrics"
                 _append_jsonl(
                     benchmarks_path,
                     {
@@ -2279,7 +2356,8 @@ def _run_rule_search_distill(
     )
 
 
-def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
+def _append_jsonl(path: Path, payload: UnstructuredMapping) -> None:
+    payload = require_mapping(payload, context="stage_b.jsonl_payload")
     with path.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(payload, ensure_ascii=False))
         fh.write("\n")
@@ -2328,10 +2406,10 @@ def _filter_overlength_tickets(
     return kept, tuple(dropped)
 
 
-def _load_jsonl(path: Path) -> list[dict[str, Any]]:
+def _load_jsonl(path: Path) -> list[UnstructuredMapping]:
     if not path.exists():
         return []
-    items: list[dict[str, Any]] = []
+    items: list[UnstructuredMapping] = []
     with path.open("r", encoding="utf-8") as fh:
         for line in fh:
             line = line.strip()
@@ -2343,7 +2421,7 @@ def _load_jsonl(path: Path) -> list[dict[str, Any]]:
                 logger.warning("Skipping malformed JSONL line in %s", path)
                 continue
             if isinstance(payload, dict):
-                items.append(payload)
+                items.append(require_mapping(payload, context="stage_b.jsonl_row"))
     return items
 
 
@@ -2376,18 +2454,20 @@ def _hard_case_rows(
     sampler: str,
     limit: int,
     reason_samples_by_ticket: Mapping[str, Sequence[str | None]] | None = None,
-) -> list[dict[str, object]]:
-    rows: list[dict[str, object]] = []
+) -> list[HardCaseRow]:
+    rows: list[HardCaseRow] = []
     for entry in stats_by_ticket.values():
         majority = getattr(entry, "majority_pred", None)
         gt_label = getattr(entry, "gt_label", None)
         if majority is None or majority == gt_label:
             continue
         ticket_key = getattr(entry, "ticket_key", None)
-        verdict_samples = list(getattr(entry, "verdict_samples", ()))
+        verdict_samples = list(
+            cast(Sequence[object], getattr(entry, "verdict_samples", ()))
+        )
         reason_samples: list[str | None] = []
         majority_reason = None
-        reason_counts: list[dict[str, object]] = []
+        reason_counts: list[ReasonCountRow] = []
         if reason_samples_by_ticket is not None and ticket_key is not None:
             raw_reasons = list(reason_samples_by_ticket.get(ticket_key, ()))
             if raw_reasons:
@@ -2404,28 +2484,27 @@ def _hard_case_rows(
                             for reason, count in counts.most_common(5)
                         ]
 
-        rows.append(
-            {
-                "timestamp": time.time(),
-                "iteration": iteration,
-                "mission": mission,
-                "sampler": sampler,
-                "ticket_key": ticket_key,
-                "gt_label": gt_label,
-                "majority_pred": majority,
-                "majority_reason": majority_reason,
-                "pass_count": getattr(entry, "pass_count", None),
-                "fail_count": getattr(entry, "fail_count", None),
-                "invalid_count": getattr(entry, "invalid_count", None),
-                "total_samples": getattr(entry, "total_samples", None),
-                "agreement": getattr(entry, "agreement", None),
-                "difficulty": getattr(entry, "difficulty", None),
-                "hard_wrong": getattr(entry, "hard_wrong", None),
-                "verdict_samples": verdict_samples,
-                "reason_samples": reason_samples,
-                "reason_counts": reason_counts,
-            }
-        )
+        row: HardCaseRow = {
+            "timestamp": time.time(),
+            "iteration": iteration,
+            "mission": mission,
+            "sampler": sampler,
+            "ticket_key": ticket_key,
+            "gt_label": gt_label,
+            "majority_pred": majority,
+            "majority_reason": majority_reason,
+            "pass_count": getattr(entry, "pass_count", None),
+            "fail_count": getattr(entry, "fail_count", None),
+            "invalid_count": getattr(entry, "invalid_count", None),
+            "total_samples": getattr(entry, "total_samples", None),
+            "agreement": getattr(entry, "agreement", None),
+            "difficulty": getattr(entry, "difficulty", None),
+            "hard_wrong": getattr(entry, "hard_wrong", None),
+            "verdict_samples": verdict_samples,
+            "reason_samples": reason_samples,
+            "reason_counts": reason_counts,
+        }
+        rows.append(row)
 
     rows.sort(
         key=lambda row: (
@@ -2446,8 +2525,8 @@ def _candidate_regressions(
     new_stats: Mapping[str, TicketRolloutStats],
     *,
     limit: int,
-) -> list[dict[str, object]]:
-    rows: list[dict[str, object]] = []
+) -> list[CandidateRegressionRow]:
+    rows: list[CandidateRegressionRow] = []
     keys = sorted(set(base_stats.keys()) & set(new_stats.keys()))
     for key in keys:
         base = base_stats[key]
@@ -2456,20 +2535,19 @@ def _candidate_regressions(
         new_correct = bool(getattr(new, "majority_correct", False))
         if not base_correct or new_correct:
             continue
-        rows.append(
-            {
-                "ticket_key": getattr(base, "ticket_key", key),
-                "gt_label": getattr(base, "gt_label", None),
-                "base_pred": getattr(base, "majority_pred", None),
-                "cand_pred": getattr(new, "majority_pred", None),
-                "base_agreement": getattr(base, "agreement", None),
-                "cand_agreement": getattr(new, "agreement", None),
-                "base_pass_count": getattr(base, "pass_count", None),
-                "base_fail_count": getattr(base, "fail_count", None),
-                "cand_pass_count": getattr(new, "pass_count", None),
-                "cand_fail_count": getattr(new, "fail_count", None),
-            }
-        )
+        row: CandidateRegressionRow = {
+            "ticket_key": getattr(base, "ticket_key", key),
+            "gt_label": getattr(base, "gt_label", None),
+            "base_pred": getattr(base, "majority_pred", None),
+            "cand_pred": getattr(new, "majority_pred", None),
+            "base_agreement": getattr(base, "agreement", None),
+            "cand_agreement": getattr(new, "agreement", None),
+            "base_pass_count": getattr(base, "pass_count", None),
+            "base_fail_count": getattr(base, "fail_count", None),
+            "cand_pass_count": getattr(new, "pass_count", None),
+            "cand_fail_count": getattr(new, "fail_count", None),
+        }
+        rows.append(row)
 
     rows.sort(
         key=lambda row: (

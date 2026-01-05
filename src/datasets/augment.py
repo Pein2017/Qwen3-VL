@@ -11,7 +11,7 @@ from data_conversion.utils.exif_utils import apply_exif_orientation
 
 from ..utils.logger import get_logger
 from .augmentation.base import AugmentationPipeline
-from .contracts import AugmentationTelemetry, validate_geometry_sequence
+from .contracts import AugmentationTelemetry, DatasetObject, validate_geometry_sequence
 
 
 def _image_to_bytes(img: Image.Image) -> bytes:
@@ -22,11 +22,11 @@ def _image_to_bytes(img: Image.Image) -> bytes:
 
 def apply_augmentations(
     images: list[str | Image.Image],
-    per_object_geoms: list[dict[str, object]],
+    per_object_geoms: list[DatasetObject],
     pipeline: AugmentationPipeline | None,
     *,
     rng: random.Random | None = None,
-) -> tuple[list[dict[str, bytes]], list[dict[str, object]]]:
+) -> tuple[list[dict[str, bytes]], list[DatasetObject]]:
     """Plugin-based augmentation wrapper (back-compatible images-bytes output).
 
     Args:
@@ -83,7 +83,7 @@ def apply_augmentations(
     if not all(isinstance(i, Image.Image) for i in out_imgs):
         raise TypeError("pipeline.apply must return list[Image.Image] as first element")
     out_imgs = cast(list[Image.Image], out_imgs)
-    geoms = cast(list[dict[str, object]], geoms)
+    geoms = cast(list[DatasetObject], geoms)
     if len(out_imgs) != len(pil_images):
         raise ValueError(
             f"pipeline.apply returned {len(out_imgs)} images, expected {len(pil_images)}"

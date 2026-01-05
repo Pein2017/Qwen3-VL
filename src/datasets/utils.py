@@ -1,11 +1,16 @@
 """Shared utilities for dataset operations"""
 
 import json
+from collections.abc import MutableMapping
 from pathlib import Path
-from typing import Any
+from typing import cast
+
+from .contracts import ConversationRecord, DatasetObject, validate_conversation_record
 
 
-def load_jsonl(jsonl_path: str, *, resolve_relative: bool = False) -> list[dict[str, Any]]:
+def load_jsonl(
+    jsonl_path: str, *, resolve_relative: bool = False
+) -> list[ConversationRecord]:
     """Load records from a JSONL file.
 
     Args:
@@ -17,29 +22,37 @@ def load_jsonl(jsonl_path: str, *, resolve_relative: bool = False) -> list[dict[
         List of dictionaries, one per line
     """
     base_dir = Path(jsonl_path).resolve().parent
-    records: list[dict[str, Any]] = []
+    records: list[ConversationRecord] = []
     with open(jsonl_path, "r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line:
                 continue
             record = json.loads(line)
+            if not isinstance(record, MutableMapping):
+                raise TypeError("JSONL record must be an object")
             if resolve_relative:
                 images = record.get("images")
                 if isinstance(images, list):
-                    resolved = []
+                    resolved: list[object] = []
                     for img in images:
-                        img_path = Path(str(img))
-                        resolved_path = (
-                            img_path if img_path.is_absolute() else (base_dir / img_path).resolve()
-                        )
-                        resolved.append(str(resolved_path))
+                        if isinstance(img, str):
+                            img_path = Path(img)
+                            resolved_path = (
+                                img_path
+                                if img_path.is_absolute()
+                                else (base_dir / img_path).resolve()
+                            )
+                            resolved.append(str(resolved_path))
+                        else:
+                            resolved.append(img)
                     record["images"] = resolved
-            records.append(record)
+            validated = validate_conversation_record(record)
+            records.append(cast(ConversationRecord, validated))
     return records
 
 
-def extract_object_points(obj: dict[str, Any]) -> tuple[str, list[float]]:
+def extract_object_points(obj: DatasetObject) -> tuple[str, list[float]]:
     """Extract geometry type and points from an object.
 
     Args:
@@ -52,16 +65,19 @@ def extract_object_points(obj: dict[str, Any]) -> tuple[str, list[float]]:
         raise ValueError(
             "quad geometry is deprecated; replace with 'poly' (flat list of x,y)."
         )
-    if "bbox_2d" in obj:
-        return "bbox_2d", list(map(float, obj["bbox_2d"]))
-    if "poly" in obj:
-        return "poly", list(map(float, obj["poly"]))
-    if "line" in obj:
-        return "line", list(map(float, obj["line"]))
+    bbox = obj.get("bbox_2d")
+    if bbox is not None:
+        return "bbox_2d", [float(v) for v in bbox]
+    poly = obj.get("poly")
+    if poly is not None:
+        return "poly", [float(v) for v in poly]
+    line = obj.get("line")
+    if line is not None:
+        return "line", [float(v) for v in line]
     return "", []
 
 
-def extract_geometry(obj: dict[str, Any]) -> dict[str, list[float]]:
+def extract_geometry(obj: DatasetObject) -> dict[str, list[float]]:
     """Extract geometry dictionary from object.
 
     Useful for augmentation and processing pipelines.
@@ -73,16 +89,19 @@ def extract_geometry(obj: dict[str, Any]) -> dict[str, list[float]]:
         Dictionary with geometry key and points
     """
     geom: dict[str, list[float]] = {}
-    if obj.get("bbox_2d") is not None:
-        geom["bbox_2d"] = obj["bbox_2d"]
-    if obj.get("poly") is not None:
-        geom["poly"] = obj["poly"]
-    if obj.get("line") is not None:
-        geom["line"] = obj["line"]
+    bbox = obj.get("bbox_2d")
+    if bbox is not None:
+        geom["bbox_2d"] = [float(v) for v in bbox]
+    poly = obj.get("poly")
+    if poly is not None:
+        geom["poly"] = [float(v) for v in poly]
+    line = obj.get("line")
+    if line is not None:
+        geom["line"] = [float(v) for v in line]
     return geom
 
 
-def is_same_record(record_a: dict[str, Any], record_b: dict[str, Any]) -> bool:
+def is_same_record(record_a: ConversationRecord, record_b: ConversationRecord) -> bool:
     """Check if two records are the same (identity check).
 
     Args:

@@ -1,6 +1,5 @@
 """Shared summary prompt primitives consumed by config + runtime helpers."""
 
-from typing import Sequence, Tuple
 
 from typing_extensions import override
 

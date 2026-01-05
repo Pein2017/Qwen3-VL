@@ -9,14 +9,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from ...utils.logger import get_logger
-
-class _Resample(Protocol):
-    BICUBIC: int
-
-
-_PIL_RESAMPLE = cast(_Resample, getattr(Image, "Resampling", Image))
-_PIL_BICUBIC = _PIL_RESAMPLE.BICUBIC
-
+from ..contracts import DatasetObject
 from ..geometry import (
     apply_affine,
     compose_affine,
@@ -50,6 +43,14 @@ from .base import (
     RngLike,
 )
 from .registry import register
+
+
+class _Resample(Protocol):
+    BICUBIC: int
+
+
+_PIL_RESAMPLE = cast(_Resample, getattr(Image, "Resampling", Image))
+_PIL_BICUBIC = _PIL_RESAMPLE.BICUBIC
 
 
 def _pil(img: Image.Image) -> Image.Image:
@@ -159,7 +160,7 @@ class ColorJitter(ColorOp):
     def apply(
         self,
         images: list[Image.Image],
-        geoms: list[dict[str, object]],
+        geoms: list[DatasetObject],
         *,
         width: int,
         height: int,
@@ -413,12 +414,12 @@ class ExpandToFitAffine(CurriculumMixin, ImageAugmenter):
     def apply(
         self,
         images: list[Image.Image],
-        geoms: list[dict[str, object]],
+        geoms: list[DatasetObject],
         *,
         width: int,
         height: int,
         rng: RngLike,
-    ) -> tuple[list[Image.Image], list[dict[str, object]]]:
+    ) -> tuple[list[Image.Image], list[DatasetObject]]:
         """
         No-op: expansion already handled in pre_flush_hook.
         Images have already been warped to the expanded canvas by Compose.
@@ -449,7 +450,7 @@ class ResizeByScale(CurriculumMixin, ImageAugmenter):
     def apply(
         self,
         images: list[Image.Image],
-        geoms: list[dict[str, object]],
+        geoms: list[DatasetObject],
         *,
         width: int,
         height: int,
@@ -483,14 +484,14 @@ class ResizeByScale(CurriculumMixin, ImageAugmenter):
             out_imgs.append(im.resize((new_w, new_h), resample=_PIL_BICUBIC))
 
         # scale geometries in pixel space
-        out_geoms: list[dict[str, object]] = []
+        out_geoms: list[DatasetObject] = []
         for g in geoms:
             meta = {k: v for k, v in g.items() if k not in {"bbox_2d", "poly", "line"}}
             if "bbox_2d" in g:
                 x1, y1, x2, y2 = g["bbox_2d"]
                 bb = [x1 * sx, y1 * sy, x2 * sx, y2 * sy]
                 bb = clamp_points(bb, new_w, new_h)
-                out_geoms.append({**meta, "bbox_2d": bb})
+                out_geoms.append(cast(DatasetObject, {**meta, "bbox_2d": bb}))
             elif "poly" in g:
                 pts = g["poly"]
                 scaled: list[float] = []
@@ -507,11 +508,11 @@ class ResizeByScale(CurriculumMixin, ImageAugmenter):
                         # else: keep clipped polygon even if not exactly 4 points
                     clipped = to_clockwise(clipped)
                     q = clamp_points(clipped, new_w, new_h)
-                    out_geoms.append({**meta, "poly": q})
+                    out_geoms.append(cast(DatasetObject, {**meta, "poly": q}))
                 else:
                     # Degenerate: preserve by clamping original scaled coords
                     q = clamp_points(to_clockwise(scaled), new_w, new_h)
-                    out_geoms.append({**meta, "poly": q})
+                    out_geoms.append(cast(DatasetObject, {**meta, "poly": q}))
             elif "line" in g:
                 pts = g["line"]
                 scaled: list[float] = []
@@ -522,18 +523,25 @@ class ResizeByScale(CurriculumMixin, ImageAugmenter):
                 clipped = clamp_points(clipped, new_w, new_h)
                 clipped = dedupe_consecutive_points(clipped)
                 if len(clipped) >= 4:
-                    out_geoms.append({**meta, "line": clipped})
+                    out_geoms.append(cast(DatasetObject, {**meta, "line": clipped}))
                 else:
                     # Degenerate: preserve by collapsing to minimal 2-point line
                     raw = clamp_points(scaled, new_w, new_h)
                     raw = dedupe_consecutive_points(raw)
                     if len(raw) >= 4:
-                        out_geoms.append({**meta, "line": raw[:4]})
+                        out_geoms.append(cast(DatasetObject, {**meta, "line": raw[:4]}))
                     elif len(raw) >= 2:
-                        out_geoms.append({**meta, "line": [raw[0], raw[1], raw[0], raw[1]]})
+                        out_geoms.append(
+                            cast(
+                                DatasetObject,
+                                {**meta, "line": [raw[0], raw[1], raw[0], raw[1]]},
+                            )
+                        )
                     else:
                         # Extreme fallback: point at (0,0)
-                        out_geoms.append({**meta, "line": [0.0, 0.0, 0.0, 0.0]})
+                        out_geoms.append(
+                            cast(DatasetObject, {**meta, "line": [0.0, 0.0, 0.0, 0.0]})
+                        )
             else:
                 out_geoms.append(g)
 
@@ -559,7 +567,7 @@ class Gamma(ColorOp):
     def apply(
         self,
         images: list[Image.Image],
-        geoms: list[dict[str, object]],
+        geoms: list[DatasetObject],
         *,
         width: int,
         height: int,
@@ -601,7 +609,7 @@ class HueSaturationValue(ColorOp):
     def apply(
         self,
         images: list[Image.Image],
-        geoms: list[dict[str, object]],
+        geoms: list[DatasetObject],
         *,
         width: int,
         height: int,
@@ -656,7 +664,7 @@ class CLAHE(ColorOp):
     def apply(
         self,
         images: list[Image.Image],
-        geoms: list[dict[str, object]],
+        geoms: list[DatasetObject],
         *,
         width: int,
         height: int,
@@ -703,7 +711,7 @@ class AutoContrast(ColorOp):
     def apply(
         self,
         images: list[Image.Image],
-        geoms: list[dict[str, object]],
+        geoms: list[DatasetObject],
         *,
         width: int,
         height: int,
@@ -733,7 +741,7 @@ class Sharpness(ColorOp):
     def apply(
         self,
         images: list[Image.Image],
-        geoms: list[dict[str, object]],
+        geoms: list[DatasetObject],
         *,
         width: int,
         height: int,
@@ -770,8 +778,8 @@ def _buffer_aabb(bbox: list[float], pad: float, width: int, height: int) -> list
 
 
 def _geom_mask_iou(
-    a: dict[str, object],
-    b: dict[str, object],
+    a: DatasetObject,
+    b: DatasetObject,
     *,
     width: int,
     height: int,
@@ -784,7 +792,7 @@ def _geom_mask_iou(
     discretization error is acceptable.
     """
 
-    def _geom_aabb(g: dict[str, object]) -> list[float]:
+    def _geom_aabb(g: DatasetObject) -> list[float]:
         aabb = get_aabb(g)
         pad = line_buffer if "line" in g else 0.0
         return _buffer_aabb(aabb, pad, width, height)
@@ -804,7 +812,7 @@ def _geom_mask_iou(
 
     line_width = max(1, int(round(line_buffer * 2.0)))
 
-    def _rasterize(g: dict[str, object]) -> NDArray[np.uint8]:
+    def _rasterize(g: DatasetObject) -> NDArray[np.uint8]:
         mask = Image.new("L", (w, h), 0)
         draw = ImageDraw.Draw(mask)
 
@@ -889,7 +897,7 @@ class SmallObjectZoomPaste(PatchOp):
         self.class_whitelist = list(class_whitelist) if class_whitelist else None
         self.allows_geometry_drops = True  # geometry count may increase; allow validation bypass
 
-    def _is_small(self, geom: dict[str, object]) -> bool:
+    def _is_small(self, geom: DatasetObject) -> bool:
         aabb = get_aabb(geom)
         w = aabb[2] - aabb[0]
         h = aabb[3] - aabb[1]
@@ -924,13 +932,13 @@ class SmallObjectZoomPaste(PatchOp):
 
     def _transform_geom(
         self,
-        geom: dict[str, object],
+        geom: DatasetObject,
         crop_origin: tuple[float, float],
         scale_factor: float,
         offset: tuple[float, float],
         width: int,
         height: int,
-    ) -> dict[str, object] | None:
+    ) -> DatasetObject | None:
         cx, cy = crop_origin
         tx, ty = offset
         M = compose_affine(
@@ -946,8 +954,8 @@ class SmallObjectZoomPaste(PatchOp):
 
     def _iou_too_high(
         self,
-        new_geom: dict[str, object],
-        existing: list[dict[str, object]],
+        new_geom: DatasetObject,
+        existing: list[DatasetObject],
         width: int,
         height: int,
     ) -> bool:
@@ -982,7 +990,7 @@ class SmallObjectZoomPaste(PatchOp):
     def apply(
         self,
         images: list[Image.Image],
-        geoms: list[dict[str, object]],
+        geoms: list[DatasetObject],
         *,
         width: int,
         height: int,
@@ -994,7 +1002,7 @@ class SmallObjectZoomPaste(PatchOp):
         logger = get_logger("augmentation.small_object_zoom_paste")
 
         pil_images = [_pil(img).copy() for img in images]
-        working_geoms: list[dict[str, object]] = list(geoms)
+        working_geoms: list[DatasetObject] = list(geoms)
 
         # Collect candidate indices
         candidates = []
@@ -1125,7 +1133,7 @@ class RandomCrop(PatchOp):
     def apply(
         self,
         images: list[Image.Image],
-        geoms: list[dict[str, object]],
+        geoms: list[DatasetObject],
         *,
         width: int,
         height: int,
@@ -1172,7 +1180,7 @@ class RandomCrop(PatchOp):
         # Compute coverage and filter geometries
         kept_indices: list[int] = []
         coverages: list[float] = []
-        filtered_geoms: list[dict[str, object]] = []
+        filtered_geoms: list[DatasetObject] = []
 
         for idx, g in enumerate(geoms):
             cov = compute_polygon_coverage(g, crop_bbox, fallback="bbox")
@@ -1207,7 +1215,7 @@ class RandomCrop(PatchOp):
                 return images, geoms
 
         # Proceed with crop - truncate and translate geometries
-        cropped_geoms: list[dict[str, object]] = []
+        cropped_geoms: list[DatasetObject] = []
         for g in filtered_geoms:
             # Truncate geometry to crop boundary
             if "bbox_2d" in g:
@@ -1295,7 +1303,8 @@ class RandomCrop(PatchOp):
                 truncated = g
 
             # Translate to crop coordinates
-            translated = translate_geometry(truncated, -crop_bbox[0], -crop_bbox[1])
+            truncated_obj = cast(DatasetObject, truncated)
+            translated = translate_geometry(truncated_obj, -crop_bbox[0], -crop_bbox[1])
             cropped_geoms.append(translated)
 
         # Crop images

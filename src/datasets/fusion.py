@@ -8,13 +8,18 @@ import random
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
-from src.utils import get_logger
+from src.utils import get_logger, require_mutable_mapping
+from src.utils.unstructured import UnstructuredMapping, UnstructuredMutableMapping
 
+from .contracts import ConversationRecord
 from .fusion_types import AuxiliarySpec, DatasetSpec, TargetSpec
 from .wrappers import build_dataset_spec
 from .utils import load_jsonl
+
+FusionPayload = UnstructuredMutableMapping
+FusionEntry = UnstructuredMapping
 
 
 def _normalize_extends(value: object) -> list[str]:
@@ -25,7 +30,7 @@ def _normalize_extends(value: object) -> list[str]:
     return [str(value)]
 
 
-def _load_fusion_payload(path: Path) -> dict[str, Any]:
+def _load_fusion_payload(path: Path) -> FusionPayload:
     text = path.read_text(encoding="utf-8")
     suffix = path.suffix.lower()
     if suffix in {".yaml", ".yml"}:
@@ -42,12 +47,10 @@ def _load_fusion_payload(path: Path) -> dict[str, Any]:
         return {}
     if not isinstance(payload, Mapping):
         raise ValueError("fusion config must be a mapping")
-    return dict(payload)
+    return require_mutable_mapping(payload, context="fusion.config")
 
 
-def _merge_dicts(
-    base: Mapping[str, Any], override: Mapping[str, Any]
-) -> dict[str, Any]:
+def _merge_dicts(base: FusionEntry, override: FusionEntry) -> FusionPayload:
     merged = dict(base)
     for key, value in override.items():
         existing = merged.get(key)
@@ -58,7 +61,7 @@ def _merge_dicts(
     return merged
 
 
-def _dataset_entry_key(entry: Mapping[str, Any], *, field_name: str) -> str:
+def _dataset_entry_key(entry: FusionEntry, *, field_name: str) -> str:
     name = entry.get("name") or entry.get("dataset")
     if name is None:
         raise ValueError(
@@ -69,7 +72,7 @@ def _dataset_entry_key(entry: Mapping[str, Any], *, field_name: str) -> str:
 
 def _ensure_entry_list(
     value: object, *, field_name: str
-) -> list[Mapping[str, Any]]:
+) -> list[FusionEntry]:
     if value is None:
         return []
     if not isinstance(value, Iterable) or isinstance(value, (str, bytes)):
@@ -83,7 +86,7 @@ def _ensure_entry_list(
 
 def _merge_dataset_entries(
     base_value: object, override_value: object, *, field_name: str
-) -> list[Mapping[str, Any]]:
+) -> list[FusionEntry]:
     if isinstance(override_value, list) and not override_value:
         return []
 
@@ -93,7 +96,7 @@ def _merge_dataset_entries(
     if not base_entries:
         return override_entries
 
-    base_map: dict[str, Mapping[str, Any]] = {}
+    base_map: dict[str, FusionEntry] = {}
     for entry in base_entries:
         key = _dataset_entry_key(entry, field_name=field_name)
         if key in base_map:
@@ -102,7 +105,7 @@ def _merge_dataset_entries(
             )
         base_map[key] = entry
 
-    override_map: dict[str, Mapping[str, Any]] = {}
+    override_map: dict[str, FusionEntry] = {}
     for entry in override_entries:
         key = _dataset_entry_key(entry, field_name=field_name)
         if key in override_map:
@@ -111,7 +114,7 @@ def _merge_dataset_entries(
             )
         override_map[key] = entry
 
-    merged_entries: list[Mapping[str, Any]] = []
+    merged_entries: list[FusionEntry] = []
     for entry in base_entries:
         key = _dataset_entry_key(entry, field_name=field_name)
         if key in override_map:
@@ -127,9 +130,7 @@ def _merge_dataset_entries(
     return merged_entries
 
 
-def _merge_fusion_payload(
-    base: Mapping[str, Any], override: Mapping[str, Any]
-) -> dict[str, Any]:
+def _merge_fusion_payload(base: FusionEntry, override: FusionEntry) -> FusionPayload:
     merged = dict(base)
     for key, value in override.items():
         if key in {"targets", "sources"}:
@@ -147,7 +148,7 @@ def _merge_fusion_payload(
 
 def _load_fusion_with_extends(
     path: Path, visited: set[Path] | None = None
-) -> Mapping[str, Any]:
+) -> FusionPayload:
     abs_path = path.resolve()
     visited = set() if visited is None else visited
     if abs_path in visited:
@@ -159,7 +160,7 @@ def _load_fusion_with_extends(
         raise ValueError("Fusion config inheritance uses 'extends'; 'inherit' is not supported.")
     extends_value = payload.pop("extends", None)
 
-    merged_base: dict[str, Any] = {}
+    merged_base: FusionPayload = {}
     for base_ref in _normalize_extends(extends_value):
         base_path = Path(base_ref)
         if not base_path.is_absolute():
@@ -380,8 +381,8 @@ def _compute_target_quotas(
     return quotas, None
 
 
-def _annotate_record(record: Mapping[str, Any], spec: DatasetSpec) -> dict[str, Any]:
-    annotated = dict(copy.deepcopy(record))
+def _annotate_record(record: ConversationRecord, spec: DatasetSpec) -> ConversationRecord:
+    annotated = cast(ConversationRecord, dict(copy.deepcopy(record)))
     metadata = annotated.get("metadata") or {}
     if not isinstance(metadata, dict):
         metadata = {}
@@ -393,16 +394,16 @@ def _annotate_record(record: Mapping[str, Any], spec: DatasetSpec) -> dict[str, 
 
 
 def _sample_with_replacement(
-    records: Sequence[Mapping[str, Any]],
+    records: Sequence[ConversationRecord],
     count: int,
     rng: random.Random,
-) -> list[dict[str, Any]]:
+) -> list[ConversationRecord]:
     if not records or count <= 0:
         return []
-    samples: list[dict[str, Any]] = []
+    samples: list[ConversationRecord] = []
     for _ in range(count):
         choice = rng.choice(records)
-        samples.append(dict(copy.deepcopy(choice)))
+        samples.append(cast(ConversationRecord, dict(copy.deepcopy(choice))))
     return samples
 
 
@@ -443,7 +444,7 @@ def build_fused_jsonl(
     logger = get_logger(__name__)
 
     # Load target records and compute quotas (respect ratios when provided).
-    target_pools: dict[str, list[dict[str, Any]]] = {}
+    target_pools: dict[str, list[ConversationRecord]] = {}
     pool_sizes: dict[str, int] = {}
     for target in config.targets:
         records = load_jsonl(str(target.train_jsonl), resolve_relative=True)
@@ -452,7 +453,7 @@ def build_fused_jsonl(
 
     target_quotas, _ = _compute_target_quotas(config.targets, pool_sizes)
 
-    fused: list[dict[str, Any]] = []
+    fused: list[ConversationRecord] = []
     for target in config.targets:
         pool = target_pools[target.name]
         quota = target_quotas.get(target.name, 0)
@@ -488,7 +489,7 @@ def build_fused_jsonl(
             rng_source,
             sample_without_replacement=bool(source.sample_without_replacement),
         )
-        sampled_records: list[dict[str, Any]]
+        sampled_records: list[ConversationRecord]
         if source.sample_without_replacement and not fell_back:
             sampled_records = [copy.deepcopy(source_records[i]) for i in sampled_indices]
         else:
@@ -523,8 +524,8 @@ def build_fused_jsonl(
 
 
 def prepare_record_for_dataset(
-    record: Mapping[str, Any], spec: DatasetSpec
-) -> dict[str, Any]:
+    record: ConversationRecord, spec: DatasetSpec
+) -> ConversationRecord:
     return _annotate_record(record, spec)
 
 

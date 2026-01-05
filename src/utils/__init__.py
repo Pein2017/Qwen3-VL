@@ -14,6 +14,11 @@ from .logger import (
     set_global_debug,
     is_global_debug_enabled,
 )
+from .unstructured import (
+    require_mapping,
+    require_mapping_sequence,
+    require_mutable_mapping,
+)
 
 __all__ = [
     "get_logger",
@@ -26,4 +31,7 @@ __all__ = [
     "disable_verbose_logging",
     "set_global_debug",
     "is_global_debug_enabled",
+    "require_mapping",
+    "require_mapping_sequence",
+    "require_mutable_mapping",
 ]

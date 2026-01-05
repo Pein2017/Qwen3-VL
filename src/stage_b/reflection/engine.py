@@ -28,6 +28,8 @@ import torch
 from transformers import PreTrainedModel, PreTrainedTokenizerBase
 
 from src.config.missions import STAGE_B_MISSION_FOCUS
+from src.utils import require_mapping
+from src.utils.unstructured import UnstructuredMapping
 
 from ..config import ReflectionConfig
 from ..io.guidance import GuidanceRepository
@@ -168,7 +170,7 @@ class ReflectionEngine:
         self.reflection_log = reflection_log
         self.device = model.device if hasattr(model, "device") else "cpu"
 
-        self._last_debug_info: dict[str, Any] | None = None
+        self._last_debug_info: UnstructuredMapping | None = None
         self._group_id_mapping: dict[str, str] = {}
 
         self._validate_template(self.decision_prompt_template)
@@ -853,14 +855,14 @@ class ReflectionEngine:
         )
 
     @staticmethod
-    def _parse_stage_a_summary_json(text: str) -> dict[str, object] | None:
+    def _parse_stage_a_summary_json(text: str) -> UnstructuredMapping | None:
         stripped = (text or "").strip()
         if not stripped or stripped.startswith("无关图片"):
             return None
 
         required = {"统计"}
 
-        def _maybe_parse_obj(candidate: str) -> dict[str, object] | None:
+        def _maybe_parse_obj(candidate: str) -> UnstructuredMapping | None:
             c = candidate.strip()
             if not (c.startswith("{") and c.endswith("}")):
                 return None
@@ -868,7 +870,10 @@ class ReflectionEngine:
                 parsed = json.loads(c)
             except Exception:
                 return None
-            return parsed if isinstance(parsed, dict) else None
+            try:
+                return require_mapping(parsed, context="stage_b.summary_json")
+            except TypeError:
+                return None
 
         obj = _maybe_parse_obj(stripped)
         if obj is not None and required.issubset(obj.keys()):

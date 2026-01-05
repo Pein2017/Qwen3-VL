@@ -3,7 +3,7 @@
 Status: Active
 Scope: Practical training runbook and configuration checklist.
 Owners: Training
-Last updated: 2026-01-02
+Last updated: 2026-01-05
 Related: [REFERENCE.md](REFERENCE.md), [data/DATA_AND_DATASETS.md](../data/DATA_AND_DATASETS.md), [reference/PROMPTS_REFERENCE.md](../reference/PROMPTS_REFERENCE.md)
 
 ## Training
@@ -15,6 +15,9 @@ Related: [REFERENCE.md](REFERENCE.md), [data/DATA_AND_DATASETS.md](../data/DATA_
 - All configuration in YAML files
 - Single length knob: `global_max_length`
 - With `template.truncation_strategy: raise`, `DenseCaptionDataset` fails fast if any sample reaches `max_length`/`global_max_length` (no truncation, no silent drop).
+
+**Schema compliance**:
+- For any non-trivial config or dataset structure change, follow the schema review checklist in [reference/SCHEMA_CONSTITUTION.md](../reference/SCHEMA_CONSTITUTION.md).
 
 **Critical Setup**:
 ```yaml

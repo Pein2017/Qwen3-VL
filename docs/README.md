@@ -3,7 +3,7 @@
 Status: Active
 Scope: Canonical documentation index and directory map.
 Owners: Documentation
-Last updated: 2026-01-02
+Last updated: 2026-01-05
 Related: [overview/README.md](overview/README.md), [data/README.md](data/README.md), [training/README.md](training/README.md), [runtime/README.md](runtime/README.md), [ops/README.md](ops/README.md), [reference/README.md](reference/README.md)
 
 ## Quick Navigation
@@ -11,7 +11,7 @@ Related: [overview/README.md](overview/README.md), [data/README.md](data/README.
 - **Data pipeline** → [data/README.md](data/README.md), [data/DATA_PREPROCESSING_PIPELINE.md](data/DATA_PREPROCESSING_PIPELINE.md), [data/DATA_JSONL_CONTRACT.md](data/DATA_JSONL_CONTRACT.md)
 - **Training** → [training/README.md](training/README.md), [training/TRAINING_PLAYBOOK.md](training/TRAINING_PLAYBOOK.md), [training/REFERENCE.md](training/REFERENCE.md)
 - **Runtime** → [runtime/README.md](runtime/README.md), [runtime/STAGE_A_RUNTIME.md](runtime/STAGE_A_RUNTIME.md), [runtime/STAGE_B_RUNTIME.md](runtime/STAGE_B_RUNTIME.md)
-- **Reference** → [reference/README.md](reference/README.md), [reference/PROMPTS_REFERENCE.md](reference/PROMPTS_REFERENCE.md), [reference/stage-B-knowledge-Chinese.md](reference/stage-B-knowledge-Chinese.md)
+- **Reference** → [reference/README.md](reference/README.md), [reference/SCHEMA_CONSTITUTION.md](reference/SCHEMA_CONSTITUTION.md), [reference/PROMPTS_REFERENCE.md](reference/PROMPTS_REFERENCE.md), [reference/stage-B-knowledge-Chinese.md](reference/stage-B-knowledge-Chinese.md)
 - **Operations** → [ops/README.md](ops/README.md), [ops/deployment.md](ops/deployment.md), [ops/UPSTREAM_DEPENDENCIES.md](ops/UPSTREAM_DEPENDENCIES.md), [ops/CODEX_MCP_INSTALLATION.md](ops/CODEX_MCP_INSTALLATION.md)
 - **Specs & governance** → [openspec/AGENTS.md](../openspec/AGENTS.md), [openspec/project.md](../openspec/project.md)
 
@@ -79,6 +79,7 @@ The auto-context router uses this directory map as its source of truth; update t
 
 ### Reference
 - [reference/README.md](reference/README.md)
+- [reference/SCHEMA_CONSTITUTION.md](reference/SCHEMA_CONSTITUTION.md)
 - [reference/PROMPTS_REFERENCE.md](reference/PROMPTS_REFERENCE.md)
 - [reference/DIAGNOSIS_AND_REVIEW.md](reference/DIAGNOSIS_AND_REVIEW.md)
 - [reference/stage-B-knowledge-Chinese.md](reference/stage-B-knowledge-Chinese.md)

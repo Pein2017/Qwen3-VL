@@ -1,23 +1,23 @@
 from __future__ import annotations
 
 import re
-from typing import Protocol, cast
+from typing import NotRequired, Protocol, TypedDict, cast
 
 from .curriculum import NumericParam
 
 from PIL import Image
 
-_PIL_TRANSFORM = getattr(Image, "Transform", Image)
-_PIL_RESAMPLE = getattr(Image, "Resampling", Image)
-_PIL_AFFINE = getattr(_PIL_TRANSFORM, "AFFINE")
-_PIL_BICUBIC = getattr(_PIL_RESAMPLE, "BICUBIC")
-
+from ..contracts import AugmentationTelemetry, DatasetObject
 from ..geometry import (
     compose_affine,
     invert_affine,
     transform_geometry,
 )
-from ..contracts import AugmentationTelemetry
+
+_PIL_TRANSFORM = getattr(Image, "Transform", Image)
+_PIL_RESAMPLE = getattr(Image, "Resampling", Image)
+_PIL_AFFINE = getattr(_PIL_TRANSFORM, "AFFINE")
+_PIL_BICUBIC = getattr(_PIL_RESAMPLE, "BICUBIC")
 
 
 def _is_prob_field(name: str) -> bool:
@@ -35,6 +35,12 @@ class RngLike(Protocol):
     def randrange(self, start: int, stop: int | None = None, step: int = 1) -> int: ...
 
     def shuffle(self, x: list[object]) -> None: ...
+
+
+class AugmentationMeta(TypedDict):
+    name: str
+    params: dict[str, object]
+    curriculum_params: NotRequired[dict[str, object]]
 
 
 class CurriculumMixin:
@@ -85,12 +91,12 @@ class ColorOp(CurriculumMixin):
     def apply(
         self,
         images: list[Image.Image],
-        geoms: list[dict[str, object]],
+        geoms: list[DatasetObject],
         *,
         width: int,
         height: int,
         rng: RngLike,
-    ) -> tuple[list[Image.Image], list[dict[str, object]]]:
+    ) -> tuple[list[Image.Image], list[DatasetObject]]:
         raise NotImplementedError
 
 
@@ -108,12 +114,12 @@ class PatchOp(CurriculumMixin):
     def apply(
         self,
         images: list[Image.Image],
-        geoms: list[dict[str, object]],
+        geoms: list[DatasetObject],
         *,
         width: int,
         height: int,
         rng: RngLike,
-    ) -> tuple[list[Image.Image], list[dict[str, object]]]:
+    ) -> tuple[list[Image.Image], list[DatasetObject]]:
         raise NotImplementedError
 
 
@@ -173,12 +179,12 @@ class ImageAugmenter(Protocol):
     def apply(
         self,
         images: list[Image.Image],
-        geoms: list[dict[str, object]],
+        geoms: list[DatasetObject],
         *,
         width: int,
         height: int,
         rng: RngLike,
-    ) -> tuple[list[Image.Image], list[dict[str, object]]]: ...
+    ) -> tuple[list[Image.Image], list[DatasetObject]]: ...
 
 
 class AugmentationPipeline(Protocol):
@@ -188,12 +194,12 @@ class AugmentationPipeline(Protocol):
     def apply(
         self,
         images: list[Image.Image],
-        geoms: list[dict[str, object]],
+        geoms: list[DatasetObject],
         *,
         width: int,
         height: int,
         rng: RngLike,
-    ) -> tuple[list[Image.Image], list[dict[str, object]]]: ...
+    ) -> tuple[list[Image.Image], list[DatasetObject]]: ...
 
 
 class Compose:
@@ -209,7 +215,7 @@ class Compose:
         self.last_image_height: int | None = None
         self.last_crop_skip_reason: str | None = None
         self.last_skip_counters: dict[str, int] = {}
-        self._augmentation_meta: list[dict[str, object]] | None = None
+        self._augmentation_meta: list[AugmentationMeta] | None = None
         self._augmentation_name_map: dict[str, list[ImageAugmenter]] | None = None
         self._curriculum_base_ops: dict[str, dict[str, NumericParam]] | None = None
 
@@ -248,14 +254,14 @@ class Compose:
     def apply(
         self,
         images: list[Image.Image],
-        geoms: list[dict[str, object]],
+        geoms: list[DatasetObject],
         *,
         width: int,
         height: int,
-        rng: object,
-    ) -> tuple[list[Image.Image], list[dict[str, object]]]:
+        rng: RngLike,
+    ) -> tuple[list[Image.Image], list[DatasetObject]]:
         out_images: list[Image.Image] = images
-        out_geoms: list[dict[str, object]] = geoms
+        out_geoms: list[DatasetObject] = geoms
 
         # Clear metadata from previous run
         self.last_kept_indices = None
@@ -296,9 +302,9 @@ class Compose:
             ]
 
         def _apply_affine_to_geoms(
-            gs: list[dict[str, object]], M: list[list[float]], w: int, h: int
-        ) -> list[dict[str, object]]:
-            new_geoms: list[dict[str, object]] = []
+            gs: list[DatasetObject], M: list[list[float]], w: int, h: int
+        ) -> list[DatasetObject]:
+            new_geoms: list[DatasetObject] = []
             for g in gs:
                 out = transform_geometry(g, M, width=w, height=h)
                 new_geoms.append(out)

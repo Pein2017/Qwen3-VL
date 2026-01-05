@@ -7,9 +7,29 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from collections.abc import Mapping, Sequence
-from typing import Literal, cast
+from typing import Literal, NotRequired, TypedDict
+
+from src.utils import require_mapping
+from src.utils.unstructured import UnstructuredMapping
 
 ExperienceOperationKind = Literal["upsert", "update", "remove", "merge"]
+
+
+class ExperienceMetadataPayload(TypedDict, total=False):
+    updated_at: str
+    reflection_id: str
+    sources: list[str]
+    rationale: NotRequired[str]
+    hit_count: int
+    miss_count: int
+    confidence: float
+
+
+class MissionGuidancePayload(TypedDict, total=False):
+    step: int
+    updated_at: str
+    experiences: dict[str, str]
+    metadata: dict[str, ExperienceMetadataPayload]
 
 
 @dataclass(frozen=True)
@@ -25,8 +45,8 @@ class ExperienceMetadata:
     miss_count: int = 0
     confidence: float = 1.0
 
-    def to_payload(self) -> dict[str, object]:
-        payload: dict[str, object] = {
+    def to_payload(self) -> ExperienceMetadataPayload:
+        payload: ExperienceMetadataPayload = {
             "updated_at": self.updated_at.isoformat(),
             "reflection_id": self.reflection_id,
             "sources": list(self.sources),
@@ -140,7 +160,11 @@ class LabelProvenance:
 
     source: str | None = None
     timestamp: datetime | None = None
-    metadata: Mapping[str, object] | None = None
+    metadata: UnstructuredMapping | None = None
+
+    def __post_init__(self) -> None:
+        if self.metadata is not None:
+            require_mapping(self.metadata, context="label_provenance.metadata")
 
 
 @dataclass(frozen=True)
@@ -175,16 +199,16 @@ class MissionGuidance:
     updated_at: datetime
     metadata: dict[str, ExperienceMetadata] = field(default_factory=dict)
 
-    def to_payload(self) -> dict[str, object]:
-        payload: dict[str, object] = {
+    def to_payload(self) -> MissionGuidancePayload:
+        payload: MissionGuidancePayload = {
             "step": self.step,
             "updated_at": self.updated_at.isoformat(),
             "experiences": self.experiences,
         }
         if self.metadata:
-            payload["metadata"] = cast(
-                object, {key: meta.to_payload() for key, meta in self.metadata.items()}
-            )
+            payload["metadata"] = {
+                key: meta.to_payload() for key, meta in self.metadata.items()
+            }
         return payload
 
 

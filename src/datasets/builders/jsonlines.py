@@ -5,9 +5,10 @@ import copy
 import json
 import os
 from collections.abc import Iterable, Mapping
-from typing import Literal, Sequence
+from typing import Literal, Sequence, cast
 
 from ..contracts import ConversationRecord, DatasetObject, validate_conversation_record
+from src.utils.unstructured import UnstructuredMutableMapping
 from ..geometry import normalize_points
 from ..utils import extract_object_points
 from .base import BaseBuilder
@@ -66,11 +67,13 @@ class JSONLinesBuilder(BaseBuilder):
             )
         return summary
 
-    def build(self, record: ConversationRecord) -> dict[str, object]:
+    def build(self, record: ConversationRecord) -> UnstructuredMutableMapping:
         """Build a single-record conversation payload."""
         return self.build_many([record])
 
-    def build_many(self, records: Iterable[Mapping[str, object]]) -> dict[str, object]:
+    def build_many(
+        self, records: Iterable[ConversationRecord]
+    ) -> UnstructuredMutableMapping:
         """Build conversation messages from one record.
 
         Dynamic pairing is no longer supported; this method fails if more than one
@@ -88,7 +91,7 @@ class JSONLinesBuilder(BaseBuilder):
         # Pass-through for pre-authored chat records (text-only fusion sources).
         messages = record.get("messages")
         if messages:
-            payload: dict[str, object] = {"messages": copy.deepcopy(messages)}
+            payload: UnstructuredMutableMapping = {"messages": copy.deepcopy(messages)}
             metadata = record.get("metadata")
             if metadata is not None:
                 payload["metadata"] = copy.deepcopy(metadata)
@@ -96,33 +99,26 @@ class JSONLinesBuilder(BaseBuilder):
 
         user_contents: list[dict[str, object]] = []
         objects_out: dict[str, list[object]] = {"ref": [], "bbox": [], "image_id": []}
-        objects_payload: dict[str, object] = {}
+        objects_payload: UnstructuredMutableMapping = {}
 
         images = record.get("images", []) or []
         objects_seq: Sequence[DatasetObject] = record.get("objects") or []
         objects = list(objects_seq)
-        sorted_objects = sort_objects_tlbr(objects)
+        sorted_objects_raw = sort_objects_tlbr(cast(list[dict[str, object]], objects))
+        sorted_objects = cast(list[DatasetObject], sorted_objects_raw)
 
         for image in images:
             user_contents.append({"type": "image", "image": self._to_url(image)})
 
         if self.mode == "summary":
-            assistant_payload: object = self._get_summary_text(record, 0)
+            assistant_text = self._get_summary_text(record, 0)
         else:
             assistant_payload = self._build_group_entry(sorted_objects, record)
+            assistant_text = self._render_json_text(assistant_payload)
             self._update_objects_metadata(objects_out, sorted_objects, 0)
             objects_payload = assistant_payload
 
         user_contents.append({"type": "text", "text": self.user_prompt})
-
-        if self.mode == "summary":
-            assistant_text = (
-                assistant_payload
-                if isinstance(assistant_payload, str)
-                else self._render_json_text(assistant_payload)
-            )
-        else:
-            assistant_text = self._render_json_text(assistant_payload)
 
         if self.assistant_prefix:
             assistant_text = f"{self.assistant_prefix}\n{assistant_text}"
@@ -135,7 +131,7 @@ class JSONLinesBuilder(BaseBuilder):
             },
         ]
 
-        merged: dict[str, object] = {"messages": messages}
+        merged: UnstructuredMutableMapping = {"messages": messages}
         if objects_payload:
             merged["assistant_payload"] = objects_payload
         if objects_out["bbox"]:
@@ -147,14 +143,14 @@ class JSONLinesBuilder(BaseBuilder):
 
     def _build_group_entry(
         self, objects: list[DatasetObject], record: ConversationRecord
-    ) -> dict[str, object]:
+    ) -> UnstructuredMutableMapping:
         width = float(record.get("width") or 1)
         height = float(record.get("height") or 1)
 
-        grouped_objects: dict[str, object] = {}
+        grouped_objects: UnstructuredMutableMapping = {}
         for idx, obj in enumerate(objects, start=1):
             geom_type, points = extract_object_points(obj)
-            payload: dict[str, object] = {
+            payload: UnstructuredMutableMapping = {
                 "desc": self._sanitize_desc(obj.get("desc"), idx)
             }
             if geom_type and points:
@@ -238,8 +234,10 @@ class JSONLinesBuilder(BaseBuilder):
         )
         return assistant_text
 
-    def _prepare_text_payload(self, payload: Mapping[str, object]) -> dict[str, object]:
-        formatted: dict[str, object] = {}
+    def _prepare_text_payload(
+        self, payload: Mapping[str, object]
+    ) -> UnstructuredMutableMapping:
+        formatted: UnstructuredMutableMapping = {}
         for key, entry in payload.items():
             if isinstance(entry, Mapping):
                 formatted[key] = self._format_object_entry(entry)
@@ -247,8 +245,10 @@ class JSONLinesBuilder(BaseBuilder):
                 formatted[key] = entry
         return formatted
 
-    def _format_object_entry(self, entry: Mapping[str, object]) -> dict[str, object]:
-        formatted_entry: dict[str, object] = {}
+    def _format_object_entry(
+        self, entry: Mapping[str, object]
+    ) -> UnstructuredMutableMapping:
+        formatted_entry: UnstructuredMutableMapping = {}
         for field, value in entry.items():
             if field in {"poly", "line"} and isinstance(value, list):
                 formatted_entry[field] = self._format_geometry_sequence(value)

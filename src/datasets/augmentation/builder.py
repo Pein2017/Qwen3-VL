@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from typing import Any
+from typing import cast
 
-from .base import Compose, ImageAugmenter
+from .base import AugmentationMeta, Compose, ImageAugmenter
 from .curriculum import NumericParam
 from .registry import get as get_augmenter
+from src.utils import require_mapping
+from src.utils.unstructured import UnstructuredMapping
 
 
-def build_compose_from_config(cfg: dict[str, Any]) -> Compose:
+def build_compose_from_config(cfg: UnstructuredMapping) -> Compose:
     """Build a Compose pipeline from a simple dict schema.
 
     Schema example (list of ops):
@@ -27,11 +29,14 @@ def build_compose_from_config(cfg: dict[str, Any]) -> Compose:
     """
     if cfg is None:
         raise ValueError("augmentation config is required to build pipeline")
-    ops_cfg: list[dict[str, Any]] = cfg.get("ops") or []
+    cfg = require_mapping(cfg, context="augmentation.config")
+    ops_cfg: list[UnstructuredMapping] = cast(
+        list[UnstructuredMapping], cfg.get("ops") or []
+    )
     if not isinstance(ops_cfg, list):
         raise TypeError("augmentation.ops must be a list of operations")
     ops: list[ImageAugmenter] = []
-    ops_meta: list[dict[str, Any]] = []
+    ops_meta: list[AugmentationMeta] = []
     curriculum_base: dict[str, dict[str, NumericParam]] = {}
 
     def _is_prob_field(name: str) -> bool:
@@ -70,7 +75,7 @@ def build_compose_from_config(cfg: dict[str, Any]) -> Compose:
                 curr_params[param_name] = numeric
                 curriculum_base.setdefault(name, {}).update({param_name: numeric})
 
-        meta_entry: dict[str, Any] = {"name": name, "params": deepcopy(params_copy)}
+        meta_entry: AugmentationMeta = {"name": name, "params": deepcopy(params_copy)}
         if curr_params:
             meta_entry["curriculum_params"] = {
                 k: v.to_python_value() for k, v in curr_params.items()

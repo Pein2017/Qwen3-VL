@@ -1,6 +1,6 @@
 """Dense caption preprocessing"""
 
-from typing import Any, Optional
+from typing import Optional
 
 from .base import BasePreprocessor
 from ..contracts import ConversationRecord

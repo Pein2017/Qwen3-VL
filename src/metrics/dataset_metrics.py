@@ -45,13 +45,18 @@ class DatasetMetricsMixin:
                 num_items_in_batch=num_items_in_batch,
             )
 
-        dataset_labels = inputs.pop(self.label_field, None)
-        _ = inputs.pop(self.segment_field, None)  # Optional legacy field
-        token_types = inputs.pop("token_types", None)
+        # Work on a mutable copy to avoid mutating Mapping inputs.
+        inputs_map: dict[str, Any] = dict(inputs)
+        dataset_labels = inputs_map.pop(self.label_field, None)
+        _ = inputs_map.pop(self.segment_field, None)  # Optional legacy field
+        token_types = inputs_map.pop("token_types", None)
 
         parent = cast(Any, super())
         result = parent.compute_loss(
-            model, inputs, return_outputs=True, num_items_in_batch=num_items_in_batch
+            model,
+            inputs_map,
+            return_outputs=True,
+            num_items_in_batch=num_items_in_batch,
         )
 
         outputs = None
@@ -65,7 +70,7 @@ class DatasetMetricsMixin:
         if dataset_labels is not None and outputs is not None:
             # Log metrics per-sample; skip distributed sync to avoid deadlocks.
             # The trainer's own aggregation handles cross-rank reduction safely.
-            self._log_dataset_metrics(outputs, inputs, dataset_labels, token_types)
+            self._log_dataset_metrics(outputs, inputs_map, dataset_labels, token_types)
             # Skip sync entirely during eval to prevent deadlocks when ranks have imbalanced batches.
             # During training, all ranks process batches uniformly, so sync is safe but unnecessary.
             # We disable it completely to avoid any potential issues.
