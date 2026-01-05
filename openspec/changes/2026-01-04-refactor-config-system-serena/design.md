@@ -3,7 +3,7 @@
 ## Goals
 - Reduce duplicated YAML blocks across dense/summary/GRPO configs.
 - Establish a clear hierarchy: runtime defaults → reusable components → runnable presets.
-- Preserve the existing `extends`/`inherit` model and allow YAML anchors/merge keys.
+- Preserve the existing `extends` model and allow YAML anchors/merge keys.
 - Keep training behavior unchanged (pure refactor).
 
 ## Proposed directory layout
@@ -61,6 +61,15 @@ Notes:
 - `configs/components/*` files only contain a single top-level section (e.g., `training:` or `custom:`) to keep overrides explicit.
 - `configs/train/*` are runnable presets composed via `extends` lists in deterministic order.
 
+## Legacy preset mapping (for reference)
+- `configs/fusion_train/sft_base.yaml` → `configs/train/sft/dense_base.yaml`
+- `configs/fusion_train/bbu_rru_dense_new_schema_1024.yaml` → `configs/train/sft/dense_1024.yaml`
+- `configs/fusion_train/bbu_rru_dense_new_schema_2048.yaml` → `configs/train/sft/dense_2048.yaml`
+- `configs/fusion_train/bbu_rru_summary_new_schema_1024.yaml` → `configs/train/sft/summary_1024.yaml`
+- `configs/fusion_train/bbu_rru_summary_new_schema_2048.yaml` → `configs/train/sft/summary_2048.yaml`
+- `configs/grpo/summary_grpo_base.yaml` → `configs/train/grpo/summary_base.yaml`
+- `configs/grpo/summary_grpo_server.yaml` → `configs/train/grpo/summary_server.yaml`
+
 ## Composition rules
 
 ### Training configs
@@ -69,10 +78,11 @@ Notes:
 - YAML anchors/merge keys are allowed within a file for readability, but cross-file reuse is done through `extends`.
 
 ### Fusion configs
-- Fusion configs accept `extends`/`inherit` (similar to `ConfigLoader`).
+- Fusion configs accept `extends` (similar to `ConfigLoader`).
 - Merge behavior is name-based for `targets` and `sources`:
   - Entries match by `name` (fallback to `dataset` if `name` missing).
   - Matching entries are deep-merged (override replaces scalar values; nested mappings merge).
+  - Entries that exist only in the overlay are appended after base entries.
   - An explicit empty list in the override replaces the base list (e.g., GRPO sources = []).
 - This enables a base file with shared dataset entries and small overlays for 1024/2048 paths.
 

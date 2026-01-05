@@ -4,7 +4,7 @@
 
 ### Requirement: Modular training config hierarchy
 - The project SHALL organize runnable training presets under `configs/train/` and reusable components under `configs/components/`.
-- Runnable presets SHALL compose component YAMLs using `extends`/`inherit` and only override deltas (dataset mix, output paths, run names, mode toggles).
+- Runnable presets SHALL compose component YAMLs using `extends` and only override deltas (dataset mix, output paths, run names, mode toggles).
 - Component YAMLs SHALL be section-scoped (single top-level key) to keep overrides explicit.
 
 #### Scenario: Dense preset composition

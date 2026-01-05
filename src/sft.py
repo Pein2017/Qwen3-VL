@@ -87,10 +87,10 @@ def parse_args():
         epilog="""
 Examples:
   # Basic training with config
-  python -m src.sft --config configs/qwen3vl_lora.yaml
+  python -m src.sft --config configs/train/sft/dense_1024.yaml
   
-  # With inheritance from base config
-  python -m src.sft --config configs/qwen3vl_lora.yaml --base_config configs/base.yaml
+  # With an extra override layer (optional)
+  python -m src.sft --config configs/train/sft/dense_1024.yaml --base_config configs/components/training/sft_defaults.yaml
   
   # Debug mode
   python -m src.sft --config configs/debug.yaml --debug

@@ -111,12 +111,6 @@ def _merge_dataset_entries(
             )
         override_map[key] = entry
 
-    unknown = [name for name in override_map.keys() if name not in base_map]
-    if unknown:
-        raise ValueError(
-            f"Unknown {field_name} entries in override fusion config: {', '.join(unknown)}"
-        )
-
     merged_entries: list[Mapping[str, Any]] = []
     for entry in base_entries:
         key = _dataset_entry_key(entry, field_name=field_name)
@@ -124,6 +118,12 @@ def _merge_dataset_entries(
             merged_entries.append(_merge_dicts(entry, override_map[key]))
         else:
             merged_entries.append(entry)
+
+    for entry in override_entries:
+        key = _dataset_entry_key(entry, field_name=field_name)
+        if key not in base_map:
+            merged_entries.append(entry)
+
     return merged_entries
 
 

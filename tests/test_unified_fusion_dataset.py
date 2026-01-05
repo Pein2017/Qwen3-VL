@@ -95,7 +95,7 @@ def _write_fusion_config(
         source_section["val_jsonl"] = str(source_val)
     if source_overrides:
         source_section.update(source_overrides)
-    payload = {"target": target_section, "sources": [source_section]}
+    payload = {"targets": [target_section], "sources": [source_section]}
     path.write_text(json.dumps(payload), encoding="utf-8")
 
 

@@ -9,7 +9,7 @@
 - Introduce a modular config hierarchy under `configs/components/` for reusable blocks (model, tuner, training, data loader, custom defaults, augmentation, rlhf, deepspeed).
 - Move runnable presets to `configs/train/<mode>/` and keep `configs/debug.yaml` as the default entrypoint.
 - Reorganize fusion dataset mix configs under `configs/fusion/` with base definitions and per-resolution overlays.
-- Add inheritance support to fusion configs (`extends`/`inherit`) with name-based merging for `targets` and `sources` to reduce duplication across 1024/2048 variants.
+- Add inheritance support to fusion configs (`extends`) with name-based merging for `targets` and `sources` plus append-only additions for new dataset names.
 - Update `scripts/validate_sft_config.py` and documentation to reflect the new layout.
 
 ## Scope
@@ -25,7 +25,7 @@
 
 ## Impact / Breaking changes
 - Existing config file paths and names will change; old YAMLs will be removed or replaced.
-- Fusion configs gain `extends`/`inherit` with name-based merge semantics for targets/sources.
+- Fusion configs gain `extends` with name-based merge semantics for targets/sources and allow new entries to append.
 
 ## Success criteria
 - Runnable presets under `configs/train/` are composed from components with minimal overrides and show >50% reduction in repeated sections.
@@ -34,7 +34,7 @@
 - Documentation reflects the new hierarchy and catalog.
 
 ## Risks
-- Name-based merge for fusion configs could hide typos in dataset names; validation must fail fast on unknown names.
+- Name-based merge for fusion configs could hide typos in dataset names; append semantics may introduce unintended new entries if names are misspelled.
 - Large-scale path changes risk stale doc references; docs map requires a full audit update.
 
 ## Rollout plan (high-level)
