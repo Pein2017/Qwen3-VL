@@ -3,6 +3,9 @@
 ## Purpose
 Define an offline, objective evaluation protocol for dense captioning/detection outputs over Qwen3‑VL’s geometry primitives (`bbox_2d`, `poly` convex quads, and `line`) with category-aware scoring derived from `desc`.
 
+## Non-goals (this change)
+- Attribute-level scoring (key/value correctness beyond phase/category) and OCR-text similarity metrics are explicitly out of scope for this change proposal. A follow-up change may add these as additional metrics once geometry + category-aware evaluation is stable.
+
 ## ADDED Requirements
 
 ### Requirement: Dump ingestion (norm1000)
@@ -46,7 +49,7 @@ The evaluator SHALL evaluate `line` objects using a mask-wise TubeIoU defined by
 - **THEN** that tolerance is used for all line overlap computations
 - **AND** the tolerance value is included in the machine-readable evaluation artifact for reproducibility
 - **WHEN** evaluation is executed without explicitly specifying a TubeIoU tolerance value
-- **THEN** the evaluator selects a default tolerance
+- **THEN** the evaluator selects a default tolerance of `8` (norm1000 units)
 - **AND** the selected default tolerance is included in the machine-readable evaluation artifact for reproducibility
 
 ### Requirement: Greedy 1-to-1 matching (intersection-over-union)
