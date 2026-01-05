@@ -1,0 +1,32 @@
+# Tasks: Geometry- and category-aware evaluation for dense captioning
+
+- [ ] Decide default parameters (line tolerance in norm1000; threshold sweep; primary threshold).
+- [ ] Add robust `desc` parsing/normalization:
+  - [ ] Extract phase/head label for both legacy (`phase/...`) and key=value (`类别=...`) formats.
+  - [ ] Extract fine category label (prefer `类别`, fall back to mapping rules for legacy desc).
+  - [ ] (Optional) Normalize attribute key/value pairs for matched-pair scoring.
+- [ ] Implement overlap rulers:
+  - [ ] Region IoU for `bbox_2d` and convex-quad `poly`, including `bbox_2d` ↔ `poly` cross-type overlap.
+  - [ ] Line TubeIoU (mask IoU for buffered polylines) at fixed tolerance.
+  - [ ] (Optional) Keep coverage-F1 line diagnostic as a secondary debug metric.
+- [ ] Implement matching:
+  - [ ] Family-aware matching (region family vs line family).
+  - [ ] 1-to-1 assignment (greedy baseline), with deterministic tie-breaking.
+  - [ ] Modes: localization-only, phase-aware, category-aware.
+- [ ] Implement metric aggregation:
+  - [ ] Precision/Recall/F1 at thresholds 0.50:0.95 step 0.05.
+  - [ ] Mean-F1 across the sweep.
+  - [ ] Per-geometry breakdown (`bbox_2d`, `poly`, `line`) and per-category breakdown (top categories).
+  - [ ] Count-based diagnostics (over/under generation rates).
+  - [ ] (Optional) Attribute/OCR metrics on matched pairs.
+- [ ] CLI + outputs:
+  - [ ] Evaluate one or more `gt_vs_pred.jsonl` dumps.
+  - [ ] Emit console report and a JSON summary artifact.
+  - [ ] (Optional) Emit wrong-case JSONL for visualization triage.
+- [ ] Add tests:
+  - [ ] Region IoU correctness for bbox/poly cross-type.
+  - [ ] Line TubeIoU correctness + tolerance sanity.
+  - [ ] Desc parsing for both formats.
+  - [ ] Matching determinism.
+- [ ] Update documentation/tooling index for evaluation usage.
+
