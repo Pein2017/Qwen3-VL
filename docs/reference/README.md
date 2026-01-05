@@ -11,7 +11,7 @@ Related: [data/BBU_RRU_BUSINESS_KNOWLEDGE.md](../data/BBU_RRU_BUSINESS_KNOWLEDGE
 - [stage-B-knowledge-Chinese.md](stage-B-knowledge-Chinese.md) — Business knowledge for Stage-B (CN).
 
 ## Schemas
-- [SCHEMA_CONSTITUTION.md](SCHEMA_CONSTITUTION.md) — Rules for non-trivial data modeling and schema review checklist.
+- [SCHEMA_CONSTITUTION.md](SCHEMA_CONSTITUTION.md) — Rules for non-trivial data modeling.
 
 ## Diagnostics
 - [DIAGNOSIS_AND_REVIEW.md](DIAGNOSIS_AND_REVIEW.md) — Stage-B rule-search diagnostics checklist.

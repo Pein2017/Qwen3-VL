@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import copy
 import random
-from collections.abc import Mapping, MutableMapping, Sequence
-from typing import Literal
+from collections.abc import Mapping, Sequence
+from typing import Literal, Protocol
 
-from src.utils import get_logger
+from src.utils import get_logger, require_mutable_mapping
+from src.utils.unstructured import UnstructuredMapping, UnstructuredMutableMapping
 
 from torch.utils.data import Dataset, get_worker_info
 from swift.llm.template.base import MaxLengthError
@@ -23,8 +24,26 @@ from .preprocessors import AugmentationPreprocessor, SequentialPreprocessor
 from .utils import extract_object_points, load_jsonl
 
 # Exposed for debugging (e.g., OOM tracing)
-LAST_SAMPLE_DEBUG: dict[str, object] = {}
+LAST_SAMPLE_DEBUG: UnstructuredMutableMapping = {}
 logger = get_logger(__name__)
+
+
+class TemplateProtocol(Protocol):
+    system: str | None
+    max_length: int | None
+    image_token_id: int | None
+    processor: object | None
+    tokenizer: object | None
+
+    def encode(
+        self,
+        inputs: object,
+        *,
+        return_template_inputs: bool = False,
+        return_length: bool = False,
+    ) -> UnstructuredMutableMapping: ...
+
+    def set_mode(self, mode: str) -> None: ...
 
 
 class BaseCaptionDataset(Dataset[object]):
@@ -37,8 +56,8 @@ class BaseCaptionDataset(Dataset[object]):
 
     def __init__(
         self,
-        base_records: Sequence[object],
-        template: object,
+        base_records: Sequence[ConversationRecord],
+        template: TemplateProtocol,
         user_prompt: str,
         emit_norm: Literal["none", "norm100", "norm1000"],
         json_format: Literal["standard"],
@@ -51,7 +70,7 @@ class BaseCaptionDataset(Dataset[object]):
         system_prompt_summary: str | None = None,
         bypass_prob: float = 0.0,
         seed: int = 2025,
-        curriculum_state: MutableMapping[str, object] | None = None,
+        curriculum_state: UnstructuredMutableMapping | None = None,
         dataset_name: str | None = None,
         allow_empty: bool = False,
     ):
@@ -111,6 +130,13 @@ class BaseCaptionDataset(Dataset[object]):
         if preprocessor is not None:
             preprocessors.append(preprocessor)
         if augmenter is not None:
+            curriculum_state = (
+                require_mutable_mapping(
+                    curriculum_state, context="dense_caption.curriculum_state"
+                )
+                if curriculum_state is not None
+                else None
+            )
             preprocessors.append(
                 AugmentationPreprocessor(
                     augmenter=augmenter,
@@ -137,7 +163,7 @@ class BaseCaptionDataset(Dataset[object]):
         self._index_perm = list(range(len(self.base_records)))
         self._rebuild_perm_for_epoch()
         self.dataset_name = dataset_name or "dataset"
-        self.last_sample_debug: dict[str, object] = {}
+        self.last_sample_debug: UnstructuredMapping = {}
 
     def _resolve_assistant_prefix(
         self, mode: Literal["dense", "summary"]
@@ -166,7 +192,7 @@ class BaseCaptionDataset(Dataset[object]):
     @staticmethod
     def from_jsonl(
         jsonl_path: str,
-        template: object,
+        template: TemplateProtocol,
         **kwargs,
     ) -> "BaseCaptionDataset":
         records = load_jsonl(jsonl_path, resolve_relative=True)
@@ -222,7 +248,7 @@ class BaseCaptionDataset(Dataset[object]):
             assistant_prefix=assistant_prefix,
         )
 
-    def __getitem__(self, index: int) -> dict[str, object]:
+    def __getitem__(self, index: int) -> UnstructuredMutableMapping:
         if not self.base_records:
             raise IndexError("BaseCaptionDataset is empty")
 
@@ -371,7 +397,10 @@ class BaseCaptionDataset(Dataset[object]):
         return encoded
 
     def _validate_mm_length(
-        self, encoded: dict[str, object], record: Mapping[str, object], base_idx: int
+        self,
+        encoded: UnstructuredMutableMapping,
+        record: ConversationRecord,
+        base_idx: int,
     ) -> None:
         input_ids = encoded.get("input_ids")
         image_grid_thw = encoded.get("image_grid_thw")

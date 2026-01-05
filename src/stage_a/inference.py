@@ -11,10 +11,10 @@ from __future__ import annotations
 import json
 import random
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, TypeVar, cast
+from typing import Protocol, TypeVar, TypedDict, cast
 
 import torch
 from PIL import Image
@@ -28,12 +28,16 @@ from transformers import (
 
 from data_conversion.utils.exif_utils import apply_exif_orientation
 
-from ..utils import get_logger
+from ..utils import get_logger, require_mapping
+from ..utils.unstructured import UnstructuredMapping
 from .prompts import SUMMARY_SYSTEM_PROMPT, build_system_prompt, build_user_prompt
+from .types import StageAGroupRecord
 from src.prompts.summary_profiles import DEFAULT_SUMMARY_PROFILE_RUNTIME
 
 
-def _build_generation_config(gen_config: dict[str, object]) -> GenerationConfig:
+def _build_generation_config(gen_config: UnstructuredMapping) -> GenerationConfig:
+    """Build a GenerationConfig from an intentionally unstructured mapping."""
+    gen_config = require_mapping(gen_config, context="stage_a.gen_config")
     return GenerationConfig(**gen_config)
 
 # Import distributed helpers from stage_b (reusable lightweight module)
@@ -112,6 +116,22 @@ class ProcessorProtocol(Protocol):
     def batch_decode(self, *args: object, **kwargs: object) -> list[str]: ...
 
 
+class ModelInputs(TypedDict, total=False):
+    input_ids: torch.Tensor
+    attention_mask: torch.Tensor
+    pixel_values: torch.Tensor
+    image_grid_thw: torch.Tensor
+
+
+def _extract_model_inputs(payload: Mapping[str, object]) -> ModelInputs:
+    model_inputs: ModelInputs = {}
+    for key in ("input_ids", "attention_mask", "pixel_values", "image_grid_thw"):
+        value = payload.get(key)
+        if value is not None:
+            model_inputs[key] = cast(torch.Tensor, value)
+    return model_inputs
+
+
 def _safe_pbar_update(pbar: object, delta: int) -> None:
     update = getattr(pbar, "update", None)
     if callable(update):
@@ -145,7 +165,7 @@ def _natural_key(s: str) -> list[object]:
     return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", s)]
 
 
-def _maybe_parse_json_object(text: str) -> dict[str, object] | None:
+def _maybe_parse_json_object(text: str) -> UnstructuredMapping | None:
     """Attempt to parse a JSON object from a string.
     Returns dict if text is a JSON object; otherwise None.
     """
@@ -156,22 +176,24 @@ def _maybe_parse_json_object(text: str) -> dict[str, object] | None:
         obj = json.loads(t)
     except Exception:
         return None
-    return obj if isinstance(obj, dict) else None
+    try:
+        return require_mapping(obj, context="stage_a.summary_json")
+    except TypeError:
+        return None
 
 
-def _is_summary_json(obj: dict[str, object]) -> bool:
+def _is_summary_json(obj: UnstructuredMapping) -> bool:
     """Heuristic: identify summary JSON schema."""
-    if not isinstance(obj, dict):
-        return False
     return "统计" in obj
 
 
-def _format_summary_json(obj: dict[str, object]) -> str:
+def _format_summary_json(obj: UnstructuredMapping) -> str:
     """Normalize summary JSON objects to a single-line string.
 
     - Keeps only the canonical top-level keys used by the summary contract.
     - Uses the canonical separators (", ", ": ") to match prompt/contract.
     """
+    obj = require_mapping(obj, context="stage_a.summary")
     ordered: dict[str, object] = {}
     for key in ("统计", "备注", "分组统计"):
         if key in obj:
@@ -584,7 +606,7 @@ def infer_one_image(
     processor: ProcessorProtocol,
     image: Image.Image,
     user_text: str,
-    gen_config: dict[str, object],
+    gen_config: UnstructuredMapping,
     verify: bool = False,
     system_prompt: str | None = None,
 ) -> tuple[str, str]:
@@ -647,13 +669,17 @@ def infer_one_image(
         images=[image], text=[text], return_tensors="pt", images_kwargs=_img_kwargs
     )
     inputs = cast(BatchEncoding, inputs)
+    model_inputs = _extract_model_inputs(inputs)
+    input_ids = model_inputs.get("input_ids")
+    if input_ids is None:
+        raise ValueError("processor output missing input_ids")
     if verify:
         try:
             import hashlib
 
             buf = image.tobytes()
             sha = hashlib.sha256(buf).hexdigest()[:16]
-            grid = inputs.get("image_grid_thw")
+            grid = model_inputs.get("image_grid_thw")
             merge = getattr(
                 getattr(processor, "image_processor", None), "merge_size", 2
             )
@@ -668,7 +694,7 @@ def infer_one_image(
                 None,
             )
             text_token_count = (
-                int((inputs["input_ids"][0] == image_token_id).sum().item())
+                int((input_ids[0] == image_token_id).sum().item())
                 if image_token_id is not None
                 else -1
             )
@@ -684,9 +710,13 @@ def infer_one_image(
         except Exception:
             logger.warning("[verify] logging failed", exc_info=False)
     inputs = inputs.to(model.device)
+    model_inputs = _extract_model_inputs(inputs)
+    input_ids = model_inputs.get("input_ids")
+    if input_ids is None:
+        raise ValueError("processor output missing input_ids")
     # Debug: verify grid/token alignment
     try:
-        grid = inputs.get("image_grid_thw")
+        grid = model_inputs.get("image_grid_thw")
         if grid is not None:
             merge = getattr(
                 getattr(processor, "image_processor", None), "merge_size", 2
@@ -698,7 +728,7 @@ def infer_one_image(
             text_token_count = -1
             try:
                 text_token_count = (
-                    int((inputs["input_ids"][0] == image_token_id).sum().item())
+                    int((input_ids[0] == image_token_id).sum().item())
                     if image_token_id is not None
                     else -1
                 )
@@ -718,14 +748,14 @@ def infer_one_image(
     # Generate
     with torch.inference_mode():
         gen = model.generate(
-            **inputs,
+            **model_inputs,
             use_cache=True,
             generation_config=generation_config,
             pad_token_id=processor.tokenizer.pad_token_id,  # type: ignore[attr-defined]
         )
 
     # Decode
-    start = inputs["input_ids"].shape[-1]
+    start = input_ids.shape[-1]
     gen_only = gen[:, start:]
     # Trim trailing EOS/PAD tokens only (preserve other content)
     gen_only = _trim_trailing_eos_pad(
@@ -773,7 +803,7 @@ def infer_batch(
     processor: ProcessorProtocol,
     images: list[Image.Image],
     user_text: str,
-    gen_config: dict[str, object],
+    gen_config: UnstructuredMapping,
     verify: bool = False,
     system_prompt: str | None = None,
 ) -> list[tuple[str, str]]:
@@ -841,11 +871,15 @@ def infer_batch(
         images_kwargs=_img_kwargs,
     )
     inputs = cast(BatchEncoding, inputs)
+    model_inputs = _extract_model_inputs(inputs)
+    input_ids = model_inputs.get("input_ids")
+    if input_ids is None:
+        raise ValueError("processor output missing input_ids")
     if verify and len(images) > 0:
         try:
             import hashlib
 
-            grid = inputs.get("image_grid_thw")
+            grid = model_inputs.get("image_grid_thw")
             merge = getattr(
                 getattr(processor, "image_processor", None), "merge_size", 2
             )
@@ -860,7 +894,7 @@ def infer_batch(
                 None,
             )
             txt = (
-                int((inputs["input_ids"][0] == image_token_id).sum().item())
+                int((input_ids[0] == image_token_id).sum().item())
                 if image_token_id is not None
                 else -1
             )
@@ -877,10 +911,14 @@ def infer_batch(
         except Exception:
             logger.warning("[verify-batch] logging failed", exc_info=False)
     inputs = inputs.to(model.device)
+    model_inputs = _extract_model_inputs(inputs)
+    input_ids = model_inputs.get("input_ids")
+    if input_ids is None:
+        raise ValueError("processor output missing input_ids")
     # Debug: verify first-sample grid/token alignment
     try:
         if len(images) > 0:
-            grid = inputs.get("image_grid_thw")
+            grid = model_inputs.get("image_grid_thw")
             if grid is not None:
                 merge = getattr(
                     getattr(processor, "image_processor", None), "merge_size", 2
@@ -896,7 +934,7 @@ def infer_batch(
                 text_token_count = -1
                 try:
                     text_token_count = (
-                        int((inputs["input_ids"][0] == image_token_id).sum().item())
+                        int((input_ids[0] == image_token_id).sum().item())
                         if image_token_id is not None
                         else -1
                     )
@@ -916,14 +954,14 @@ def infer_batch(
     # Generate for batch
     with torch.inference_mode():
         gen = model.generate(
-            **inputs,
+            **model_inputs,
             use_cache=True,
             generation_config=generation_config,
             pad_token_id=processor.tokenizer.pad_token_id,  # type: ignore[attr-defined]
         )
 
     # Decode each output
-    start = inputs["input_ids"].shape[-1]
+    start = input_ids.shape[-1]
     outputs: list[tuple[str, str]] = []
 
     for i in range(len(images)):
@@ -980,10 +1018,10 @@ def process_group(
     mission: str | None,
     dataset: str = "bbu",
     prompt_profile: str = DEFAULT_SUMMARY_PROFILE_RUNTIME,
-    gen_config: dict[str, object] | None = None,
+    gen_config: UnstructuredMapping | None = None,
     batch_size: int = 8,
     verify: bool = False,
-) -> dict[str, object]:
+) -> StageAGroupRecord:
     """Process a single group with batched inference.
 
     Args:
@@ -1091,7 +1129,7 @@ def process_group(
 
     # Build record
     # Flattened record: keep only essential fields; drop raw/clean arrays to reduce redundancy
-    record: dict[str, object] = {
+    record: StageAGroupRecord = {
         "group_id": group_id,
         "mission": group_info.mission,
         "label": group_info.label,
@@ -1110,7 +1148,7 @@ def run_stage_a_inference(
     dataset: str = "bbu",
     prompt_profile: str = DEFAULT_SUMMARY_PROFILE_RUNTIME,
     device: str = "cuda:0",
-    gen_params: dict[str, object] | None = None,
+    gen_params: UnstructuredMapping | None = None,
     batch_size: int = 8,
     max_pixels: int = 786432,
     verify_inputs: bool = False,
@@ -1423,7 +1461,7 @@ def _run_per_group(
     mission: str,
     dataset: str,
     prompt_profile: str,
-    gen_config: dict[str, object],
+    gen_config: UnstructuredMapping,
     batch_size: int,
     verify_inputs: bool,
     output_path: Path,
@@ -1503,7 +1541,7 @@ def _run_per_image_jobs(
     mission: str,
     dataset: str,
     prompt_profile: str,
-    gen_config: dict[str, object],
+    gen_config: UnstructuredMapping,
     batch_size: int,
     verify_inputs: bool,
     output_path: Path,
@@ -1847,7 +1885,7 @@ def _run_cross_group_batches(
     processor: ProcessorProtocol,
     mission: str,
     dataset: str,
-    gen_config: dict[str, object],
+    gen_config: UnstructuredMapping,
     batch_size: int,
     verify_inputs: bool,
     prompt_profile: str,

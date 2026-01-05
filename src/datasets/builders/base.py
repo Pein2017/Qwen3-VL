@@ -1,8 +1,9 @@
 """Base builder interface"""
 
-from typing import Any, Dict, Iterable, Mapping
+from typing import Any, Iterable
 
 from ..contracts import ConversationRecord, validate_conversation_record
+from src.utils.unstructured import UnstructuredMutableMapping
 
 
 class BaseBuilder:
@@ -15,13 +16,15 @@ class BaseBuilder:
         """Initialize builder with configuration."""
         self.config = kwargs
 
-    def build(self, record: ConversationRecord) -> Dict[str, Any]:
-        """Build messages from a single record."""
+    def build(self, record: ConversationRecord) -> UnstructuredMutableMapping:
+        """Build messages from a single record (unstructured payload)."""
         raise NotImplementedError(
             "Subclasses must implement build() for single records"
         )
 
-    def build_many(self, records: Iterable[Mapping[str, Any]]) -> Dict[str, Any]:
+    def build_many(
+        self, records: Iterable[ConversationRecord]
+    ) -> UnstructuredMutableMapping:
         """Build messages from one record.
 
         Dynamic pairing/grouping has been removed; providing more than one record
@@ -37,7 +40,7 @@ class BaseBuilder:
             "Dynamic pairing is no longer supported; provide exactly one record to build_many()."
         )
 
-    def __call__(self, record: Mapping[str, Any]) -> Dict[str, Any]:
+    def __call__(self, record: ConversationRecord) -> UnstructuredMutableMapping:
         """Allow builder to be called as a function with a single record."""
 
         rec = validate_conversation_record(record)

@@ -1,10 +1,9 @@
 # Schema Constitution
 
 Status: Active
-Scope: Rules for modeling non-trivial data, schema selection, validation, and review checklist.
+Scope: Rules for modeling non-trivial data, schema selection, and validation.
 Owners: Architecture
 Last updated: 2026-01-05
-Related: [data/DATA_JSONL_CONTRACT.md](../data/DATA_JSONL_CONTRACT.md), [training/REFERENCE.md](../training/REFERENCE.md), `src/datasets/contracts.py`, `src/config/schema.py`
 
 ## Purpose
 Establish a consistent, scalable approach for modeling non-trivial data across Qwen3-VL. The goals are:
@@ -15,31 +14,54 @@ Establish a consistent, scalable approach for modeling non-trivial data across Q
 ## Definitions
 
 ### Boundary schema
-A schema for data that crosses a boundary (file/JSON/JSONL, config, disk, network/API, CLI input, or public module interface). Boundary schemas must validate at creation.
+A schema for data that crosses a boundary.
+
+A boundary is any point where:
+- data leaves one responsibility domain and enters another, or
+- downstream code is expected to rely on stable semantic assumptions.
+
+Typical boundaries include (but are not limited to):
+- file / JSON / JSONL ingestion
+- config loading
+- disk or network I/O
+- CLI and serving interfaces
+- public module interfaces
+
+Boundary schemas must validate at creation.
 
 ### Serving and CLI
 - **Serving**: runtime HTTP/RPC interfaces that accept external requests (inference endpoints).
 - **CLI**: command-line entrypoints that parse user input (for example `python -m src.sft --config ...`).
 
-### Non-trivial data (rubric)
-**Hard triggers (any one => non-trivial):**
-- Boundary I/O (config, JSON/JSONL, disk, network, CLI, public interface)
-- Nested structures (mapping of mappings, list of mappings, list of lists)
-- Stored or shared across modules (not just a local expression)
+### Semantic grouping
+A semantic grouping is a structured object that intentionally bundles related fields
+which are meant to be interpreted together.
 
-**Soft triggers (two or more => non-trivial):**
-- 3+ semantically meaningful fields
-- Optional/union fields that affect behavior
-- Cross-field invariants or validation rules
+Semantic grouping is preferred when:
+- multiple fields jointly represent one conceptual unit, or
+- correctness depends on the relationship between fields rather than individual values.
 
-**Trivial data**: no hard triggers and at most one soft trigger.
+Semantic groupings serve as carriers of meaning across boundaries and module interfaces.
+
+### Non-trivial data (rubric C)
+The rubric applies to function signatures, return types, and class attributes.
+
+**Non-trivial** when a dict/list represents a record with multiple semantic fields, nested structures, or heterogeneous value types.
+
+Data is also considered non-trivial when:
+- the meaning of one field depends on the presence or interpretation of another field, or
+- the structure is intended to be consumed as a conceptual whole by downstream code.
+
+**Trivial** when the structure is a simple lookup or flat list of primitives (for example `Mapping[str, str | int | float | bool]` or `list[int]`), or a local-only helper expression.
 
 ## Type selection rules
 Use the smallest structured type that satisfies the contract.
 
-1) **Pydantic BaseModel** (boundary with complex validation)
+At boundaries, prefer a single semantic grouping over multiple loosely related parameters
+or ad-hoc mappings.
+
+1) **Pydantic BaseModel** (serving/CLI boundary)
 - Use for serving/CLI/request validation, cross-field constraints, or rich error reporting.
-- Prefer when validation or coercion is a requirement.
 - **Scope**: permitted only for serving/CLI boundary schemas unless a module already depends on Pydantic.
 
 2) **dataclass (frozen=True)** (internal structured state)
@@ -50,24 +72,36 @@ Use the smallest structured type that satisfies the contract.
 - Use for JSON/JSONL records that must stay mapping-shaped.
 - Provide a `validate_*` helper and only `cast(...)` after validation.
 
-4) **JsonValue alias** (unstructured data)
-- Use only when data is truly unstructured and must remain so.
-- Keep unstructured payloads isolated in a field named `extra` or `raw`.
+4) **Explicitly unstructured mappings** (escape hatch)
+- Allowed only when the payload is intentionally unstructured.
+- Must be documented in a docstring and validated as a `Mapping` or `Sequence` at entry.
+- Prefer isolating unstructured data in fields named `extra` or `raw` when feasible.
 
 ## Validation and error handling
 - **Type mismatch**: raise `TypeError` with the full field path.
 - **Value invalid**: raise `ValueError` with the full field path and constraint.
 - Validate at boundaries, convert immediately to structured types, and keep `cast(...)` only after validation passes.
 
+Validation is required at boundaries.
+Within a boundary, internal transformations may assume validated invariants
+and are not required to re-validate intermediate states.
+
 ## Function signatures and returns
 - Non-trivial arguments must use structured types (dataclass, TypedDict, or Pydantic).
 - Prefer an `Options` or `Params` object when inputs are interdependent or exceed four fields.
 - Composite returns must use a named structure.
 
+Functions that conceptually operate on or produce a single unit of meaning
+should accept or return a corresponding semantic grouping,
+even if the underlying data could be represented as multiple independent values.
+
 ## Naming and placement
 - Use `XConfig`, `XParams`, `XOptions`, `XInput`, `XOutput`, `XRecord`, `XItem` naming.
 - Place schemas in `contracts/` or `schema/` modules per domain.
 - Keep validators adjacent to the schema definition.
+
+Names should reflect the conceptual role of the data rather than its transport form.
+Avoid names that expose only implementation details (e.g. `data_dict`, `tmp_result`).
 
 ## Examples (before/after)
 
@@ -134,20 +168,14 @@ class RunRequest(BaseModel):
     dry_run: bool = False
 ```
 
-## Schema review checklist (canonical)
-Use this checklist in code reviews or when adding/modifying schemas:
-- Non-trivial rubric applied (hard triggers or two soft triggers).
-- Boundary data validated at creation and converted immediately to structured types.
-- Schema type chosen correctly (Pydantic, dataclass, TypedDict) with justification.
-- `dict`/`list` used only for trivial or explicitly unstructured data.
-- `extra`/`raw` unstructured fields are isolated and documented.
-- Type errors vs value errors are distinct and include full field paths.
-- `Optional[T]` used only when `None` is meaningful (not as a default placeholder).
-
 ## Migration guidance
 - Start at boundaries: replace raw mappings with `from_mapping` or validators.
 - Move shared structures into `schema/` or `contracts/` modules.
 - Keep `extra` for forward compatibility but avoid spreading unstructured payloads.
+
+When refactoring existing code, prioritize:
+- collapsing loosely related parameters into semantic groupings, and
+- making boundary-crossing data explicit and named.
 
 ## Backward-compatibility policy
 There are no backward-compatibility guarantees for the `src/` refactor. Internal call sites may change to align with the constitution.

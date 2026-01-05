@@ -8,6 +8,8 @@ import json
 import re
 
 from src.prompts.stage_b_verdict import build_stage_b_system_prompt
+from src.utils import require_mapping
+from src.utils.unstructured import UnstructuredMapping
 
 from ..types import GroupTicket, MissionGuidance
 from ..utils.chinese import normalize_spaces, to_simplified
@@ -16,7 +18,7 @@ _INDEX_RE = re.compile(r"(\d+)$")
 _STATION_DISTANCE_RE = re.compile(r"站点距离[=/](\d+)")
 
 
-def _parse_summary_json(text: str) -> dict[str, object] | None:
+def _parse_summary_json(text: str) -> UnstructuredMapping | None:
     if not text:
         return None
 
@@ -39,7 +41,7 @@ def _parse_summary_json(text: str) -> dict[str, object] | None:
     if not stripped:
         return None
 
-    def _maybe_parse_obj(candidate: str) -> dict[str, object] | None:
+    def _maybe_parse_obj(candidate: str) -> UnstructuredMapping | None:
         c = candidate.strip()
         if not (c.startswith("{") and c.endswith("}")):
             return None
@@ -47,9 +49,12 @@ def _parse_summary_json(text: str) -> dict[str, object] | None:
             parsed = json.loads(c)
         except Exception:
             return None
-        return parsed if isinstance(parsed, dict) else None
+        try:
+            return require_mapping(parsed, context="stage_b.summary_json")
+        except TypeError:
+            return None
 
-    def _is_summary(obj: dict[str, object]) -> bool:
+    def _is_summary(obj: UnstructuredMapping) -> bool:
         return "统计" in obj
 
     # Fast path: whole string is the JSON object.
@@ -68,7 +73,8 @@ def _parse_summary_json(text: str) -> dict[str, object] | None:
     return None
 
 
-def _format_summary_json(obj: dict[str, object]) -> str:
+def _format_summary_json(obj: UnstructuredMapping) -> str:
+    obj = require_mapping(obj, context="stage_b.summary")
     preferred_order = ["统计", "备注", "分组统计"]
     allowed = set(preferred_order)
     ordered: dict[str, object] = {}
@@ -83,7 +89,7 @@ def _format_summary_json(obj: dict[str, object]) -> str:
     return json.dumps(ordered, ensure_ascii=False, separators=(", ", ": "))
 
 
-def _summary_entries(obj: dict[str, object]) -> list[dict[str, object]]:
+def _summary_entries(obj: UnstructuredMapping) -> list[UnstructuredMapping]:
     entries = obj.get("统计")
     if isinstance(entries, list):
         return [e for e in entries if isinstance(e, dict)]
@@ -91,15 +97,15 @@ def _summary_entries(obj: dict[str, object]) -> list[dict[str, object]]:
 
 
 def _entry_by_category(
-    entries: list[dict[str, object]], category: str
-) -> dict[str, object] | None:
+    entries: list[UnstructuredMapping], category: str
+) -> UnstructuredMapping | None:
     for entry in entries:
         if entry.get("类别") == category:
             return entry
     return None
 
 
-def _summary_distances(obj: dict[str, object]) -> list[str]:
+def _summary_distances(obj: UnstructuredMapping) -> list[str]:
     entry = _entry_by_category(_summary_entries(obj), "站点距离")
     if not entry:
         return []
@@ -111,7 +117,7 @@ def _summary_distances(obj: dict[str, object]) -> list[str]:
     return []
 
 
-def _summary_has_label_text(obj: dict[str, object]) -> bool:
+def _summary_has_label_text(obj: UnstructuredMapping) -> bool:
     entry = _entry_by_category(_summary_entries(obj), "标签")
     if not entry:
         return False
@@ -124,7 +130,7 @@ def _summary_has_label_text(obj: dict[str, object]) -> bool:
     return False
 
 
-def _estimate_object_count_from_summary(obj: dict[str, object]) -> int:
+def _estimate_object_count_from_summary(obj: UnstructuredMapping) -> int:
     """Best-effort object count estimate derived from `统计`."""
 
     entries = _summary_entries(obj)
@@ -160,7 +166,7 @@ def _estimate_object_count_from_summary(obj: dict[str, object]) -> int:
             return 0
         return 1
 
-    def _estimate_category(entry: dict[str, object]) -> int:
+    def _estimate_category(entry: UnstructuredMapping) -> int:
         category = entry.get("类别")
         cat = category.strip() if isinstance(category, str) else ""
 

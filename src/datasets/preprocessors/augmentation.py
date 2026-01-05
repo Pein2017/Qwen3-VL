@@ -10,7 +10,9 @@ from PIL import Image as PILImage
 
 from ...utils.logger import get_logger
 from ..augmentation.curriculum import NumericParam, _build_base_ops
-from ..contracts import AugmentationTelemetry, ConversationRecord
+from src.utils import require_mutable_mapping
+from src.utils.unstructured import UnstructuredMutableMapping
+from ..contracts import AugmentationTelemetry, ConversationRecord, DatasetObject
 from ..utils import extract_geometry
 from .base import BasePreprocessor
 
@@ -30,7 +32,7 @@ class AugmentationPreprocessor(BasePreprocessor):
         augmenter: object | None = None,
         rng: random.Random | None = None,
         bypass_prob: float = 0.0,
-        curriculum_state: MutableMapping[str, object] | None = None,
+        curriculum_state: UnstructuredMutableMapping | None = None,
         **kwargs: object,
     ):
         """Initialize augmentation preprocessor.
@@ -45,7 +47,13 @@ class AugmentationPreprocessor(BasePreprocessor):
         self.augmenter = augmenter
         self.rng = rng if rng is not None else random.Random()
         self.bypass_prob = float(bypass_prob)
-        self.curriculum_state = curriculum_state
+        self.curriculum_state = (
+            require_mutable_mapping(
+                curriculum_state, context="augmentation.curriculum_state"
+            )
+            if curriculum_state is not None
+            else None
+        )
         self._curriculum_last_step: int | None = None
 
     def preprocess(self, row: ConversationRecord) -> ConversationRecord | None:
@@ -93,17 +101,17 @@ class AugmentationPreprocessor(BasePreprocessor):
         images: list[str | PILImage.Image] = cast(
             list[str | PILImage.Image], rec_map.get("images") or []
         )
-        objs: list[dict[str, object]] = cast(
-            list[dict[str, object]], rec_map.get("objects") or []
+        objs: list[DatasetObject] = cast(
+            list[DatasetObject], rec_map.get("objects") or []
         )
 
         # Extract geometries and keep an index mapping back to the object list.
         # This lets us append new duplicated objects when PatchOps increase geometry count
         # (e.g., small_object_zoom_paste).
-        per_obj_geoms: list[dict[str, object]] = []
+        per_obj_geoms: list[DatasetObject] = []
         obj_idx_with_geom: list[int] = []
         for idx, obj in enumerate(objs):
-            g = cast(dict[str, object], extract_geometry(obj))
+            g = cast(DatasetObject, extract_geometry(obj))
             if g:
                 # Attach desc metadata for class-aware PatchOps (e.g., small_object_zoom_paste).
                 # This enables whitelist matching against the full desc string, including 备注/文本.
@@ -143,7 +151,7 @@ class AugmentationPreprocessor(BasePreprocessor):
             # 2) Append any extra geometries as duplicated objects (labeled).
             extra_geoms = per_obj_geoms_new[len(obj_idx_with_geom) :]
             if extra_geoms and obj_idx_with_geom:
-                appended_objs: list[dict[str, object]] = []
+                appended_objs: list[DatasetObject] = []
                 for geom in extra_geoms:
                     src_idx = geom.get("__src_geom_idx")
                     src_idx_int = 0
@@ -163,7 +171,7 @@ class AugmentationPreprocessor(BasePreprocessor):
                 rec_map["objects"] = objs
         else:
             # Crop was applied - filter objects and update completeness
-            filtered_objects: list[dict[str, object]] = []
+            filtered_objects: list[DatasetObject] = []
             kept_indices = list(telemetry.kept_indices)
             coverages = list(telemetry.coverages)
 
@@ -243,7 +251,7 @@ class AugmentationPreprocessor(BasePreprocessor):
             # Append any extra geometries as duplicated objects (labeled).
             extra_geoms = per_obj_geoms_new[len(kept_indices) :]
             if extra_geoms and filtered_objects:
-                appended_objs_crop: list[dict[str, object]] = []
+                appended_objs_crop: list[DatasetObject] = []
                 for geom in extra_geoms:
                     src_idx = geom.get("__src_geom_idx")
                     src_idx_int = 0
@@ -429,7 +437,7 @@ class AugmentationPreprocessor(BasePreprocessor):
                     setattr(op, param_name, coerced)
 
     def _update_geometry_field(
-        self, obj: dict[str, object], new_geom: dict[str, object]
+        self, obj: DatasetObject, new_geom: DatasetObject
     ) -> None:
         """
         Update object's geometry field, ensuring only ONE geometry type exists.

@@ -1,29 +1,23 @@
 ## ADDED Requirements
 ### Requirement: Schema Constitution Document
-A Schema Constitution SHALL define the project-wide rules for modeling non-trivial data, including the boundary/internal decision tree and type-selection rules aligned with current patterns.
+A Schema Constitution SHALL define the project-wide rules for modeling non-trivial data, including the boundary/internal decision rules, type-selection rules, validation/error handling, and escape-hatch guidance for explicitly unstructured mappings.
 
 #### Scenario: Constitution is discoverable and complete
 - **WHEN** schema guidance is published or updated
 - **THEN** a Schema Constitution document exists under `docs/reference/SCHEMA_CONSTITUTION.md`
-- **AND** it is indexed in `docs/README.md` and `docs/reference/README.md`
-- **AND** it includes a concise non-trivial rubric (hard/soft triggers), a boundary/internal decision tree, validation/error handling rules, and before/after examples aligned to `src/datasets/contracts.py` and `src/config/schema.py`
+- **AND** it is written as pure guidance (no execution, monitoring, or checklist coupling)
+- **AND** it includes a minimal non-trivial rubric (rubric C) that applies to function signatures, return types, and class attributes
+- **AND** it includes type-selection rules aligned to dataclass, TypedDict + validator, and limited Pydantic usage
+- **AND** it includes validation/error handling guidance (TypeError vs ValueError with full field paths)
+- **AND** it includes escape-hatch rules permitting explicitly unstructured mappings only when documented and validated as mappings
 - **AND** it explicitly states Pydantic is permitted only for serving/CLI boundary schemas unless a module already depends on it
 - **AND** it explicitly states there are no backward-compatibility guarantees for the `src/` refactor
 
-### Requirement: Canonical Schema Review Checklist
-A single schema review checklist SHALL be the canonical source of schema compliance checks, and other checklists MUST reference it rather than duplicate items.
-
-#### Scenario: Checklist references are centralized
-- **WHEN** a review checklist or runbook includes schema compliance checks
-- **THEN** it links to the canonical schema checklist instead of restating the items
-- **AND** the canonical checklist is linked from the Schema Constitution document
-- **AND** the canonical checklist covers boundary vs internal schema selection, structured type usage, validation expectations, and allowed escape hatches (for example, `extra` mappings)
-
 ### Requirement: `src/` Refactor Compliance
-All Python modules under `src/` SHALL comply with the Schema Constitution by replacing non-trivial dict/list usage with structured types.
+All Python modules under `src/` SHALL comply with the Schema Constitution by replacing non-trivial dict/list usage with structured types or documented+validated explicitly unstructured payloads.
 
 #### Scenario: `src/` is brought into compliance
 - **WHEN** the refactor is completed
 - **THEN** function signatures, return types, and class attributes use structured types for non-trivial data
-- **AND** trivial local dict/list usage is retained only when no hard trigger applies
-- **AND** unstructured payloads are isolated in `extra`/`raw` fields when required
+- **AND** trivial dict/list usage is retained only for simple lookups, flat lists of primitives, or local expressions
+- **AND** explicitly unstructured payloads are documented and validated as mappings or sequences

@@ -11,13 +11,46 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import NotRequired, TypedDict
 
 from ..types import HypothesisCandidate
 from ..utils.chinese import normalize_spaces, to_simplified
+from src.utils import require_mapping
+from src.utils.unstructured import UnstructuredMapping
 
 logger = logging.getLogger(__name__)
 
 _PUNCT_RE = re.compile(r"[，,。.!！？;；:：\-—_()（）\[\]{}<>《》“”\"'·~]", re.UNICODE)
+
+
+class HypothesisRecordPayload(TypedDict, total=False):
+    signature: str
+    text: str
+    falsifier: NotRequired[str | None]
+    dimension: NotRequired[str | None]
+    status: str
+    support_cycles: int
+    support_cycle_ids: list[int]
+    support_ticket_keys: list[str]
+    first_seen: str
+    last_seen: str
+    promoted_at: NotRequired[str]
+    rejected_at: NotRequired[str]
+
+
+class HypothesisEventPayload(TypedDict, total=False):
+    timestamp: str
+    event: str
+    signature: str
+    text: str
+    falsifier: NotRequired[str | None]
+    dimension: NotRequired[str | None]
+    ticket_keys: list[str]
+    reflection_cycle: int
+    epoch: int
+    support_cycles: NotRequired[int]
+    unique_ticket_keys: NotRequired[int]
+    reason: NotRequired[str]
 
 
 def _now() -> datetime:
@@ -48,8 +81,8 @@ class HypothesisRecord:
     promoted_at: str | None = None
     rejected_at: str | None = None
 
-    def to_payload(self) -> dict[str, object]:
-        payload: dict[str, object] = {
+    def to_payload(self) -> HypothesisRecordPayload:
+        payload: HypothesisRecordPayload = {
             "signature": self.signature,
             "text": self.text,
             "falsifier": self.falsifier,
@@ -68,7 +101,8 @@ class HypothesisRecord:
         return payload
 
     @staticmethod
-    def from_payload(payload: Mapping[str, object]) -> "HypothesisRecord":
+    def from_payload(payload: UnstructuredMapping) -> "HypothesisRecord":
+        payload = require_mapping(payload, context="hypothesis.record")
         signature = str(payload.get("signature") or "").strip()
         text = str(payload.get("text") or "").strip()
         falsifier = (
@@ -198,7 +232,7 @@ class HypothesisPool:
             json.dump(serializable, fh, ensure_ascii=False, indent=2)
         self._cache = dict(payload)
 
-    def _append_event(self, payload: Mapping[str, object]) -> None:
+    def _append_event(self, payload: HypothesisEventPayload) -> None:
         self.events_path.parent.mkdir(parents=True, exist_ok=True)
         with self.events_path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(payload, ensure_ascii=False))
@@ -363,7 +397,7 @@ class HypothesisPool:
             record.last_seen = now
             pool[signature] = record
             rejected.append(record)
-            payload = {
+            payload: HypothesisEventPayload = {
                 "timestamp": now,
                 "event": "rejected",
                 "signature": signature,

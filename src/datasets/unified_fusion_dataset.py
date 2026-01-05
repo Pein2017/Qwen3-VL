@@ -12,11 +12,12 @@ import random
 from collections.abc import Mapping, MutableMapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, cast, override
+from typing import Literal, TypedDict, cast, override
 
 from torch.utils.data import get_worker_info
 
-from src.utils import get_logger
+from src.utils import get_logger, require_mutable_mapping
+from src.utils.unstructured import UnstructuredMapping, UnstructuredMutableMapping
 
 from ..config.prompts import (
     SYSTEM_PROMPT_SUMMARY,
@@ -29,8 +30,8 @@ from .assistant_prefix import (
     resolve_task_token,
 )
 from .builders import JSONLinesBuilder
-from .contracts import validate_conversation_record
-from .dense_caption import LAST_SAMPLE_DEBUG, BaseCaptionDataset
+from .contracts import ConversationRecord, validate_conversation_record
+from .dense_caption import LAST_SAMPLE_DEBUG, BaseCaptionDataset, TemplateProtocol
 from .fusion import FusionConfig, _compute_target_quotas, _sample_indices
 from .fusion_types import DatasetSpec
 from .preprocessors import AugmentationPreprocessor, ObjectCapPreprocessor
@@ -56,6 +57,17 @@ class _DatasetPolicy:
     sample_without_replacement: bool
 
 
+class EpochPlanEntry(TypedDict):
+    count: int
+    mode: Literal["dense", "summary"]
+    augmentation: bool
+    curriculum: bool
+    max_objects_per_image: int | None
+    prompt_source: Literal["default", "domain", "dataset"]
+    sample_without_replacement: bool
+    fallback_to_replacement: bool
+
+
 class FusionCaptionDataset(BaseCaptionDataset):
     """Fusion dataset that concatenates multiple JSONL sources with a unified template."""
 
@@ -65,7 +77,7 @@ class FusionCaptionDataset(BaseCaptionDataset):
     _fusion_config: FusionConfig
     _augmenter: object | None
     bypass_prob: float
-    curriculum_state: MutableMapping[str, object] | None
+    curriculum_state: UnstructuredMutableMapping | None
     _shuffle: bool
     _include_source_eval: bool
     _sample_limit: int | None
@@ -75,7 +87,7 @@ class FusionCaptionDataset(BaseCaptionDataset):
     _dataset_order: list[str]
     _primary_target: str
     _rng: random.Random
-    last_sample_debug: dict[str, object]
+    last_sample_debug: UnstructuredMapping
 
     def __init__(
         self,
@@ -87,7 +99,7 @@ class FusionCaptionDataset(BaseCaptionDataset):
         json_format: Literal["standard"],
         augmenter: object | None,
         bypass_prob: float,
-        curriculum_state: MutableMapping[str, object] | None,
+        curriculum_state: UnstructuredMutableMapping | None,
         use_summary: bool,
         system_prompt_dense: str | None,
         system_prompt_summary: str | None,
@@ -103,7 +115,11 @@ class FusionCaptionDataset(BaseCaptionDataset):
         self._split: Literal["train", "eval"] = split
         self._augmenter = augmenter
         self.bypass_prob = float(bypass_prob)
-        self.curriculum_state = curriculum_state
+        self.curriculum_state = (
+            require_mutable_mapping(curriculum_state, context="fusion.curriculum_state")
+            if curriculum_state is not None
+            else None
+        )
         self._shuffle = bool(shuffle)
         self._include_source_eval = False  # target-only eval per policy
         self._sample_limit = sample_limit
@@ -112,10 +128,10 @@ class FusionCaptionDataset(BaseCaptionDataset):
         self._epoch_counts: dict[str, int] = {}
         self._without_replacement_fallbacks: dict[str, bool] = {}
         self._policies: dict[str, _DatasetPolicy] = {}
-        self._record_pools: dict[str, list[dict[str, object]]] = {}
+        self._record_pools: dict[str, list[ConversationRecord]] = {}
         self._preprocessors_aug: dict[str, AugmentationPreprocessor] = {}
         self._preprocessors_cap: dict[str, ObjectCapPreprocessor] = {}
-        self.epoch_plan: dict[str, dict[str, object]] = {}
+        self.epoch_plan: dict[str, EpochPlanEntry] = {}
         self._assistant_prefix_format = (
             assistant_prefix_format.strip() if assistant_prefix_format else None
         )
@@ -252,7 +268,7 @@ class FusionCaptionDataset(BaseCaptionDataset):
         all_records = [rec for pool in self._record_pools.values() for rec in pool]
         super().__init__(
             base_records=all_records,
-            template=base_template,
+            template=cast(TemplateProtocol, base_template),
             user_prompt=user_prompt,
             user_prompt_summary=USER_PROMPT_SUMMARY,
             emit_norm=emit_norm,
@@ -297,12 +313,12 @@ class FusionCaptionDataset(BaseCaptionDataset):
 
     @staticmethod
     def _annotate_record(
-        record: MutableMapping[str, object],
+        record: ConversationRecord,
         spec: DatasetSpec,
         mode: Literal["dense", "summary"],
-    ) -> dict[str, object]:
+    ) -> ConversationRecord:
         """Annotate record with source dataset metadata."""
-        annotated = copy.deepcopy(dict(record))
+        annotated = cast(ConversationRecord, copy.deepcopy(dict(record)))
         metadata = annotated.get("metadata") or {}
         if not isinstance(metadata, dict):
             metadata = {}
@@ -316,16 +332,18 @@ class FusionCaptionDataset(BaseCaptionDataset):
     @staticmethod
     def _load_records(
         path: Path, *, limit: int | None
-    ) -> list[MutableMapping[str, object]]:
+    ) -> list[ConversationRecord]:
         records = load_jsonl(str(path), resolve_relative=True)
-        records = [cast(MutableMapping[str, object], rec) for rec in records]
         if limit is not None and limit > 0:
             records = records[:limit]
-        validated: list[MutableMapping[str, object]] = []
+        validated: list[ConversationRecord] = []
         for idx, record in enumerate(records):
             try:
                 validated.append(
-                    dict(copy.deepcopy(validate_conversation_record(record)))
+                    cast(
+                        ConversationRecord,
+                        dict(copy.deepcopy(validate_conversation_record(record))),
+                    )
                 )
             except ValueError as exc:
                 raise ValueError(f"Record {idx} in {path} is invalid: {exc}") from exc
@@ -563,7 +581,7 @@ class FusionCaptionDataset(BaseCaptionDataset):
         self._update_epoch_plan(eval_mode=True)
 
     def _update_epoch_plan(self, eval_mode: bool = False) -> None:
-        plan: dict[str, dict[str, object]] = {}
+        plan: dict[str, EpochPlanEntry] = {}
         for name in self._dataset_order:
             policy = self._policies.get(name)
             if policy is None:
@@ -604,7 +622,7 @@ class FusionCaptionDataset(BaseCaptionDataset):
         return len(self._schedule)
 
     @override
-    def __getitem__(self, index: int) -> dict[str, object]:
+    def __getitem__(self, index: int) -> UnstructuredMutableMapping:
         if not self._schedule:
             raise IndexError("FusionCaptionDataset is empty")
 

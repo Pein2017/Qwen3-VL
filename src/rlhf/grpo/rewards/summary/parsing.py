@@ -7,6 +7,8 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
+from src.utils.unstructured import UnstructuredMutableMapping
+
 _IRRELEVANT_SOURCE = "irrelevant_summary"
 _IRRELEVANT_TEXT = "无关图片"
 _HEADER_PATTERN = re.compile(r"^<DOMAIN=[A-Z]+>, <TASK=[A-Z]+>$")
@@ -236,8 +238,8 @@ class JsonDuplicateKeyError(ValueError):
 
 
 def loads_json_rejecting_duplicate_keys(text: str) -> Any:
-    def _hook(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-        obj: dict[str, Any] = {}
+    def _hook(pairs: list[tuple[str, Any]]) -> UnstructuredMutableMapping:
+        obj: UnstructuredMutableMapping = {}
         for k, v in pairs:
             if k in obj:
                 raise JsonDuplicateKeyError(f"Duplicate key: {k}")

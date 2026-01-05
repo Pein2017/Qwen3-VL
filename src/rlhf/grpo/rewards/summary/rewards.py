@@ -25,6 +25,8 @@ from .parsing import (
     normalize_free_text,
     normalize_summary,
 )
+from src.utils import require_mapping
+from src.utils.unstructured import UnstructuredMapping
 
 
 class SummaryReward(ORM):
@@ -33,9 +35,19 @@ class SummaryReward(ORM):
     def score(self, sample: SummarySample) -> float:
         raise NotImplementedError
 
-    def __call__(
-        self, completions: Iterable[Any], metadata=None, **kwargs
-    ) -> List[float]:
+    def __call__(self, **kwargs: object) -> List[float]:
+        payload = kwargs.get("completions") or kwargs.get("payload")
+        if payload is None:
+            return []
+        completions: Iterable[Any] = payload  # type: ignore[assignment]
+        metadata: object | None = kwargs.get("metadata")
+        if isinstance(payload, Mapping):
+            maybe_completions = payload.get("completions")
+            if isinstance(maybe_completions, Iterable) and not isinstance(
+                maybe_completions, (str, bytes)
+            ):
+                completions = maybe_completions
+                metadata = payload.get("metadata")
         samples = build_samples(completions, metadata)
         return [float(self.score(sample)) for sample in samples]
 
@@ -165,7 +177,8 @@ class SummaryNoDupKeysPenalty(SummaryReward):
         return 0.0
 
 
-def _extract_categories(obj: dict[str, Any]) -> set[str]:
+def _extract_categories(obj: UnstructuredMapping) -> set[str]:
+    obj = require_mapping(obj, context="summary.categories")
     stats = obj.get("统计")
     if not isinstance(stats, list):
         return set()
@@ -339,7 +352,8 @@ class SummaryNotesBBUReward(SummaryReward):
         if not isinstance(ref_json, dict):
             return 0.0
 
-        def _notes(obj: dict[str, Any]) -> set[str]:
+        def _notes(obj: UnstructuredMapping) -> set[str]:
+            obj = require_mapping(obj, context="summary.notes")
             notes = obj.get("备注")
             if not isinstance(notes, list):
                 return set()

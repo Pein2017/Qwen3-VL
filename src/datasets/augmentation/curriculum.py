@@ -2,9 +2,20 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, NotRequired, TypedDict, cast
 
 _NUMERIC_TYPES = (int, float)
+
+
+class CurriculumState(TypedDict):
+    bypass_prob: float
+    ops: dict[str, dict[str, float | list[float]]]
+
+
+class CurriculumOpMeta(TypedDict, total=False):
+    name: str
+    params: NotRequired[Mapping[str, object]]
+    curriculum_params: NotRequired[Mapping[str, object]]
 
 
 def _is_sequence_of_numbers(value: Sequence[object]) -> bool:
@@ -245,7 +256,7 @@ class AugmentationCurriculumScheduler:
         self._final_ops = {name: dict(params) for name, params in prev_ops.items()}
         self._final_bypass = prev_bypass
 
-    def get_state(self, global_step: int) -> dict[str, Any]:
+    def get_state(self, global_step: int) -> CurriculumState:
         if self._requires_total_steps and self._final_bypass is None:
             raise ValueError(
                 "Curriculum with until_percent requires total_steps; call set_total_steps() first"
@@ -257,12 +268,20 @@ class AugmentationCurriculumScheduler:
                 return self._interpolate(descriptor, global_step)
         if self._final_bypass is None:
             raise ValueError("Curriculum final state is unavailable")
-        return {
-            'bypass_prob': self._final_bypass.to_python_value(),
-            'ops': _numeric_ops_to_python(self._final_ops),
+        bypass_value = self._final_bypass.to_python_value()
+        if isinstance(bypass_value, list):
+            if len(bypass_value) != 1:
+                raise ValueError("bypass_prob must resolve to a single float value")
+            bypass_prob = float(bypass_value[0])
+        else:
+            bypass_prob = float(bypass_value)
+        state: CurriculumState = {
+            "bypass_prob": bypass_prob,
+            "ops": _numeric_ops_to_python(self._final_ops),
         }
+        return state
 
-    def _interpolate(self, descriptor: _PhaseDescriptor, step: int) -> dict[str, Any]:
+    def _interpolate(self, descriptor: _PhaseDescriptor, step: int) -> CurriculumState:
         span = descriptor.end_step - descriptor.start_step
         progress = 1.0
         if span > 0:
@@ -278,10 +297,18 @@ class AugmentationCurriculumScheduler:
                 prev_value = prev_params.get(param_name, target_value)
                 entry[param_name] = prev_value.interpolate(target_value, progress)
             effective_ops[op_name] = entry
-        return {
-            'bypass_prob': effective_bypass.to_python_value(),
-            'ops': _numeric_ops_to_python(effective_ops),
+        bypass_value = effective_bypass.to_python_value()
+        if isinstance(bypass_value, list):
+            if len(bypass_value) != 1:
+                raise ValueError("bypass_prob must resolve to a single float value")
+            bypass_prob = float(bypass_value[0])
+        else:
+            bypass_prob = float(bypass_value)
+        state: CurriculumState = {
+            "bypass_prob": bypass_prob,
+            "ops": _numeric_ops_to_python(effective_ops),
         }
+        return state
 
     def set_total_steps(self, total_steps: int) -> None:
         if not self._requires_total_steps:
@@ -335,14 +362,14 @@ def _deepcopy_ops(
 
 
 def _build_base_ops(
-    op_meta: Iterable[Mapping[str, Any]]
+    op_meta: Iterable[Mapping[str, Any]],
 ) -> dict[str, dict[str, NumericParam]]:
     base_ops: dict[str, dict[str, NumericParam]] = {}
     for entry in op_meta:
         if not isinstance(entry, Mapping):
             continue
-        name = entry.get('name')
-        params = entry.get('curriculum_params') or entry.get('params', {})
+        name = entry.get("name")
+        params = entry.get("curriculum_params") or entry.get("params", {})
         if not name or not isinstance(params, Mapping):
             continue
         numeric_params: dict[str, NumericParam] = {}

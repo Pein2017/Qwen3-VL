@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import math
 from collections.abc import Mapping
 from typing import Any, Tuple
 
 from .parsing import (
     normalize_digit_text,
     normalize_free_text,
-    parse_non_negative_int,
     parse_positive_int,
 )
 

@@ -46,6 +46,8 @@ class DatasetObject(TypedDict, total=False):
     poly_points: int
     line_points: int
     metadata: Mapping[str, Any]
+    __src_geom_idx: int
+    __aug_op: str
 
 
 class ConversationRecord(TypedDict, total=False):

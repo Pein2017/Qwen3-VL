@@ -12,14 +12,14 @@ from __future__ import annotations
 import logging
 import math
 import os
-from collections.abc import Callable, Iterable, MutableMapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
 from PIL import Image
 
-from ..contracts import ConversationRecord
+from ..contracts import ConversationRecord, DatasetImage, DatasetObject
 from ..geometry import clamp_points, scale_points
 from .base import BasePreprocessor
 
@@ -90,31 +90,35 @@ def smart_resize(
 
 
 def _scale_and_clamp_geometry(
-    objects: Iterable[MutableMapping[str, object]],
+    objects: Iterable[DatasetObject],
     sx: float,
     sy: float,
     width: int,
     height: int,
-) -> list[MutableMapping[str, object]]:
+) -> list[DatasetObject]:
     """Scale geometries by (sx, sy) and clamp to the new bounds."""
-    scaled: list[MutableMapping[str, object]] = []
+    scaled: list[DatasetObject] = []
     for obj in objects:
-        updated = dict(obj)
-        if obj.get("bbox_2d") is not None:
-            pts = scale_points(obj["bbox_2d"], sx, sy)
+        updated = cast(DatasetObject, dict(obj))
+        bbox = obj.get("bbox_2d")
+        if bbox is not None:
+            pts = scale_points(bbox, sx, sy)
             updated["bbox_2d"] = clamp_points(pts, width, height)
             updated.pop("poly", None)
             updated.pop("line", None)
-        elif obj.get("poly") is not None:
-            pts = scale_points(obj["poly"], sx, sy)
-            updated["poly"] = clamp_points(pts, width, height)
-            updated.pop("bbox_2d", None)
-            updated.pop("line", None)
-        elif obj.get("line") is not None:
-            pts = scale_points(obj["line"], sx, sy)
-            updated["line"] = clamp_points(pts, width, height)
-            updated.pop("bbox_2d", None)
-            updated.pop("poly", None)
+        else:
+            poly = obj.get("poly")
+            line = obj.get("line")
+            if poly is not None:
+                pts = scale_points(poly, sx, sy)
+                updated["poly"] = clamp_points(pts, width, height)
+                updated.pop("bbox_2d", None)
+                updated.pop("line", None)
+            elif line is not None:
+                pts = scale_points(line, sx, sy)
+                updated["line"] = clamp_points(pts, width, height)
+                updated.pop("bbox_2d", None)
+                updated.pop("poly", None)
         scaled.append(updated)
     return scaled
 
@@ -158,8 +162,8 @@ class Resizer:
         if self.output_dir:
             self.output_dir.mkdir(parents=True, exist_ok=True)
 
-    def resize_record(self, row: dict[str, object]) -> dict[str, object]:
-        images = row.get("images") or []
+    def resize_record(self, row: ConversationRecord) -> ConversationRecord:
+        images = cast(Sequence[str | DatasetImage], row.get("images") or [])
         if not images:
             return row
 
@@ -225,36 +229,38 @@ class Resizer:
             row["images"] = self._maybe_relativize_paths(resolved_paths)
         return row
 
-    def _resolve_image_paths(self, images: Sequence[object]) -> list[str]:
+    def _resolve_image_paths(self, images: Sequence[str | DatasetImage]) -> list[str]:
         resolved: list[str] = []
         base = self.jsonl_dir
         for img in images:
+            raw_path: str | None = None
             if isinstance(img, str):
-                p = Path(img)
-                if not p.is_absolute():
-                    if self.images_root_override:
-                        p = (self.images_root_override / p).resolve()
-                    elif base:
-                        p = (base / p).resolve()
-                    else:
-                        p = p.resolve()
-                resolved.append(str(p))
-            else:
-                resolved.append(img)
+                raw_path = img
+            elif isinstance(img, Mapping):
+                image_path = img.get("image")
+                if isinstance(image_path, str):
+                    raw_path = image_path
+            if raw_path is None:
+                raise ValueError("resize expects image paths as strings or DatasetImage")
+            p = Path(raw_path)
+            if not p.is_absolute():
+                if self.images_root_override:
+                    p = (self.images_root_override / p).resolve()
+                elif base:
+                    p = (base / p).resolve()
+                else:
+                    p = p.resolve()
+            resolved.append(str(p))
         return resolved
 
-    def _maybe_relativize_paths(self, paths: Sequence[object]) -> list[object]:
+    def _maybe_relativize_paths(self, paths: Sequence[str]) -> list[str]:
         if not self.relative_output_root:
             return list(paths)
-        rel_paths: list[object] = []
+        rel_paths: list[str] = []
         relative_output_root_resolved = self.relative_output_root.resolve()
         output_dir_resolved = self.output_dir.resolve() if self.output_dir else None
 
         for p in paths:
-            if not isinstance(p, str):
-                rel_paths.append(p)
-                continue
-
             path_obj = Path(p)
             path_resolved = path_obj.resolve() if path_obj.is_absolute() else path_obj
 
@@ -362,10 +368,12 @@ class Resizer:
 
     @staticmethod
     def _safe_int(value: object) -> int | None:
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            return None
+        if isinstance(value, (int, float, str)):
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return None
+        return None
 
 
 class SmartResizePreprocessor(BasePreprocessor):
@@ -395,7 +403,7 @@ class SmartResizePreprocessor(BasePreprocessor):
         )
 
     def preprocess(self, row: ConversationRecord) -> ConversationRecord | None:
-        result = self.resizer.resize_record(dict(row))
+        result = self.resizer.resize_record(cast(ConversationRecord, dict(row)))
         return cast(ConversationRecord | None, cast(object, result))
 
 

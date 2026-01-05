@@ -8,9 +8,13 @@ import argparse
 import json
 import re
 import tempfile
+from collections.abc import Mapping
 from pathlib import Path
+from typing import cast
 
-from ..utils import get_logger
+from ..utils import get_logger, require_mapping, require_mutable_mapping
+from ..utils.unstructured import UnstructuredMapping
+from .types import StageAGroupRecord
 
 logger = get_logger(__name__)
 
@@ -43,7 +47,9 @@ _RRU_CATEGORIES = {
 }
 
 
-def _format_summary_json(obj: dict[str, object]) -> str:
+def _format_summary_json(obj: UnstructuredMapping) -> str:
+    """Format an intentionally unstructured summary JSON mapping."""
+    obj = require_mapping(obj, context="stage_a.summary")
     ordered: dict[str, object] = {}
     for key in ("统计", "备注", "分组统计"):
         if key in obj:
@@ -59,7 +65,7 @@ def _extract_summary_json_line(text: str) -> str | None:
     if not stripped:
         return None
 
-    def _maybe_parse_obj(candidate: str) -> dict[str, object] | None:
+    def _maybe_parse_obj(candidate: str) -> UnstructuredMapping | None:
         c = candidate.strip()
         if not (c.startswith("{") and c.endswith("}")):
             return None
@@ -67,9 +73,12 @@ def _extract_summary_json_line(text: str) -> str | None:
             obj = json.loads(c)
         except Exception:
             return None
-        return obj if isinstance(obj, dict) else None
+        try:
+            return require_mapping(obj, context="stage_a.summary_json")
+        except TypeError:
+            return None
 
-    def _is_summary(obj: dict[str, object]) -> bool:
+    def _is_summary(obj: UnstructuredMapping) -> bool:
         return "统计" in obj
 
     obj = _maybe_parse_obj(stripped)
@@ -117,9 +126,13 @@ def sanitize_summary_by_dataset(text: str, dataset: str) -> str:
     return summary_text
 
 
-def clean_stage_a_record(record: dict[str, object], dataset: str) -> dict[str, object]:
+def clean_stage_a_record(record: StageAGroupRecord, dataset: str) -> StageAGroupRecord:
+    """Clean a Stage-A group record in-place."""
+    record = cast(
+        StageAGroupRecord, require_mutable_mapping(record, context="stage_a.record")
+    )
     per_image = record.get("per_image")
-    if not isinstance(per_image, dict):
+    if not isinstance(per_image, Mapping):
         return record
     cleaned: dict[str, str] = {}
     for key, value in per_image.items():

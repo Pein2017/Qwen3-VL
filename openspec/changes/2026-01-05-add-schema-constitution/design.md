@@ -1,7 +1,7 @@
 # Design: Schema Constitution Refactor (src/)
 
 ## Intent
-Refactor `src/` to comply with the Schema Constitution by replacing non-trivial dict/list usage with structured types that align with existing patterns.
+Refactor `src/` to comply with the Schema Constitution by replacing non-trivial dict/list usage with structured types or explicitly unstructured payloads that are documented and validated.
 
 ## Decisions
 - **Default patterns**:
@@ -12,8 +12,8 @@ Refactor `src/` to comply with the Schema Constitution by replacing non-trivial 
 
 ## Refactor Rules (src/)
 - Replace non-trivial dict/list usage in function signatures, return types, and class attributes with structured types.
-- Keep trivial local dict/list usage where no hard trigger applies (local expressions, 1–2 semantic fields, no boundary crossing).
-- Unstructured payloads must be isolated as `extra`/`raw` fields and documented.
+- Keep trivial dict/list usage where no rubric trigger applies (simple lookups, flat lists of primitives, local expressions).
+- Explicitly unstructured payloads are allowed when documented and validated as mappings or sequences; prefer isolating them in `extra`/`raw` fields when feasible.
 
 ## Risk Controls
 - Incremental inventory -> refactor -> lint loop.
