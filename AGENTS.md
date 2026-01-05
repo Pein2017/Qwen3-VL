@@ -52,3 +52,6 @@ Keep this managed block so 'openspec update' can refresh the instructions.
 Prefer repo-relative paths in Serena MCP tool arguments; use absolute paths only for outside sources (e.g., `/root/miniconda3/envs/ms/lib/python3.12/site-packages/transformers`, `/data/ms-swift`).
 **DO NOT use Serena MCP's `execute_shell_command` tool.** 
 
+
+## Codex Skill: python-lint-loop
+- Trigger this skill for any Python code editing tasks; run the lint loop (ruff auto-fix + pyright under conda env `ms`) until clean.
