@@ -21,6 +21,7 @@ Canonical entrypoints for training, inference, and inspection runs. Prefer these
 
 Usage tips
 - Run with `ms` conda env activated (`conda activate ms`), unless the script handles it.
+- Training configs now live under `configs/train/` (runnable presets) and `configs/components/` (reusable blocks); `configs/debug.yaml` remains the default quick entrypoint.
 - Prefer setting seeds in configs; scripts propagate env when present.
 - Keep inputs/output paths mission-specific to avoid cross-run collisions.
 - Stage‑B no-model audit: `bash scripts/stage_b.sh smoke`
