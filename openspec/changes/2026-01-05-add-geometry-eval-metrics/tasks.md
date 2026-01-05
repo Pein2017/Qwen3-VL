@@ -1,0 +1,27 @@
+# Tasks: Geometry- and category-aware evaluation for dense captioning
+
+- [x] Decide default parameters (line tolerance in norm1000; threshold sweep; primary threshold).
+- [x] Add robust `desc` parsing/normalization:
+  - [x] Extract phase/head label for both legacy (`phase/...`) and key=value (`类别=...`) formats.
+  - [x] Extract fine category label (prefer `类别`, fall back to mapping rules for legacy desc).
+- [x] Implement overlap rulers:
+  - [x] Region IoU for `bbox_2d` and convex-quad `poly`, including `bbox_2d` ↔ `poly` cross-type overlap.
+  - [x] Line TubeIoU (mask IoU for buffered polylines) at fixed tolerance.
+- [x] Implement matching:
+  - [x] Family-aware matching (region family vs line family).
+  - [x] 1-to-1 assignment (greedy baseline), with deterministic tie-breaking.
+  - [x] Modes: localization-only, phase-aware, category-aware.
+- [x] Implement metric aggregation:
+  - [x] Precision/Recall/F1 at thresholds 0.50:0.95 step 0.05.
+  - [x] Mean-F1 across the sweep.
+  - [x] Per-geometry breakdown (`bbox_2d`, `poly`, `line`) and per-category breakdown (top categories).
+  - [x] Count-based diagnostics (over/under generation rates).
+- [x] CLI + outputs:
+  - [x] Evaluate a single `gt_vs_pred.jsonl` dump (single-file only).
+  - [x] Emit console report and a JSON summary artifact.
+- [x] Add tests:
+  - [x] Region IoU correctness for bbox/poly cross-type.
+  - [x] Line TubeIoU correctness + tolerance sanity.
+  - [x] Desc parsing for both formats.
+  - [x] Matching determinism.
+- [x] Update documentation/tooling index for evaluation usage.
