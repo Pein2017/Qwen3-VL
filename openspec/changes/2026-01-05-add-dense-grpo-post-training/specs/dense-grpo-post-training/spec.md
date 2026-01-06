@@ -73,8 +73,8 @@ Mode-mismatched reward functions SHALL return a neutral per-sample reward value 
 ### Requirement: Exact poly/line geometry scoring without bbox-only fallback
 Dense GRPO localization rewards SHALL compute geometry overlap using exact rulers:
 - Region family (`bbox_2d`, `poly`): pixel-level filled-shape IoU on the norm1000 grid (size 1001×1001), computed by rasterizing each region into a binary mask and then taking `|A∩B|/|A∪B|`.
-  - This raster IoU SHALL support non-convex polygons.
-  - The polygon fill rule SHALL be deterministic (e.g., even-odd rule), and MUST be identical between reward computation and offline evaluation.
+  - This raster IoU SHALL support non-convex polygons and cross-type matching between `bbox_2d` and `poly` by rasterizing `bbox_2d` as a filled rectangle and `poly` as a filled polygon under the same ruler.
+  - The polygon fill rule SHALL be the even-odd (parity) rule for determinism, and MUST be identical between reward computation and offline evaluation.
 - Line family (`line`): TubeIoU on the norm1000 grid with a stability-first tolerance (default `tol=8.0` in norm1000 space), computed by rasterizing each polyline into a tube mask of width `round(2*tol)` and then taking `|A∩B|/|A∪B|`.
 
 Rewards SHALL NOT approximate invalid `poly`/`line` geometries using bbox/AABB fallback; invalid geometries SHALL be treated as schema failures and excluded from matching.
@@ -86,6 +86,12 @@ Rewards SHALL NOT approximate invalid `poly`/`line` geometries using bbox/AABB f
 - **WHEN** localization rewards are computed
 - **THEN** the object is treated as invalid
 - **AND** matching does not use bbox/AABB approximations for that object
+
+#### Scenario: bbox_2d↔poly matching uses the same filled-shape IoU
+- **GIVEN** a GT object with `poly` and a predicted object with `bbox_2d` that cover the same region in norm1000 space
+- **WHEN** localization overlap is computed for matching and scoring
+- **THEN** the overlap is computed as filled-shape IoU on the norm1000 grid
+- **AND** no geometry-type penalty is applied solely because one side is `bbox_2d` and the other is `poly`
 
 ### Requirement: Localization rewards bias toward recall (missing-object reduction) with weak hallucination penalties
 Dense GRPO reward shaping SHALL prioritize reducing missing objects and SHALL avoid strong penalties on unmatched predictions, because GT annotations may be incomplete.

@@ -74,7 +74,8 @@ Dense rewards compute overlap in norm1000 space:
 - Region family: `bbox_2d` and `poly`
   - Use pixel-level filled-shape IoU computed on the norm1000 grid (size 1001×1001) by rasterizing each region into a binary mask and then taking `|A∩B|/|A∪B|`.
   - This ruler supports non-convex polygons and avoids fragile analytic clipping assumptions.
-  - The polygon fill rule is deterministic (e.g., even-odd) and MUST be shared between rewards and offline evaluation.
+  - Cross-type `bbox_2d`↔`poly` matching is supported by rasterizing `bbox_2d` as a filled rectangle and `poly` as a filled polygon under the same ruler; the geometry representation type does not matter.
+  - The polygon fill rule is the even-odd (parity) rule for determinism and MUST be shared between rewards and offline evaluation.
 - Line family: `line`
   - Use the project’s polyline overlap metric (distance-tolerant coverage-F1 style).
   - Use a stability-first tolerance: default `tol=8.0` in norm1000 space (aligned with offline evaluator defaults).
