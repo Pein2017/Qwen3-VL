@@ -35,24 +35,20 @@ class SummaryReward(ORM):
     def score(self, sample: SummarySample) -> float:
         raise NotImplementedError
 
-    def __call__(
-        self, completions: Iterable[Any] | None = None, **kwargs: object
-    ) -> List[float]:
-        # Support both positional (GRPO trainer) and keyword argument
-        if completions is None:
-            completions = kwargs.get("completions") or kwargs.get("payload")  # type: ignore[assignment]
-        if completions is None:
+    def __call__(self, **kwargs: object) -> List[float]:
+        payload = kwargs.get("completions") or kwargs.get("payload")
+        if payload is None:
             return []
-        completions_iter: Iterable[Any] = completions  # type: ignore[assignment]
+        completions: Iterable[Any] = payload  # type: ignore[assignment]
         metadata: object | None = kwargs.get("metadata")
-        if isinstance(completions, Mapping):
-            maybe_completions = completions.get("completions")  # type: ignore[union-attr]
+        if isinstance(payload, Mapping):
+            maybe_completions = payload.get("completions")
             if isinstance(maybe_completions, Iterable) and not isinstance(
                 maybe_completions, (str, bytes)
             ):
-                completions_iter = maybe_completions  # type: ignore[assignment]
-                metadata = completions.get("metadata")  # type: ignore[union-attr]
-        samples = build_samples(completions_iter, metadata)
+                completions = maybe_completions
+                metadata = payload.get("metadata")
+        samples = build_samples(completions, metadata)
         return [float(self.score(sample)) for sample in samples]
 
 
