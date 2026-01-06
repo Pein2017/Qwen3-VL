@@ -1,5 +1,10 @@
 # Tasks: Mixed-mode dense GRPO post-training (BBU/RRU detection) with reward shaping
 
+- [ ] Pre-implementation verification (recommended)
+  - [ ] Confirm `metadata._fusion_mode` exists for fusion samples and values are exactly `dense|summary`.
+  - [ ] Confirm TubeIoU implementation matches `vis_tools/geometry_eval_metrics.py:tube_iou_line` and uses `DEFAULT_LINE_TOL=8.0` by default.
+  - [ ] Ensure any new `DenseSample` / config dataclasses follow Schema Constitution (`dataclass(frozen=True)` for internal state).
+
 - [ ] Spec + design
   - [ ] Confirm reward-call contract with ms-swift GRPO (`reward_func(completions, **kwargs)`) and codify it in specs.
   - [ ] Define dense-vs-summary mode gating rules using `metadata._fusion_mode` and `metadata._fusion_source`.
@@ -14,6 +19,7 @@
     - [ ] `desc` key=value parsing (exact string semantics)
   - [ ] Add `src/rlhf/grpo/rewards/dense/matching.py`:
     - [ ] exact region IoU for bbox/poly (convex polygons)
+    - [ ] define behavior for non-convex polys (reject as invalid for scoring; no bbox/AABB fallback)
     - [ ] exact line overlap metric (TubeIoU on norm1000 grid; see `vis_tools/geometry_eval_metrics.py`) with configurable tolerance
     - [ ] greedy 1-to-1 matching + IoU sweep reuse
   - [ ] Add `src/rlhf/grpo/rewards/dense/rewards.py`:

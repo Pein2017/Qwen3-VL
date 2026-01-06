@@ -73,7 +73,8 @@ Invalid geometry is treated as a schema failure and MUST NOT be evaluated via bb
 Dense rewards compute overlap in norm1000 space:
 - Region family: `bbox_2d` and `poly`
   - Use filled-shape IoU; allow cross-type bbox↔poly matching via polygon conversion.
-  - `poly` is treated as convex polygon for exact intersection computation.
+  - `poly` overlap is computed using the project’s convex polygon clipper (Sutherland–Hodgman style), which is defined only for convex polygons.
+  - Non-convex `poly` inputs are treated as invalid geometry for scoring (schema failure; excluded from matching) to avoid unstable or incorrect IoU values; there is no bbox/AABB fallback.
 - Line family: `line`
   - Use the project’s polyline overlap metric (distance-tolerant coverage-F1 style).
   - Use a stability-first tolerance: default `tol=8.0` in norm1000 space (aligned with offline evaluator defaults).
@@ -170,11 +171,6 @@ Concretely:
 - Explicit precision/false-positive penalties remain small and bounded (including possibly zero); the default policy relies on the FP term already present in F2 and does not introduce large extra penalties.
 - Category/attribute rewards are computed only on matched pairs, so unmatched predictions do not induce large negative signals.
 
-### 9.2 Attribute normalization rules
-`desc` attribute matching uses exact string equality after normalization:
-- Trim whitespace around keys/values; collapse repeated spaces inside (per prompt guidance, values should not contain spaces, so this mostly guards against tokenizer artifacts).
-- Preserve punctuation (`-`, `/`, `,`, `|`, `=`) exactly as emitted.
-- OCR/备注 text is compared after whitespace removal (no internal normalization beyond trimming).
 ### 9.1 Attribute key weights (non-normative defaults)
 For `desc` key=value scoring on matched pairs:
 - Default per-key weight for non-OCR keys (excluding `可见性`) is `1.0`.
@@ -185,3 +181,8 @@ For `desc` key=value scoring on matched pairs:
 - RRU `站点距离`:
   - default key weight: `4.0` (important but simpler than OCR/notes)
   - exact integer match only (`站点距离=<int>`)
+
+### 9.2 Attribute normalization rules
+`desc` attribute matching uses exact string equality after normalization:
+- Remove all whitespace characters from both keys and values before comparison (e.g., `品牌=华为` equals `品牌 = 华为`).
+- Preserve punctuation (`-`, `/`, `,`, `|`, `=`) exactly as emitted (no fuzzy or semantic matching).

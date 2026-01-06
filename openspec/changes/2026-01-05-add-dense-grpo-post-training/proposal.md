@@ -18,7 +18,7 @@
     - attribute rewards using **exact string match** on `desc` key=value fields with business weighting
     - category-aware metrics as a secondary objective
   - A GRPO fusion dataset mix that samples:
-    - dense targets: `bbu_dense`, `rru_dense`
+    - dense targets: `bbu_dense` ratio `1.0`, `rru_dense` ratio `1.0`
     - summary sources: `bbu_summary` ratio `0.5`, `rru_summary` ratio `0.5`
     - irrelevant summary: `irrelevant_summary` ratio `0.2`
     - explicitly **excludes** `lvis` and `lang_chat` for this post-training stage
@@ -36,6 +36,7 @@
 - Introducing new geometry primitives beyond `bbox_2d`, `poly`, and `line`.
 - Adding LVIS/chat sources to GRPO post-training (explicitly excluded for this stage).
 - Replacing the existing summary GRPO presets; summary-only workflows remain supported.
+- Adding new CHORD-mixing requirements specific to dense GRPO; any CHORD behavior remains governed by the existing GRPO/summary CHORD integration and is not modified by this change.
 
 ## Impact / Breaking changes
 - Additive change for configs and reward functions.
