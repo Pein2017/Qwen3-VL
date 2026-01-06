@@ -4,14 +4,38 @@ extends:
 model:
   model: output/1-4/2048_res_dense_merged/epoch_4-ckpt-5960
 
+template:
+  # Cap image token budget to match the 2048-vision-token dataset preprocessing.
+  # Keeps prompt token length stable and reduces outlier-driven vLLM KV cache waste.
+  max_pixels: 20971520
+
 training:
-  run_name: epoch_2-lrs_1e-5
+  run_name: epoch_2-grpo-ebs32-gbs32-llm5e-6-align1e-5-l7424
   output_dir: ./output/1-6/new_schema-4B-dense-summary-grpo-2048
   logging_dir: ./tb/1-6/new_schema-4B-dense-summary-grpo-2048
   num_train_epochs: 2
-  learning_rate: 1.0e-5
+  learning_rate: 5.0e-6
   vit_lr: 1.0e-7
-  aligner_lr: 1.0e-7
+  aligner_lr: 1.0e-5
+  # Keep micro-batch minimal; scale via grad accumulation (auto-derived from effective_batch_size).
+  effective_batch_size: 32
+
+rlhf:
+  # Increase rollout prompt count (8 GPUs, per_device_train_batch_size=1):
+  # generation_batch_size=32 => steps_per_generation=4, prompt_batch_size=8 (with num_generations=4).
+  generation_batch_size: 32
+  temperature: 0.8
+  top_p: 1.0
+  # vLLM colocate sizing depends on vllm_tensor_parallel_size * steps_per_generation.
+  # Use TP=4 as a safer default than 8 to reduce KV/cache preallocation pressure.
+  vllm_tensor_parallel_size: 4
+  # Avoid inheriting global_max_length=16000 into vLLM max_model_len; keep rollout KV planning bounded.
+  # Empirically measured (256 samples): prompt_len max/p99=3050 with image tokens max=2040.
+  # With max_completion_length=4096 => needed=7146; use 7424 (=ceil256(7146+128)).
+  vllm_max_model_len: 8192
+  # Keep headroom for training model forward/backward on the same GPUs in colocate mode.
+  vllm_gpu_memory_utilization: 0.5
 
 custom:
   fusion_config: configs/fusion/variants/bbu_rru_dense_grpo_mixed_2048.yaml
+  val_sample_limit: 240
