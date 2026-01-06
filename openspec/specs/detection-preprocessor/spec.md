@@ -64,11 +64,13 @@ All target and source detection converters SHALL emit the canonical BBU-style JS
 
 #### Scenario: Summary JSON schema keys
 - **WHEN** a BBU or RRU converter writes summaries
-- **THEN** the JSON string includes `dataset` and `统计`
+- **THEN** the JSON string includes `统计`
+- **AND** the JSON string MUST NOT include `dataset`
 - **AND** `统计` is a list of per-category objects each containing `类别` plus any observed attribute counts
 - **AND** BBU summaries include a `备注` list of strings (may be empty)
 - **AND** RRU summaries MAY include `分组统计` (group id → count) and per-category `组` counts
-- **AND** summaries include an `异常` object with `无法解析`, `未知类别`, `冲突值`, and `示例` fields
+- **AND** summaries MUST NOT include any legacy total-count field (e.g., `objects_total`)
+- **AND** converters MUST fail-fast on summary anomalies rather than embedding an `异常` object
 - **AND** the JSON string is single-line and uses standard separators (`, ` and `: `)
 
 ### Requirement: Unified smart-resize preprocessor
@@ -135,3 +137,4 @@ The preprocessor SHALL log scale factors and warn on aggressive downscales.
 - **GIVEN** an image that requires >2× downscale to satisfy `max_pixels`
 - **WHEN** processed
 - **THEN** it logs original vs. final dimensions and the scale factor, with a remediation hint to adjust `max_pixels` or upstream image sizes.
+
