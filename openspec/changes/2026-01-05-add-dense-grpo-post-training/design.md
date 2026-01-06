@@ -78,6 +78,7 @@ Dense rewards compute overlap in norm1000 space:
   - The polygon fill rule is the even-odd (parity) rule for determinism and MUST be shared between rewards and offline evaluation.
   - Self-intersecting polygons are scored under the same even-odd fill rule (not rejected), to keep scoring robust to minor vertex-ordering mistakes in model outputs.
   - Data audit note: `analysis/poly_convexity_audit_report.json` shows non-convex `poly` shapes exist in the training targets (BBU ≈0.2% non-convex; RRU ≈10% non-convex), so convex-only polygon clipping would be incorrect for a non-trivial slice of RRU data.
+  - Data audit note: `data_new_schema/bbu_full_2048_poly/all_samples.jsonl` and `data_new_schema/rru_full_2048_poly/all_samples.jsonl` contain 0 self-intersecting GT polygons under a segment-intersection check (raw and angle-sorted orders), but the scoring path still accepts self-intersecting predictions for robustness.
 - Line family: `line`
   - Use the project’s polyline overlap metric (distance-tolerant coverage-F1 style).
   - Use a stability-first tolerance: default `tol=8.0` in norm1000 space (aligned with offline evaluator defaults).
