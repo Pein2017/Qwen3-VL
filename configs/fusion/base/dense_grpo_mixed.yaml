@@ -1,0 +1,50 @@
+targets:
+  - name: bbu_dense
+    dataset: bbu
+    train_jsonl: data_new_schema/bbu_full_1024/train.jsonl
+    val_jsonl: data_new_schema/bbu_full_1024/val.jsonl
+    template: target_dense_bbu
+    mode: dense
+    ratio: 1.0
+  - name: rru_dense
+    dataset: rru
+    train_jsonl: data_new_schema/rru_full_1024_poly/train.jsonl
+    val_jsonl: data_new_schema/rru_full_1024_poly/val.jsonl
+    template: target_dense_rru
+    mode: dense
+    ratio: 1.0
+
+sources:
+  # BBU summary mode for regularization (mixed-mode GRPO)
+  - name: bbu_summary
+    dataset: bbu
+    train_jsonl: data_new_schema/bbu_full_1024/train.jsonl
+    ratio: 0.5
+    template: summary_bbu
+    mode: summary
+    sample_without_replacement: true
+    augmentation_enabled: true
+    curriculum_enabled: false
+
+  # RRU summary mode for regularization (mixed-mode GRPO)
+  - name: rru_summary
+    dataset: rru
+    train_jsonl: data_new_schema/rru_full_1024_poly/train.jsonl
+    ratio: 0.5
+    template: summary_rru
+    mode: summary
+    sample_without_replacement: true
+    augmentation_enabled: true
+    curriculum_enabled: false
+
+  # Irrelevant summary regularization (mixed-mode GRPO)
+  - name: irrelevant_summary
+    dataset: bbu
+    train_jsonl: data/irrelevant_summary/train.jsonl
+    ratio: 0.2
+    template: summary_bbu
+    mode: summary
+    sample_without_replacement: true
+    augmentation_enabled: true
+    curriculum_enabled: false
+

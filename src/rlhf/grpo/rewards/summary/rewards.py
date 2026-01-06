@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable, Mapping
-from typing import Any, List, Tuple
+from typing import Any, List, Tuple, cast
 
 from swift.plugin.orm import ORM
 
-from .context import SummarySample, build_samples
+from .context import SummarySample
 from .facts import (
     extract_summary_fact_counts,
     f1_from_fact_counts,
@@ -20,6 +20,7 @@ from .parsing import (
     _HEADER_PATTERN,
     _IRRELEVANT_TEXT,
     JsonDuplicateKeyError,
+    ensure_list,
     loads_json_rejecting_duplicate_keys,
     normalize_bbu_ocr_text,
     normalize_free_text,
@@ -35,25 +36,56 @@ class SummaryReward(ORM):
     def score(self, sample: SummarySample) -> float:
         raise NotImplementedError
 
-    def __call__(
-        self, completions: Iterable[Any] | None = None, **kwargs: object
-    ) -> List[float]:
-        # Support both positional (GRPO trainer) and keyword argument
-        if completions is None:
-            completions = kwargs.get("completions") or kwargs.get("payload")  # type: ignore[assignment]
-        if completions is None:
-            return []
-        completions_iter: Iterable[Any] = completions  # type: ignore[assignment]
+    def __call__(self, completions: Any | None = None, **kwargs: object) -> List[float]:
+        """ms-swift GRPO entrypoint.
+
+        ms-swift calls rewards as `reward_func(completions, **kwargs)` where:
+        - `completions` is a list of decoded assistant strings
+        - `kwargs` contains batched per-row fields such as `metadata`
+
+        Backward compatibility: also supports the legacy `payload=` / `completions=` kwargs
+        structure used by older call sites.
+        """
+
+        payload: object | None = kwargs.get("payload")
         metadata: object | None = kwargs.get("metadata")
-        if isinstance(completions, Mapping):
-            maybe_completions = completions.get("completions")  # type: ignore[union-attr]
-            if isinstance(maybe_completions, Iterable) and not isinstance(
-                maybe_completions, (str, bytes)
-            ):
-                completions_iter = maybe_completions  # type: ignore[assignment]
-                metadata = completions.get("metadata")  # type: ignore[union-attr]
-        samples = build_samples(completions_iter, metadata)
-        return [float(self.score(sample)) for sample in samples]
+
+        if completions is None:
+            payload = kwargs.get("completions") or payload
+            if payload is None:
+                return []
+            if isinstance(payload, Mapping):
+                payload_map = cast(Mapping[str, object], payload)
+                maybe_completions = payload_map.get("completions")
+                if isinstance(maybe_completions, Iterable) and not isinstance(
+                    maybe_completions, (str, bytes)
+                ):
+                    completions = cast(Iterable[Any], maybe_completions)
+                    metadata = payload_map.get("metadata")
+            else:
+                completions = payload
+
+        if completions is None:
+            completions_iterable: Iterable[Any] = []
+        elif isinstance(completions, Iterable) and not isinstance(completions, (str, bytes)):
+            completions_iterable = cast(Iterable[Any], completions)
+        else:
+            completions_iterable = [completions]
+
+        completions_list = list(completions_iterable)
+        metas = ensure_list(metadata, len(completions_list))
+
+        rewards: list[float] = [0.0] * len(completions_list)
+        for idx, (completion, meta) in enumerate(zip(completions_list, metas)):
+            # Mixed-mode safety: summary rewards MUST no-op on dense samples.
+            if isinstance(meta, Mapping) and cast(Mapping[str, object], meta).get(
+                "_fusion_mode"
+            ) == "dense":
+                rewards[idx] = 0.0
+                continue
+            rewards[idx] = float(self.score(SummarySample.from_inputs(completion, meta)))
+
+        return rewards
 
 
 class SummaryFormatReward(SummaryReward):
@@ -187,10 +219,11 @@ def _extract_categories(obj: UnstructuredMapping) -> set[str]:
     if not isinstance(stats, list):
         return set()
     cats: set[str] = set()
-    for entry in stats:
+    for entry in cast(list[object], stats):
         if not isinstance(entry, dict):
             continue
-        cat = entry.get("类别")
+        entry_map = cast(dict[str, object], entry)
+        cat = entry_map.get("类别")
         if isinstance(cat, str):
             cat = cat.strip()
             if cat:
@@ -207,12 +240,14 @@ class SummaryCategoryRecallReward(SummaryReward):
         pred_json = sample.pred_json()
         if not isinstance(pred_json, dict):
             return 0.0
+        pred_json = cast(UnstructuredMapping, pred_json)
         summary_ref = sample.summary_ref
         if not summary_ref or summary_ref == _IRRELEVANT_TEXT:
             return 0.0
         ref_json = sample.ref_json()
         if not isinstance(ref_json, dict):
             return 0.0
+        ref_json = cast(UnstructuredMapping, ref_json)
 
         _, pred_ok = normalize_summary(pred_json, sample.domain_token)
         _, ref_ok = normalize_summary(ref_json, sample.domain_token)
@@ -362,7 +397,7 @@ class SummaryNotesBBUReward(SummaryReward):
             if not isinstance(notes, list):
                 return set()
             out: set[str] = set()
-            for note in notes:
+            for note in cast(list[object], notes):
                 if note is None:
                     continue
                 norm = normalize_bbu_ocr_text(str(note))
@@ -370,8 +405,8 @@ class SummaryNotesBBUReward(SummaryReward):
                     out.add(norm)
             return out
 
-        ref_notes = _notes(ref_json)
-        pred_notes = _notes(pred_json)
+        ref_notes = _notes(cast(UnstructuredMapping, ref_json))
+        pred_notes = _notes(cast(UnstructuredMapping, pred_json))
 
         if not ref_notes:
             return -1.0 if pred_notes else 0.0
@@ -413,12 +448,14 @@ class SummaryCategoryF1Reward(SummaryReward):
         pred_json = sample.pred_json()
         if not isinstance(pred_json, dict):
             return 0.0
+        pred_json = cast(UnstructuredMapping, pred_json)
         summary_ref = sample.summary_ref
         if not summary_ref or summary_ref == _IRRELEVANT_TEXT:
             return 0.0
         ref_json = sample.ref_json()
         if not isinstance(ref_json, dict):
             return 0.0
+        ref_json = cast(UnstructuredMapping, ref_json)
 
         _, pred_ok = normalize_summary(pred_json, sample.domain_token)
         _, ref_ok = normalize_summary(ref_json, sample.domain_token)
@@ -444,9 +481,12 @@ class SummaryNotesPresenceReward(SummaryReward):
         ref_json = sample.ref_json()
         if not isinstance(ref_json, dict):
             return 0.0
+        ref_json = cast(dict[str, object], ref_json)
         ref_notes = ref_json.get("备注")
         ref_has_notes = isinstance(ref_notes, list) and any(
-            normalize_free_text(str(v)) for v in ref_notes if v is not None
+            normalize_free_text(str(v))
+            for v in cast(list[object], ref_notes)
+            if v is not None
         )
         if not ref_has_notes:
             return 0.0
@@ -454,9 +494,12 @@ class SummaryNotesPresenceReward(SummaryReward):
         pred_json = sample.pred_json()
         if not isinstance(pred_json, dict):
             return 0.0
+        pred_json = cast(dict[str, object], pred_json)
         pred_notes = pred_json.get("备注")
         pred_has_notes = isinstance(pred_notes, list) and any(
-            normalize_free_text(str(v)) for v in pred_notes if v is not None
+            normalize_free_text(str(v))
+            for v in cast(list[object], pred_notes)
+            if v is not None
         )
         return 1.0 if pred_has_notes else 0.0
 
@@ -475,20 +518,24 @@ class SummaryGroupStatsPresenceReward(SummaryReward):
         ref_json = sample.ref_json()
         if not isinstance(ref_json, dict):
             return 0.0
+        ref_json = cast(dict[str, object], ref_json)
         ref_group = ref_json.get("分组统计")
-        ref_has_groups = isinstance(ref_group, dict) and any(
-            str(k).strip() for k in ref_group.keys()
-        )
+        if not isinstance(ref_group, dict):
+            return 0.0
+        ref_group_map = cast(dict[str, object], ref_group)
+        ref_has_groups = any(str(k).strip() for k in ref_group_map.keys())
         if not ref_has_groups:
             return 0.0
 
         pred_json = sample.pred_json()
         if not isinstance(pred_json, dict):
             return 0.0
+        pred_json = cast(dict[str, object], pred_json)
         pred_group = pred_json.get("分组统计")
-        pred_has_groups = isinstance(pred_group, dict) and any(
-            str(k).strip() for k in pred_group.keys()
-        )
+        if not isinstance(pred_group, dict):
+            return 0.0
+        pred_group_map = cast(dict[str, object], pred_group)
+        pred_has_groups = any(str(k).strip() for k in pred_group_map.keys())
         return 1.0 if pred_has_groups else 0.0
 
 

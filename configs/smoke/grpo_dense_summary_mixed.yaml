@@ -1,0 +1,18 @@
+extends:
+  - ../train/grpo/dense_summary_mixed_2048.yaml
+
+training:
+  run_name: smoke_dense_summary_grpo_mixed
+  eval_strategy: "no"
+  save_strategy: "no"
+  logging_steps: 1
+
+custom:
+  train_sample_limit: 2
+  val_sample_limit: 2
+
+rlhf:
+  # Keep rollout sizes tiny for smoke validation.
+  generation_batch_size: 4
+  num_generations: 2
+

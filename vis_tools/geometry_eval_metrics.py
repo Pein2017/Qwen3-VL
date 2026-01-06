@@ -2,15 +2,18 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from dataclasses import dataclass
 from enum import Enum
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence, TypedDict, cast
+from typing import Any, Iterable, Literal, Mapping, Sequence, TypedDict, cast
 
-import numpy as np
-from numpy.typing import NDArray
-from PIL import Image, ImageDraw
+from src.rlhf.grpo.rewards.dense.matching import (
+    region_iou_mask as _dense_region_iou_mask,
+    tube_iou_line as _dense_tube_iou_line,
+)
+from src.rlhf.grpo.rewards.dense.parsing import DenseGeometry
 
 
 class EvalObject(TypedDict):
@@ -63,6 +66,45 @@ def _find_kv_value(text: str, key: str) -> str:
     if end == -1:
         end = len(text)
     return text[start:end].strip()
+
+
+_WHITESPACE_RE = re.compile(r"\s+")
+
+
+def _normalize_kv_text(value: str) -> str:
+    return _WHITESPACE_RE.sub("", value or "")
+
+
+def _parse_desc_kv(text: str) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for token in (text or "").split(","):
+        token = token.strip()
+        if not token or "=" not in token:
+            continue
+        k, v = token.split("=", 1)
+        k_norm = _normalize_kv_text(k)
+        v_norm = _normalize_kv_text(v)
+        if not k_norm:
+            continue
+        out[k_norm] = v_norm
+    return out
+
+
+def _attr_weight(key: str, *, category: str) -> float:
+    if key == "可见性":
+        return 0.1
+    if key == "站点距离":
+        return 4.0
+    return 1.0
+
+
+def _as_int_strict(value: str) -> int | None:
+    if not value or not value.isdigit():
+        return None
+    try:
+        return int(value)
+    except Exception:
+        return None
 
 
 def _clamp_norm1000(v: float) -> float:
@@ -266,53 +308,29 @@ def _convex_clip(subject: Sequence[float], clip: Sequence[float]) -> list[float]
     return flat
 
 
-def _to_region_poly(obj: GeometryObject) -> list[float]:
+def _as_dense_geometry(obj: GeometryObject) -> DenseGeometry | None:
     gtype = obj["type"]
-    pts_f = obj["points"]
-    if gtype == "bbox_2d" and len(pts_f) == 4:
-        x1, y1, x2, y2 = pts_f
-        x1, x2 = (x1, x2) if x1 <= x2 else (x2, x1)
-        y1, y2 = (y1, y2) if y1 <= y2 else (y2, y1)
-        return [x1, y1, x2, y1, x2, y2, x1, y2]
-
-    if gtype == "poly" and len(pts_f) >= 6 and len(pts_f) % 2 == 0:
-        return _ensure_polygon_order(pts_f)
-
-    return []
+    if gtype not in ("bbox_2d", "poly", "line"):
+        return None
+    pts = tuple(_clamp_norm1000(float(p)) for p in obj["points"])
+    return DenseGeometry(
+        type=cast(Literal["bbox_2d", "poly", "line"], gtype),
+        points=pts,
+    )
 
 
 def region_iou(obj_a: GeometryObject, obj_b: GeometryObject) -> float:
-    """Filled-shape IoU between region-family objects (bbox_2d and poly), cross-type."""
-    poly_a = _to_region_poly(obj_a)
-    poly_b = _to_region_poly(obj_b)
-    if not poly_a or not poly_b:
+    """Filled-shape IoU between region-family objects (bbox_2d and poly), cross-type.
+
+    Shared ruler: delegates to `src.rlhf.grpo.rewards.dense.matching.region_iou_mask`
+    (exact raster IoU on the 1000×1000 norm1000 grid, clamped to [0, 999]).
+    """
+
+    geom_a = _as_dense_geometry(obj_a)
+    geom_b = _as_dense_geometry(obj_b)
+    if geom_a is None or geom_b is None:
         return 0.0
-
-    aabb_a = _aabb_from_points(poly_a)
-    aabb_b = _aabb_from_points(poly_b)
-    if _aabb_intersection_area(aabb_a, aabb_b) <= 0.0:
-        return 0.0
-
-    area_a = abs(_polygon_area(poly_a))
-    area_b = abs(_polygon_area(poly_b))
-    if area_a <= 0.0 or area_b <= 0.0:
-        return 0.0
-
-    inter_poly = _convex_clip(poly_a, poly_b)
-    if not inter_poly:
-        return 0.0
-    inter_area = abs(_polygon_area(inter_poly))
-    if inter_area <= 0.0:
-        return 0.0
-
-    union = area_a + area_b - inter_area
-    return (inter_area / union) if union > 0.0 else 0.0
-
-
-def _to_line_xy(points: Sequence[float]) -> list[tuple[float, float]]:
-    if len(points) < 4 or len(points) % 2 != 0:
-        return []
-    return [(float(points[i]), float(points[i + 1])) for i in range(0, len(points), 2)]
+    return _dense_region_iou_mask(geom_a, geom_b, grid_size=NORM1000_GRID_SIZE)
 
 
 def tube_iou_line(
@@ -322,51 +340,16 @@ def tube_iou_line(
     tol: float,
     grid_size: int = NORM1000_GRID_SIZE,
 ) -> float:
-    """Mask-wise TubeIoU for polyline geometries on the norm1000 grid."""
-    pts_g = obj_gt["points"]
-    pts_p = obj_pred["points"]
-    if obj_gt["type"] != "line" or obj_pred["type"] != "line":
+    """Mask-wise TubeIoU for polyline geometries on the norm1000 grid.
+
+    Shared ruler: delegates to `src.rlhf.grpo.rewards.dense.matching.tube_iou_line`.
+    """
+
+    geom_gt = _as_dense_geometry(obj_gt)
+    geom_pred = _as_dense_geometry(obj_pred)
+    if geom_gt is None or geom_pred is None:
         return 0.0
-
-    xy_g = _to_line_xy(pts_g)
-    xy_p = _to_line_xy(pts_p)
-    if len(xy_g) < 2 or len(xy_p) < 2:
-        return 0.0
-
-    width = int(grid_size)
-    height = int(grid_size)
-    if width <= 0 or height <= 0:
-        return 0.0
-
-    line_width = max(1, int(round(2.0 * float(tol))))
-
-    aabb_g = _aabb_from_points([c for xy in xy_g for c in xy])
-    aabb_p = _aabb_from_points([c for xy in xy_p for c in xy])
-    pad = float(tol)
-    aabb_gb = (aabb_g[0] - pad, aabb_g[1] - pad, aabb_g[2] + pad, aabb_g[3] + pad)
-    aabb_pb = (aabb_p[0] - pad, aabb_p[1] - pad, aabb_p[2] + pad, aabb_p[3] + pad)
-    if _aabb_intersection_area(aabb_gb, aabb_pb) <= 0.0:
-        return 0.0
-
-    # Tight union window for speed; +1 on ceil to include boundary pixels.
-    ux1 = max(0, int(math.floor(min(aabb_gb[0], aabb_pb[0]))))
-    uy1 = max(0, int(math.floor(min(aabb_gb[1], aabb_pb[1]))))
-    ux2 = min(width, int(math.ceil(max(aabb_gb[2], aabb_pb[2]))) + 1)
-    uy2 = min(height, int(math.ceil(max(aabb_gb[3], aabb_pb[3]))) + 1)
-    w = max(1, ux2 - ux1)
-    h = max(1, uy2 - uy1)
-
-    def _rasterize(xy: list[tuple[float, float]]) -> NDArray[np.bool_]:
-        mask = Image.new("1", (w, h), 0)
-        draw = ImageDraw.Draw(mask)
-        draw.line([(x - ux1, y - uy1) for x, y in xy], fill=1, width=line_width)
-        return np.asarray(mask, dtype=np.bool_)
-
-    ma = _rasterize(xy_g)
-    mb = _rasterize(xy_p)
-    inter = int(np.count_nonzero(np.logical_and(ma, mb)))
-    union = int(np.count_nonzero(np.logical_or(ma, mb)))
-    return (inter / union) if union > 0 else 0.0
+    return _dense_tube_iou_line(geom_gt, geom_pred, tol=tol, grid_size=grid_size)
 
 
 def _geom_family(gtype: object) -> str:
@@ -552,6 +535,17 @@ def evaluate_dump_records(
     category_totals: dict[str, dict[str, int]] = {}
     primary_key = _format_thr(primary)
 
+    # Attribute diagnostics (computed on localization matches at primary threshold).
+    attr_weight_total = 0.0
+    attr_weight_matched = 0.0
+    text_total = 0
+    text_matched = 0
+    notes_total = 0
+    notes_matched = 0
+    site_total = 0
+    site_matched = 0
+    attr_pairs = 0
+
     for rec in records:
         gt_raw: object = rec.get("gt_norm1000") or rec.get("gt_norm") or []
         pred_raw: object = rec.get("pred_norm1000") or rec.get("pred") or []
@@ -579,6 +573,55 @@ def evaluate_dump_records(
             count_under += 1
         else:
             count_equal += 1
+
+        # Attribute diagnostics are evaluated on localization matches (primary threshold).
+        matches_attr = _greedy_match(
+            overlap,
+            threshold=primary,
+            mode=EvalMode.LOCALIZATION,
+            gt_labels=gt_labels,
+            pred_labels=pred_labels,
+        )
+        for gi, pi in matches_attr:
+            attr_pairs += 1
+            gt_kv = _parse_desc_kv(gt[gi].get("desc", ""))
+            pred_kv = _parse_desc_kv(pred[pi].get("desc", ""))
+            category = gt_kv.get("类别", "")
+
+            for key, gt_val in gt_kv.items():
+                if not key or key == "类别":
+                    continue
+                if not gt_val:
+                    continue
+                pred_val = pred_kv.get(key, "")
+
+                if key == "文本":
+                    text_total += 1
+                    if pred_val and pred_val == gt_val:
+                        text_matched += 1
+                    continue
+                if key == "备注":
+                    notes_total += 1
+                    if pred_val and pred_val == gt_val:
+                        notes_matched += 1
+                    continue
+
+                weight = _attr_weight(key, category=category)
+                attr_weight_total += weight
+
+                if key == "站点距离" and category == "站点距离":
+                    gt_i = _as_int_strict(gt_val)
+                    pred_i = _as_int_strict(pred_val)
+                    if gt_i is not None:
+                        site_total += 1
+                        if pred_i is not None and pred_i == gt_i:
+                            site_matched += 1
+                    if gt_i is not None and pred_i is not None and pred_i == gt_i:
+                        attr_weight_matched += weight
+                    continue
+
+                if pred_val and pred_val == gt_val:
+                    attr_weight_matched += weight
 
         for mode in modes:
             mode_key = mode.value
@@ -698,6 +741,13 @@ def evaluate_dump_records(
             "f1": prf.f1,
         }
 
+    attr_weighted_recall = (
+        (attr_weight_matched / attr_weight_total) if attr_weight_total > 0 else 0.0
+    )
+    text_match_rate = (text_matched / text_total) if text_total > 0 else 0.0
+    notes_match_rate = (notes_matched / notes_total) if notes_total > 0 else 0.0
+    site_distance_acc = (site_matched / site_total) if site_total > 0 else 0.0
+
     return {
         "images": num_images,
         "params": {
@@ -718,6 +768,29 @@ def evaluate_dump_records(
         },
         "modes": out_modes,
         "category_breakdown_primary": cat_out,
+        "attribute_diagnostics_primary": {
+            "matched_pairs": attr_pairs,
+            "attr_weighted_recall": attr_weighted_recall,
+            "attr_weighted": {
+                "matched_weight": float(attr_weight_matched),
+                "total_weight": float(attr_weight_total),
+            },
+            "text": {
+                "gt_present": text_total,
+                "matched": text_matched,
+                "match_rate": text_match_rate,
+            },
+            "notes": {
+                "gt_present": notes_total,
+                "matched": notes_matched,
+                "match_rate": notes_match_rate,
+            },
+            "site_distance": {
+                "gt_present": site_total,
+                "matched": site_matched,
+                "exact_match_accuracy": site_distance_acc,
+            },
+        },
     }
 
 
