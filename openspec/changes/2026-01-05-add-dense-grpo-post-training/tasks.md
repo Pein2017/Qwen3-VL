@@ -18,8 +18,7 @@
     - [ ] object schema validation (one geometry key + desc)
     - [ ] `desc` key=value parsing (exact string semantics)
   - [ ] Add `src/rlhf/grpo/rewards/dense/matching.py`:
-    - [ ] exact region IoU for bbox/poly (convex polygons)
-    - [ ] define behavior for non-convex polys (reject as invalid for scoring; no bbox/AABB fallback)
+    - [ ] exact region IoU for bbox/poly using norm1000 mask IoU (supports non-convex polys)
     - [ ] exact line overlap metric (TubeIoU on norm1000 grid; see `vis_tools/geometry_eval_metrics.py`) with configurable tolerance
     - [ ] greedy 1-to-1 matching + IoU sweep reuse
   - [ ] Add `src/rlhf/grpo/rewards/dense/rewards.py`:
@@ -52,6 +51,7 @@
     - [ ] notes match for `备注` (bonus-only semantics)
     - [ ] RRU `站点距离` exact match accuracy
   - [ ] Ensure evaluation uses the same geometry rulers as dense rewards (poly/line exact; no bbox-only fallback for invalid inputs).
+  - [ ] Update region IoU in offline evaluation to support non-convex polys (norm1000 mask IoU), aligned with reward computation.
 
 - [ ] Tests + smoke
   - [ ] Unit tests for dense parsing/schema/desc parsing (including duplicate keys).
