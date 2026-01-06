@@ -5,7 +5,7 @@ model:
   model: output/1-4/2048_res_dense_merged/epoch_4-ckpt-5960
 
 training:
-  run_name: dense_summary_grpo_mixed_2048
+  run_name: epoch_2-lrs_1e-5
   output_dir: ./output/1-6/new_schema-4B-dense-summary-grpo-2048
   logging_dir: ./tb/1-6/new_schema-4B-dense-summary-grpo-2048
   num_train_epochs: 2
