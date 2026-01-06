@@ -10,7 +10,7 @@ rlhf:
   num_generations: 4
   temperature: 0.7
   repetition_penalty: 1.05
-  max_completion_length: 2048
+  max_completion_length: 4096
   truncation_strategy: delete
   generation_batch_size: 24
   dynamic_sample: true
@@ -22,4 +22,3 @@ rlhf:
   vllm_gpu_memory_utilization: 0.53
   vllm_enable_prefix_caching: true
   vllm_enable_lora: false
-
