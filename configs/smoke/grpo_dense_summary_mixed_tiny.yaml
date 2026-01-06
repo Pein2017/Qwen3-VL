@@ -1,0 +1,32 @@
+extends:
+  - grpo_dense_summary_mixed.yaml
+
+# Smoke preset with:
+# - Tiny fusion JSONLs (where available)
+# - Train/eval logging every step
+# - Few steps only (fast wiring validation)
+
+training:
+  run_name: smoke_dense_summary_grpo_mixed_tiny
+  eval_strategy: steps
+  eval_steps: 1
+  save_strategy: "no"
+  logging_steps: 1
+  logging_first_step: true
+  max_steps: 2
+
+custom:
+  fusion_config: configs/fusion/variants/bbu_rru_dense_grpo_mixed_2048_tiny.yaml
+  # Tiny sample limits as an extra safety net.
+  train_sample_limit: 2
+  val_sample_limit: 2
+  # Keep smoke runs minimal: disable CHORD (extra supervised dataloader).
+  grpo:
+    chord:
+      enabled: false
+
+rlhf:
+  # Keep rollout sizes tiny for smoke validation.
+  generation_batch_size: 4
+  num_generations: 2
+

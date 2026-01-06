@@ -26,3 +26,21 @@ def test_smoke_dense_summary_grpo_config_loads():
     # Summary rewards are present for mixed-mode regularization
     assert "summary.format" in reward_funcs
     assert "summary.group_stats_presence" in reward_funcs
+
+
+def test_smoke_dense_summary_grpo_tiny_config_loads():
+    cfg = cast(
+        dict[str, Any],
+        ConfigLoader.load_yaml_with_extends(
+            "configs/smoke/grpo_dense_summary_mixed_tiny.yaml"
+        ),
+    )
+    custom = cast(dict[str, Any], cfg.get("custom") or {})
+    training = cast(dict[str, Any], cfg.get("training") or {})
+
+    assert (
+        custom.get("fusion_config")
+        == "configs/fusion/variants/bbu_rru_dense_grpo_mixed_2048_tiny.yaml"
+    )
+    assert training.get("logging_steps") == 1
+    assert training.get("eval_steps") == 1
