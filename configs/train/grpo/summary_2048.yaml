@@ -1,5 +1,12 @@
 extends:
   - summary_base.yaml
 
+
+training:
+  output_dir: ./output/1-6/grpo_summary_2048
+  run_name: grpo_summary_2048-lrs_1e-5-epochs_4-chord_sft
+  logging_dir: ./tb/1-6/grpo_summary_2048
+  num_train_epochs: 4
+
 custom:
   fusion_config: configs/fusion/variants/bbu_rru_summary_grpo_2048.yaml

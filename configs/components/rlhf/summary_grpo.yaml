@@ -25,7 +25,7 @@ rlhf:
   # vLLM Configuration - Colocate Mode (internal vLLM)
   use_vllm: true
   vllm_mode: colocate
-  vllm_gpu_memory_utilization: 0.53
+  vllm_gpu_memory_utilization: 0.50
   vllm_enable_prefix_caching: true
   vllm_enable_lora: false
   # async_generate: true
