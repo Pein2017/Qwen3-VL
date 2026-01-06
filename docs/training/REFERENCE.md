@@ -67,6 +67,7 @@ Comprehensive guide for training, inference, deployment, and advanced topics.
 - Resolves `global_max_length` → `model.max_model_len` + `template.max_length` and forces `template.truncation_strategy: raise`
 - Attaches typed runtime toggles to `TrainArguments` (e.g., `save_delay_config`, `visual_kd_config`)
 - Fails fast with informative errors when schemas or inheritance are invalid
+- Hard-fails when required run settings are missing: `model.model`, `training.run_name`, `training.output_dir`, `training.logging_dir`, `training.num_train_epochs`, `training.learning_rate`, `training.vit_lr`, `training.aligner_lr`
 - Source of truth for all configuration behavior
 - Over-length policy: when `template.truncation_strategy` is `raise`, downstream datasets surface `MaxLengthError` as a hard failure so training stops rather than truncating or skipping samples (see `DenseCaptionDataset`).
 

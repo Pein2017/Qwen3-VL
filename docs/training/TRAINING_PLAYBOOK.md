@@ -19,6 +19,19 @@ Related: [REFERENCE.md](REFERENCE.md), [data/DATA_AND_DATASETS.md](../data/DATA_
 **Schema compliance**:
 - For any non-trivial config or dataset structure change, follow the schema review checklist in [reference/SCHEMA_CONSTITUTION.md](../reference/SCHEMA_CONSTITUTION.md).
 
+**Required per-launch settings** (no inheritance):
+- `model.model`
+- `training.run_name`
+- `training.output_dir`
+- `training.logging_dir` (TensorBoard)
+- `training.num_train_epochs`
+- `training.learning_rate`
+- `training.vit_lr`
+- `training.aligner_lr`
+
+Base configs/components set these to `null`; launch configs must override them explicitly.
+Config loading fails fast if any of the fields above is missing or empty.
+
 **Critical Setup**:
 ```yaml
 # Always set these

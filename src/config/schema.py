@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 from collections.abc import Mapping, MutableMapping
+import math
 from typing import Any, Literal, cast
 
 AllowedNorm = Literal["none", "norm100", "norm1000"]
@@ -29,6 +30,44 @@ def _as_dict(value: Mapping[str, Any] | None) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
         raise TypeError(f"Configuration section must be a mapping, got {type(value)!r}")
     return value
+
+
+def _require_string(value: Any, field_name: str) -> str:
+    if value is None:
+        raise ValueError(f"{field_name} must be set to a non-empty string")
+    if isinstance(value, str):
+        if not value.strip():
+            raise ValueError(f"{field_name} must be set to a non-empty string")
+        return value
+    if isinstance(value, Path):
+        value_str = str(value)
+        if not value_str.strip():
+            raise ValueError(f"{field_name} must be set to a non-empty string")
+        return value_str
+    raise TypeError(f"{field_name} must be a string")
+
+
+def _require_number(value: Any, field_name: str) -> float:
+    if value is None:
+        raise ValueError(f"{field_name} must be set to a numeric value")
+    if isinstance(value, bool):
+        raise TypeError(f"{field_name} must be numeric, got boolean")
+    parsed: float
+    if isinstance(value, (int, float)):
+        parsed = float(value)
+    elif isinstance(value, str):
+        if not value.strip():
+            raise ValueError(f"{field_name} must be set to a numeric value")
+        try:
+            parsed = float(value)
+        except ValueError as exc:
+            raise ValueError(f"{field_name} must be numeric, got {value!r}") from exc
+    else:
+        raise TypeError(f"{field_name} must be numeric")
+
+    if not math.isfinite(parsed):
+        raise ValueError(f"{field_name} must be finite")
+    return parsed
 
 
 
@@ -568,6 +607,56 @@ class CustomConfig:
 
 
 @dataclass(frozen=True)
+class RequiredTrainingSettings:
+    model_path: str
+    run_name: str
+    output_dir: str
+    logging_dir: str
+    num_train_epochs: float
+    learning_rate: float
+    vit_lr: float
+    aligner_lr: float
+
+    @classmethod
+    def from_mapping(
+        cls, model: Mapping[str, Any], training: Mapping[str, Any]
+    ) -> "RequiredTrainingSettings":
+        model_path = _require_string(model.get("model"), "model.model")
+        run_name = _require_string(training.get("run_name"), "training.run_name")
+        output_dir = _require_string(training.get("output_dir"), "training.output_dir")
+        logging_dir = _require_string(
+            training.get("logging_dir"), "training.logging_dir"
+        )
+        num_train_epochs = _require_number(
+            training.get("num_train_epochs"), "training.num_train_epochs"
+        )
+        if num_train_epochs <= 0:
+            raise ValueError("training.num_train_epochs must be > 0")
+        learning_rate = _require_number(
+            training.get("learning_rate"), "training.learning_rate"
+        )
+        if learning_rate < 0:
+            raise ValueError("training.learning_rate must be >= 0")
+        vit_lr = _require_number(training.get("vit_lr"), "training.vit_lr")
+        if vit_lr < 0:
+            raise ValueError("training.vit_lr must be >= 0")
+        aligner_lr = _require_number(training.get("aligner_lr"), "training.aligner_lr")
+        if aligner_lr < 0:
+            raise ValueError("training.aligner_lr must be >= 0")
+
+        return cls(
+            model_path=model_path,
+            run_name=run_name,
+            output_dir=output_dir,
+            logging_dir=logging_dir,
+            num_train_epochs=num_train_epochs,
+            learning_rate=learning_rate,
+            vit_lr=vit_lr,
+            aligner_lr=aligner_lr,
+        )
+
+
+@dataclass(frozen=True)
 class TrainingConfig:
     template: Mapping[str, Any]
     custom: CustomConfig
@@ -576,6 +665,7 @@ class TrainingConfig:
     data: Mapping[str, Any] = field(default_factory=dict)
     tuner: Mapping[str, Any] = field(default_factory=dict)
     training: Mapping[str, Any] = field(default_factory=dict)
+    required_settings: RequiredTrainingSettings | None = None
     rlhf: Mapping[str, Any] = field(default_factory=dict)
     prompts: PromptOverrides = field(default_factory=PromptOverrides)
     deepspeed: DeepSpeedConfig | None = None
@@ -618,6 +708,7 @@ class TrainingConfig:
             template["system"] = prompts.system
 
         custom = CustomConfig.from_mapping(custom_raw, prompts=prompts)
+        required_settings = RequiredTrainingSettings.from_mapping(model, training)
 
         return cls(
             template=template,
@@ -627,6 +718,7 @@ class TrainingConfig:
             data=data_section,
             tuner=tuner,
             training=training,
+            required_settings=required_settings,
             rlhf=rlhf,
             prompts=prompts,
             deepspeed=deepspeed,
