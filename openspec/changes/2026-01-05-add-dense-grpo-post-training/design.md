@@ -77,6 +77,7 @@ Dense rewards compute overlap in norm1000 space:
   - Cross-type `bbox_2d`↔`poly` matching is supported by rasterizing `bbox_2d` as a filled rectangle and `poly` as a filled polygon under the same ruler; the geometry representation type does not matter.
   - The polygon fill rule is the even-odd (parity) rule for determinism and MUST be shared between rewards and offline evaluation.
   - Self-intersecting polygons are scored under the same even-odd fill rule (not rejected), to keep scoring robust to minor vertex-ordering mistakes in model outputs.
+  - Data audit note: `analysis/poly_convexity_audit_report.json` shows non-convex `poly` shapes exist in the training targets (BBU ≈0.2% non-convex; RRU ≈10% non-convex), so convex-only polygon clipping would be incorrect for a non-trivial slice of RRU data.
 - Line family: `line`
   - Use the project’s polyline overlap metric (distance-tolerant coverage-F1 style).
   - Use a stability-first tolerance: default `tol=8.0` in norm1000 space (aligned with offline evaluator defaults).
