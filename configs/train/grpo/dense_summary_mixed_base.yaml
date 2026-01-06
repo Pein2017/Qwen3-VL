@@ -1,0 +1,42 @@
+extends:
+  - ../../base.yaml
+  - ../../components/global/max_length_16000.yaml
+  - ../../components/model/qwen3_vl_4b.yaml
+  - ../../components/tuner/dora_full.yaml
+  - ../../components/training/sft_defaults.yaml
+  - ../../components/training/grpo_summary.yaml
+  - ../../components/data/loader_defaults.yaml
+  - ../../components/prompts/summary_runtime_bbu.yaml
+  - ../../components/custom/common_fusion.yaml
+  - ../../components/custom/assistant_prefix.yaml
+  - ../../components/custom/augmentation_grpo_summary.yaml
+  - ../../components/deepspeed/zero3.yaml
+  - ../../components/rlhf/dense_summary_grpo_mixed.yaml
+
+model:
+  # model: output/12-27/new_schema-4B-summary-merged/checkpoint-330
+  model: output/12-30/grpo-merged
+
+training:
+  run_name: dense_summary_grpo_mixed
+  output_dir: ./output/1-1/new_schema-4B-dense-summary-grpo
+  logging_dir: ./tb/1-1/new_schema-4B-dense-summary-grpo
+
+custom:
+  # Mixed-mode: fusion config declares per-dataset modes; keep default dense.
+  use_summary: false
+  val_sample_limit: 200
+  # Optional: CHORD-style SFT mixing for GRPO (supervised fallback signal).
+  # Uses the same (fusion) training dataset stream as expert data.
+  grpo:
+    chord:
+      enabled: true
+      # Keep SFT micro-batch minimal; tuned for GPUs that can only backprop one sample per device.
+      sft_per_device_train_batch_size: 1
+      # Conservative constant mu after warmup: ramps to 0.05 then stays.
+      mu_warmup_steps: 100
+      mu_decay_steps: 0
+      mu_peak: 0.05
+      mu_valley: 0.05
+      enable_phi_function: false
+

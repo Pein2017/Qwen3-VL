@@ -1,11 +1,12 @@
 """GRPO reward registration entrypoints."""
 
-from .rewards.registry import register_summary_rewards
+from .rewards.registry import register_dense_rewards, register_summary_rewards
 
 
 def register_grpo_rewards() -> None:
-    """Register GRPO reward functions for summary post-training."""
+    """Register GRPO reward functions for summary and dense post-training."""
 
+    register_dense_rewards()
     register_summary_rewards()
 
 

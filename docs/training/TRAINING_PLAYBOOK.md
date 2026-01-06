@@ -55,6 +55,7 @@ sft.prepare_model(...)
 - `configs/train/sft/dense_1024.yaml` — Dense fusion SFT preset; sets `custom.fusion_config` to `configs/fusion/variants/bbu_rru_dense_1024.yaml`.
 - `configs/train/sft/summary_1024.yaml` — Summary fusion SFT preset; sets `custom.fusion_config` to `configs/fusion/variants/bbu_rru_summary_1024.yaml` and summary-specific augmentation.
 - `configs/train/grpo/summary_2048.yaml` — Summary GRPO preset (uses `configs/fusion/variants/bbu_rru_summary_grpo_2048.yaml`).
+- `configs/train/grpo/dense_summary_mixed_2048.yaml` — Mixed-mode dense+summary GRPO preset (dense detection + summary regularization; uses `configs/fusion/variants/bbu_rru_dense_grpo_mixed_2048.yaml`).
 - `configs/train/grpo/summary_server.yaml` — vLLM server-mode override for GRPO.
 - `configs/train/stage_b/distill.yaml` — Stage-B verdict distillation SFT (text-only ChatML), uses `configs/fusion/stage_b_distill.yaml`.
 - `configs/fusion/base/*.yaml` + `configs/fusion/variants/*.yaml` — Fusion dataset mixes with inheritance (dense/summary/GRPO, 1024/2048 overlays).
@@ -170,6 +171,21 @@ Use GRPO to stabilize summary outputs (two-line header + JSON for BBU/RRU, singl
 - **Rollout settings**: set backward size via `training.effective_batch_size` (with `per_device_train_batch_size` as the micro-batch), and set rollout size via `rlhf.generation_batch_size` (global trajectories per generation). `rlhf.num_generations` must divide `generation_batch_size`. Keep `rlhf.max_completion_length=2048` unless retuning; tune `rlhf.temperature` based on format stability vs diversity.
 - **LoRA note**: keep `train_type: lora` and do **not** set `rlhf.ref_model` (ms-swift treats LoRA refs via adapter disabling or `ref_adapters` when explicitly provided).
 - **Irrelevant handling**: prompts alternate per epoch (~50/50) between `summary_bbu`/`summary_rru`; assistant prefixes are suppressed so labels stay single-line `无关图片`.
+
+### Mixed-mode Dense GRPO Post-Training (Localization-first)
+
+Use GRPO to tune dense detection quality (geometry-first) while mixing summary samples as regularization signal to avoid summary regressions.
+
+- **Activation**: start from `configs/train/grpo/dense_summary_mixed_2048.yaml` (extends `configs/train/grpo/dense_summary_mixed_base.yaml` and uses `configs/fusion/variants/bbu_rru_dense_grpo_mixed_2048.yaml`).
+- **Fusion mix**: dense targets (`bbu_dense`, `rru_dense`) + summary sources (`bbu_summary`, `rru_summary`, `irrelevant_summary`) with explicit exclusion of LVIS/chat for this stage.
+- **Reward funcs** (dense mode; applied only when `metadata._fusion_mode == "dense"`):
+  - Contract + schema: `dense.format`, `dense.parse_schema_strict` (duplicate keys + strict geometry validity; no bbox-only fallback for invalid poly/line).
+  - Localization-first: `dense.loc_mean_fbeta` (mean-Fβ over IoU thresholds, default β=2.0 for recall bias), `dense.loc_soft_recall` (smooth per-GT best-overlap shaping).
+  - Geometry ruler: norm1000 is rasterized on a 1000×1000 grid clamped to `[0, 999]` (pixel-level filled-shape IoU for `bbox_2d`/`poly`, TubeIoU for `line`).
+  - Secondary: `dense.cat_mean_f1` (category-aware mean F1 requiring `类别` match).
+  - Tertiary: `dense.attr_weighted_recall` (exact key=value attributes on matched pairs; down-weight `可见性`, bonus-only `文本/备注`, strict `站点距离=<int>`).
+- **Summary rewards**: reuse the existing `summary.*` reward set for summary-mode rows, but they no-op on dense rows in mixed-mode runs.
+- **Offline evaluation**: evaluate dense dumps (`gt_vs_pred.jsonl`, norm1000) via `vis_tools/eval_dump.py` and inspect `attribute_diagnostics_primary` in the JSON report (`attr_weighted_recall`, `text`/`notes` match rates, `site_distance.exact_match_accuracy`).
 
 #### LM-head KD Weight
 

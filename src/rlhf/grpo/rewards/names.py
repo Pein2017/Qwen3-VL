@@ -19,3 +19,18 @@ LEGACY_SUMMARY_REWARD_NAMES: dict[str, str] = {
 }
 
 SUMMARY_REWARD_NAMES: tuple[str, ...] = tuple(LEGACY_SUMMARY_REWARD_NAMES.values())
+
+DENSE_REWARD_NAMES: tuple[str, ...] = (
+    "dense.format",
+    "dense.parse_schema_strict",
+    "dense.loc_mean_fbeta",
+    "dense.loc_soft_recall",
+    "dense.cat_mean_f1",
+    "dense.attr_weighted_recall",
+)
+
+__all__ = [
+    "DENSE_REWARD_NAMES",
+    "LEGACY_SUMMARY_REWARD_NAMES",
+    "SUMMARY_REWARD_NAMES",
+]

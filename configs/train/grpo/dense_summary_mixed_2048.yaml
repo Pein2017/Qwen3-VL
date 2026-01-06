@@ -1,0 +1,6 @@
+extends:
+  - dense_summary_mixed_base.yaml
+
+custom:
+  fusion_config: configs/fusion/variants/bbu_rru_dense_grpo_mixed_2048.yaml
+

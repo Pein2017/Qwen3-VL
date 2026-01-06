@@ -72,7 +72,7 @@ Invalid geometry is treated as a schema failure and MUST NOT be evaluated via bb
 ### 4.2 Matching and overlap rulers (exact)
 Dense rewards compute overlap in norm1000 space:
 - Region family: `bbox_2d` and `poly`
-  - Use pixel-level filled-shape IoU computed on the norm1000 grid (size 1001×1001) by rasterizing each region into a binary mask and then taking `|A∩B|/|A∪B|`.
+  - Use pixel-level filled-shape IoU computed on the norm1000 grid (size 1000×1000, with coordinates clamped to `[0, 999]`) by rasterizing each region into a binary mask and then taking `|A∩B|/|A∪B|`.
   - This ruler supports non-convex polygons and avoids fragile analytic clipping assumptions.
   - Cross-type `bbox_2d`↔`poly` matching is supported by rasterizing `bbox_2d` as a filled rectangle and `poly` as a filled polygon under the same ruler; the geometry representation type does not matter.
   - The polygon fill rule is the even-odd (parity) rule for determinism and MUST be shared between rewards and offline evaluation.

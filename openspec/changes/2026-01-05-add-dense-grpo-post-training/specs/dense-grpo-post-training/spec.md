@@ -72,7 +72,7 @@ Mode-mismatched reward functions SHALL return a neutral per-sample reward value 
 
 ### Requirement: Exact poly/line geometry scoring without bbox-only fallback
 Dense GRPO localization rewards SHALL compute geometry overlap using exact rulers:
-- Region family (`bbox_2d`, `poly`): pixel-level filled-shape IoU on the norm1000 grid (size 1001×1001), computed by rasterizing each region into a binary mask and then taking `|A∩B|/|A∪B|`.
+- Region family (`bbox_2d`, `poly`): pixel-level filled-shape IoU on the norm1000 grid (size 1000×1000, with coordinates clamped to `[0, 999]`), computed by rasterizing each region into a binary mask and then taking `|A∩B|/|A∪B|`.
   - This raster IoU SHALL support non-convex polygons and cross-type matching between `bbox_2d` and `poly` by rasterizing `bbox_2d` as a filled rectangle and `poly` as a filled polygon under the same ruler.
   - The polygon fill rule SHALL be the even-odd (parity) rule for determinism, and MUST be identical between reward computation and offline evaluation.
   - Self-intersecting `poly` outputs SHALL be scored using the same even-odd fill rule and SHALL NOT be treated as invalid geometry solely due to self-intersection.
