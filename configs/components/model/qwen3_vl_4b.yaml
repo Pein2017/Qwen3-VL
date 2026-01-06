@@ -1,3 +1,0 @@
-model:
-  # Explicitly required in launch configs.
-  model: null

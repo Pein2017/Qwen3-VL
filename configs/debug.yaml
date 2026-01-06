@@ -1,6 +1,5 @@
 extends:
   - base.yaml
-  - components/model/qwen3_vl_4b.yaml
   - components/tuner/debug_lora.yaml
   - components/training/debug.yaml
   - components/data/loader_debug.yaml

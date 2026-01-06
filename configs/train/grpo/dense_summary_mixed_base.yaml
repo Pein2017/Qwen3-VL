@@ -1,7 +1,6 @@
 extends:
   - ../../base.yaml
   - ../../components/global/max_length_16000.yaml
-  - ../../components/model/qwen3_vl_4b.yaml
   - ../../components/tuner/dora_full.yaml
   - ../../components/training/sft_defaults.yaml
   - ../../components/training/grpo_summary.yaml
