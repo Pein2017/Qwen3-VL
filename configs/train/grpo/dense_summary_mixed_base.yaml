@@ -8,7 +8,7 @@ extends:
   - ../../components/prompts/summary_runtime_bbu.yaml
   - ../../components/custom/common_fusion.yaml
   - ../../components/custom/assistant_prefix.yaml
-  - ../../components/custom/augmentation_grpo_summary.yaml
+  - ../../components/custom/augmentation_dense.yaml
   - ../../components/deepspeed/zero3.yaml
   - ../../components/rlhf/dense_summary_grpo_mixed.yaml
 
