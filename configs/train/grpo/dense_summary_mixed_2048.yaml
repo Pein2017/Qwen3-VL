@@ -1,6 +1,17 @@
 extends:
   - dense_summary_mixed_base.yaml
 
+model:
+  model: output/1-4/2048_res_dense_merged/epoch_4-ckpt-5960
+
+training:
+  run_name: dense_summary_grpo_mixed_2048
+  output_dir: ./output/1-6/new_schema-4B-dense-summary-grpo-2048
+  logging_dir: ./tb/1-6/new_schema-4B-dense-summary-grpo-2048
+  num_train_epochs: 2
+  learning_rate: 1.0e-5
+  vit_lr: 1.0e-7
+  aligner_lr: 1.0e-7
+
 custom:
   fusion_config: configs/fusion/variants/bbu_rru_dense_grpo_mixed_2048.yaml
-

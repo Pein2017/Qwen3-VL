@@ -14,18 +14,12 @@ extends:
   - ../../components/rlhf/dense_summary_grpo_mixed.yaml
 
 model:
-  # model: output/12-27/new_schema-4B-summary-merged/checkpoint-330
-  model: output/12-30/grpo-merged
-
-training:
-  run_name: dense_summary_grpo_mixed
-  output_dir: ./output/1-1/new_schema-4B-dense-summary-grpo
-  logging_dir: ./tb/1-1/new_schema-4B-dense-summary-grpo
+  model: null
 
 custom:
   # Mixed-mode: fusion config declares per-dataset modes; keep default dense.
   use_summary: false
-  val_sample_limit: 200
+  val_sample_limit: 360
   # Optional: CHORD-style SFT mixing for GRPO (supervised fallback signal).
   # Uses the same (fusion) training dataset stream as expert data.
   grpo:
@@ -39,4 +33,3 @@ custom:
       mu_peak: 0.05
       mu_valley: 0.05
       enable_phi_function: false
-
