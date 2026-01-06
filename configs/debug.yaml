@@ -6,5 +6,8 @@ extends:
   - components/data/loader_debug.yaml
   - components/custom/debug_data.yaml
 
+model:
+  model: model_cache/models/Qwen/Qwen3-VL-4B-Instruct
+
 # Minimal debug config used by tests and quick smoke runs.
 # Targets fast config validation and single-GPU sanity checks.

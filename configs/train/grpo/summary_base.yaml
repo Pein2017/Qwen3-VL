@@ -15,8 +15,7 @@ extends:
   - ../../components/rlhf/summary_grpo.yaml
 
 model:
-  # model: output/12-27/new_schema-4B-summary-merged/checkpoint-330
-  model: output/12-30/grpo-merged
+  model: null
 
 custom:
   val_sample_limit: 200

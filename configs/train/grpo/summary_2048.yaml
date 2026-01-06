@@ -1,12 +1,17 @@
 extends:
   - summary_base.yaml
 
+model:
+  model: output/1-4/2048_res_dense_merged/epoch_4-ckpt-5960
 
 training:
   output_dir: ./output/1-6/grpo_summary_2048
   run_name: grpo_summary_2048-lrs_1e-5-epochs_4-chord_sft
   logging_dir: ./tb/1-6/grpo_summary_2048
-  num_train_epochs: 4
+  num_train_epochs: 2
+  learning_rate: 1.0e-5
+  vit_lr: 1.0e-7
+  aligner_lr: 1.0e-7
 
 custom:
   fusion_config: configs/fusion/variants/bbu_rru_summary_grpo_2048.yaml

@@ -15,4 +15,4 @@ extends:
   - ../../components/deepspeed/zero2.yaml
 
 model:
-  model: output/12-27/new_schema-4B-dense-merged/checkpoint-4470
+  model: null

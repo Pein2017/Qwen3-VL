@@ -1,12 +1,12 @@
 training:
   # Summary GRPO overrides.
-  run_name: continue_training-lrs_1e-5-more_rewards-epochs_2-chord_sft
-  num_train_epochs: 2
-  learning_rate: 1.0e-5
-  vit_lr: 1.0e-7
-  aligner_lr: 1.0e-7
-  output_dir: ./output/1-1/new_schema-4B-summary-grpo
-  logging_dir: ./tb/1-1/new_schema-4B-summary-grpo
+  run_name: null
+  num_train_epochs: null
+  learning_rate: null
+  vit_lr: null
+  aligner_lr: null
+  output_dir: null
+  logging_dir: null
   per_device_train_batch_size: 1
   per_device_eval_batch_size: 2
   effective_batch_size: 24

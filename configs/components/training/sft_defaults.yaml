@@ -1,16 +1,16 @@
 training:
   # Baseline dense-caption SFT defaults.
-  output_dir: ./output/12-27/new_schema-4B-dense
-  run_name: epoch_30-2_1_6
-  num_train_epochs: 30
+  output_dir: null
+  run_name: null
+  num_train_epochs: null
   per_device_train_batch_size: 1
   per_device_eval_batch_size: 2
   effective_batch_size: 32
   optimizer: multimodal
   # LR groups (LLM/ViT/aligner) — tune per experiment as needed.
-  learning_rate: 2.0e-4
-  vit_lr: 1.0e-4
-  aligner_lr: 6.0e-4
+  learning_rate: null
+  vit_lr: null
+  aligner_lr: null
   lr_scheduler_type: cosine_warmup_with_min_lr
   lr_scheduler_kwargs:
     min_lr: 1.0e-6
@@ -34,6 +34,6 @@ training:
   metric_for_best_model: eval_token_acc
   greater_is_better: true
   save_delay_steps: 1800
-  logging_dir: ./tb/12-27/new_schema-4B
+  logging_dir: null
   logging_steps: 10
   logging_first_step: true

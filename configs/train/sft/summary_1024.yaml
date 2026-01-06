@@ -1,5 +1,17 @@
 extends:
   - summary_base.yaml
 
+model:
+  model: output/12-27/new_schema-4B-dense-merged/checkpoint-4470
+
+training:
+  output_dir: ./output/12-27/new_schema-4B-summary
+  run_name: epoch_2
+  num_train_epochs: 2
+  learning_rate: 1.0e-4
+  vit_lr: 1.0e-7
+  aligner_lr: 1.0e-7
+  logging_dir: ./tb/12-27/new_schema-4B-summary
+
 custom:
   fusion_config: configs/fusion/variants/bbu_rru_summary_1024.yaml

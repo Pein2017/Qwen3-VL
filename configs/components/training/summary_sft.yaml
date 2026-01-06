@@ -1,11 +1,11 @@
 training:
   # Summary SFT overrides.
-  output_dir: ./output/12-27/new_schema-4B-summary
-  logging_dir: ./tb/12-27/new_schema-4B-summary
-  run_name: epoch_2
-  num_train_epochs: 2
-  learning_rate: 1.0e-4
-  vit_lr: 1.0e-7
-  aligner_lr: 1.0e-7
+  output_dir: null
+  logging_dir: null
+  run_name: null
+  num_train_epochs: null
+  learning_rate: null
+  vit_lr: null
+  aligner_lr: null
   save_delay_steps: 300
   warmup_ratio: 0.05

@@ -1,2 +1,3 @@
 model:
-  model: model_cache/models/Qwen/Qwen3-VL-8B-Instruct
+  # Explicitly required in launch configs.
+  model: null
