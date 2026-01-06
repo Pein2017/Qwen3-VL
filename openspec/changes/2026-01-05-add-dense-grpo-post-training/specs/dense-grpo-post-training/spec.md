@@ -75,6 +75,7 @@ Dense GRPO localization rewards SHALL compute geometry overlap using exact ruler
 - Region family (`bbox_2d`, `poly`): pixel-level filled-shape IoU on the norm1000 grid (size 1001×1001), computed by rasterizing each region into a binary mask and then taking `|A∩B|/|A∪B|`.
   - This raster IoU SHALL support non-convex polygons and cross-type matching between `bbox_2d` and `poly` by rasterizing `bbox_2d` as a filled rectangle and `poly` as a filled polygon under the same ruler.
   - The polygon fill rule SHALL be the even-odd (parity) rule for determinism, and MUST be identical between reward computation and offline evaluation.
+  - Self-intersecting `poly` outputs SHALL be scored using the same even-odd fill rule and SHALL NOT be treated as invalid geometry solely due to self-intersection.
 - Line family (`line`): TubeIoU on the norm1000 grid with a stability-first tolerance (default `tol=8.0` in norm1000 space), computed by rasterizing each polyline into a tube mask of width `round(2*tol)` and then taking `|A∩B|/|A∪B|`.
 
 Rewards SHALL NOT approximate invalid `poly`/`line` geometries using bbox/AABB fallback; invalid geometries SHALL be treated as schema failures and excluded from matching.
@@ -92,6 +93,12 @@ Rewards SHALL NOT approximate invalid `poly`/`line` geometries using bbox/AABB f
 - **WHEN** localization overlap is computed for matching and scoring
 - **THEN** the overlap is computed as filled-shape IoU on the norm1000 grid
 - **AND** no geometry-type penalty is applied solely because one side is `bbox_2d` and the other is `poly`
+
+#### Scenario: Self-intersecting polys are scored (not rejected)
+- **GIVEN** a predicted object with `poly` that is syntactically valid but self-intersecting
+- **WHEN** localization overlap is computed for matching and scoring
+- **THEN** the polygon is rasterized using the even-odd fill rule and scored via filled-shape IoU
+- **AND** the polygon is not treated as invalid solely due to self-intersection
 
 ### Requirement: Localization rewards bias toward recall (missing-object reduction) with weak hallucination penalties
 Dense GRPO reward shaping SHALL prioritize reducing missing objects and SHALL avoid strong penalties on unmatched predictions, because GT annotations may be incomplete.
