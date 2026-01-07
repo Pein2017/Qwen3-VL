@@ -3,6 +3,7 @@
 
 !AGENTS.md
 !pyrightconfig.json
+!.gitmodules
 
 # But track these specific folders
 !src/
@@ -21,6 +22,7 @@
 !archive/
 !.proxy/
 !analysis/
+!mcp/
 
 # Track files in the tracked folders
 !src/**
@@ -38,6 +40,7 @@
 !*.md
 !compare/**
 !references/**/*.md
+!mcp/codex-mcp-server/
 !references/**/*.py
 !public_data/**/*.py
 !public_data/**/*.md
