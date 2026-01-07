@@ -2,7 +2,7 @@
 
 ## MODIFIED Requirements
 
-### Requirement: Header matching uses fusion metadata and TASK=SUMMARY
+### Requirement: Header matching uses dataset domain token and TASK=SUMMARY
 For non-irrelevant samples, header rewards SHALL validate `<DOMAIN>` against a domain token derived from `_fusion_template` (`summary_bbu` → `BBU`, `summary_rru` → `RRU`) and SHALL validate `<TASK>` as the fixed token `SUMMARY` for summary-mode outputs. `_fusion_source == "irrelevant_summary"` SHALL suppress header checks entirely (even if `_fusion_template` is `summary_bbu`).
 
 #### Scenario: Header token match via fusion template

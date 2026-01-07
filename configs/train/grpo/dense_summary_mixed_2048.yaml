@@ -7,10 +7,10 @@ model:
 template:
   # Cap image token budget to match the 2048-vision-token dataset preprocessing.
   # Keeps prompt token length stable and reduces outlier-driven vLLM KV cache waste.
-  max_pixels: 20971520
+  max_pixels: 209715200
 
 training:
-  run_name: epoch_2-grpo-ebs32-gbs32-llm5e-6-align1e-5-l7424
+  run_name: epoch_2-ebs32-gbs32-llm_lr-5e-6-vit_lr-1e-7-aligner_lr-1e-5-tp4
   output_dir: ./output/1-6/new_schema-4B-dense-summary-grpo-2048
   logging_dir: ./tb/1-6/new_schema-4B-dense-summary-grpo-2048
   num_train_epochs: 2
@@ -24,7 +24,7 @@ rlhf:
   # Increase rollout prompt count (8 GPUs, per_device_train_batch_size=1):
   # generation_batch_size=32 => steps_per_generation=4, prompt_batch_size=8 (with num_generations=4).
   generation_batch_size: 32
-  temperature: 0.8
+  temperature: 0.7
   top_p: 1.0
   # vLLM colocate sizing depends on vllm_tensor_parallel_size * steps_per_generation.
   # Use TP=4 as a safer default than 8 to reduce KV/cache preallocation pressure.
@@ -34,7 +34,7 @@ rlhf:
   # With max_completion_length=4096 => needed=7146; use 7424 (=ceil256(7146+128)).
   vllm_max_model_len: 8192
   # Keep headroom for training model forward/backward on the same GPUs in colocate mode.
-  vllm_gpu_memory_utilization: 0.5
+  vllm_gpu_memory_utilization: 0.55
 
 custom:
   fusion_config: configs/fusion/variants/bbu_rru_dense_grpo_mixed_2048.yaml
