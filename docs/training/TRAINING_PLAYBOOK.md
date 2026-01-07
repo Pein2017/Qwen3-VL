@@ -317,6 +317,7 @@ python -m src.sft --config config.yaml --debug
 | Full model saved instead of adapter | Missing `sft.prepare_model()` | Always call before trainer creation |
 | Zero gradients for vision/aligner | Wrong content format | Use `{"type": "image", "image": path}` |
 | OOM | Batch size / length too large | Lower batch size, enable gradient checkpointing, use ZeRO |
+| OOM after `eval_steps` (GRPO + vLLM colocate) | CUDA reserved memory creeps across eval cycles (allocator cache / fragmentation) | Keep default `custom.cuda_memory` cleanup enabled; to diagnose set `custom.cuda_memory.profile: true` and inspect `cuda_memory_trace.rank0.jsonl` in `training.output_dir` |
 | Slow convergence | Learning rate mismatch | Try 1e-4 for LoRA, 5e-5 for full |
 | NaN loss | LR too high or bad data | Lower LR, check data validation |
 | NCCL monitoredBarrier after best checkpoint | Token accuracy aggregated per rank → only some processes call `_save_checkpoint`, others block in collectives | Upgrade to the 2025‑11‑16 trainer (`src/trainers/gkd_monitor.py`) which reduces `{token_acc_correct, token_acc_total}` across ranks before logging so every process makes the same best-model decision. Older builds should stick to `metric_for_best_model=eval_loss`. |

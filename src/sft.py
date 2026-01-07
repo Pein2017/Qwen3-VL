@@ -2,7 +2,7 @@
 
 import argparse
 import copy
-from dataclasses import asdict
+from dataclasses import asdict, replace
 import logging
 import math
 from multiprocessing import Manager
@@ -20,6 +20,7 @@ from transformers import PreTrainedTokenizerBase
 from transformers.trainer_utils import SaveStrategy
 
 from .callbacks.fusion_epoch import FusionEpochCallback
+from .callbacks.cuda_memory import CudaMemoryCallback
 from .config import ConfigLoader, SaveDelayConfig
 from .config.grpo import validate_grpo_config
 from .data_collators.dataset_metrics import (
@@ -919,6 +920,31 @@ def main():
 
     # Add SaveDelayCallback if save_delay_steps is configured
     callbacks = sft.callbacks.copy() if sft.callbacks else []
+    cuda_memory_cb: CudaMemoryCallback | None = None
+    cuda_memory_cfg = getattr(custom_config, "cuda_memory", None)
+    cuda_memory_cfg_enabled = bool(getattr(cuda_memory_cfg, "enabled", False))
+    disable_cuda_cleanup = os.environ.get("QWEN3VL_DISABLE_CUDA_EVAL_CLEANUP", "0").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "y",
+        "on",
+    )
+    cuda_memory_cfg_effective = (
+        replace(cuda_memory_cfg, cleanup=False)
+        if cuda_memory_cfg is not None and disable_cuda_cleanup and bool(getattr(cuda_memory_cfg, "cleanup", False))
+        else cuda_memory_cfg
+    )
+    if cuda_memory_cfg_effective is not None and cuda_memory_cfg_enabled:
+        cuda_memory_cb = CudaMemoryCallback(cuda_memory_cfg_effective)
+        callbacks.append(cuda_memory_cb)
+        if bool(getattr(cuda_memory_cfg_effective, "profile", False)) or disable_cuda_cleanup:
+            logger.info(
+                "CUDA memory callback active: profile=%s cleanup=%s rank0_only=%s",
+                getattr(cuda_memory_cfg_effective, "profile", None),
+                getattr(cuda_memory_cfg_effective, "cleanup", None),
+                getattr(cuda_memory_cfg_effective, "rank0_only", None),
+            )
     if curriculum_scheduler is not None and curriculum_state is not None:
         from .callbacks.augmentation_curriculum import (
             AugmentationCurriculumCallback,
@@ -981,6 +1007,8 @@ def main():
         template=sft.template,  # type: ignore[arg-type]
         **trainer_kwargs,
     )
+    if cuda_memory_cb is not None:
+        cuda_memory_cb.attach_trainer(trainer)
 
     # Post-init CHORD wiring (GRPO-only). This must happen after trainer.accelerator exists.
     if chord_enabled and chord_dataset is not None:

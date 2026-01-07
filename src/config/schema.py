@@ -15,6 +15,10 @@ AllowedJsonFormat = Literal["standard"]
 ALLOWED_JSON_FORMATS: set[str] = {"standard"}
 
 
+def _empty_str_any_dict() -> dict[str, Any]:
+    return {}
+
+
 def _normalize_json_format(value: object) -> AllowedJsonFormat:
     if not isinstance(value, str):
         raise TypeError("custom.json_format must be a string")
@@ -92,25 +96,26 @@ class TokenTypeMetricsConfig:
         object.__setattr__(self, "exclude", exc)
 
     @classmethod
-    def from_mapping(cls, payload: object) -> "TokenTypeMetricsConfig":
+    def from_mapping(cls, payload: Mapping[str, Any] | None) -> "TokenTypeMetricsConfig":
         if payload is None:
             return cls()
         if not isinstance(payload, Mapping):
             raise TypeError("custom.token_type_metrics must be a mapping when provided")
 
         enabled = bool(payload.get("enabled", False))
-        include_raw = payload.get("include", cls.include)
-        exclude_raw = payload.get("exclude", cls.exclude)
+        include_raw: object = payload.get("include", cls.include)
+        exclude_raw: object = payload.get("exclude", cls.exclude)
 
-        def _to_tuple(value: object, field: str) -> tuple[str, ...]:
+        def _to_tuple(value: object) -> tuple[str, ...]:
             if value is None:
                 return ()
             if isinstance(value, (list, tuple)):
-                return tuple(str(v).strip() for v in value)
+                seq = cast("list[object] | tuple[object, ...]", value)
+                return tuple(str(v).strip() for v in seq)
             return (str(value).strip(),)
 
-        include = _to_tuple(include_raw, "include")
-        exclude = _to_tuple(exclude_raw, "exclude")
+        include = _to_tuple(include_raw)
+        exclude = _to_tuple(exclude_raw)
 
         return cls(enabled=enabled, include=include, exclude=exclude)
 
@@ -361,7 +366,7 @@ class GrpoChordConfig:
 @dataclass(frozen=True)
 class GrpoConfig:
     chord: GrpoChordConfig = field(default_factory=GrpoChordConfig.disabled)
-    extra: Mapping[str, Any] = field(default_factory=dict)
+    extra: Mapping[str, Any] = field(default_factory=_empty_str_any_dict)
 
     @classmethod
     def from_mapping(cls, payload: Mapping[str, Any] | None) -> "GrpoConfig":
@@ -372,6 +377,113 @@ class GrpoConfig:
         data = dict(payload)
         chord = GrpoChordConfig.from_mapping(data.pop("chord", None))
         return cls(chord=chord, extra=dict(data))
+
+
+@dataclass(frozen=True)
+class CudaMemoryConfig:
+    """CUDA memory profiling + cleanup controls.
+
+    Intended for long-running GRPO + vLLM colocate runs where CUDA reserved memory
+    (PyTorch allocator) can creep upward after evaluation, reducing free headroom
+    for other GPU consumers (e.g., vLLM KV cache / NCCL buffers).
+    """
+
+    enabled: bool = True
+    profile: bool = False
+    cleanup: bool = True
+    rank0_only: bool = True
+    force_sync: bool = True
+    ipc_collect: bool = False
+    max_retries: int = 1
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.enabled, bool):
+            raise TypeError("custom.cuda_memory.enabled must be a boolean value")
+        if not isinstance(self.profile, bool):
+            raise TypeError("custom.cuda_memory.profile must be a boolean value")
+        if not isinstance(self.cleanup, bool):
+            raise TypeError("custom.cuda_memory.cleanup must be a boolean value")
+        if not isinstance(self.rank0_only, bool):
+            raise TypeError("custom.cuda_memory.rank0_only must be a boolean value")
+        if not isinstance(self.force_sync, bool):
+            raise TypeError("custom.cuda_memory.force_sync must be a boolean value")
+        if not isinstance(self.ipc_collect, bool):
+            raise TypeError("custom.cuda_memory.ipc_collect must be a boolean value")
+        if not isinstance(self.max_retries, int):
+            raise TypeError("custom.cuda_memory.max_retries must be an integer value")
+        if self.max_retries < 1:
+            raise ValueError("custom.cuda_memory.max_retries must be >= 1")
+
+    @staticmethod
+    def _parse_bool(value: object, field_name: str) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            if value in (0, 1, 0.0, 1.0):
+                return bool(value)
+            raise ValueError(f"{field_name} must be boolean (0 or 1), got {value!r}.")
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"true", "1", "yes", "y", "on"}:
+                return True
+            if normalized in {"false", "0", "no", "n", "off"}:
+                return False
+            raise ValueError(
+                f"{field_name} string value '{value}' is not a recognized boolean representation."
+            )
+        raise TypeError(f"{field_name} must be a boolean value, got {type(value)!r}.")
+
+    @classmethod
+    def from_mapping(cls, payload: Mapping[str, Any] | None) -> "CudaMemoryConfig":
+        if payload is None:
+            return cls()
+        if not isinstance(payload, Mapping):
+            raise TypeError("custom.cuda_memory must be a mapping when provided")
+
+        data = dict(payload)
+        enabled = cls._parse_bool(
+            data.pop("enabled", True), "custom.cuda_memory.enabled"
+        )
+        profile = cls._parse_bool(
+            data.pop("profile", False), "custom.cuda_memory.profile"
+        )
+        cleanup = cls._parse_bool(
+            data.pop("cleanup", True), "custom.cuda_memory.cleanup"
+        )
+        rank0_only = cls._parse_bool(
+            data.pop("rank0_only", True), "custom.cuda_memory.rank0_only"
+        )
+        force_sync = cls._parse_bool(
+            data.pop("force_sync", True), "custom.cuda_memory.force_sync"
+        )
+        ipc_collect = cls._parse_bool(
+            data.pop("ipc_collect", False), "custom.cuda_memory.ipc_collect"
+        )
+
+        max_retries_raw = data.pop("max_retries", 1)
+        if isinstance(max_retries_raw, bool):
+            raise TypeError("custom.cuda_memory.max_retries must be an integer value")
+        try:
+            max_retries = int(max_retries_raw)
+        except (TypeError, ValueError) as exc:
+            raise TypeError(
+                "custom.cuda_memory.max_retries must be an integer value, got "
+                + repr(max_retries_raw)
+            ) from exc
+
+        if data:
+            unknown = ", ".join(sorted(str(k) for k in data))
+            raise ValueError(f"Unknown custom.cuda_memory fields: {unknown}")
+
+        return cls(
+            enabled=enabled,
+            profile=profile,
+            cleanup=cleanup,
+            rank0_only=rank0_only,
+            force_sync=force_sync,
+            ipc_collect=ipc_collect,
+            max_retries=max_retries,
+        )
 
 
 @dataclass(frozen=True)
@@ -396,7 +508,8 @@ class CustomConfig:
     output_variant: Literal["dense", "summary"] = "dense"
     visual_kd: VisualKDConfig = field(default_factory=VisualKDConfig.disabled)
     token_type_metrics: TokenTypeMetricsConfig = field(default_factory=TokenTypeMetricsConfig)
-    extra: Mapping[str, Any] = field(default_factory=dict)
+    cuda_memory: CudaMemoryConfig = field(default_factory=CudaMemoryConfig)
+    extra: Mapping[str, Any] = field(default_factory=_empty_str_any_dict)
     fusion_config: str | None = None
     grpo: GrpoConfig = field(default_factory=GrpoConfig)
 
@@ -498,6 +611,10 @@ class CustomConfig:
             )
         augmentation = data.pop("augmentation", None)
         augmentation_curriculum = data.pop("augmentation_curriculum", None)
+        if augmentation is not None and not isinstance(augmentation, Mapping):
+            raise TypeError("custom.augmentation must be a mapping when provided")
+        if augmentation_curriculum is not None and not isinstance(augmentation_curriculum, Mapping):
+            raise TypeError("custom.augmentation_curriculum must be a mapping when provided")
         bypass_prob = float(data.pop("bypass_prob", 0.0))
         trainer_variant = data.pop("trainer_variant", None)
         def _parse_sample_limit(value: Any, field_name: str) -> int | None:
@@ -541,6 +658,8 @@ class CustomConfig:
         visual_kd = VisualKDConfig.from_mapping(visual_kd_raw)
         token_type_metrics_raw = data.pop("token_type_metrics", None)
         token_type_metrics = TokenTypeMetricsConfig.from_mapping(token_type_metrics_raw)
+        cuda_memory_raw = data.pop("cuda_memory", None)
+        cuda_memory = CudaMemoryConfig.from_mapping(cuda_memory_raw)
         hsm_raw = data.pop("hard_sample_mining", None)
         if hsm_raw is not None:
             raise ValueError(
@@ -579,12 +698,8 @@ class CustomConfig:
             assistant_prefix_format=assistant_prefix_format,
             use_summary=use_summary,
             system_prompt_summary=system_prompt_summary,
-            augmentation=augmentation
-            if isinstance(augmentation, Mapping)
-            else augmentation,
-            augmentation_curriculum=augmentation_curriculum
-            if isinstance(augmentation_curriculum, Mapping)
-            else augmentation_curriculum,
+            augmentation=cast("Mapping[str, Any] | None", augmentation),
+            augmentation_curriculum=cast("Mapping[str, Any] | None", augmentation_curriculum),
             bypass_prob=bypass_prob,
             trainer_variant=str(trainer_variant)
             if trainer_variant is not None
@@ -601,6 +716,7 @@ class CustomConfig:
             output_variant=prompts.output_variant,
             visual_kd=visual_kd,
             token_type_metrics=token_type_metrics,
+            cuda_memory=cuda_memory,
             extra=extra,
             grpo=grpo,
         )
@@ -660,17 +776,17 @@ class RequiredTrainingSettings:
 class TrainingConfig:
     template: Mapping[str, Any]
     custom: CustomConfig
-    model: Mapping[str, Any] = field(default_factory=dict)
-    quantization: Mapping[str, Any] = field(default_factory=dict)
-    data: Mapping[str, Any] = field(default_factory=dict)
-    tuner: Mapping[str, Any] = field(default_factory=dict)
-    training: Mapping[str, Any] = field(default_factory=dict)
+    model: Mapping[str, Any] = field(default_factory=_empty_str_any_dict)
+    quantization: Mapping[str, Any] = field(default_factory=_empty_str_any_dict)
+    data: Mapping[str, Any] = field(default_factory=_empty_str_any_dict)
+    tuner: Mapping[str, Any] = field(default_factory=_empty_str_any_dict)
+    training: Mapping[str, Any] = field(default_factory=_empty_str_any_dict)
     required_settings: RequiredTrainingSettings | None = None
-    rlhf: Mapping[str, Any] = field(default_factory=dict)
+    rlhf: Mapping[str, Any] = field(default_factory=_empty_str_any_dict)
     prompts: PromptOverrides = field(default_factory=PromptOverrides)
     deepspeed: DeepSpeedConfig | None = None
     global_max_length: int | None = None
-    extra: Mapping[str, Any] = field(default_factory=dict)
+    extra: Mapping[str, Any] = field(default_factory=_empty_str_any_dict)
 
     @classmethod
     def from_mapping(

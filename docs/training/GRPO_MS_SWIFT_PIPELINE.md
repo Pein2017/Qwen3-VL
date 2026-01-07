@@ -3,7 +3,7 @@
 Status: Active
 Scope: Code-derived GRPO pipeline notes for ms-swift integration (internal reference).
 Owners: Training
-Last updated: 2026-01-02
+Last updated: 2026-01-07
 Related: [REFERENCE.md](REFERENCE.md), [configs/train/grpo/summary_base.yaml](../../configs/train/grpo/summary_base.yaml)
 
 ## Scope and Sources
@@ -185,6 +185,25 @@ reductions, override DeepSpeed config to disable `zero_optimization.reduce_scatt
 - vLLM capacity is sized from training batch and `steps_per_generation` (see Batch Size Semantics).
 - Memory relief knobs (from ms-swift docs): `sleep_level`, `offload_optimizer`, `offload_model`, and lower
   `vllm_gpu_memory_utilization`. See the ms-swift GRPO guide referenced in [docs/ops/UPSTREAM_DEPENDENCIES.md](../ops/UPSTREAM_DEPENDENCIES.md).
+
+#### CUDA OOM after `eval_steps` (reserved-memory creep)
+
+In GRPO + vLLM **colocate** mode, evaluation can temporarily allocate extra CUDA workspaces (PyTorch + vLLM). Even when
+those tensors go out of scope, CUDA **reserved** memory (allocator cache) can remain high and drift upward across
+eval cycles, reducing free headroom and eventually triggering CUDA OOM (often after a few evals).
+
+Mitigation in Qwen3-VL:
+- Qwen3-VL enables an **eval/save CUDA cache cleanup hook by default** (runs `gc.collect()` + `torch.cuda.empty_cache()`
+  after evaluation / checkpoint saves; also best-effort resets vLLM prefix cache).
+- This does **not** change GRPO batch size or vLLM GPU settings; it only releases unused reserved memory back to the
+  driver at eval/save boundaries to prevent monotonic headroom loss.
+
+Controls (all under `custom.cuda_memory`):
+- Disable completely: set `custom.cuda_memory.enabled: false`
+- Disable cleanup only (keep hook for optional profiling): set `custom.cuda_memory.cleanup: false` or export
+  `QWEN3VL_DISABLE_CUDA_EVAL_CLEANUP=1`
+- Enable profiling trace: set `custom.cuda_memory.profile: true` (writes `cuda_memory_trace.rank{RANK}.jsonl` into
+  `training.output_dir`; defaults to rank-0 logging only via `rank0_only: true`)
 
 ### Server (external `swift rollout`)
 - `vllm_server_host` or `vllm_server_base_url` forces `vllm_mode=server`; missing host forces `colocate`.

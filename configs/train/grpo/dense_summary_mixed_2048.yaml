@@ -10,7 +10,7 @@ template:
   max_pixels: 209715200
 
 training:
-  run_name: epoch_2-ebs32-gbs32-llm_lr-5e-6-vit_lr-1e-7-aligner_lr-1e-5
+  run_name: epoch_2-ebs32-gbs32-llm_lr-5e-6-vit_lr-1e-7-aligner_lr-1e-5-tp4
   output_dir: ./output/1-6/new_schema-4B-dense-summary-grpo-2048
   logging_dir: ./tb/1-6/new_schema-4B-dense-summary-grpo-2048
   num_train_epochs: 2
@@ -28,7 +28,7 @@ rlhf:
   top_p: 1.0
   # vLLM colocate sizing depends on vllm_tensor_parallel_size * steps_per_generation.
   # Use TP=4 as a safer default than 8 to reduce KV/cache preallocation pressure.
-  vllm_tensor_parallel_size: 8
+  vllm_tensor_parallel_size: 4
   # Avoid inheriting global_max_length=16000 into vLLM max_model_len; keep rollout KV planning bounded.
   # Empirically measured (256 samples): prompt_len max/p99=3050 with image tokens max=2040.
   # With max_completion_length=4096 => needed=7146; use 7424 (=ceil256(7146+128)).
