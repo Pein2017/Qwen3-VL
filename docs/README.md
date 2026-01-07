@@ -82,6 +82,8 @@ The auto-context router uses this directory map as its source of truth; update t
 - [reference/SCHEMA_CONSTITUTION.md](reference/SCHEMA_CONSTITUTION.md)
 - [reference/PROMPTS_REFERENCE.md](reference/PROMPTS_REFERENCE.md)
 - [reference/DIAGNOSIS_AND_REVIEW.md](reference/DIAGNOSIS_AND_REVIEW.md)
+- [reference/CODEX_SUBAGENTS_ORCHESTRATION.md](reference/CODEX_SUBAGENTS_ORCHESTRATION.md)
+- [reference/CODEX_SUBAGENTS_ORCHESTRATION_QUICKREF.md](reference/CODEX_SUBAGENTS_ORCHESTRATION_QUICKREF.md)
 - [reference/stage-B-knowledge-Chinese.md](reference/stage-B-knowledge-Chinese.md)
 
 ## Scripts & Tooling

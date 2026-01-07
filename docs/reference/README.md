@@ -16,5 +16,9 @@ Related: [data/BBU_RRU_BUSINESS_KNOWLEDGE.md](../data/BBU_RRU_BUSINESS_KNOWLEDGE
 ## Diagnostics
 - [DIAGNOSIS_AND_REVIEW.md](DIAGNOSIS_AND_REVIEW.md) — Stage-B rule-search diagnostics checklist.
 
+## Codex Tooling
+- [CODEX_SUBAGENTS_ORCHESTRATION.md](CODEX_SUBAGENTS_ORCHESTRATION.md) — How to orchestrate parallel Codex subagents via MCP.
+- [CODEX_SUBAGENTS_ORCHESTRATION_QUICKREF.md](CODEX_SUBAGENTS_ORCHESTRATION_QUICKREF.md) — Quick checklist for subagent orchestration patterns.
+
 ## Related (Data)
 - [data/BBU_RRU_BUSINESS_KNOWLEDGE.md](../data/BBU_RRU_BUSINESS_KNOWLEDGE.md) — Domain taxonomy and attribute index.
