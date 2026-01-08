@@ -22,7 +22,7 @@ Server name: `codex-cli-wrapper` → tool identifiers start with `mcp__codex-cli
 - `mcp__codex-cli-wrapper__codex_spawn` → spawn worker; returns `jobId` immediately
 - `mcp__codex-cli-wrapper__codex_wait_any` → wait for first completion among `jobIds` (returns `timedOut` + `completedJobId`)
 - `mcp__codex-cli-wrapper__codex_events` → poll incremental events (cursor-based)
-- `mcp__codex-cli-wrapper__codex_result` → fetch job result (`view:"finalMessage"` for message-only)
+- `mcp__codex-cli-wrapper__codex_result` → fetch final delegated message (default); use `view:"full"` for status + tails
 - `mcp__codex-cli-wrapper__codex_status` → poll job status
 - `mcp__codex-cli-wrapper__codex_cancel` → cancel job (SIGTERM default; SIGKILL when `force=true`)
 
