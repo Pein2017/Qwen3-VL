@@ -34,6 +34,8 @@ This repository intentionally keeps **one canonical runbook** and treats other d
   - Owns: architecture model, coordination protocol, delegated prompt contract, and default concurrency limits.
 - Quick reference: `docs/reference/CODEX_SUBAGENTS_ORCHESTRATION_QUICKREF.md`
   - Owns: short checklist and tool list only; MUST NOT re-specify full protocols.
+- Toy drills: `docs/reference/CODEX_SUBAGENTS_TOY_DRILLS.md`
+  - Owns: copy/paste stability drills + operator feedback checklist; MUST remain toy-only.
 - OpenSpec (normative requirements): `openspec/changes/2026-01-07-add-codex-subagents-mcp/specs/codex-mcp-subagents/spec.md`
   - Owns: requirements and scenarios; SHOULD link here for operational detail.
 - Boss instructions (skill): `.codex/skills/codex-subagent-orchestrator/SKILL.md`

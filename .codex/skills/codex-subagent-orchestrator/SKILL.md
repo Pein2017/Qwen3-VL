@@ -33,6 +33,7 @@ This skill intentionally stays short and defers protocol details to canonical do
 
 - Canonical runbook: `docs/reference/CODEX_SUBAGENTS_ORCHESTRATION.md`
 - Quick checklist: `docs/reference/CODEX_SUBAGENTS_ORCHESTRATION_QUICKREF.md`
+- Toy drills (safe scratch-only): `docs/reference/CODEX_SUBAGENTS_TOY_DRILLS.md`
 - Normative spec delta: `openspec/changes/2026-01-07-add-codex-subagents-mcp/specs/codex-mcp-subagents/spec.md`
 
 ## Tool Naming (Verified)
@@ -168,6 +169,7 @@ If the current process is a spawned job, treat the current role as a delegated t
 - Do not spawn sub-agents or call orchestration tools.
 - Do not perform git write operations (commit/checkout/reset/stash); edits are file-based only.
 - Provide an early acknowledgement + short plan in the first assistant message (improves progress visibility via `codex_events`).
+- If you are about to run a long tool command, emit a short assistant message first (so cancellation still leaves a `lastAgentMessage`).
 - In the final response, list `modifiedFiles` explicitly (one per line) so the coordinator can apply A2 conflict detection.
 
 ## Reactive Orchestration (“first-completed-wins”)

@@ -8,6 +8,9 @@ Last updated: 2026-01-08
 Canonical runbook:
 - `docs/reference/CODEX_SUBAGENTS_ORCHESTRATION.md`
 
+Toy drills (safe scratch-only checks):
+- `docs/reference/CODEX_SUBAGENTS_TOY_DRILLS.md`
+
 ## Mental Model
 
 - One main agent coordinates multiple delegated jobs.
