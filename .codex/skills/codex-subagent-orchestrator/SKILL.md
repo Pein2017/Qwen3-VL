@@ -44,7 +44,7 @@ Job-based tool identifiers:
 - `mcp__codex-cli-wrapper__codex_status` (poll job status)
 - `mcp__codex-cli-wrapper__codex_events` (poll normalized incremental events; cursor-based)
 - `mcp__codex-cli-wrapper__codex_wait_any` (wait for first completion among `jobIds`)
-- `mcp__codex-cli-wrapper__codex_result` (final/partial job result)
+- `mcp__codex-cli-wrapper__codex_result` (job result; use `view:"finalMessage"` to return only the final message as plain text)
 - `mcp__codex-cli-wrapper__codex_cancel` (cancel running job; SIGTERM default, SIGKILL on `force=true`)
 
 If the MCP server is renamed in `~/.codex/config.toml`, the tool prefix changes accordingly.
@@ -119,6 +119,7 @@ Recommended pattern:
 
 1) **Warm-up handshake (fast)**: after spawning jobs, call `codex_events` once per job with `cursor="0"` to confirm that each job has started producing events (plan/ack).
 2) **Short completion checks**: use `codex_wait_any` with a short `timeoutMs` (including `timeoutMs: 0` for a non-blocking check) to detect completions without stalling the coordinator.
+   - Treat `{ timedOut: true, completedJobId: null }` as “no completion yet” (not an error).
 3) **Backoff on quiet jobs**: if a job is producing no new events, poll it less frequently (e.g., 5s → 15s → 30s), rather than tight loops.
 4) **Do something small while waiting** (examples):
    - Prepare the final synthesis skeleton (sections, checklists, acceptance criteria).
@@ -190,10 +191,10 @@ mcp__codex-cli-wrapper__codex_spawn({ prompt: "...task B...", sandbox: "workspac
 mcp__codex-cli-wrapper__codex_spawn({ prompt: "...task C...", sandbox: "workspace-write", workingDirectory: "/data/Qwen3-VL" }) -> jobIdC
 
 # Step 2: React to first completion
-mcp__codex-cli-wrapper__codex_wait_any({ jobIds: [jobIdA, jobIdB, jobIdC], timeoutMs: 60000 }) -> { completedJobId }
+mcp__codex-cli-wrapper__codex_wait_any({ jobIds: [jobIdA, jobIdB, jobIdC], timeoutMs: 60000 }) -> { completedJobId, timedOut }
 
-# Step 3: Inspect result, adapt
-mcp__codex-cli-wrapper__codex_result({ jobId: completedJobId }) -> { exitCode, finalMessage, stdoutTail, stderrTail }
+# Step 3: Inspect result, adapt (prefer the final message view to avoid extra process noise)
+mcp__codex-cli-wrapper__codex_result({ jobId: completedJobId, view: "finalMessage" }) -> "<final delegated message>"
 
 # Step 4: Continue waiting, or cancel no-longer-needed work
 mcp__codex-cli-wrapper__codex_wait_any({ jobIds: [remaining...], timeoutMs: 60000 })
