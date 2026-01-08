@@ -1,249 +1,202 @@
-# Codex Subagents Orchestration (MCP)
+# Codex Async Sub-Agents Orchestration (MCP Jobs, Option A)
 
 Status: Active  
-Scope: Operational guidance for orchestrating parallel Codex “subagents” using the Codex MCP server.  
+Scope: Operational + design guidance for async “sub-agent” (boss–worker) orchestration using `codex-mcp-server` job primitives.  
 Owners: Tooling / DX  
-Last updated: 2026-01-07
+Last updated: 2026-01-08
 
-## Goal
+## Context and Goal
 
-Enable a single Codex “main agent” session to delegate multiple independent subtasks to multiple “subagents” concurrently, then synthesize results.
+### Repositories
+- **Current worktree**: `/data/Qwen3-VL`
+- **Local MCP server (editable)**: `/data/Qwen3-VL/mcp/codex-mcp-server`
+- **Upstream Codex (read-only, no modifications)**: `/data/Qwen3-VL/references/codex`
 
-This mirrors Claude Code’s subagent workflow: the power comes from *instructions and orchestration patterns*, not from a new concurrency primitive.
+### Objective
+Finalize the async sub-agent mechanism design and document how the main agent orchestrates worker sub-agents using job semantics.
 
-## Verified Architecture (3 Layers)
+**Scope**: Design refinement + spec + documentation updates. No implementation changes are required to adopt the workflow at the spec level.
 
-Layer 0: Main agent (single Codex session)
-    ↓ (one assistant message containing N tool calls)
-Layer 1: Parallel MCP tool calls
-    - `mcp__codex-cli-wrapper__codex` × N
-    ↓
-Layer 2: Subagent processes
-    - N separate `codex exec ...` processes spawned by the MCP server
+## Hard Constraints (Locked)
+
+1) **No upstream Codex modifications** — `/references/codex` is read-only
+2) **No recursive sub-agents** — workers report to boss only; workers cannot spawn sub-agents
+3) **Shared worktree model** — all workers edit the same workspace; no per-worker commits
+4) **Git is required** — conflict detection and rollback MUST use git
+5) **A2 coordination strategy** — optimistic concurrency with git-based recovery (no lock tools)
+
+## Why Job Semantics (Not “Parallel Tool Calls”)
+
+Upstream Codex has a global tool execution gate that may serialize tool calls, including MCP tool calls:
+- Global tool execution gate: `references/codex/codex-rs/core/src/tools/parallel.rs`
+- MCP tool registration defaults (parallel support is not assumed): `references/codex/codex-rs/core/src/tools/spec.rs`
+- MCP tool call is awaited: `references/codex/codex-rs/core/src/mcp_tool_call.rs`
+
+**Implication**: “Multiple tool calls in one assistant message” MUST NOT be treated as a concurrency primitive.  
+**Requirement**: Real concurrency MUST come from background worker jobs that keep running after `codex_spawn` returns.
+
+## Architecture
+
+### Layer Model
+
+Layer 0: Main Agent (Boss)
+    - Single Codex session
+    - Calls MCP tools to orchestrate workers
+    - Performs git checkpoint/rollback
+    - Synthesizes final result for the user
+         │ MCP tool calls (codex_spawn, codex_events, codex_wait_any, …)
+         ▼
+Layer 1: codex-mcp-server (Job Manager)
+    - Spawns worker processes
+    - Manages job lifecycle
+    - Buffers events and results
+    - Enforces maximum concurrent jobs (server cap)
+         │ child_process.spawn()
+         ▼
+Layer 2: Worker Processes (N × `codex exec --json`)
+    - Independent Codex CLI instances
+    - Emit JSONL events to stdout (parsed into normalized events)
+    - Edit the shared workspace filesystem (sandbox-controlled)
+    - MUST NOT recursively spawn sub-agents
+
+### Grounded Implementation References (local server)
+- Tool schemas/constants: `mcp/codex-mcp-server/src/types.ts`
+- Tool handlers: `mcp/codex-mcp-server/src/tools/handlers.ts`
+- Job lifecycle + event normalization: `mcp/codex-mcp-server/src/jobs/job_manager.ts`
+
+## Existing MCP Tools (Job API)
+
+These tools are the only required interface for orchestration.
+
+| Tool | Purpose |
+|------|---------|
+| `codex_spawn` | Start worker, return `jobId` immediately |
+| `codex_status` | Get job status |
+| `codex_result` | Get final result + stdout/stderr tails |
+| `codex_events` | Poll incremental events (cursor-based) |
+| `codex_wait_any` | Wait for first completion among jobs |
+| `codex_cancel` | Cancel running job (SIGTERM default, SIGKILL when `force=true`) |
+
+## Workflow Model: Boss–Worker Pattern
+
+The boss main agent orchestrates workers as background jobs and produces a single consolidated outcome.
+
+1) **Dispatch**: Boss spawns N workers via `codex_spawn` (non-blocking)
+2) **Monitor**: Boss polls progress via `codex_events` and/or uses `codex_wait_any`
+3) **React**: Boss cancels workers or adjusts strategy based on intermediate results
+4) **Collect**: Boss gathers final results via `codex_result`
+5) **Decide**: Boss synthesizes results, then either finishes or spawns follow-up workers
+
+Workers:
+- Execute independently as `codex exec --json` processes
+- Edit files in the shared worktree (no commits)
+- Report completion/failure to MCP server
+- Cannot spawn sub-agents or call orchestration tools
+
+## Concurrency Model (Locked Defaults)
+
+The boss MUST apply bounded concurrency to reduce conflict risk.
+
+- `K_read = 8` for read-only workers (`sandbox="read-only"`)
+- `K_write = 2` for write-enabled workers (`sandbox="workspace-write"`)
 
 Notes:
-- The main agent calls MCP tools directly in the same Codex session.
-- Each MCP call spawns exactly one Codex CLI subprocess for that subtask.
-- No shell wrapper pattern is required in normal Codex usage.
+- Server-side cap remains authoritative (`CODEX_MCP_MAX_JOBS`, default `32`) in `mcp/codex-mcp-server/src/jobs/job_manager.ts`.
+- Under upstream tool serialization, the boss should prefer **short tool calls** (`codex_spawn`, `codex_events`, `codex_status`) and avoid long waits.
 
-## Tool Naming (Verified)
+## A2 Coordination Protocol (Optimistic + Git)
 
-The exact callable tool identifiers depend on the MCP server name configured in `~/.codex/config.toml`.
+This protocol allows parallel edits in a shared worktree with git-based recovery.
 
-In this repository’s configuration, the server is named `codex-cli-wrapper`, and the callable tool identifiers are:
-- `mcp__codex-cli-wrapper__codex` (spawn a subagent run)
-- `mcp__codex-cli-wrapper__ping` (connectivity test)
-- `mcp__codex-cli-wrapper__codex_spawn` (spawn async subagent job; returns `jobId` immediately)
-- `mcp__codex-cli-wrapper__codex_status` (poll job status)
-- `mcp__codex-cli-wrapper__codex_result` (get final/partial result, including stdout/stderr tails)
-- `mcp__codex-cli-wrapper__codex_events` (poll normalized incremental events)
-- `mcp__codex-cli-wrapper__codex_wait_any` (wait for first completion among jobs)
-- `mcp__codex-cli-wrapper__codex_cancel` (cancel running job)
+### Pre-Spawn Phase (Boss)
+1) Ensure a clean working tree, OR stash/rollback to a clean baseline.
+2) Record baseline HEAD:
+   - `git rev-parse HEAD`
+3) Record baseline working tree state:
+   - `git status --porcelain`
 
-If the server name changes, the tool prefix changes accordingly (pattern: `mcp__<server-name>__<tool>`).
+### Execution Phase (Boss + Workers)
+1) Spawn N workers with `sandbox: "workspace-write"` (for edit tasks).
+2) Workers edit files freely (no commits).
+3) Boss monitors progress via `codex_events` and/or `codex_wait_any`.
 
-Note: Some Codex environments may accept underscore variants (e.g., `mcp__codex_cli_wrapper__codex`) as aliases. Prefer the canonical identifiers from the MCP tool listing in the active Codex session.
+### Post-Completion Phase (Boss)
+For each completed job:
+1) Fetch `codex_result` for `{ jobId }`.
+2) Record worker-reported `modifiedFiles` from the worker’s final message (required by the Worker Prompt Contract).
+3) Optionally extract file touches from `codex_events` (when `file_change` events are present).
 
-## Core Principle
+**Important**: Per-job `git status` snapshots are NOT reliable for attributing changes under concurrent writers. Git snapshots remain authoritative for rollback and for the final overall “what changed” view, but per-job attribution should be treated as best-effort.
 
-```
-ONE MESSAGE → MULTIPLE TOOL CALLS → PARALLEL EXECUTION
-```
+### Conflict Detection (Boss)
+1) Compare `modifiedFiles` across all jobs.
+2) If the same file appears in multiple jobs’ `modifiedFiles`, a conflict is detected.
 
-Parallelism is achieved by issuing multiple MCP tool calls in a single assistant turn.
+Recommended additional safety check:
+- Compare the union of all `modifiedFiles` to the actual working tree diff:
+  - `git diff --name-only`
+  - Any diff-only file not reported by workers should be treated as a protocol violation or missed attribution.
 
-## When to Use Subagents
+### Resolution (Boss)
+- **No conflict**: accept all changes; optionally commit (boss-only).
+- **Conflict detected**:
+  1) Roll back to baseline.
+     - Prefer: `git restore --source <baseline-head> --worktree --staged .`
+     - Or (older syntax): `git checkout -- .`
+  2) Re-run conflicting tasks sequentially (reduce `K_write` temporarily to `1`), OR manually resolve and continue.
 
-Use subagents when:
-- The user request spans 3+ independent areas (directories/modules/concerns).
-- Multiple “specialist perspectives” help (security, performance, tests, style).
-- Broad exploration is needed before a write phase.
+### Failure Recovery (Boss)
+- On worker failure: capture `codex_result` (stderr tail), inspect `git diff --name-only`, then roll back to baseline.
+- On worker crash mid-write: roll back to baseline (do not attempt partial recovery unless a narrower scope is proven safe).
 
-Avoid subagents when:
-- The task is small and sequential.
-- A single-file edit is needed (do it in the main agent).
-- Tasks are tightly dependent (chain sequentially instead).
+## Cancellation Semantics (Locked)
 
-## Sandbox Rules (Safety Baseline)
+- Default cancellation is best-effort (SIGTERM): `codex_cancel({ jobId, force: false })`
+- Forced kill is allowed when explicitly required (SIGKILL): `codex_cancel({ jobId, force: true })`
 
-| Task Type | Sandbox |
-|----------|---------|
-| Exploration / analysis / review | `read-only` |
-| Editing files | `workspace-write` |
-| Running tests | `workspace-write` |
+After any cancellation of a write-enabled worker, the boss MUST treat the workspace as potentially inconsistent and run git-based recovery checks (`git status --porcelain`, `git diff --name-only`) before continuing.
 
-Never default subagents to `danger-full-access`. Only use it on explicit user request with clear justification.
+## Worker Prompt Contract
 
-### Default subagent sandbox (optional)
+Every worker task prompt should include the following contract.
 
-To avoid repeating `sandbox="workspace-write"` on every subagent call, configure the MCP server with:
-- `CODEX_MCP_DEFAULT_SANDBOX=workspace-write`
+Role: Sub-agent worker.
 
-When configured, the MCP `codex` tool uses this value when `sandbox` is omitted.
-
-## Inheriting Model / Reasoning Defaults (Config-Driven)
-
-To keep main agent and subagents consistent:
-- Omit `model` unless an override is explicitly required.
-- Omit `reasoningEffort` unless an override is explicitly required.
-
-This allows `~/.codex/config.toml` (and any configured profile) to determine model and reasoning settings uniformly across main agent and subagents.
-
-## Write Coordination (Instruction-Based “Write Lock”)
-
-Because subagents share the same worktree/branch:
-- Parallel read-only subagents are safe.
-- Parallel writes to *different files* can be acceptable.
-- Parallel writes to the *same file* are forbidden (serialize those edits).
-
-This is enforced by main-agent instructions (not by the MCP server).
-
-## Subagent Prompt Header (Recommended)
-
-For each subagent call, prepend a strict header to reduce risk:
-
-```
-Role: Subagent worker.
 Constraints:
-- Do not call any MCP tools.
-- Do not spawn further subagents.
-- Stay within the assigned scope only.
-- If asked to edit, only touch the explicitly named files.
+- Complete the assigned task only.
+- Do NOT spawn sub-agents or call orchestration tools.
+- Do NOT make git commits; only edit files.
+- Report files modified in the final response.
+
 Output format:
-- Findings (bullets)
-- Proposed changes (bullets)
-- If edits were made: list edited files
-```
+- Summary of actions taken
+- List of files modified
+- Any issues encountered
 
-## Orchestration Patterns
-
-### Pattern A: Parallel exploration (recommended default)
-
-Issue multiple `mcp__codex-cli-wrapper__codex` calls with:
-- `sandbox="read-only"`
-- shared `workingDirectory` (repo root)
-- small, non-overlapping scopes (e.g., `src/auth`, `src/api`, `tests/`)
-
-Then synthesize results in the main agent.
-
-### Pattern B: Phased editing (safe writes)
-
-Phase 1 (parallel exploration, read-only): gather facts.
-
-Phase 2 (writes, workspace-write): ensure each subagent targets different files, or serialize same-file edits.
-
-Phase 3 (validation): run tests/lint as a dedicated subtask (often parallelizable with other read-only checks).
-
-### Pattern C: Specialist delegation
-
-Fan out “review lenses”:
-- Security review (read-only)
-- Performance review (read-only)
-- Style/maintainability review (read-only)
-- Tests/coverage audit (read-only)
-
-Synthesize into one coherent report.
-
-### Pattern D: Reactive async orchestration (job-based, “first-completed-wins”)
-
-Use async jobs when the main agent must:
-- keep working while subagents run
-- react as soon as any subagent finishes (without waiting for the slowest)
-
-This pattern uses:
-- `codex_spawn` for immediate fan-out
-- `codex_wait_any` for first-completed detection
-- `codex_result` for final output
-- `codex_events` for incremental progress (optional)
-- `codex_cancel` to stop no-longer-needed work (optional)
-
-Important constraint: job state is **in-memory** in the MCP server process. If the MCP server restarts, all jobs are lost.
-
-#### Minimal workflow: spawn → wait_any → result
-
-```
-# Step 1: Spawn N subagents (prefer parallel tool calls in a single assistant response)
-mcp__codex-cli-wrapper__codex_spawn({ prompt: "task A", sandbox: "workspace-write", workingDirectory: "/data/Qwen3-VL" }) -> jobIdA
-mcp__codex-cli-wrapper__codex_spawn({ prompt: "task B", sandbox: "workspace-write", workingDirectory: "/data/Qwen3-VL" }) -> jobIdB
-mcp__codex-cli-wrapper__codex_spawn({ prompt: "task C", sandbox: "workspace-write", workingDirectory: "/data/Qwen3-VL" }) -> jobIdC
-
-# Step 2: Wait for first completion
-mcp__codex-cli-wrapper__codex_wait_any({ jobIds: [jobIdA, jobIdB, jobIdC], timeoutMs: 60000 })
-  -> { completedJobId }
-
-# Step 3: Inspect result and adapt
-mcp__codex-cli-wrapper__codex_result({ jobId: completedJobId })
-  -> { status, exitCode, finalMessage, stdoutTail, stderrTail }
-
-# Step 4: Continue for remaining jobs (or cancel)
-mcp__codex-cli-wrapper__codex_wait_any({ jobIds: [jobIdA, jobIdC], timeoutMs: 60000 })
-mcp__codex-cli-wrapper__codex_cancel({ jobId: jobIdC })
-```
-
-#### Optional: incremental progress via events
-
-```
-mcp__codex-cli-wrapper__codex_events({ jobId: jobIdA, cursor: "0", maxEvents: 200 })
-  -> { events, nextCursor, done }
-```
-
-Persist `nextCursor` and pass it back on subsequent polls.
-
-## Example Prompts (Main Agent)
-
-These prompts are designed for the human user to send to the main agent.
-
-### Example 1: Parallel exploration + synthesis (read-only)
-
-“Analyze `src/stage_a`, `src/stage_b`, and `scripts/` in parallel. Use read-only subagents for exploration only. Return a combined summary with the top 10 findings and next steps.”
-
-### Example 2: Reactive async orchestration (first-completed-wins)
-
-“Spawn three async subagents via `codex_spawn` to:
-1) locate where Stage-B loads guidance rules
-2) locate where Stage-A writes summary JSONL
-3) locate scripts that run Stage-A then Stage-B
-
-Use `codex_wait_any` to react to whichever finishes first, and then decide if a follow-up subagent is needed. Use `codex_result` for completed jobs, and cancel any job that becomes unnecessary.”
-
-### Example 3: Safe phased writes (avoid same-file conflicts)
-
-“Phase 1: spawn read-only subagents to propose changes to `docs/reference/CODEX_SUBAGENTS_ORCHESTRATION.md` and `docs/reference/README.md`. Phase 2: apply edits in the main agent (single writer).”
+Enforcement model:
+1) Prompt instructions (required; soft enforcement)
+2) Boss monitoring for violations (recommended): treat unexpected orchestration attempts as a worker failure and re-run safely
 
 ## Anti-Patterns
 
-- Recursive orchestration: subagents calling MCP tools or spawning subagents.
-- Parallel writes to the same file (race conditions, conflicts, nondeterminism).
-- Using `danger-full-access` by default (should only happen on explicit request).
-- Using async job IDs across MCP server restarts (job IDs become invalid).
+- Relying on “parallel tool calls” as a concurrency guarantee.
+- Allowing workers to spawn additional workers (recursive sub-agents).
+- Allowing workers to create commits/branches (violates shared worktree model).
+- Continuing after cancellation without git-based integrity checks.
 
 ## Troubleshooting
 
 ### “Unknown jobId” / “job not found”
-Cause: the MCP server process restarted (or orchestration is occurring across multiple independent MCP client sessions).
+Cause: job state is in-memory in the MCP server process; server restart loses jobs.  
+Action: treat as lost; re-spawn work if still needed.
 
-Action:
-- treat jobs as ephemeral; re-spawn if needed
-- keep orchestration within a single long-lived Codex “main agent” session
+### Conflicts are frequent
+Actions:
+- Reduce `K_write` from `2` to `1` for the affected run.
+- Increase task decomposition granularity (smaller edits per worker).
+- Strengthen worker prompts to reduce scope creep and file overlap.
 
-### `codex_spawn` rejects with “Too many concurrent jobs”
-Cause: concurrency cap reached.
-
-Action:
-- wait for existing jobs to complete, or cancel non-essential jobs
-- raise the cap via `CODEX_MCP_MAX_JOBS` when appropriate
-
-### Writes are blocked / sandbox denies
-Cause: subagent sandbox mode is insufficient (e.g., `read-only`).
-
-Action:
-- use `sandbox="workspace-write"` for file creation/editing subagents
-- ensure `CODEX_MCP_DEFAULT_SANDBOX=workspace-write` is set if consistent write capability is desired
-
-## Result Synthesis Checklist
-
-After all subagents return:
-- Validate each output for errors and scope violations.
-- Detect overlap/conflicts (multiple subagents claiming the same file).
-- Combine results into a single coherent answer.
-- Propose the next action (apply patch, run tests, etc.).
+### Dirty working tree prevents safe orchestration
+Actions:
+- Stash or roll back to a clean baseline before spawning write-enabled workers.
+- Use `git status --porcelain` as a preflight gate.
