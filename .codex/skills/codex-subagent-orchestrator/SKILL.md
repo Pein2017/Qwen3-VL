@@ -24,8 +24,8 @@ This skill may be auto-loaded in either context:
 - No upstream Codex modifications (reference-only in `/references/codex`).
 - No recursive sub-agents: delegated sub-agents MUST NOT spawn additional sub-agents (prompt discipline only; no hard tool blocking assumed).
 - Shared worktree model: delegated sub-agents edit the same workspace; delegated sub-agents MUST NOT create git commits.
-- Git is REQUIRED for conflict detection and rollback.
-- Coordination is A2: optimistic concurrency + git-based recovery.
+- Git is available for recovery and for “what changed?” inspection (recommended but not a hard gate for spawning).
+- Coordination uses optimistic concurrency in a shared worktree; when overlapping edits happen, prefer *chaining* follow-up tasks rather than hard rollback.
 
 ## Canonical References (Avoid Redundancy)
 
@@ -102,14 +102,14 @@ To ensure the coordinating agent and delegated sub-agents behave identically, pr
 
 ## Coordinator Algorithm (A2, Shared Worktree)
 
-Follow the full A2 protocol in `docs/reference/CODEX_SUBAGENTS_ORCHESTRATION.md`. Minimum coordinator loop:
+Follow the full coordination protocol in `docs/reference/CODEX_SUBAGENTS_ORCHESTRATION.md`. Minimum coordinator loop:
 
-1) Preflight: ensure a clean baseline (`git status --porcelain`), record baseline HEAD (`git rev-parse HEAD`).
-2) Spawn: use `codex_spawn` for delegated jobs (read vs write). Keep within the canonical `K_read` / `K_write`.
+1) Preflight: record baseline state (dirty is OK): `git status --porcelain`, optionally baseline HEAD (`git rev-parse HEAD`).
+2) Spawn: use `codex_spawn` for delegated jobs (analysis vs edit). Keep within the canonical `K_read` / `K_write`.
 3) Monitor: prefer `codex_wait_any` for completions; use `codex_events` for progress when needed.
 4) Collect: call `codex_result` for completed jobs; extract delegated-agent-reported `modifiedFiles`.
-5) Detect conflict: overlap in `modifiedFiles` across jobs ⇒ conflict.
-6) Recover: roll back to baseline and re-run conflicting work safely (usually reduce write concurrency).
+5) Detect overlap: overlap in `modifiedFiles` across jobs ⇒ order-dependent edits.
+6) Reconcile: prefer a follow-up “reconcile” job (or a sequential re-run) that continues from the current workspace state.
 
 ## Coordinator Waiting Pattern (Don’t Busy-Poll)
 

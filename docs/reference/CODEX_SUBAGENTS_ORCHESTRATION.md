@@ -1,7 +1,7 @@
 # Codex Async Sub-Agents Orchestration (MCP Jobs, Option A)
 
 Status: Active  
-Scope: Operational + design guidance for async “sub-agent” (boss–worker) orchestration using `codex-mcp-server` job primitives.  
+Scope: Operational + design guidance for async sub-agent orchestration (coordinator + delegated jobs) using `codex-mcp-server` job primitives.  
 Owners: Tooling / DX  
 Last updated: 2026-01-08
 
@@ -13,24 +13,25 @@ Last updated: 2026-01-08
 - **Upstream Codex (read-only, no modifications)**: `/data/Qwen3-VL/references/codex`
 
 ### Objective
-Finalize the async sub-agent mechanism design and document how the main agent orchestrates worker sub-agents using job semantics.
+Finalize the async sub-agent mechanism design and document how the main agent coordinates delegated sub-agent jobs using job semantics.
 
 **Scope**: Design refinement + spec + documentation updates. No implementation changes are required to adopt the workflow at the spec level.
 
 ## Hard Constraints (Locked)
 
 1) **No upstream Codex modifications** — `/references/codex` is read-only
-2) **No recursive sub-agents** — workers report to boss only; workers cannot spawn sub-agents
-3) **Shared worktree model** — all workers edit the same workspace; no per-worker commits
-4) **Git is required** — conflict detection and rollback MUST use git
-5) **A2 coordination strategy** — optimistic concurrency with git-based recovery (no lock tools)
+2) **No recursive sub-agents** — delegated jobs cannot spawn additional delegated jobs
+3) **Shared worktree model** — all delegated jobs edit the same workspace; no per-job commits
+4) **Default sandbox is `workspace-write`** — “read-only subagents” are not assumed; read-only behavior is prompt-enforced
+5) **Dirty worktrees are allowed** — coordination MUST work on top of an existing (dirty) workspace state
+6) **Git is recommended** — use git for recovery and for “what changed?” inspection when needed
 
 ## Document Map (Avoid Redundancy)
 
 This repository intentionally keeps **one canonical runbook** and treats other documents as thin entrypoints:
 
 - Canonical runbook (this file): `docs/reference/CODEX_SUBAGENTS_ORCHESTRATION.md`
-  - Owns: architecture model, A2 protocol, worker prompt contract, and default concurrency limits.
+  - Owns: architecture model, coordination protocol, delegated prompt contract, and default concurrency limits.
 - Quick reference: `docs/reference/CODEX_SUBAGENTS_ORCHESTRATION_QUICKREF.md`
   - Owns: short checklist and tool list only; MUST NOT re-specify full protocols.
 - OpenSpec (normative requirements): `openspec/changes/2026-01-07-add-codex-subagents-mcp/specs/codex-mcp-subagents/spec.md`
@@ -52,10 +53,10 @@ Upstream Codex has a global tool execution gate that may serialize tool calls, i
 
 ### Layer Model
 
-Layer 0: Main Agent (Boss)
+Layer 0: Main Agent (Coordinator)
     - Single Codex session
-    - Calls MCP tools to orchestrate workers
-    - Performs git checkpoint/rollback
+    - Calls MCP tools to coordinate delegated jobs
+    - May use git for inspection/recovery (optional)
     - Synthesizes final result for the user
          │ MCP tool calls (codex_spawn, codex_events, codex_wait_any, …)
          ▼
@@ -85,22 +86,22 @@ These tools are the only required interface for orchestration.
 |------|---------|
 | `codex_spawn` | Start worker, return `jobId` immediately |
 | `codex_status` | Get job status |
-| `codex_result` | Get final result + stdout/stderr tails |
+| `codex_result` | Get final result; use `view="finalMessage"` to return only the final message |
 | `codex_events` | Poll incremental events (cursor-based) |
 | `codex_wait_any` | Wait for first completion among jobs |
 | `codex_cancel` | Cancel running job (SIGTERM default, SIGKILL when `force=true`) |
 
-## Workflow Model: Boss–Worker Pattern
+## Workflow Model: Coordinator + Delegated Jobs
 
-The boss main agent orchestrates workers as background jobs and produces a single consolidated outcome.
+The main agent coordinates delegated jobs as background processes and produces a single consolidated outcome.
 
-1) **Dispatch**: Boss spawns N workers via `codex_spawn` (non-blocking)
-2) **Monitor**: Boss polls progress via `codex_events` and/or uses `codex_wait_any`
-3) **React**: Boss cancels workers or adjusts strategy based on intermediate results
-4) **Collect**: Boss gathers final results via `codex_result`
-5) **Decide**: Boss synthesizes results, then either finishes or spawns follow-up workers
+1) **Dispatch**: coordinator spawns N delegated jobs via `codex_spawn` (non-blocking)
+2) **Monitor**: coordinator polls progress via `codex_events` and/or uses `codex_wait_any`
+3) **React**: coordinator cancels jobs or adjusts strategy based on intermediate results
+4) **Collect**: coordinator gathers final delegated messages via `codex_result(view="finalMessage")`
+5) **Decide**: coordinator synthesizes results, then either finishes or spawns follow-up delegated jobs
 
-Workers:
+Delegated jobs:
 - Execute independently as `codex exec --json` processes
 - Edit files in the shared worktree (no commits)
 - Report completion/failure to MCP server
@@ -108,78 +109,74 @@ Workers:
 
 ## Concurrency Model (Locked Defaults)
 
-The boss MUST apply bounded concurrency to reduce conflict risk.
+The coordinator MUST apply bounded concurrency to reduce conflict risk.
 
-- `K_read = 8` for read-only workers (`sandbox="read-only"`)
-- `K_write = 3` for write-enabled workers (`sandbox="workspace-write"`)
+- `K_read = 8` for analysis-only jobs (prompt-enforced “do not modify files”, even though sandbox is `workspace-write`)
+- `K_write = 3` for edit jobs (allowed to modify files under `workspace-write`)
 
 Notes:
 - Server-side cap remains authoritative (`CODEX_MCP_MAX_JOBS`, default `32`) in `mcp/codex-mcp-server/src/jobs/job_manager.ts`.
-- Under upstream tool serialization, the boss should prefer **short tool calls** (`codex_spawn`, `codex_events`, `codex_status`) and avoid long waits.
+- Under upstream tool serialization, the coordinator should prefer **short tool calls** (`codex_spawn`, `codex_events`, `codex_status`) and avoid long waits.
 
-## A2 Coordination Protocol (Optimistic + Git)
+## Shared Worktree Coordination (Dirty OK, Git-assisted)
 
-This protocol allows parallel edits in a shared worktree with git-based recovery.
+This protocol supports dirty worktrees and overlapping intent by treating the current workspace state as the baseline and using git as an optional recovery/inspection tool.
 
-### Pre-Spawn Phase (Boss)
-1) Ensure a clean working tree, OR stash/rollback to a clean baseline.
-2) Record baseline HEAD:
-   - `git rev-parse HEAD`
-3) Record baseline working tree state:
+### Pre-Spawn Phase (Coordinator)
+1) Record baseline state (dirty is OK):
    - `git status --porcelain`
+   - `git diff --name-only`
+2) Optionally record baseline HEAD (useful for recovery):
+   - `git rev-parse HEAD`
 
-### Execution Phase (Boss + Workers)
-1) Spawn N workers with `sandbox: "workspace-write"` (for edit tasks).
-2) Workers edit files freely (no commits).
-3) Boss monitors progress via `codex_events` and/or `codex_wait_any`.
+### Execution Phase (Coordinator + Delegated Jobs)
+1) Spawn N delegated jobs with `sandbox: "workspace-write"`.
+2) For “analysis-only” jobs, enforce read-only behavior via prompt (not via sandbox).
+3) Delegated jobs may edit files freely (no commits).
+4) Coordinator monitors progress via `codex_events` and/or `codex_wait_any`.
 
-### Post-Completion Phase (Boss)
+### Post-Completion Phase (Coordinator)
 For each completed job:
-1) Fetch `codex_result` for `{ jobId }`.
-2) Record worker-reported `modifiedFiles` from the worker’s final message (required by the Worker Prompt Contract).
+1) Fetch the final delegated message:
+   - `codex_result({ jobId, view: "finalMessage" })`
+2) Record delegated-job-reported `modifiedFiles` from the final message (required by the Delegated Prompt Contract).
 3) Optionally extract file touches from `codex_events` (when `file_change` events are present).
 
-**Important**: Per-job `git status` snapshots are NOT reliable for attributing changes under concurrent writers. Git snapshots remain authoritative for rollback and for the final overall “what changed” view, but per-job attribution should be treated as best-effort.
+**Important**: Per-job `git status` snapshots are NOT reliable for attributing changes under concurrent writers. Use delegated self-reporting (`modifiedFiles`) as best-effort attribution and git only as an overall “what changed” view.
 
-### Conflict Detection (Boss)
-1) Compare `modifiedFiles` across all jobs.
-2) If the same file appears in multiple jobs’ `modifiedFiles`, a conflict is detected.
+### Overlap Handling (Coordinator)
+If the same file appears in multiple jobs’ `modifiedFiles`, this indicates **order-dependent edits**, not an automatic failure.
 
-Recommended additional safety check:
-- Compare the union of all `modifiedFiles` to the actual working tree diff:
-  - `git diff --name-only`
-  - Any diff-only file not reported by workers should be treated as a protocol violation or missed attribution.
+Recommended behaviors:
+- Avoid concurrently spawning two edit jobs likely to touch the same file. If you need a follow-up edit on the same file, **chain** it: spawn the next job after the previous job finishes so it can “continue from what’s currently in the workspace”.
+- If overlapping edits happened concurrently and results look inconsistent, prefer a **reconcile job** that re-reads the current file and produces a coherent final version, rather than rolling back.
 
-### Resolution (Boss)
-- **No conflict**: accept all changes; optionally commit (boss-only).
-- **Conflict detected**:
-  1) Roll back to baseline.
-     - Prefer: `git restore --source <baseline-head> --worktree --staged .`
-     - Or (older syntax): `git checkout -- .`
-  2) Re-run conflicting tasks sequentially (reduce `K_write` temporarily to `1`), OR manually resolve and continue.
+Optional recovery (when needed):
+- Use git to roll back to the recorded baseline HEAD if a cancellation/crash leaves the workspace inconsistent.
 
-### Failure Recovery (Boss)
-- On worker failure: capture `codex_result` (stderr tail), inspect `git diff --name-only`, then roll back to baseline.
-- On worker crash mid-write: roll back to baseline (do not attempt partial recovery unless a narrower scope is proven safe).
+### Failure Recovery (Coordinator)
+- On delegated job failure: capture `codex_result` (full view for stderr tail if needed), inspect `git diff --name-only`, and decide whether to keep changes, reconcile, or roll back.
+- On crash mid-write: prefer a reconcile job first; roll back only if the workspace is clearly inconsistent.
 
 ## Cancellation Semantics (Locked)
 
 - Default cancellation is best-effort (SIGTERM): `codex_cancel({ jobId, force: false })`
 - Forced kill is allowed when explicitly required (SIGKILL): `codex_cancel({ jobId, force: true })`
 
-After any cancellation of a write-enabled worker, the boss MUST treat the workspace as potentially inconsistent and run git-based recovery checks (`git status --porcelain`, `git diff --name-only`) before continuing.
+After any cancellation of an edit job, the coordinator MUST treat the workspace as potentially inconsistent and run recovery checks (`git status --porcelain`, `git diff --name-only`) before continuing.
 
-## Worker Prompt Contract
+## Delegated Prompt Contract
 
-Every worker task prompt should include the following contract.
+Every delegated job prompt should include the following contract.
 
-Role: Sub-agent worker.
+Role: Sub-agent (delegated job).
 
 Constraints:
 - Complete the assigned task only.
 - Do NOT spawn sub-agents or call orchestration tools.
-- Do NOT make git commits; only edit files.
-- Report files modified in the final response.
+- Do NOT make git commits; do not rewrite git history (no `reset`, `checkout`, `stash`).
+- Work on top of the current workspace state (dirty is OK); do not require a clean baseline.
+- Report files modified in the final response (`modifiedFiles` list).
 
 Output format:
 - Summary of actions taken
@@ -188,7 +185,7 @@ Output format:
 
 Enforcement model:
 1) Prompt instructions (required; soft enforcement)
-2) Boss monitoring for violations (recommended): treat unexpected orchestration attempts as a worker failure and re-run safely
+2) Coordinator monitoring for violations (recommended): treat unexpected orchestration attempts as a job failure and re-run safely
 
 ## Anti-Patterns
 
@@ -203,13 +200,11 @@ Enforcement model:
 Cause: job state is in-memory in the MCP server process; server restart loses jobs.  
 Action: treat as lost; re-spawn work if still needed.
 
-### Conflicts are frequent
+### Overlaps are frequent
 Actions:
 - Reduce `K_write` from `3` to `1` for the affected run.
 - Increase task decomposition granularity (smaller edits per worker).
 - Strengthen worker prompts to reduce scope creep and file overlap.
 
 ### Dirty working tree prevents safe orchestration
-Actions:
-- Stash or roll back to a clean baseline before spawning write-enabled workers.
-- Use `git status --porcelain` as a preflight gate.
+This workflow assumes dirty working trees are OK. If you still need a clean baseline (e.g., for reproducibility), do it as a deliberate coordinator-only step (stash/commit/worktree), not as a hard requirement for spawning.
