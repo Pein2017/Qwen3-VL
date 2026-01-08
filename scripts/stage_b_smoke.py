@@ -148,7 +148,7 @@ rule_search:
         max_new_tokens: 64
         seed: 42
         repetition_penalty: 1.05
-        stop: ["assistant", "<|im_end|>", "<|endoftext|>", "</s>"]
+        stop: ["<|endoftext|>", "<|im_end|>"]
   eval_sampler:
     samples_per_decode: 1
     grid:
@@ -157,7 +157,7 @@ rule_search:
         max_new_tokens: 64
         seed: 42
         repetition_penalty: 1.05
-        stop: ["assistant", "<|im_end|>", "<|endoftext|>", "</s>"]
+        stop: ["<|endoftext|>", "<|im_end|>"]
 
 reflection:
   decision_prompt_path: configs/prompts/stage_b_reflection_decision_prompt.txt

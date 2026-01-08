@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.stage_b import distributed as stage_dist
+from src import distributed as stage_dist
 from src.stage_b.runner import _shard_bounds
 
 

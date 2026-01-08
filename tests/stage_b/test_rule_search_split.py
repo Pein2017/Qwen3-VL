@@ -23,7 +23,7 @@ def test_split_train_eval_pool_stratified_preserves_label_balance() -> None:
 
     train, holdout = _split_train_eval_pool(
         tickets,
-        eval_fraction=0.2,
+        eval_size=20,
         seed=7,
         stratify_by_label=True,
     )

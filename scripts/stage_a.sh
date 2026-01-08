@@ -22,7 +22,7 @@ BASE_OUTPUT_DIR="output_post/stage_a_grpo-1-4"
 # output_dir=... (override output directory)
 # checkpoint=... (override checkpoint path)
 
-DATASET="${dataset:-}"
+DATASET="${dataset:-bbu}"
 MISSION="${mission:-}"
 if [[ -n "${checkpoint:-}" ]]; then
   CHECKPOINT="${checkpoint}"

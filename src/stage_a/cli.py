@@ -210,7 +210,7 @@ Examples:
         "--max_new_tokens",
         type=int,
         default=1024,
-        help="Maximum new tokens to generate. Default: 256",
+        help="Maximum new tokens to generate. Default: 1024",
     )
     parser.add_argument(
         "--temperature",
@@ -313,18 +313,14 @@ def main() -> None:
     logger = get_logger("stage_a.cli")
 
     # Check if running in distributed mode
-    try:
-        from ..stage_b.distributed import get_world_size, is_main_process
+    from ..distributed import get_world_size, is_main_process
 
-        world_size = get_world_size()
-        if world_size > 1 and is_main_process():
-            logger.info(
-                "Multi-GPU mode detected (WORLD_SIZE=%d). Groups will be sharded across ranks.",
-                world_size,
-            )
-    except (ImportError, Exception):
-        # Distributed helpers not available or not in distributed mode
-        pass
+    world_size = get_world_size()
+    if world_size > 1 and is_main_process():
+        logger.info(
+            "Multi-GPU mode detected (WORLD_SIZE=%d). Groups will be sharded across ranks.",
+            world_size,
+        )
 
     input_path = Path(cfg.input_dir)
     checkpoint_path = Path(cfg.checkpoint)

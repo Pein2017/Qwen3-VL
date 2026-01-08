@@ -1,6 +1,5 @@
 """Unit tests for prompt formatting with numbered experiences."""
 
-import re
 from datetime import datetime, timezone
 
 import pytest

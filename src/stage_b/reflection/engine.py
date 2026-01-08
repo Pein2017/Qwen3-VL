@@ -25,7 +25,18 @@ from pathlib import Path
 from typing import Any, cast
 
 import torch
-from transformers import PreTrainedModel, PreTrainedTokenizerBase
+from transformers import PreTrainedTokenizerBase
+
+from src.generation import (
+    ChatTemplateOptions,
+    DecodeOptions,
+    GenerationEngine,
+    GenerationOptions,
+    QWEN_STOP_TOKENS,
+    StopOptions,
+    TextGenerationRequest,
+)
+from src.generation.chat_template import render_chat_template
 
 from src.config.missions import STAGE_B_MISSION_FOCUS
 from src.utils import require_mapping
@@ -150,14 +161,14 @@ class ReflectionEngine:
 
     def __init__(
         self,
-        model: PreTrainedModel,
+        engine: GenerationEngine,
         tokenizer: PreTrainedTokenizerBase,
         config: ReflectionConfig,
         guidance_repo: GuidanceRepository,
         *,
         reflection_log: Path | None = None,
     ) -> None:
-        self.model = model
+        self.engine = engine
         self.tokenizer = tokenizer
         self.config = config
         self.guidance_repo = guidance_repo
@@ -168,7 +179,11 @@ class ReflectionEngine:
             encoding="utf-8"
         )
         self.reflection_log = reflection_log
-        self.device = model.device if hasattr(model, "device") else "cpu"
+        self.chat_template = ChatTemplateOptions(
+            add_generation_prompt=True,
+            tokenize=False,
+            enable_thinking=False,
+        )
 
         self._last_debug_info: UnstructuredMapping | None = None
         self._group_id_mapping: dict[str, str] = {}
@@ -253,20 +268,9 @@ class ReflectionEngine:
             {"role": "system", "content": system_template},
             {"role": "user", "content": user_prompt},
         ]
-        try:
-            chat_prompt = self.tokenizer.apply_chat_template(
-                messages,
-                add_generation_prompt=True,
-                tokenize=False,
-                enable_thinking=False,
-            )
-        except TypeError:
-            chat_prompt = self.tokenizer.apply_chat_template(  # type: ignore[call-arg]
-                messages,
-                add_generation_prompt=True,
-                tokenize=False,
-            )
-        assert isinstance(chat_prompt, str)
+        chat_prompt = render_chat_template(
+            self.tokenizer, messages, options=self.chat_template
+        )
 
         encoded_full = self.tokenizer(
             chat_prompt,
@@ -316,43 +320,35 @@ class ReflectionEngine:
                 f"Reflection prompt exceeds max_reflection_length: {full_token_length} > {self.config.max_reflection_length}"
             )
 
-        encoded = self.tokenizer(
-            chat_prompt,
-            return_tensors="pt",
-            padding=True,
-            truncation=False,
+        options = GenerationOptions(
+            max_new_tokens=self.config.max_new_tokens,
+            temperature=self.config.temperature,
+            top_p=self.config.top_p,
+            repetition_penalty=getattr(self.config, "repetition_penalty", 1.0),
+            do_sample=True,
+            stop=StopOptions(stop=QWEN_STOP_TOKENS),
+            pad_token_id=self.tokenizer.pad_token_id or self.tokenizer.eos_token_id,
+            eos_token_id=self.tokenizer.eos_token_id,
+            use_cache=True,
+            decode=DecodeOptions(
+                skip_special_tokens=True,
+                clean_up_tokenization_spaces=True,
+                strip_whitespace=True,
+            ),
         )
-        inputs = {k: v.to(self.device) for k, v in encoded.items()}
+        request = TextGenerationRequest(messages=messages)
+        result = self.engine.generate_text_batch([request], options)[0]
+        maybe_empty_cache("reflection.generate_json_payload")
 
-        with torch.inference_mode():
-            generate_kwargs = {
-                "max_new_tokens": self.config.max_new_tokens,
-                "temperature": self.config.temperature,
-                "top_p": self.config.top_p,
-                "repetition_penalty": getattr(self.config, "repetition_penalty", 1.0),
-                "do_sample": True,
-                "pad_token_id": self.tokenizer.pad_token_id
-                or self.tokenizer.eos_token_id,
-                "eos_token_id": self.tokenizer.eos_token_id,
-                "use_cache": True,
-            }
-            model = cast(Any, self.model)
-            output = model.generate(
-                **inputs,
-                **generate_kwargs,
-            )
-            maybe_empty_cache("reflection.generate_json_payload")
-
-        prompt_length = inputs["input_ids"].size(1)
-        generated_tokens = output[0, prompt_length:]
-        response = self.tokenizer.decode(generated_tokens, skip_special_tokens=True)
-        response = normalize_spaces(to_simplified(response))
+        raw_text = result.raw_text
+        response = normalize_spaces(to_simplified(result.text))
 
         try:
             return self._loads_first_json(response)
         except Exception as exc:
             self._last_debug_info = {
-                "raw_response": response[:500],
+                "raw_text_prefix": raw_text[:500],
+                "text_prefix": response[:500],
                 "parse_error": str(exc),
             }
             raise

@@ -12,7 +12,7 @@ from src.utils.unstructured import UnstructuredMutableMapping
 _IRRELEVANT_SOURCE = "irrelevant_summary"
 _IRRELEVANT_TEXT = "无关图片"
 _HEADER_PATTERN = re.compile(r"^<DOMAIN=[A-Z]+>, <TASK=[A-Z]+>$")
-_SPECIAL_TOKENS = ("<|endoftext|>", "<|im_end|>", "<|eot_id|>")
+_SPECIAL_TOKENS = ("<|endoftext|>", "<|im_end|>")
 _WHITESPACE_RE = re.compile(r"\s+")
 _DIGITS_RE = re.compile(r"\d+")
 

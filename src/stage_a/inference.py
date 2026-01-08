@@ -11,21 +11,13 @@ from __future__ import annotations
 import json
 import random
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, TypeVar, TypedDict, cast
+from typing import TypeVar, cast
 
 import torch
 from PIL import Image
-from transformers import (
-    AutoProcessor,
-    BatchEncoding,
-    GenerationConfig,
-    PreTrainedTokenizerBase,
-    Qwen3VLForConditionalGeneration,
-)
-
 from data_conversion.utils.exif_utils import apply_exif_orientation
 
 from ..utils import get_logger, require_mapping
@@ -33,103 +25,59 @@ from ..utils.unstructured import UnstructuredMapping
 from .prompts import SUMMARY_SYSTEM_PROMPT, build_system_prompt, build_user_prompt
 from .types import StageAGroupRecord
 from src.prompts.summary_profiles import DEFAULT_SUMMARY_PROFILE_RUNTIME
+from src.generation import (
+    ChatTemplateOptions,
+    GenerationEngine,
+    GenerationOptions,
+    ModelLoadConfig,
+    QWEN_STOP_TOKENS,
+    VlmGenerationRequest,
+    VlmPreprocessOptions,
+    build_hf_engine,
+)
 
-
-def _build_generation_config(gen_config: UnstructuredMapping) -> GenerationConfig:
-    """Build a GenerationConfig from an intentionally unstructured mapping."""
-    gen_config = require_mapping(gen_config, context="stage_a.gen_config")
-    return GenerationConfig(**gen_config)
-
-# Import distributed helpers from stage_b (reusable lightweight module)
-try:
-    from ..stage_b.distributed import (
-        barrier,
-        broadcast_object,
-        get_local_rank,
-        get_rank,
-        get_world_size,
-        init_distributed,
-        is_main_process,
-    )
-except ImportError:
-    # Fallback if stage_b is not available (shouldn't happen in normal usage)
-    def get_world_size() -> int:
-        import os
-
-        value = os.environ.get("WORLD_SIZE")
-        return int(value) if value is not None else 1
-
-    def get_rank() -> int:
-        import os
-
-        value = os.environ.get("RANK")
-        return int(value) if value is not None else 0
-
-    def get_local_rank() -> int:
-        import os
-
-        value = os.environ.get("LOCAL_RANK")
-        return int(value) if value is not None else 0
-
-    def is_main_process() -> bool:
-        return get_rank() == 0
-
-    def init_distributed(*, timeout_seconds: int = 1800) -> None:
-        import torch.distributed as dist
-
-        if not dist.is_available() or dist.is_initialized():
-            return
-        world_size = get_world_size()
-        if world_size <= 1:
-            return
-        from datetime import timedelta
-
-        backend = "nccl" if torch.cuda.is_available() else "gloo"
-        dist.init_process_group(
-            backend=backend,
-            init_method="env://",
-            timeout=timedelta(seconds=int(timeout_seconds)),
-        )
-        if torch.cuda.is_available():
-            torch.cuda.set_device(get_local_rank())
-
-    def barrier() -> None:
-        import torch.distributed as dist
-
-        if dist.is_available() and dist.is_initialized() and get_world_size() > 1:
-            dist.barrier()
-
-    def broadcast_object(obj: object | None, *, src: int = 0) -> object:
-        return obj
+from ..distributed import (
+    barrier,
+    broadcast_object,
+    get_local_rank,
+    get_rank,
+    get_world_size,
+    init_distributed,
+    is_main_process,
+)
 
 
 logger = get_logger(__name__)
 
 
-class ProcessorProtocol(Protocol):
-    tokenizer: PreTrainedTokenizerBase
-
-    def apply_chat_template(self, *args: object, **kwargs: object) -> str: ...
-
-    def __call__(self, *args: object, **kwargs: object) -> BatchEncoding: ...
-
-    def batch_decode(self, *args: object, **kwargs: object) -> list[str]: ...
-
-
-class ModelInputs(TypedDict, total=False):
-    input_ids: torch.Tensor
-    attention_mask: torch.Tensor
-    pixel_values: torch.Tensor
-    image_grid_thw: torch.Tensor
-
-
-def _extract_model_inputs(payload: Mapping[str, object]) -> ModelInputs:
-    model_inputs: ModelInputs = {}
-    for key in ("input_ids", "attention_mask", "pixel_values", "image_grid_thw"):
-        value = payload.get(key)
-        if value is not None:
-            model_inputs[key] = cast(torch.Tensor, value)
-    return model_inputs
+def _build_generation_options(gen_config: UnstructuredMapping) -> GenerationOptions:
+    """Build GenerationOptions from an intentionally unstructured mapping."""
+    raw = dict(require_mapping(gen_config, context="stage_a.gen_config"))
+    stop_raw = raw.get("stop")
+    if stop_raw is None:
+        raw["stop"] = list(QWEN_STOP_TOKENS)
+    elif isinstance(stop_raw, Sequence) and not isinstance(stop_raw, (str, bytes)):
+        stop_tokens = [str(token) for token in stop_raw]
+        invalid_stop = [token for token in stop_tokens if token not in QWEN_STOP_TOKENS]
+        if invalid_stop:
+            raise ValueError(
+                "stage_a.gen_config.stop must contain only "
+                f"{list(QWEN_STOP_TOKENS)}; invalid={invalid_stop}"
+            )
+        raw["stop"] = stop_tokens
+    else:
+        raise TypeError(
+            "stage_a.gen_config.stop must be a sequence of strings or null"
+        )
+    raw.setdefault(
+        "decode",
+        {
+            "skip_special_tokens": True,
+            "clean_up_tokenization_spaces": False,
+            "strip_whitespace": True,
+        },
+    )
+    return GenerationOptions.from_mapping(raw, context="stage_a.gen_config")
 
 
 def _safe_pbar_update(pbar: object, delta: int) -> None:
@@ -490,120 +438,30 @@ def _sample_groups(
     return sampled, stats
 
 
-def load_model_processor(
+def load_generation_engine(
     checkpoint: str, device: str, max_pixels: int = 786432
-) -> tuple[Qwen3VLForConditionalGeneration, ProcessorProtocol]:
-    """Load Qwen3-VL model and processor.
-
-    Args:
-        checkpoint: HuggingFace checkpoint path
-        device: Device string (cuda:N or cpu)
-        max_pixels: Maximum pixels for image resizing (default: 786432 for efficiency)
-
-    Returns:
-        Tuple of (model, processor)
-    """
-    logger.info(f"Loading model from {checkpoint}")
-
-    model = Qwen3VLForConditionalGeneration.from_pretrained(
-        checkpoint,
-        torch_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
-        attn_implementation="flash_attention_2"
-        if torch.cuda.is_available()
-        else "eager",
+) -> GenerationEngine:
+    """Load centralized generation engine for Stage-A."""
+    logger.info("Loading model from %s", checkpoint)
+    model_config = ModelLoadConfig(
+        model_name_or_path=checkpoint,
+        torch_dtype="bfloat16" if torch.cuda.is_available() else "float32",
+        device=device,
+        attn_implementation="flash_attention_2" if torch.cuda.is_available() else "eager",
         trust_remote_code=True,
+        variant="vlm",
     )
-    cast(torch.nn.Module, model).to(device)
-    model.eval()
-
-    processor = cast(
-        ProcessorProtocol,
-        AutoProcessor.from_pretrained(checkpoint, trust_remote_code=True),
+    preprocess = VlmPreprocessOptions(max_pixels=max_pixels)
+    chat_template = ChatTemplateOptions(enable_thinking=False, tokenize=False)
+    engine = build_hf_engine(
+        model_config, chat_template=chat_template, preprocess=preprocess
     )
-    # IMPORTANT: For decoder-only generation with variable-length prompts (vision tokens vary by image),
-    # batched inference MUST use left-padding. Right-padding puts PAD tokens at the end of shorter prompts
-    # and can destabilize generation when mixed-size images are batched together (common in per_image mode).
-    try:
-        tok = getattr(processor, "tokenizer", None)
-        if tok is not None:
-            tok.padding_side = "left"
-            tok.truncation_side = "left"
-            logger.info(
-                "Tokenizer padding_side=%s truncation_side=%s",
-                getattr(tok, "padding_side", None),
-                getattr(tok, "truncation_side", None),
-            )
-    except Exception:
-        logger.warning(
-            "Failed to set tokenizer padding/truncation side", exc_info=False
-        )
-
-    # Configure max_pixels for compute efficiency
-    # Lower values = faster inference but lower image quality
-    # 786432 = 1024×768 equivalent (good balance)
-    # Default Qwen3-VL is 12845056 (very high resolution)
-    # Enforce pixel budget on the image processor (Qwen2VLImageProcessorFast)
-    ip = getattr(processor, "image_processor", None)
-    if ip is not None:
-        try:
-            # Qwen fast processor expects pixel budgets via the size dict
-            #   size["shortest_edge"] = min_pixels, size["longest_edge"] = max_pixels
-            if not hasattr(ip, "size") or not isinstance(ip.size, dict):
-                ip.size = {}
-
-            # Preserve any explicit min_pixels if provided; otherwise fall back to existing size or default 56*56
-            min_pix = getattr(ip, "min_pixels", None)
-            if min_pix is None:
-                min_pix = ip.size.get("shortest_edge", 56 * 56)
-
-            ip.size["shortest_edge"] = int(min_pix)
-            ip.size["longest_edge"] = int(max_pixels)
-
-            # Mirror onto convenience attributes when present
-            try:
-                ip.min_pixels = int(min_pix)
-            except Exception:
-                pass
-            try:
-                ip.max_pixels = int(max_pixels)
-            except Exception:
-                pass
-
-            logger.info(
-                "Set pixel budget: min_pixels=%s max_pixels=%s (size=%s)",
-                ip.size.get("shortest_edge"),
-                ip.size.get("longest_edge"),
-                ip.size,
-            )
-        except Exception:
-            logger.warning(
-                "Failed to set pixel budget on image_processor; continuing with defaults",
-                exc_info=False,
-            )
-    else:
-        logger.warning("Could not set max_pixels (processor may not support it)")
-    # Log critical image processor settings for alignment diagnostics
-    try:
-        ip = getattr(processor, "image_processor", None)
-        logger.info(
-            "ImageProcessor settings: do_resize=%s, patch_size=%s, merge_size=%s, min_pixels=%s, max_pixels=%s, size=%s",
-            getattr(ip, "do_resize", None),
-            getattr(ip, "patch_size", None),
-            getattr(ip, "merge_size", None),
-            getattr(ip, "min_pixels", None),
-            getattr(ip, "max_pixels", None),
-            getattr(ip, "size", None),
-        )
-    except Exception:
-        pass
-
-    logger.info(f"Model loaded on {device}")
-    return model, processor
+    logger.info("Model loaded on %s", device)
+    return engine
 
 
 def infer_one_image(
-    model: Qwen3VLForConditionalGeneration,
-    processor: ProcessorProtocol,
+    engine: GenerationEngine,
     image: Image.Image,
     user_text: str,
     gen_config: UnstructuredMapping,
@@ -613,8 +471,7 @@ def infer_one_image(
     """Run inference on a single image.
 
     Args:
-        model: Qwen3-VL model
-        processor: ProcessorProtocol
+        engine: GenerationEngine
         image: PIL Image
         user_text: User prompt text
         gen_config: Generation config dict
@@ -642,150 +499,11 @@ def infer_one_image(
         },
     ]
 
-    # Apply chat template
-    text = processor.apply_chat_template(  # type: ignore[attr-defined]
-        messages, add_generation_prompt=True, tokenize=False
-    )
-
-    # Encode
-    # Respect max_pixels by passing images_kwargs explicitly (Qwen2VLImageProcessorFast)
-    _img_kwargs = {}
-    try:
-        ip = getattr(processor, "image_processor", None)
-        if ip is not None:
-            if isinstance(getattr(ip, "size", None), dict):
-                min_pix = ip.size.get("shortest_edge")
-                max_pix = ip.size.get("longest_edge")
-            else:
-                min_pix = getattr(ip, "min_pixels", None)
-                max_pix = getattr(ip, "max_pixels", None)
-            if min_pix is not None:
-                _img_kwargs["min_pixels"] = int(min_pix)
-            if max_pix is not None:
-                _img_kwargs["max_pixels"] = int(max_pix)
-    except Exception:
-        pass
-    inputs = processor(  # type: ignore[operator]
-        images=[image], text=[text], return_tensors="pt", images_kwargs=_img_kwargs
-    )
-    inputs = cast(BatchEncoding, inputs)
-    model_inputs = _extract_model_inputs(inputs)
-    input_ids = model_inputs.get("input_ids")
-    if input_ids is None:
-        raise ValueError("processor output missing input_ids")
-    if verify:
-        try:
-            import hashlib
-
-            buf = image.tobytes()
-            sha = hashlib.sha256(buf).hexdigest()[:16]
-            grid = model_inputs.get("image_grid_thw")
-            merge = getattr(
-                getattr(processor, "image_processor", None), "merge_size", 2
-            )
-            expected_tokens = (
-                int((grid[0].prod() // (merge * merge)).item())
-                if grid is not None
-                else -1
-            )
-            image_token_id = getattr(processor, "image_token_id", None) or getattr(
-                processor.tokenizer,  # type: ignore[attr-defined]
-                "image_token_id",
-                None,
-            )
-            text_token_count = (
-                int((input_ids[0] == image_token_id).sum().item())
-                if image_token_id is not None
-                else -1
-            )
-            logger.info(
-                "[verify] size=%sx%s sha256=%s grid_thw=%s expected_image_tokens=%s text_image_tokens=%s",
-                image.width,
-                image.height,
-                sha,
-                tuple(grid[0].tolist()) if grid is not None else None,
-                expected_tokens,
-                text_token_count,
-            )
-        except Exception:
-            logger.warning("[verify] logging failed", exc_info=False)
-    inputs = inputs.to(model.device)
-    model_inputs = _extract_model_inputs(inputs)
-    input_ids = model_inputs.get("input_ids")
-    if input_ids is None:
-        raise ValueError("processor output missing input_ids")
-    # Debug: verify grid/token alignment
-    try:
-        grid = model_inputs.get("image_grid_thw")
-        if grid is not None:
-            merge = getattr(
-                getattr(processor, "image_processor", None), "merge_size", 2
-            )
-            expected_tokens = int((grid[0].prod() // (merge * merge)).item())
-            image_token_id = getattr(processor, "image_token_id", None)
-            if image_token_id is None:
-                image_token_id = getattr(processor.tokenizer, "image_token_id", None)  # type: ignore[attr-defined]
-            text_token_count = -1
-            try:
-                text_token_count = (
-                    int((input_ids[0] == image_token_id).sum().item())
-                    if image_token_id is not None
-                    else -1
-                )
-            except Exception:
-                pass
-            logger.debug(
-                "grid_thw=%s expected_image_tokens=%s text_image_tokens=%s",
-                tuple(grid[0].tolist()),
-                expected_tokens,
-                text_token_count,
-            )
-    except Exception:
-        pass
-
-    generation_config = _build_generation_config(gen_config)
-
-    # Generate
-    with torch.inference_mode():
-        gen = model.generate(
-            **model_inputs,
-            use_cache=True,
-            generation_config=generation_config,
-            pad_token_id=processor.tokenizer.pad_token_id,  # type: ignore[attr-defined]
-        )
-
-    # Decode
-    start = input_ids.shape[-1]
-    gen_only = gen[:, start:]
-    # Trim trailing EOS/PAD tokens only (preserve other content)
-    gen_only = _trim_trailing_eos_pad(
-        gen_only,
-        eos_id=getattr(processor.tokenizer, "eos_token_id", None),  # type: ignore[attr-defined]
-        pad_id=getattr(processor.tokenizer, "pad_token_id", None),  # type: ignore[attr-defined]
-    )
-
-    try:
-        raw_text = processor.batch_decode(  # type: ignore[attr-defined]
-            gen_only, skip_special_tokens=False, clean_up_tokenization_spaces=False
-        )[0]
-    except Exception:
-        raw_text = processor.tokenizer.batch_decode(  # type: ignore[attr-defined]
-            gen_only, skip_special_tokens=False, clean_up_tokenization_spaces=False
-        )[0]
-
-    # Keep raw content; only strip outer whitespace
-    raw_text = raw_text.strip()
-
-    try:
-        clean_text = processor.batch_decode(  # type: ignore[attr-defined]
-            gen_only, skip_special_tokens=False, clean_up_tokenization_spaces=False
-        )[0]
-    except Exception:
-        clean_text = processor.tokenizer.batch_decode(  # type: ignore[attr-defined]
-            gen_only, skip_special_tokens=False, clean_up_tokenization_spaces=False
-        )[0]
-
-    clean_text = clean_text.strip()
+    options = _build_generation_options(gen_config)
+    request = VlmGenerationRequest(messages=messages, verify=verify)
+    result = engine.generate_vlm_batch([request], options=options)[0]
+    raw_text = result.raw_text
+    clean_text = result.text
 
     # Validation: fail-fast on empty summary
     if not clean_text:
@@ -799,8 +517,7 @@ def infer_one_image(
 
 
 def infer_batch(
-    model: Qwen3VLForConditionalGeneration,
-    processor: ProcessorProtocol,
+    engine: GenerationEngine,
     images: list[Image.Image],
     user_text: str,
     gen_config: UnstructuredMapping,
@@ -810,8 +527,7 @@ def infer_batch(
     """Run batched inference on multiple images.
 
     Args:
-        model: Qwen3-VL model
-        processor: ProcessorProtocol
+        engine: GenerationEngine
         images: List of PIL Images
         user_text: User prompt text (same for all images)
         gen_config: Generation config dict
@@ -840,170 +556,24 @@ def infer_batch(
         for img in images
     ]
 
-    # Apply chat template to each
-    texts = [
-        processor.apply_chat_template(msgs, add_generation_prompt=True, tokenize=False)  # type: ignore[attr-defined]
-        for msgs in messages_list
-    ]
-
-    # Batch encode with padding
-    _img_kwargs = {}
-    try:
-        ip = getattr(processor, "image_processor", None)
-        if ip is not None:
-            if isinstance(getattr(ip, "size", None), dict):
-                min_pix = ip.size.get("shortest_edge")
-                max_pix = ip.size.get("longest_edge")
-            else:
-                min_pix = getattr(ip, "min_pixels", None)
-                max_pix = getattr(ip, "max_pixels", None)
-            if min_pix is not None:
-                _img_kwargs["min_pixels"] = int(min_pix)
-            if max_pix is not None:
-                _img_kwargs["max_pixels"] = int(max_pix)
-    except Exception:
-        pass
-    inputs = processor(  # type: ignore[operator]
-        images=images,
-        text=texts,
-        return_tensors="pt",
-        padding=True,
-        images_kwargs=_img_kwargs,
-    )
-    inputs = cast(BatchEncoding, inputs)
-    model_inputs = _extract_model_inputs(inputs)
-    input_ids = model_inputs.get("input_ids")
-    if input_ids is None:
-        raise ValueError("processor output missing input_ids")
-    if verify and len(images) > 0:
-        try:
-            import hashlib
-
-            grid = model_inputs.get("image_grid_thw")
-            merge = getattr(
-                getattr(processor, "image_processor", None), "merge_size", 2
-            )
-            exp = (
-                int((grid[0].prod() // (merge * merge)).item())
-                if grid is not None
-                else -1
-            )
-            image_token_id = getattr(processor, "image_token_id", None) or getattr(
-                processor.tokenizer,  # type: ignore[attr-defined]
-                "image_token_id",
-                None,
-            )
-            txt = (
-                int((input_ids[0] == image_token_id).sum().item())
-                if image_token_id is not None
-                else -1
-            )
-            sha0 = hashlib.sha256(images[0].tobytes()).hexdigest()[:16]
-            logger.info(
-                "[verify-batch] first.size=%sx%s sha256=%s grid_thw=%s expected_tokens=%s text_tokens=%s",
-                images[0].width,
-                images[0].height,
-                sha0,
-                tuple(grid[0].tolist()) if grid is not None else None,
-                exp,
-                txt,
-            )
-        except Exception:
-            logger.warning("[verify-batch] logging failed", exc_info=False)
-    inputs = inputs.to(model.device)
-    model_inputs = _extract_model_inputs(inputs)
-    input_ids = model_inputs.get("input_ids")
-    if input_ids is None:
-        raise ValueError("processor output missing input_ids")
-    # Debug: verify first-sample grid/token alignment
-    try:
-        if len(images) > 0:
-            grid = model_inputs.get("image_grid_thw")
-            if grid is not None:
-                merge = getattr(
-                    getattr(processor, "image_processor", None), "merge_size", 2
-                )
-                expected_tokens = int((grid[0].prod() // (merge * merge)).item())
-                image_token_id = getattr(processor, "image_token_id", None)
-                if image_token_id is None:
-                    image_token_id = getattr(
-                        processor.tokenizer,  # type: ignore[attr-defined]
-                        "image_token_id",
-                        None,
-                    )
-                text_token_count = -1
-                try:
-                    text_token_count = (
-                        int((input_ids[0] == image_token_id).sum().item())
-                        if image_token_id is not None
-                        else -1
-                    )
-                except Exception:
-                    pass
-                logger.debug(
-                    "[batch] grid_thw=%s expected_image_tokens=%s text_image_tokens=%s",
-                    tuple(grid[0].tolist()),
-                    expected_tokens,
-                    text_token_count,
-                )
-    except Exception:
-        pass
-
-    generation_config = _build_generation_config(gen_config)
-
-    # Generate for batch
-    with torch.inference_mode():
-        gen = model.generate(
-            **model_inputs,
-            use_cache=True,
-            generation_config=generation_config,
-            pad_token_id=processor.tokenizer.pad_token_id,  # type: ignore[attr-defined]
+    options = _build_generation_options(gen_config)
+    requests: list[VlmGenerationRequest] = []
+    for idx in range(len(images)):
+        req = VlmGenerationRequest(
+            messages=messages_list[idx], verify=verify and idx == 0
         )
+        requests.append(req)
 
-    # Decode each output
-    start = input_ids.shape[-1]
+    results = engine.generate_vlm_batch(requests, options=options)
     outputs: list[tuple[str, str]] = []
-
-    for i in range(len(images)):
-        gen_only = gen[i : i + 1, start:]
-        # Trim trailing EOS/PAD tokens only (preserve other content)
-        gen_only = _trim_trailing_eos_pad(
-            gen_only,
-            eos_id=getattr(processor.tokenizer, "eos_token_id", None),  # type: ignore[attr-defined]
-            pad_id=getattr(processor.tokenizer, "pad_token_id", None),  # type: ignore[attr-defined]
-        )
-
-        try:
-            raw_text = processor.batch_decode(  # type: ignore[attr-defined]
-                gen_only, skip_special_tokens=False, clean_up_tokenization_spaces=False
-            )[0]
-        except Exception:
-            raw_text = processor.tokenizer.batch_decode(  # type: ignore[attr-defined]
-                gen_only, skip_special_tokens=False, clean_up_tokenization_spaces=False
-            )[0]
-
-        # Keep raw content; only strip outer whitespace
-        raw_text = raw_text.strip()
-
-        try:
-            clean_text = processor.batch_decode(  # type: ignore[attr-defined]
-                gen_only, skip_special_tokens=False, clean_up_tokenization_spaces=False
-            )[0]
-        except Exception:
-            clean_text = processor.tokenizer.batch_decode(  # type: ignore[attr-defined]
-                gen_only, skip_special_tokens=True, clean_up_tokenization_spaces=False
-            )[0]
-
-        clean_text = clean_text.strip()
-
-        # Validation: fail-fast on empty summary
+    for i, result in enumerate(results):
+        raw_text = result.raw_text
+        clean_text = result.text
         if not clean_text:
             raise ValueError(
                 f"Empty summary generated for image {i} in batch "
                 "(clean_text is empty after stripping)"
             )
-
-        # Sanitize single-image summary to keep only primary image content and remove redundancy
         clean_text = sanitize_single_image_summary(clean_text)
         outputs.append((raw_text, clean_text))
 
@@ -1013,8 +583,7 @@ def infer_batch(
 def process_group(
     group_id: str,
     group_info: GroupInfo,
-    model: Qwen3VLForConditionalGeneration,
-    processor: ProcessorProtocol,
+    engine: GenerationEngine,
     mission: str | None,
     dataset: str = "bbu",
     prompt_profile: str = DEFAULT_SUMMARY_PROFILE_RUNTIME,
@@ -1027,8 +596,7 @@ def process_group(
     Args:
         group_id: Group ID
         group_info: GroupInfo with paths and metadata
-        model: Qwen3-VL model
-        processor: ProcessorProtocol
+        engine: GenerationEngine
         mission: Mission name (for prompt building)
         dataset: Dataset type ("bbu" or "rru")
         gen_config: Generation config dict
@@ -1082,8 +650,7 @@ def process_group(
         if batch_size == 1:
             # Sequential fallback
             raw, clean = infer_one_image(
-                model,
-                processor,
+                engine,
                 chunk[0],
                 user_text,
                 gen_config,
@@ -1095,8 +662,7 @@ def process_group(
         else:
             # Batched inference
             chunk_outputs = infer_batch(
-                model,
-                processor,
+                engine,
                 chunk,
                 user_text,
                 gen_config,
@@ -1267,8 +833,8 @@ def run_stage_a_inference(
     if sharding_mode not in {"per_group", "per_image"}:
         raise ValueError(f"Unsupported sharding_mode: {sharding_mode!r}")
 
-    # Load model and processor (all ranks).
-    model, processor = load_model_processor(checkpoint, device, max_pixels=max_pixels)
+    # Load generation engine (all ranks).
+    engine = load_generation_engine(checkpoint, device, max_pixels=max_pixels)
 
     if sharding_mode == "per_group":
         # Shard groups by rank in distributed mode.
@@ -1305,8 +871,7 @@ def run_stage_a_inference(
 
         processed, errors = _run_per_group(
             groups=my_groups,
-            model=model,
-            processor=processor,
+            engine=engine,
             mission=mission,
             dataset=dataset,
             prompt_profile=prompt_profile,
@@ -1400,8 +965,7 @@ def run_stage_a_inference(
     processed_images, errors_images = _run_per_image_jobs(
         jobs=my_jobs,
         groups=groups,
-        model=model,
-        processor=processor,
+        engine=engine,
         mission=mission,
         dataset=dataset,
         prompt_profile=prompt_profile,
@@ -1456,8 +1020,7 @@ def run_stage_a_inference(
 def _run_per_group(
     *,
     groups: list[GroupInfo],
-    model: Qwen3VLForConditionalGeneration,
-    processor: ProcessorProtocol,
+    engine: GenerationEngine,
     mission: str,
     dataset: str,
     prompt_profile: str,
@@ -1478,15 +1041,14 @@ def _run_per_group(
                 record = process_group(
                     group_id=group_id,
                     group_info=group_info,
-                    model=model,
-                    processor=processor,
+                    engine=engine,
                     mission=mission,
                     dataset=dataset,
-                prompt_profile=prompt_profile,
-                gen_config=gen_config,
-                batch_size=batch_size,
-                verify=verify_inputs,
-            )
+                    prompt_profile=prompt_profile,
+                    gen_config=gen_config,
+                    batch_size=batch_size,
+                    verify=verify_inputs,
+                )
 
                 f_out.write(json.dumps(record, ensure_ascii=False) + "\n")
                 f_out.flush()
@@ -1536,8 +1098,7 @@ def _run_per_image_jobs(
     *,
     jobs: list[_ImageJob],
     groups: list[GroupInfo],
-    model: Qwen3VLForConditionalGeneration,
-    processor: ProcessorProtocol,
+    engine: GenerationEngine,
     mission: str,
     dataset: str,
     prompt_profile: str,
@@ -1646,8 +1207,7 @@ def _run_per_image_jobs(
                 try:
                     outputs = [
                         infer_one_image(
-                            model,
-                            processor,
+                            engine,
                             images[0],
                             user_text,
                             gen_config,
@@ -1661,8 +1221,7 @@ def _run_per_image_jobs(
             else:
                 try:
                     outputs = infer_batch(
-                        model,
-                        processor,
+                        engine,
                         images,
                         user_text,
                         gen_config,
@@ -1680,8 +1239,7 @@ def _run_per_image_jobs(
                         try:
                             outputs.append(
                                 infer_one_image(
-                                    model,
-                                    processor,
+                                    engine,
                                     img,
                                     user_text,
                                     gen_config,
@@ -1881,8 +1439,7 @@ def _merge_per_image_outputs(
 def _run_cross_group_batches(
     *,
     groups: list[GroupInfo],
-    model: Qwen3VLForConditionalGeneration,
-    processor: ProcessorProtocol,
+    engine: GenerationEngine,
     mission: str,
     dataset: str,
     gen_config: UnstructuredMapping,
@@ -2058,8 +1615,7 @@ def _run_cross_group_batches(
                 try:
                     outputs = [
                         infer_one_image(
-                            model,
-                            processor,
+                            engine,
                             images[0],
                             user_text,
                             gen_config,
@@ -2074,8 +1630,7 @@ def _run_cross_group_batches(
             else:
                 try:
                     outputs = infer_batch(
-                        model,
-                        processor,
+                        engine,
                         images,
                         user_text,
                         gen_config,
@@ -2096,8 +1651,7 @@ def _run_cross_group_batches(
                         try:
                             outputs.append(
                                 infer_one_image(
-                                    model,
-                                    processor,
+                                    engine,
                                     img,
                                     user_text,
                                     gen_config,

@@ -1,7 +1,7 @@
 """
 Qwen3-VL visualization script:
   - Define configs at top
-  - Load model/processor
+  - Load generation engine
   - Read JSONL
   - Inference with training user prompt
   - Parse norm1000 predictions; inverse-scale to pixels
@@ -17,17 +17,21 @@ from __future__ import annotations
 
 import argparse
 import ast
-import gc
 import json
 import os
 import re
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, cast
 
 import torch
 
 _SKIP_VIS_DEPS = os.environ.get("QWEN3_VL_NO_VIS_DEPS") is not None
+
+REPO_DIR = Path(__file__).resolve().parents[1]
+if str(REPO_DIR) not in sys.path:
+    sys.path.insert(0, str(REPO_DIR))
 
 if TYPE_CHECKING:
     import matplotlib.patches as patches  # noqa: F401
@@ -43,14 +47,22 @@ else:
         plt = None  # type: ignore
         Image = None  # type: ignore
 from transformers import (  # noqa: E402
-    AutoProcessor,
-    Qwen3VLForConditionalGeneration,
     StoppingCriteria,
     StoppingCriteriaList,
 )
 from transformers.generation.logits_process import (  # noqa: E402
     LogitsProcessor,
     LogitsProcessorList,
+)
+
+from src.generation import (  # noqa: E402
+    ChatTemplateOptions,
+    DecodeOptions,
+    GenerationOptions,
+    ModelLoadConfig,
+    VlmGenerationRequest,
+    VlmPreprocessOptions,
+    build_hf_engine,
 )
 
 from vis_tools import evaluate as geom_eval  # noqa: E402
@@ -130,9 +142,8 @@ PLOT_JSONL_PATH = DUMP_JSONL_PATH
 # ======================================================
 
 REPO_DIR = Path(__file__).resolve().parents[1]
-SRC_DIR = REPO_DIR / "src"
-if str(SRC_DIR) not in sys.path:
-    sys.path.append(str(SRC_DIR))
+if str(REPO_DIR) not in sys.path:
+    sys.path.insert(0, str(REPO_DIR))
 try:
     from src.config.prompts import (  # type: ignore
         USER_PROMPT_JSON,
@@ -203,22 +214,37 @@ print("[INFO] System prompt format hint: standard")
 print(f"[INFO] Domain/Task: {resolved_domain_token} / {resolved_task_token}")
 
 
-if not _SKIP_VIS_DEPS:
+engine = None
+tokenizer = None
+
+
+def _init_engine() -> None:
+    global engine
+    global tokenizer
+    if _SKIP_VIS_DEPS:
+        return
+    if engine is not None:
+        return
+
     # ======================
-    # Load model/processor
+    # Load generation engine
     # ======================
 
     print(f"[INFO] Loading model from: {CKPT_PATH}")
-    model = Qwen3VLForConditionalGeneration.from_pretrained(
-        CKPT_PATH,
-        torch_dtype=torch.bfloat16,
+    model_config = ModelLoadConfig(
+        model_name_or_path=CKPT_PATH,
+        torch_dtype="bfloat16",
+        device=DEVICE,
         attn_implementation="flash_attention_2",
+        trust_remote_code=True,
+        variant="vlm",
     )
-    # Move model to device
-    # PyTorch's .to() accepts both str and torch.device
-    # Type checker incorrectly flags this - this is a false positive
-    model.to(DEVICE)  # type: ignore[misc, call-arg]
-    model.eval()
+    preprocess = VlmPreprocessOptions(do_resize=False)
+    chat_template = ChatTemplateOptions(add_generation_prompt=True, tokenize=False)
+    engine = build_hf_engine(
+        model_config, chat_template=chat_template, preprocess=preprocess
+    )
+    tokenizer = engine.tokenizer
 
     # Enable CUDA perf/kvcache optimizations when available
     try:
@@ -247,20 +273,16 @@ if not _SKIP_VIS_DEPS:
     except Exception:
         pass
 
-    # Ensure KV cache is used by default
+    # Ensure KV cache is used by default (best-effort when HF backend is active)
     try:
-        model.config.use_cache = True
+        backend_model = getattr(getattr(engine, "backend", None), "model", None)
+        if backend_model is not None:
+            backend_model.config.use_cache = True
+            gc = getattr(backend_model, "generation_config", None)
+            if gc is not None:
+                gc.use_cache = True
     except Exception:
         pass
-    try:
-        gc = getattr(model, "generation_config", None)
-        if gc is not None:
-            gc.use_cache = True
-    except Exception:
-        pass
-
-processor = AutoProcessor.from_pretrained(CKPT_PATH, trust_remote_code=True)
-processor.image_processor.do_resize = False
 
 # ======================
 # Inference helpers
@@ -268,6 +290,9 @@ processor.image_processor.do_resize = False
 
 
 def run_infer_one(pil_img: Any, prompt: str) -> tuple[str, str]:  # type: ignore[type-arg]
+    _init_engine()
+    if engine is None:
+        raise RuntimeError("Engine not initialized; set QWEN3_VL_NO_VIS_DEPS?")
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT_TEXT},
         {
@@ -278,36 +303,32 @@ def run_infer_one(pil_img: Any, prompt: str) -> tuple[str, str]:  # type: ignore
             ],
         },
     ]
-    # Use the tokenizer's chat template owned by the processor
-    text = processor.apply_chat_template(
-        messages, add_generation_prompt=True, tokenize=False
-    )
+    def _resolve_tokenizer():
+        if tokenizer is not None:
+            return tokenizer
+        backend = getattr(engine, "backend", None)
+        return getattr(backend, "tokenizer", None)
 
-    inputs = processor(images=[pil_img], text=[text], return_tensors="pt")
-    # Move tensors to model device
-    inputs = {
-        k: (v.to(model.device) if hasattr(v, "to") else v) for k, v in inputs.items()
-    }
+    tok = _resolve_tokenizer()
+    if tok is None:
+        raise RuntimeError("Tokenizer unavailable for vis_tools inference")
 
-    # Build optional stopping criteria (balanced JSON and/or object cap)
-    prompt_len = int(inputs.get("input_ids").shape[-1])  # type: ignore[union-attr]
-
-    stopping: StoppingCriteriaList | None = None
+    plugins: list[object] = []
 
     if STOP_AT_BALANCED_JSON or (MAX_OBJECTS_CAP is not None and MAX_OBJECTS_CAP > 0):
 
         class _BalancedJsonStopper(StoppingCriteria):
-            def __init__(self, prompt_len: int, max_objects: int | None) -> None:
-                self.prompt_len: int = prompt_len
-                self.max_objects: int | None = max_objects
+            def __init__(self, prompt_lens: list[int], max_objects: int | None) -> None:
+                self.prompt_lens = prompt_lens
+                self.max_objects = max_objects
 
             def _decode(self, ids: "torch.Tensor") -> str:
                 try:
-                    return processor.tokenizer.decode(
+                    return tok.decode(
                         ids,
                         skip_special_tokens=False,
                         clean_up_tokenization_spaces=False,
-                    )  # type: ignore[attr-defined]
+                    )
                 except Exception:
                     return ""
 
@@ -326,72 +347,77 @@ def run_infer_one(pil_img: Any, prompt: str) -> tuple[str, str]:  # type: ignore
                         (batch_size,), False, device=device, dtype=torch.bool
                     ).bool()
                     return cast("torch.BoolTensor", result)
-                seq = input_ids[0]
-                gen_ids = seq[self.prompt_len :]
-                if gen_ids.numel() == 0:
-                    result = torch.full(
-                        (batch_size,), False, device=device, dtype=torch.bool
-                    ).bool()
-                    return cast("torch.BoolTensor", result)
-                text = self._decode(gen_ids)
-                if not text:
-                    result = torch.full(
-                        (batch_size,), False, device=device, dtype=torch.bool
-                    ).bool()
-                    return cast("torch.BoolTensor", result)
-                if self.max_objects is not None and self.max_objects > 0:
-                    try:
-                        if text.count('"object_') >= self.max_objects:
-                            result = torch.full(
-                                (batch_size,), True, device=device, dtype=torch.bool
-                            ).bool()
-                            return cast("torch.BoolTensor", result)
-                    except Exception:
-                        pass
-                if not STOP_AT_BALANCED_JSON:
-                    result = torch.full(
-                        (batch_size,), False, device=device, dtype=torch.bool
-                    ).bool()
-                    return cast("torch.BoolTensor", result)
-                depth = 0
-                started = False
-                in_str = False
-                esc = False
-                for ch in text:
-                    if in_str:
-                        if esc:
-                            esc = False
-                        elif ch == "\\":
-                            esc = True
-                        elif ch == '"':
-                            in_str = False
-                        continue
-                    else:
-                        if ch == '"':
-                            in_str = True
-                            continue
-                        if ch == "{":
-                            depth += 1
-                            started = True
-                        elif ch == "}":
-                            if depth > 0:
-                                depth -= 1
-                                if started and depth == 0:
-                                    result = torch.full(
-                                        (batch_size,),
-                                        True,
-                                        device=device,
-                                        dtype=torch.bool,
-                                    ).bool()
-                                    return cast("torch.BoolTensor", result)
                 result = torch.full(
                     (batch_size,), False, device=device, dtype=torch.bool
                 ).bool()
+                for idx in range(batch_size):
+                    prompt_len = self.prompt_lens[idx] if idx < len(self.prompt_lens) else 0
+                    seq = input_ids[idx]
+                    gen_ids = seq[prompt_len:]
+                    if gen_ids.numel() == 0:
+                        continue
+                    text = self._decode(gen_ids)
+                    if not text:
+                        continue
+                    if self.max_objects is not None and self.max_objects > 0:
+                        try:
+                            if text.count('"object_') >= self.max_objects:
+                                result[idx] = True
+                                continue
+                        except Exception:
+                            pass
+                    if not STOP_AT_BALANCED_JSON:
+                        continue
+                    depth = 0
+                    started = False
+                    in_str = False
+                    esc = False
+                    for ch in text:
+                        if in_str:
+                            if esc:
+                                esc = False
+                            elif ch == "\\":
+                                esc = True
+                            elif ch == '"':
+                                in_str = False
+                            continue
+                        else:
+                            if ch == '"':
+                                in_str = True
+                                continue
+                            if ch == "{":
+                                depth += 1
+                                started = True
+                            elif ch == "}":
+                                if depth > 0:
+                                    depth -= 1
+                                    if started and depth == 0:
+                                        result[idx] = True
+                                        break
                 return cast("torch.BoolTensor", result)
 
-        stopping = StoppingCriteriaList(
-            [_BalancedJsonStopper(prompt_len, MAX_OBJECTS_CAP)]
-        )
+        class _BalancedJsonStopperPlugin:
+            name = "balanced_json_stop"
+            backends = ("hf",)
+            request_types = ("vlm",)
+            uses_hf_stopping_criteria = True
+            uses_hf_logits_processor = False
+
+            def __init__(self, max_objects: int | None) -> None:
+                self.max_objects = max_objects
+
+            def hf_stopping_criteria(self, prompt_lengths: Sequence[int]):
+                return StoppingCriteriaList(
+                    [_BalancedJsonStopper(list(prompt_lengths), self.max_objects)]
+                )
+
+            def hf_logits_processor(self, prompt_lengths: Sequence[int]):
+                return None
+
+            def postprocess_text(self, text: str) -> str:
+                return text
+
+        plugins.append(_BalancedJsonStopperPlugin(MAX_OBJECTS_CAP))
 
     # Build logits processor to block exact duplicate object values (e.g., identical line arrays)
     class _DedupObjectValueProcessor(LogitsProcessor):
@@ -402,15 +428,15 @@ def run_infer_one(pil_img: Any, prompt: str) -> tuple[str, str]:  # type: ignore
 
         def _decode(self, ids: "torch.Tensor") -> str:
             try:
-                return processor.tokenizer.decode(
+                return tok.decode(
                     ids, skip_special_tokens=False, clean_up_tokenization_spaces=False
-                )  # type: ignore[attr-defined]
+                )
             except Exception:
                 return ""
 
         def _encode(self, s: str) -> list[int]:
             try:
-                return processor.tokenizer.encode(s, add_special_tokens=False)  # type: ignore[attr-defined]
+                return tok.encode(s, add_special_tokens=False)
             except Exception:
                 return []
 
@@ -510,43 +536,42 @@ def run_infer_one(pil_img: Any, prompt: str) -> tuple[str, str]:  # type: ignore
                         scores[..., int(next_id)] = -float("inf")
             return scores
 
-    logits_processor = LogitsProcessorList([_DedupObjectValueProcessor(prompt_len)])
+    class _DedupObjectValuePlugin:
+        name = "dedup_object_values"
+        backends = ("hf",)
+        request_types = ("vlm",)
+        uses_hf_stopping_criteria = False
+        uses_hf_logits_processor = True
 
-    with torch.inference_mode():
-        gen = model.generate(
-            **inputs,
-            max_new_tokens=MAX_NEW_TOKENS,
-            do_sample=(TEMPERATURE > 0),
-            temperature=TEMPERATURE,
-            top_p=TOP_P,
-            repetition_penalty=REPETITION_PENALTY,
-            no_repeat_ngram_size=NO_REPEAT_NGRAM_SIZE,  # Prevents repeating object structures without global distribution shift
-            logits_processor=logits_processor,
-            stopping_criteria=stopping,
-            use_cache=True,
-        )
-    # Strip prompt tokens from the front
-    start = inputs["input_ids"].shape[-1]
-    gen_only = gen[:, start:]
+        def hf_stopping_criteria(self, prompt_lengths: Sequence[int]):
+            return None
 
-    # Decode both raw (with specials) and cleaned
-    try:
-        raw_text = processor.batch_decode(
-            gen_only, skip_special_tokens=False, clean_up_tokenization_spaces=False
-        )[0]
-    except Exception:
-        raw_text = processor.tokenizer.batch_decode(
-            gen_only, skip_special_tokens=False, clean_up_tokenization_spaces=False
-        )[0]
-    try:
-        clean_text = processor.batch_decode(
-            gen_only, skip_special_tokens=True, clean_up_tokenization_spaces=False
-        )[0]
-    except Exception:
-        clean_text = processor.tokenizer.batch_decode(
-            gen_only, skip_special_tokens=True, clean_up_tokenization_spaces=False
-        )[0]
-    return raw_text, clean_text
+        def hf_logits_processor(self, prompt_lengths: Sequence[int]):
+            prompt_len = prompt_lengths[0] if prompt_lengths else 0
+            return LogitsProcessorList([_DedupObjectValueProcessor(prompt_len)])
+
+        def postprocess_text(self, text: str) -> str:
+            return text
+
+    plugins.append(_DedupObjectValuePlugin())
+
+    options = GenerationOptions(
+        max_new_tokens=MAX_NEW_TOKENS,
+        temperature=TEMPERATURE,
+        top_p=TOP_P,
+        repetition_penalty=REPETITION_PENALTY,
+        no_repeat_ngram_size=NO_REPEAT_NGRAM_SIZE,
+        do_sample=(TEMPERATURE > 0),
+        use_cache=True,
+        decode=DecodeOptions(
+            skip_special_tokens=True,
+            clean_up_tokenization_spaces=False,
+            strip_whitespace=True,
+        ),
+    )
+    request = VlmGenerationRequest(messages=messages)
+    result = engine.generate_vlm_batch([request], options=options, plugins=plugins)[0]
+    return result.raw_text, result.text
 
 
 # ======================
@@ -1053,6 +1078,7 @@ def main() -> None:
     if args.device_id is not None:
         DEVICE = f"cuda:{args.device_id}"
     # DEVICE already set to "cuda:7" from runtime settings if CLI arg not provided
+    _init_engine()
 
     def _resolve_repo_relative(path: str) -> Path:
         p = Path(path)

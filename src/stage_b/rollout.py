@@ -4,15 +4,25 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 import logging
 import re
 from datetime import datetime, timezone
 from typing import cast
 
 import torch
-from transformers import PreTrainedModel, PreTrainedTokenizerBase
-from transformers.generation.utils import GenerateOutput
+from transformers import PreTrainedTokenizerBase
+
+from src.generation import (
+    ChatTemplateOptions,
+    DecodeOptions,
+    GenerationEngine,
+    GenerationOptions,
+    QWEN_STOP_TOKENS,
+    StopOptions,
+    TextGenerationRequest,
+)
+from src.generation.chat_template import render_chat_template
 
 from .config import SamplerConfig
 from .sampling.prompts import build_messages
@@ -41,15 +51,7 @@ _ASSISTANT_MARKERS: Sequence[str] = (
     "<|im_start|>assistant\n",
 )
 
-_DEFAULT_STOP: tuple[str, ...] = (
-    "\nassistant",
-    "assistant\n",
-    "assistant:",
-    "Assistant:",
-    "<|endoftext|>",
-    "</s>",
-    "<|im_end|>",
-)
+_DEFAULT_STOP: tuple[str, ...] = QWEN_STOP_TOKENS
 
 _DEFAULT_MAX_PROMPT_TOKENS = 4096
 
@@ -119,35 +121,35 @@ class RolloutSampler:
 
     def __init__(
         self,
-        model: PreTrainedModel,
-        tokenizer: PreTrainedTokenizerBase,
+        engine: GenerationEngine,
         config: SamplerConfig,
-        *,
-        device: str | None = None,
     ) -> None:
-        self.model: PreTrainedModel = model
-        self.tokenizer: PreTrainedTokenizerBase = tokenizer
+        self.engine: GenerationEngine = engine
+        self.tokenizer: PreTrainedTokenizerBase = cast(
+            PreTrainedTokenizerBase, engine.tokenizer
+        )
         self.config: SamplerConfig = config
-        self.device: torch.device | str = (
-            device or (model.device if hasattr(model, "device") else "cpu")
+        self.chat_template = ChatTemplateOptions(
+            add_generation_prompt=True,
+            tokenize=False,
+            enable_thinking=False,
         )
 
     # ------------------------------------------------------------------
     # Prompt building
     # ------------------------------------------------------------------
+    def _build_messages(
+        self, ticket: GroupTicket, guidance: MissionGuidance, *, domain: str
+    ) -> Sequence[Mapping[str, object]]:
+        return build_messages(ticket, guidance, domain=domain)
+
     def _build_prompt(
         self, ticket: GroupTicket, guidance: MissionGuidance, *, domain: str
     ) -> str:
-        messages = build_messages(ticket, guidance, domain=domain)
-        rendered = self.tokenizer.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=True,
-            # Disable Qwen3 "thinking" blocks (<think>...</think>) to keep outputs simple
-            enable_thinking=False,
+        messages = self._build_messages(ticket, guidance, domain=domain)
+        return render_chat_template(
+            self.tokenizer, messages, options=self.chat_template
         )
-        assert isinstance(rendered, str), "apply_chat_template must return string"
-        return rendered
 
     def _count_prompt_tokens(self, prompts: Sequence[str]) -> list[int | None]:
         if not prompts:
@@ -191,115 +193,43 @@ class RolloutSampler:
     # ------------------------------------------------------------------
     # Generation helpers
     # ------------------------------------------------------------------
-    def _generate_with_prompts(
+    def _generate_with_messages(
         self,
-        prompts: Sequence[str],
+        messages: Sequence[Sequence[Mapping[str, object]]],
         decode: DecodeConfig,
         sample_offset: int,
     ) -> list[str]:
-        if not prompts:
+        if not messages:
             return []
 
-        encoded = self.tokenizer(
-            list(prompts),
-            return_tensors="pt",
-            padding=True,
-            truncation=False,
-        )
-
-        inputs = {key: value.to(self.device) for key, value in encoded.items()}
-        input_len = inputs["input_ids"].shape[1]
-
-        do_sample = decode.temperature > 0
         stop_tokens = decode.stop if decode.stop else _DEFAULT_STOP
-        # Treat common chat terminators as EOS to hard-stop generation
-        stop_token_ids = []
-        for token in stop_tokens:
-            try:
-                ids = self.tokenizer.encode(token, add_special_tokens=False)
-            except Exception:
-                ids = []
-            if len(ids) == 1:
-                stop_token_ids.append(ids[0])
-
-        eos_ids: list[int] = []
-        if self.tokenizer.eos_token_id is not None:
-            eos_token_id = self.tokenizer.eos_token_id
-            if isinstance(eos_token_id, int):
-                eos_ids.append(eos_token_id)
-        for tid in stop_token_ids:
-            if tid not in eos_ids:
-                eos_ids.append(tid)
-        generator_kwargs = {
-            "max_new_tokens": decode.max_new_tokens,
-            "temperature": decode.temperature if do_sample else None,
-            "top_p": decode.top_p,
-            "do_sample": do_sample,
-            "repetition_penalty": decode.repetition_penalty,
-            "no_repeat_ngram_size": decode.no_repeat_ngram_size,
-            "pad_token_id": self.tokenizer.pad_token_id
-            or (eos_ids[0] if eos_ids else None),
-            "eos_token_id": eos_ids or None,
-            "return_dict_in_generate": True,
-            "use_cache": True,  # Explicitly enable KV cache for faster inference
-        }
-        generator_kwargs = {k: v for k, v in generator_kwargs.items() if v is not None}
-
-        if decode.seed is not None:
-            torch.manual_seed(decode.seed + sample_offset)
-
-        with torch.inference_mode():
-            generate_fn = cast(
-                Callable[..., torch.Tensor | GenerateOutput],
-                getattr(self.model, "generate"),
-            )
-            generation = generate_fn(**inputs, **generator_kwargs)
-            maybe_empty_cache("rollout.generate")
-
-        if isinstance(generation, torch.Tensor):
-            sequences = generation
-        else:
-            sequences = generation.sequences
-        sequences = sequences.to("cpu")
-
-        outputs: list[str] = []
-        for idx in range(sequences.size(0)):
-            generated_ids = sequences[idx, input_len:]
-
-            # Optionally truncate at stop token ids (robust to specials removal)
-            if stop_token_ids:
-                try:
-                    stop_pos = next(
-                        pos
-                        for pos, tid in enumerate(generated_ids.tolist())
-                        if tid in stop_token_ids
-                    )
-                except StopIteration:
-                    stop_pos = None
-                if stop_pos is not None:
-                    generated_ids = generated_ids[:stop_pos]
-
-            text = self.tokenizer.decode(
-                generated_ids,
+        options = GenerationOptions(
+            max_new_tokens=decode.max_new_tokens,
+            temperature=decode.temperature,
+            top_p=decode.top_p,
+            repetition_penalty=decode.repetition_penalty,
+            no_repeat_ngram_size=decode.no_repeat_ngram_size,
+            stop=StopOptions(stop=tuple(stop_tokens)),
+            seed=(decode.seed + sample_offset) if decode.seed is not None else None,
+            decode=DecodeOptions(
                 skip_special_tokens=True,
                 clean_up_tokenization_spaces=True,
-            )
+                strip_whitespace=True,
+            ),
+        )
 
-            trimmed = text.strip()
+        requests = [TextGenerationRequest(messages=msg) for msg in messages]
+        results = self.engine.generate_text_batch(requests, options=options)
+        maybe_empty_cache("rollout.generate")
+
+        outputs: list[str] = []
+        for result in results:
+            trimmed = result.text.strip()
             for marker in _ASSISTANT_MARKERS:
                 if trimmed.startswith(marker):
                     trimmed = trimmed[len(marker) :]
                     break
-
-            if stop_tokens:
-                for token in stop_tokens:
-                    pos = trimmed.find(token)
-                    if pos > 0:
-                        trimmed = trimmed[:pos]
-                        break
-
             outputs.append(trimmed.strip())
-
         return outputs
 
     # ------------------------------------------------------------------
@@ -314,6 +244,7 @@ class RolloutSampler:
         if not tickets:
             return {}, ()
 
+        messages_list: list[Sequence[Mapping[str, object]]] = []
         prompts: list[str] = []
         for ticket in tickets:
             if ticket.mission not in guidance_map:
@@ -322,11 +253,15 @@ class RolloutSampler:
                 raise ValueError(
                     f"Missing domain mapping for mission '{ticket.mission}'"
                 )
+            messages = self._build_messages(
+                ticket,
+                guidance_map[ticket.mission],
+                domain=domain_map[ticket.mission],
+            )
+            messages_list.append(messages)
             prompts.append(
-                self._build_prompt(
-                    ticket,
-                    guidance_map[ticket.mission],
-                    domain=domain_map[ticket.mission],
+                render_chat_template(
+                    self.tokenizer, messages, options=self.chat_template
                 )
             )
 
@@ -337,14 +272,16 @@ class RolloutSampler:
         )
         prompt_lengths = self._count_prompt_tokens(prompts)
         kept_tickets: list[GroupTicket] = []
-        kept_prompts: list[str] = []
+        kept_messages: list[Sequence[Mapping[str, object]]] = []
         dropped_keys: list[str] = []
-        for ticket, prompt, length in zip(tickets, prompts, prompt_lengths):
+        for ticket, prompt, length, messages in zip(
+            tickets, prompts, prompt_lengths, messages_list
+        ):
             if length is None or length > max_prompt_tokens:
                 dropped_keys.append(ticket.key)
             else:
                 kept_tickets.append(ticket)
-                kept_prompts.append(prompt)
+                kept_messages.append(messages)
 
         if not kept_tickets:
             return {}, tuple(dropped_keys)
@@ -356,8 +293,8 @@ class RolloutSampler:
 
         for decode in self.config.grid:
             for sample_index in range(self.config.samples_per_decode):
-                responses = self._generate_with_prompts(
-                    kept_prompts, decode, sample_index
+                responses = self._generate_with_messages(
+                    kept_messages, decode, sample_index
                 )
                 if len(responses) != len(kept_tickets):
                     raise RuntimeError("Sampler returned mismatched response count")

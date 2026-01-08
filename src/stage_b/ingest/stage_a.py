@@ -40,10 +40,10 @@ def _maybe_unwrap_json(text: str) -> str:
             return text
         if isinstance(parsed, str):
             return parsed
-        if isinstance(parsed, Mapping):
-            values = [str(value) for value in parsed.values()]
-            if values:
-                return "，".join(values)
+        # Preserve JSON objects for downstream prompting/parsing.
+        # Stage-B prompt construction expects the Stage-A summary JSON payload
+        # (containing keys like "统计") to remain intact.
+        return stripped
     return text
 
 

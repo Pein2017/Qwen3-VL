@@ -16,7 +16,10 @@
   - model/tokenizer/processor loading
   - prompt rendering / chat-template application
   - generation invocation and decoding (batch-first)
-- Output parsing and downstream post-processing (dense JSON extraction, summary JSON extraction, Stage‑B verdict protocols) SHALL remain in existing, task-specific modules.
+- The engine SHALL render prompts with model “thinking” disabled (e.g., `enable_thinking=False`) for **all** call sites
+  (Stage-A, Stage-B, and `vis_tools`) to keep outputs deterministic and parseable.
+- Output parsing and task-specific post-processing (dense JSON extraction, summary JSON extraction, Stage‑B verdict protocols) SHALL remain in existing, task-specific modules.
+- Optional, reusable generation-time features (e.g., HF `StoppingCriteria` / `LogitsProcessor` hooks and stop-policy normalization) MAY be implemented as engine “plugins” so that utility scripts (e.g., `vis_tools`) can share behavior without forcing it on Stage-A/B.
 - vLLM integration SHALL be **colocate only** (no server mode in this change).
 - The engine SHALL provide:
   - a “safe” Hugging Face backend (transformers `generate`)
@@ -34,7 +37,12 @@
   - shared batch `generate()` wrappers for:
     - text-only generation (Stage-B reflection / rule-search)
     - vision-language generation (Qwen3-VL image+text inference)
+  - unified stop-policy handling for common generation termination patterns (stop strings and stop token ids), with backend-appropriate wiring and deterministic post-truncation
+  - a stable decoded-text result shape with two slots:
+    - `text`: cleaned decoded assistant text (default consumer path)
+    - `raw_text`: decoded text including special tokens (debugging and optional plugin consumers)
   - structured configuration objects (Schema Constitution compliant) to reduce “dict soup” at call sites
+  - optional plugin hooks to reuse advanced HF-only controls (e.g., stopping criteria / logits processors) in `vis_tools` without coupling them into Stage-A/B default behavior
 - Migrate existing call sites to the centralized engine, minimizing behavior changes:
   - Stage-A: loading + per-image/batch inference delegates to the engine
   - Stage-B: loading + generation blocks delegate to the engine
@@ -66,4 +74,5 @@
 - vLLM multimodal parity varies by model + vLLM version; the vLLM backend MUST fail fast with a clear error when unsupported,
   and optionally support explicit fallback to the HF backend when configured.
 - Hidden coupling: some scripts may rely on implicit defaults (`trust_remote_code`, attention impl, pad-token fallback).
-
+- Disabling “thinking” everywhere may change output shape for some checkpoints; this change treats “no-thinking” as an explicit,
+  intended behavior and should be validated on representative Stage-A and `vis_tools` workflows.

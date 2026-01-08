@@ -18,15 +18,7 @@ from pathlib import Path
 from typing import Any, NotRequired, TypedDict, cast
 
 import torch
-from transformers import (
-    AutoConfig,
-    AutoModelForCausalLM,
-    AutoProcessor,
-    AutoTokenizer,
-    PreTrainedModel,
-    PreTrainedTokenizerBase,
-    Qwen3VLForConditionalGeneration,
-)
+from transformers import AutoConfig, PreTrainedTokenizerBase
 
 from ..utils import configure_logging, get_logger
 from src.utils import require_mapping
@@ -37,7 +29,7 @@ from .config import (
     load_stage_b_config,
     resolve_domain_for_mission,
 )
-from .distributed import (
+from ..distributed import (
     barrier,
     broadcast_int,
     broadcast_object,
@@ -50,6 +42,19 @@ from .distributed import (
 )
 from .ingest import ingest_stage_a
 from .io.guidance import GuidanceRepository
+from src.generation import (
+    ChatTemplateOptions,
+    DecodeOptions,
+    GenerationEngine,
+    GenerationOptions,
+    ModelLoadConfig,
+    QWEN_STOP_TOKENS,
+    StopOptions,
+    TextGenerationRequest,
+    VlmPreprocessOptions,
+    build_hf_engine,
+)
+from src.generation.chat_template import render_chat_template
 from .reflection import ReflectionEngine
 from .rollout import RolloutSampler
 from .rule_search import (
@@ -212,20 +217,14 @@ def _safe_model_max_length(tokenizer: PreTrainedTokenizerBase) -> int | None:
     return length
 
 
-def _load_model(config: StageBConfig):
+def _load_generation_engine(config: StageBConfig) -> GenerationEngine:
     variant = _detect_model_variant(config.model.model_name_or_path)
     logger.info(
         "Detected model variant '%s' for %s",
         variant,
         config.model.model_name_or_path,
     )
-
-    tokenizer = AutoTokenizer.from_pretrained(
-        config.model.model_name_or_path,
-        padding_side="left",
-        trust_remote_code=True,
-    )
-    dtype = _dtype_from_str(config.model.torch_dtype)
+    _dtype_from_str(config.model.torch_dtype)
     device_map: object = config.model.device_map
     if get_world_size() > 1 and torch.cuda.is_available():
         local_rank = get_local_rank()
@@ -237,40 +236,32 @@ def _load_model(config: StageBConfig):
                 config.model.device_map,
                 device_map,
             )
-    model_kwargs = {
-        "torch_dtype": dtype,
-        "device_map": device_map,
-    }
-    # Enable Flash Attention 2 if specified in config (similar to training pipeline)
-    if config.model.attn_implementation is not None:
-        # Normalize 'flash_attn' to 'flash_attention_2' for compatibility
-        attn_impl = config.model.attn_implementation
-        if attn_impl.lower() in ("flash_attn", "flash_attention_2"):
-            attn_impl = "flash_attention_2"
-        model_kwargs["attn_implementation"] = attn_impl
-        if is_main_process():
-            logger.info("Using attention implementation: %s", attn_impl)
-    if variant == "vl":
-        model = Qwen3VLForConditionalGeneration.from_pretrained(
-            config.model.model_name_or_path,
-            **cast(Any, model_kwargs),
-            trust_remote_code=True,
-        )
-        processor = AutoProcessor.from_pretrained(
-            config.model.model_name_or_path, trust_remote_code=True
-        )
-    else:
-        model = AutoModelForCausalLM.from_pretrained(
-            config.model.model_name_or_path,
-            **cast(Any, model_kwargs),
-            trust_remote_code=True,
-        )
-        processor = None
+    attn_impl = config.model.attn_implementation
+    if attn_impl is not None and attn_impl.lower() in ("flash_attn", "flash_attention_2"):
+        attn_impl = "flash_attention_2"
+    model_config = ModelLoadConfig(
+        model_name_or_path=config.model.model_name_or_path,
+        torch_dtype=config.model.torch_dtype,
+        device_map=device_map,
+        attn_implementation=attn_impl,
+        trust_remote_code=True,
+        variant="vlm" if variant == "vl" else "text",
+    )
+    chat_template = ChatTemplateOptions(
+        add_generation_prompt=True, tokenize=False, enable_thinking=False
+    )
+    preprocess = VlmPreprocessOptions()
+    engine = build_hf_engine(
+        model_config, chat_template=chat_template, preprocess=preprocess
+    )
+    return engine
 
-    if tokenizer.pad_token is None and tokenizer.eos_token is not None:
-        tokenizer.pad_token = tokenizer.eos_token
-    model.eval()
-    return model, tokenizer, processor
+
+def _require_engine_tokenizer(engine: GenerationEngine) -> PreTrainedTokenizerBase:
+    tokenizer = engine.tokenizer
+    if not isinstance(tokenizer, PreTrainedTokenizerBase):
+        raise RuntimeError("Engine tokenizer is unavailable or invalid")
+    return tokenizer
 
 
 def _shuffle_indices(count: int, *, epoch: int, base_seed: int) -> list[int]:
@@ -293,6 +284,17 @@ def _resolve_train_pool_size(
     else:
         target = int(train_pool_size)
     return min(max(1, target), total)
+
+
+def _compute_learnability_coverage(
+    learnable_keys: set[str],
+    *candidate_keys: Sequence[str],
+) -> tuple[set[str], set[str]]:
+    contributors: set[str] = set()
+    for keys in candidate_keys:
+        contributors.update(keys)
+    uncovered = set(learnable_keys) - contributors
+    return contributors, uncovered
 
 
 def _split_train_eval_pool(
@@ -697,7 +699,7 @@ def _build_rule_proposer_user_prompt(
 
 def _propose_rules(
     *,
-    model: torch.nn.Module,
+    engine: GenerationEngine,
     tokenizer: PreTrainedTokenizerBase,
     config: StageBConfig,
     mission: str,
@@ -731,20 +733,11 @@ def _propose_rules(
             {"role": "user", "content": user_prompt},
         ]
 
-        try:
-            chat_prompt = tokenizer.apply_chat_template(
-                messages,
-                add_generation_prompt=True,
-                tokenize=False,
-                enable_thinking=False,
-            )
-        except TypeError:
-            chat_prompt = tokenizer.apply_chat_template(  # type: ignore[call-arg]
-                messages,
-                add_generation_prompt=True,
-                tokenize=False,
-            )
-        assert isinstance(chat_prompt, str)
+        chat_prompt = render_chat_template(
+            tokenizer,
+            messages,
+            options=ChatTemplateOptions(add_generation_prompt=True, tokenize=False),
+        )
 
         try:
             encoded_probe = tokenizer(
@@ -810,32 +803,27 @@ def _propose_rules(
                 model_max_length,
             )
 
-    encoded = tokenizer(
-        chat_prompt,
-        return_tensors="pt",
-        padding=True,
-        truncation=False,
+    options = GenerationOptions(
+        max_new_tokens=config.rule_search.proposer_max_new_tokens,
+        temperature=config.rule_search.proposer_temperature,
+        top_p=config.rule_search.proposer_top_p,
+        repetition_penalty=config.rule_search.proposer_repetition_penalty,
+        do_sample=True,
+        stop=StopOptions(stop=QWEN_STOP_TOKENS),
+        pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id,
+        eos_token_id=tokenizer.eos_token_id,
+        use_cache=True,
+        seed=int(config.seed),
+        decode=DecodeOptions(
+            skip_special_tokens=True,
+            clean_up_tokenization_spaces=True,
+            strip_whitespace=True,
+        ),
     )
-    inputs = {k: v.to(model.device) for k, v in encoded.items()}
-
-    torch.manual_seed(int(config.seed))
-    with torch.inference_mode():
-        output = cast(Any, model).generate(
-            **inputs,
-            max_new_tokens=config.rule_search.proposer_max_new_tokens,
-            temperature=config.rule_search.proposer_temperature,
-            top_p=config.rule_search.proposer_top_p,
-            repetition_penalty=config.rule_search.proposer_repetition_penalty,
-            do_sample=True,
-            pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id,
-            eos_token_id=tokenizer.eos_token_id,
-            use_cache=True,
-        )
-
-    prompt_length = inputs["input_ids"].size(1)
-    generated_tokens = output[0, prompt_length:]
-    raw_response = tokenizer.decode(generated_tokens, skip_special_tokens=True)
-    response = normalize_spaces(to_simplified(raw_response))
+    request = TextGenerationRequest(messages=messages)
+    result = engine.generate_text_batch([request], options=options)[0]
+    raw_response = result.raw_text
+    response = normalize_spaces(to_simplified(result.text))
 
     try:
         payload = ReflectionEngine._loads_first_json(response)
@@ -1069,7 +1057,7 @@ def _build_ablation_candidates(
 def _run_rule_search_mission(
     *,
     config: StageBConfig,
-    model: PreTrainedModel,
+    engine: GenerationEngine,
     tokenizer: PreTrainedTokenizerBase,
     mission: str,
     mission_tickets: Sequence[GroupTicket],
@@ -1102,7 +1090,7 @@ def _run_rule_search_mission(
         )
         if not jump_reflection:
             reflection_engine = ReflectionEngine(
-                model=model,
+                engine=engine,
                 tokenizer=tokenizer,
                 config=config.reflection,
                 guidance_repo=mission_guidance_repo,
@@ -1141,7 +1129,7 @@ def _run_rule_search_mission(
             raise ValueError("rule_search.train_sampler is required in rule_search mode")
 
         train_sampler = RolloutSampler(
-            model=model, tokenizer=tokenizer, config=config.rule_search.train_sampler
+            engine=engine, config=config.rule_search.train_sampler
         )
 
         distill_cfg = config.stage_b_distillation
@@ -1355,7 +1343,7 @@ def _run_rule_search_mission(
             distill_guidance = current_guidance
             _run_rule_search_distill(
                 config=config,
-                model=model,
+                engine=engine,
                 tokenizer=tokenizer,
                 mission=mission,
                 mission_tickets=tickets_filtered,
@@ -1392,15 +1380,15 @@ def _run_rule_search_mission(
     if config.rule_search.eval_sampler is None:
         raise ValueError("rule_search.eval_sampler is required in rule_search mode")
     train_sampler = RolloutSampler(
-        model=model, tokenizer=tokenizer, config=config.rule_search.train_sampler
+        engine=engine, config=config.rule_search.train_sampler
     )
     eval_sampler = RolloutSampler(
-        model=model, tokenizer=tokenizer, config=config.rule_search.eval_sampler
+        engine=engine, config=config.rule_search.eval_sampler
     )
     # mining_sampler is optional; if not provided, use train_sampler
     mining_sampler_cfg = config.rule_search.mining_sampler or config.rule_search.train_sampler
     mining_sampler = RolloutSampler(
-        model=model, tokenizer=tokenizer, config=mining_sampler_cfg
+        engine=engine, config=mining_sampler_cfg
     )
 
     patience = int(config.rule_search.early_stop.patience)
@@ -1594,7 +1582,7 @@ def _run_rule_search_mission(
                 assert reflection_engine is not None
                 try:
                     candidates = _propose_rules(
-                        model=model,
+                        engine=engine,
                         tokenizer=tokenizer,
                         config=config,
                         mission=mission,
@@ -2195,7 +2183,7 @@ def _run_rule_search_mission(
                 )
             _run_rule_search_distill(
                 config=config,
-                model=model,
+                engine=engine,
                 tokenizer=tokenizer,
                 mission=mission,
                 mission_tickets=mission_tickets,
@@ -2208,7 +2196,7 @@ def _run_rule_search_mission(
 def _run_rule_search_distill(
     *,
     config: StageBConfig,
-    model: PreTrainedModel,
+    engine: GenerationEngine,
     tokenizer: PreTrainedTokenizerBase,
     mission: str,
     mission_tickets: Sequence[GroupTicket],
@@ -2269,7 +2257,7 @@ def _run_rule_search_distill(
         max_prompt_tokens=train_sampler_cfg.max_prompt_tokens,
     )
     distill_sampler = RolloutSampler(
-        model=model, tokenizer=tokenizer, config=distill_sampler_cfg
+        engine=engine, config=distill_sampler_cfg
     )
 
     distill_seed = (
@@ -2733,13 +2721,14 @@ def run_all(
     training_by_mission = tickets_by_mission
 
     logger.info(f"Loading model {config.model.model_name_or_path}")
-    model, tokenizer, processor = _load_model(config)
+    engine = _load_generation_engine(config)
+    tokenizer = _require_engine_tokenizer(engine)
 
     mission = mission_name
     domain = resolve_domain_for_mission(config, mission)
     _run_rule_search_mission(
         config=config,
-        model=model,
+        engine=engine,
         tokenizer=tokenizer,
         mission=mission,
         mission_tickets=training_by_mission[mission],

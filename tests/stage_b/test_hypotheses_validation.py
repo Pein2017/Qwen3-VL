@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from src.generation import GenerationResult
 from src.stage_b.config import ReflectionConfig
 from src.stage_b.reflection import ReflectionEngine
 from src.stage_b.types import (
@@ -18,8 +19,9 @@ from src.stage_b.types import (
 )
 
 
-class _FakeModel:
-    device = "cpu"
+class _FakeGenerationEngine:
+    def generate_text_batch(self, requests, options, *, plugins=None):  # noqa: ANN001
+        return [GenerationResult(text="{}", raw_text="{}") for _ in requests]
 
 
 class _FakeTokenizer:
@@ -92,7 +94,7 @@ def _engine(tmp_path: Path) -> ReflectionEngine:
         max_new_tokens=16,
     )
     return ReflectionEngine(
-        model=_FakeModel(),  # type: ignore[arg-type]
+        engine=_FakeGenerationEngine(),  # type: ignore[arg-type]
         tokenizer=_FakeTokenizer(),  # type: ignore[arg-type]
         config=cfg,
         guidance_repo=_FakeGuidanceRepo(),  # type: ignore[arg-type]

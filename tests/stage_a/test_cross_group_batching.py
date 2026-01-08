@@ -46,7 +46,7 @@ def _stub_inference(monkeypatch: pytest.MonkeyPatch):
     import src.stage_a.inference as stage_a_inf
 
     def fake_infer_batch(*args, **kwargs):
-        images = args[2] if len(args) > 2 else kwargs["images"]
+        images = args[1] if len(args) > 1 else kwargs["images"]
         out = []
         for img in images:
             name = Path(getattr(img, "filename", "")).name
@@ -54,7 +54,7 @@ def _stub_inference(monkeypatch: pytest.MonkeyPatch):
         return out
 
     def fake_infer_one_image(*args, **kwargs):
-        image = args[2] if len(args) > 2 else kwargs["image"]
+        image = args[1] if len(args) > 1 else kwargs["image"]
         name = Path(getattr(image, "filename", "")).name
         return (f"raw:{name}", f"clean:{name}")
 
@@ -70,13 +70,13 @@ def test_cross_group_reaggregation_and_structure(tmp_path: Path) -> None:
 
     processed, errors = _run_cross_group_batches(
         groups=[g1, g2],
-        model=None,  # type: ignore[arg-type]
-        processor=None,  # type: ignore[arg-type]
+        engine=None,  # type: ignore[arg-type]
         mission="挡风板安装检查",
+        dataset="bbu",
         gen_config={},
         batch_size=4,
-        include_mission_focus=True,
         verify_inputs=False,
+        prompt_profile="summary_runtime",
         output_path=out,
         pbar=None,
         distributed=False,
@@ -99,13 +99,13 @@ def test_cross_group_preserves_group_output_order(tmp_path: Path) -> None:
 
     processed, errors = _run_cross_group_batches(
         groups=[g1, g2],
-        model=None,  # type: ignore[arg-type]
-        processor=None,  # type: ignore[arg-type]
+        engine=None,  # type: ignore[arg-type]
         mission="挡风板安装检查",
+        dataset="bbu",
         gen_config={},
         batch_size=4,
-        include_mission_focus=True,
         verify_inputs=False,
+        prompt_profile="summary_runtime",
         output_path=out,
         pbar=None,
         distributed=False,
@@ -125,13 +125,13 @@ def test_cross_group_failure_does_not_block_later_groups(tmp_path: Path) -> None
 
     processed, errors = _run_cross_group_batches(
         groups=[g_bad, g2, g3],
-        model=None,  # type: ignore[arg-type]
-        processor=None,  # type: ignore[arg-type]
+        engine=None,  # type: ignore[arg-type]
         mission="挡风板安装检查",
+        dataset="bbu",
         gen_config={},
         batch_size=4,
-        include_mission_focus=True,
         verify_inputs=False,
+        prompt_profile="summary_runtime",
         output_path=out,
         pbar=None,
         distributed=False,
@@ -157,26 +157,26 @@ def test_cross_group_rank_local_shard_invariants(tmp_path: Path) -> None:
 
     _run_cross_group_batches(
         groups=shard0,
-        model=None,  # type: ignore[arg-type]
-        processor=None,  # type: ignore[arg-type]
+        engine=None,  # type: ignore[arg-type]
         mission="挡风板安装检查",
+        dataset="bbu",
         gen_config={},
         batch_size=8,
-        include_mission_focus=True,
         verify_inputs=False,
+        prompt_profile="summary_runtime",
         output_path=out0,
         pbar=None,
         distributed=False,
     )
     _run_cross_group_batches(
         groups=shard1,
-        model=None,  # type: ignore[arg-type]
-        processor=None,  # type: ignore[arg-type]
+        engine=None,  # type: ignore[arg-type]
         mission="挡风板安装检查",
+        dataset="bbu",
         gen_config={},
         batch_size=8,
-        include_mission_focus=True,
         verify_inputs=False,
+        prompt_profile="summary_runtime",
         output_path=out1,
         pbar=None,
         distributed=False,

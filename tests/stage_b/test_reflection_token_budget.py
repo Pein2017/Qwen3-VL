@@ -2,6 +2,7 @@ import re
 from dataclasses import dataclass
 from typing import Dict, Optional
 
+from src.generation import GenerationResult
 from src.stage_b.reflection.engine import ReflectionEngine
 from src.stage_b.config import ReflectionConfig
 from src.stage_b.types import (
@@ -39,9 +40,9 @@ class _FakeTokenizer:
         return ""
 
 
-class _FakeModel:
-    def __init__(self):
-        self.device = "cpu"
+class _FakeGenerationEngine:
+    def generate_text_batch(self, requests, options, *, plugins=None):  # noqa: ANN001
+        return [GenerationResult(text="{}", raw_text="{}") for _ in requests]
 
 
 @dataclass
@@ -121,7 +122,7 @@ def _engine_with_budget(budget: int) -> ReflectionEngine:
         eligibility_policy="selected_mismatch_or_all_wrong",
     )
     return ReflectionEngine(
-        model=_FakeModel(),  # type: ignore[arg-type]
+        engine=_FakeGenerationEngine(),  # type: ignore[arg-type]
         tokenizer=_FakeTokenizer(),  # type: ignore[arg-type]
         config=cfg,
         guidance_repo=_FakeGuidanceRepo(),  # type: ignore[arg-type]

@@ -45,7 +45,7 @@ def _stub_inference(monkeypatch: pytest.MonkeyPatch):
     import src.stage_a.inference as stage_a_inf
 
     def fake_infer_batch(*args, **kwargs):
-        images = args[2] if len(args) > 2 else kwargs["images"]
+        images = args[1] if len(args) > 1 else kwargs["images"]
         out = []
         for img in images:
             name = Path(getattr(img, "filename", "")).name
@@ -53,7 +53,7 @@ def _stub_inference(monkeypatch: pytest.MonkeyPatch):
         return out
 
     def fake_infer_one_image(*args, **kwargs):
-        image = args[2] if len(args) > 2 else kwargs["image"]
+        image = args[1] if len(args) > 1 else kwargs["image"]
         name = Path(getattr(image, "filename", "")).name
         return (f"raw:{name}", f"clean:{name}")
 
@@ -75,12 +75,12 @@ def test_per_image_single_rank_end_to_end_merge_and_cleanup(tmp_path: Path) -> N
     processed, errors = _run_per_image_jobs(
         jobs=jobs,
         groups=groups,
-        model=None,  # type: ignore[arg-type]
-        processor=None,  # type: ignore[arg-type]
+        engine=None,  # type: ignore[arg-type]
         mission=mission,
+        dataset="bbu",
+        prompt_profile="summary_runtime",
         gen_config={},
         batch_size=2,
-        include_mission_focus=True,
         verify_inputs=False,
         output_path=intermediate,
         pbar=None,
@@ -94,6 +94,7 @@ def test_per_image_single_rank_end_to_end_merge_and_cleanup(tmp_path: Path) -> N
         mission=mission,
         world_size=1,
         keep_intermediate_outputs=False,
+        dataset="bbu",
     )
     assert (merged, failed) == (2, 0)
     assert not intermediate.exists()
@@ -136,6 +137,7 @@ def test_per_image_merge_marks_incomplete_group_failed_and_continues(tmp_path: P
         mission=mission,
         world_size=1,
         keep_intermediate_outputs=True,
+        dataset="bbu",
     )
     assert (merged, failed) == (1, 1)
     assert intermediate.exists()

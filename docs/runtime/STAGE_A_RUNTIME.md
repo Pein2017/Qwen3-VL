@@ -3,7 +3,7 @@
 Status: Active
 Scope: Stage-A inference runbook for generating per-image summaries consumed by Stage-B.
 Owners: Runtime
-Last updated: 2026-01-02
+Last updated: 2026-01-08
 Related: [runtime/STAGE_A_STAGE_B.md](STAGE_A_STAGE_B.md), [runtime/STAGE_B_RUNTIME.md](STAGE_B_RUNTIME.md), [reference/stage-B-knowledge-Chinese.md](../reference/stage-B-knowledge-Chinese.md)
 
 Single-image summarization runbook for generating the evidence JSONL that Stage-B consumes. Use this file as the engineer-facing reference for commands, inputs, outputs, and common flags.
@@ -33,6 +33,8 @@ mission=BBU安装方式检查（正装） gpus=0 pass_group_number=500 fail_grou
   bash scripts/stage_a.sh
 ```
 
+- Generation engine note: Stage‑A uses the centralized `src/generation` engine (HF backend today) with chat-template rendering configured to disable “thinking” (`enable_thinking=False`) for deterministic outputs. The engine returns both `text` (clean) and `raw_text` (includes special tokens for debugging); Stage‑A persists only the cleaned per-image summaries in `per_image`.
+
 ## Inputs
 - Layout: `<root>/<mission>/{审核通过|审核不通过}/<group_id>/*.{jpg,jpeg,png}`
 - Labels inferred from parent directory: `审核通过` → `pass`, `审核不通过` → `fail`.
@@ -55,7 +57,7 @@ For Qwen3-VL **decoder-only** generation, **variable-length prompts** are common
 Implementation note:
 - `transformers/models/qwen3_vl/processing_qwen3_vl.py` does not force a padding side; it inherits `tokenizer.padding_side`.
 - Stage-A MUST set `tokenizer.padding_side="left"` (and typically `truncation_side="left"`) before calling `processor(..., padding=True)` for batch inference.
-- Stage-A enforces this in `src/stage_a/inference.py` (`load_model_processor`).
+- Stage-A enforces this via the centralized generation engine tokenizer normalization (`src/generation/preprocess.py`, invoked during engine load in `src/generation/backends/hf_backend.py`).
 
 Troubleshooting symptom:
 - If summaries suddenly start with unrelated English prefixes (e.g., `CoreApplication...`) especially under `sharding_mode=per_image` or mixed-resolution batches, check that **left padding** is enabled (right padding can trigger this failure mode).

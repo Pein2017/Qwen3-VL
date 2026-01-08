@@ -16,7 +16,7 @@ sys.path.insert(0, str(project_root))
 from PIL import Image  # noqa: E402
 
 from data_conversion.utils.exif_utils import apply_exif_orientation  # noqa: E402
-from src.stage_a.inference import infer_one_image, load_model_processor  # noqa: E402
+from src.stage_a.inference import infer_one_image, load_generation_engine  # noqa: E402
 from src.stage_a.prompts import build_system_prompt, build_user_prompt  # noqa: E402
 from src.utils import configure_logging, get_logger  # noqa: E402
 
@@ -67,12 +67,12 @@ def main():
     logger.info(f"Max new tokens: {MAX_NEW_TOKENS}")
     logger.info("=" * 70)
 
-    # Load model and processor
-    logger.info("Loading model and processor...")
-    model, processor = load_model_processor(
+    # Load generation engine
+    logger.info("Loading generation engine...")
+    engine = load_generation_engine(
         str(checkpoint_path), DEVICE, max_pixels=MAX_PIXELS
     )
-    logger.info("Model loaded successfully")
+    logger.info("Engine loaded successfully")
 
     # Build prompts (matching stage_a.sh behavior with mission focus)
     logger.info("Building prompts...")
@@ -104,8 +104,7 @@ def main():
     logger.info("Running inference...")
     try:
         raw_text, clean_text = infer_one_image(
-            model=model,
-            processor=processor,
+            engine=engine,
             image=image,
             user_text=user_text,
             gen_config=gen_config,

@@ -9,7 +9,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TypeVar, cast
 
-
+from src.generation.stop_policy import QWEN_STOP_TOKENS
 from src.prompts.domain_packs import get_domain_pack
 
 import yaml
@@ -280,6 +280,15 @@ def _decode_config(section: Mapping[str, object]) -> DecodeConfig:
         stop_tokens = tuple(str(token) for token in raw_stop)
     else:
         raise TypeError("sampler.grid entry 'stop' must be a sequence or null")
+
+    # Qwen3 stop policy is standardized across the repo: only these stop tokens.
+    allowed_stop = set(QWEN_STOP_TOKENS)
+    invalid_stop = [token for token in stop_tokens if token not in allowed_stop]
+    if invalid_stop:
+        raise ValueError(
+            "sampler.grid.stop must contain only "
+            f"{sorted(allowed_stop)}; invalid={invalid_stop}"
+        )
 
     return DecodeConfig(
         temperature=temperature,
