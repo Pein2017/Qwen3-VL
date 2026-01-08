@@ -268,24 +268,20 @@ Keep configs under `configs/` in sync with the playbook when making behavioral c
 - **Dry-run recipe**: clone the example config, set `training.max_steps: 2`, `training.eval_strategy: "no"`, `training.save_strategy: "no"`, `custom.train_sample_limit: 2`, `custom.val_sample_limit: 2`, then launch via `scripts/train.sh config=<new-config.yaml> gpus=0 debug=true`.
   - **Success criteria**: job starts, reward metrics appear (format/header/strict/parse + dup-key penalty + structured content rewards), and 1–2 steps complete without dataset or format exceptions.
 
-### Mixed-mode Dense GRPO Post-Training (Localization-first)
-- **Config example**: `configs/train/grpo/dense_summary_mixed_2048.yaml` (uses `configs/fusion/variants/bbu_rru_dense_grpo_mixed_2048.yaml`; edit checkpoint + epochs/LRs).
-- **Base template**: `configs/train/grpo/dense_summary_mixed_base.yaml` (composed from `configs/components/*` + `configs/base.yaml`).
+### Dense GRPO Post-Training (Localization-first)
+- **Config example**: `configs/train/grpo/dense_2048.yaml` (uses `configs/fusion/variants/bbu_rru_dense_grpo_2048.yaml`; edit checkpoint + epochs/LRs).
+- **Base template**: `configs/train/grpo/dense_base.yaml` (composed from `configs/components/*` + `configs/base.yaml`).
   - **Required knobs**:
     - `rlhf.rlhf_type=grpo`
-    - `rlhf.reward_funcs` includes both dense and summary rewards:
-      - Dense: `dense.format`, `dense.parse_schema_strict`, `dense.loc_mean_fbeta`, `dense.loc_soft_recall`, `dense.cat_mean_f1`, `dense.attr_weighted_recall`
-      - Summary (regularization): reuse the existing `summary.*` set
+    - `rlhf.reward_funcs=[dense.format, dense.parse_schema_strict, dense.loc_mean_fbeta, dense.loc_soft_recall, dense.cat_mean_f1, dense.attr_weighted_recall]`
     - `rlhf.num_generations` (must divide `rlhf.generation_batch_size`)
-    - `rlhf.max_completion_length=2048`
+    - `rlhf.max_completion_length=4096` (tune together with `vllm_max_model_len`)
+    - `training.effective_batch_size` (backward global batch), `rlhf.generation_batch_size` (rollout global trajectories)
     - `custom.assistant_prefix_format`, `custom.fusion_config`
-- **Mode routing**: rewards are gated by `metadata._fusion_mode`:
-  - `dense.*` rewards apply only to rows where `_fusion_mode == "dense"`
-  - `summary.*` rewards apply only to rows where `_fusion_mode == "summary"` (including irrelevant summary)
+- **Mode routing**: dense rewards are gated by `metadata._fusion_mode == "dense"`. The dense GRPO presets keep fusion datasets dense-only.
 - **Dense references**: fusion dataset attaches per-row `assistant_payload` (GT object dict) for dense samples; reward implementations consume it for geometry/attribute scoring.
 - **Implementation**:
   - Dense rewards live in `src/rlhf/grpo/rewards/dense/` (strict 2-line parsing + exact raster IoU for poly/bbox on the norm1000 1000×1000 grid clamped to `[0, 999]` + TubeIoU for lines).
-  - Summary rewards are mixed-mode safe and no-op on dense samples.
 - **Offline evaluation**: evaluate dense dumps (`gt_vs_pred.jsonl`, norm1000) via `vis_tools/eval_dump.py`.
   - JSON report includes `attribute_diagnostics_primary` aligned with reward semantics (`attr_weighted_recall`, OCR/text match rate for `文本`, notes match rate for `备注`, site-distance exact-match accuracy).
 

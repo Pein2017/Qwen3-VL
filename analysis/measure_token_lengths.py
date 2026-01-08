@@ -6,7 +6,7 @@ import math
 import os
 import statistics
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any, Iterable, cast
 
 
 def _percentile(sorted_values: list[int], pct: float) -> int:
@@ -101,7 +101,7 @@ def main() -> None:
     parser.add_argument(
         "--config",
         required=True,
-        help="Training YAML path, e.g. configs/train/grpo/dense_summary_mixed_2048.yaml",
+        help="Training YAML path, e.g. configs/train/grpo/dense_2048.yaml",
     )
     parser.add_argument(
         "--samples",
@@ -122,10 +122,10 @@ def main() -> None:
     from src.datasets.fusion import FusionConfig
     from src.datasets.unified_fusion_dataset import FusionCaptionDataset
 
-    from swift.llm.model.register import get_model_tokenizer
-    from swift.llm.template import get_template
+    from swift.llm.model.register import get_model_tokenizer  # pyright: ignore[reportUnknownVariableType]
+    from swift.llm.template import get_template  # pyright: ignore[reportUnknownVariableType]
     from swift.llm.template.template_inputs import TemplateInputs
-    from swift.utils.utils import remove_response
+    from swift.utils.utils import remove_response  # pyright: ignore[reportUnknownVariableType]
 
     raw_cfg = ConfigLoader.load_yaml_with_extends(args.config)
     prompts = ConfigLoader.resolve_prompts(raw_cfg)
@@ -167,7 +167,9 @@ def main() -> None:
     custom = training_config.custom
     fusion_path = custom.fusion_config
     if not fusion_path:
-        raise ValueError("custom.fusion_config is required for this measurement script.")
+        raise ValueError(
+            "custom.fusion_config is required for this measurement script."
+        )
     fusion_config = FusionConfig.from_file(fusion_path)
 
     augmenter = None
@@ -238,15 +240,18 @@ def main() -> None:
         messages = sample.get("messages")
         if not isinstance(messages, list):
             raise TypeError("dataset sample must contain 'messages' as a list")
+        messages_list = cast(list[object], messages)
 
         # Generation prompt: remove assistant response and re-encode exactly like GRPO trainer does.
-        messages_prompt = copy.deepcopy(messages)
+        messages_prompt = copy.deepcopy(messages_list)
         remove_response(messages_prompt)
         prompt_inputs = TemplateInputs.from_dict({"messages": messages_prompt})
         prompt_encoded = template.encode(prompt_inputs)
         prompt_ids = prompt_encoded.get("input_ids")
         if prompt_ids is None:
-            raise ValueError("template.encode did not return input_ids for prompt encoding")
+            raise ValueError(
+                "template.encode did not return input_ids for prompt encoding"
+            )
         prompt_len = len(prompt_ids)
         prompt_lens.append(prompt_len)
         prompt_image_tokens.append(_count_image_tokens(prompt_ids, image_token_id))
@@ -261,7 +266,11 @@ def main() -> None:
         assistant_len = _count_labeled_tokens(sample.get("labels"))
         sft_assistant_lens.append(assistant_len)
 
-        mode = sample.get("metadata", {}).get("_fusion_mode") if isinstance(sample.get("metadata"), dict) else None
+        mode = (
+            sample.get("metadata", {}).get("_fusion_mode")
+            if isinstance(sample.get("metadata"), dict)
+            else None
+        )
         if mode == "summary":
             summary_prompt_lens.append(prompt_len)
             summary_sft_total_lens.append(total_len)
@@ -272,7 +281,9 @@ def main() -> None:
     rlhf = training_config.rlhf
     max_completion_length = int(rlhf.get("max_completion_length") or 0)
     if max_completion_length <= 0:
-        raise ValueError("rlhf.max_completion_length must be set and > 0 in the resolved config")
+        raise ValueError(
+            "rlhf.max_completion_length must be set and > 0 in the resolved config"
+        )
 
     prompt_stats = _summarize(prompt_lens)
     total_stats = _summarize(sft_total_lens)
@@ -312,10 +323,16 @@ def main() -> None:
         _print_stats("sft_total_len_summary", _summarize(summary_sft_total_lens))
 
     print("-" * 80)
-    print(f"Needed vLLM max_model_len (p99 prompt + max_completion): {needed_max_len_p99}")
-    print(f"Needed vLLM max_model_len (max prompt + max_completion): {needed_max_len_max}")
+    print(
+        f"Needed vLLM max_model_len (p99 prompt + max_completion): {needed_max_len_p99}"
+    )
+    print(
+        f"Needed vLLM max_model_len (max prompt + max_completion): {needed_max_len_max}"
+    )
     print(f"Recommended vLLM max_model_len (p99+headroom, ceil256): {recommended}")
-    print(f"Conservative vLLM max_model_len (max+headroom, ceil256): {recommended_hard}")
+    print(
+        f"Conservative vLLM max_model_len (max+headroom, ceil256): {recommended_hard}"
+    )
     print("=" * 80)
 
 

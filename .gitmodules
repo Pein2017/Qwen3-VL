@@ -1,0 +1,3 @@
+[submodule "mcp/codex-mcp-server"]
+	path = mcp/codex-mcp-server
+	url = git@github.com:Pein2017/codex-mcp-server.git

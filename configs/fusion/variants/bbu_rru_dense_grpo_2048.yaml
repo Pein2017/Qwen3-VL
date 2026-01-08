@@ -1,4 +1,4 @@
-extends: ../base/dense_grpo_mixed.yaml
+extends: ../base/dense_grpo.yaml
 
 targets:
   - name: bbu_dense
@@ -7,10 +7,4 @@ targets:
   - name: rru_dense
     train_jsonl: data_new_schema/rru_full_2048_poly/train.jsonl
     val_jsonl: data_new_schema/rru_full_2048_poly/val.jsonl
-
-sources:
-  - name: bbu_summary
-    train_jsonl: data_new_schema/bbu_full_2048_poly/train.jsonl
-  - name: rru_summary
-    train_jsonl: data_new_schema/rru_full_2048_poly/train.jsonl
 

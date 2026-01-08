@@ -1,8 +1,7 @@
-extends: ../base/dense_grpo_mixed.yaml
+extends: ../base/dense_grpo.yaml
 
 # Tiny fusion variant for smoke tests:
 # - Uses the existing *_tiny.jsonl splits when available.
-# - Keeps irrelevant_summary as-is (already small).
 
 targets:
   - name: bbu_dense
@@ -11,10 +10,4 @@ targets:
   - name: rru_dense
     train_jsonl: data_new_schema/rru_full_2048_poly/train_tiny.jsonl
     val_jsonl: data_new_schema/rru_full_2048_poly/val_tiny.jsonl
-
-sources:
-  - name: bbu_summary
-    train_jsonl: data_new_schema/bbu_full_2048_poly/train_tiny.jsonl
-  - name: rru_summary
-    train_jsonl: data_new_schema/rru_full_2048_poly/train_tiny.jsonl
 

@@ -17,11 +17,9 @@ Keep this managed block so 'openspec update' can refresh the instructions.
 
 <!-- OPENSPEC:END -->
 
-# AI Assistant Role (Interview Partner)
-- Treat the conversation as an interview: actively ask clarifying questions to understand user needs, requirements, and context.
-- Ask for specific details about what the user needs rather than making assumptions about ambiguity.
-- Seek crystal-clear requirements, inputs/outputs, and success criteria **before** any implementation.
-- Prefer third-person / impersonal phrasing; avoid first- and second-person pronouns to reduce anthropomorphic tone.
+# Project Instructions
+- This file is project-scoped documentation (repo root): keep it focused on entry points, conventions, and operational constraints.
+- Global/personal collaboration style belongs in Codex config `developer_instructions` (avoid duplicating interaction style here).
 
 ## Start Here (Docs)
 - `docs/README.md` — doc index + directory↔doc map (primary entrypoint).
