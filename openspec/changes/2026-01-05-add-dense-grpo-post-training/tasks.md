@@ -1,4 +1,4 @@
-# Tasks: Mixed-mode dense GRPO post-training (BBU/RRU detection) with reward shaping
+# Tasks: Dense GRPO post-training (BBU/RRU detection) with reward shaping
 
 - [x] Pre-implementation verification (recommended)
   - [x] Confirm `metadata._fusion_mode` exists for fusion samples and values are exactly `dense|summary`.
@@ -38,11 +38,11 @@
   - [x] Update `src/rlhf/grpo/rewards/names.py` to include dense reward identifiers.
 
 - [x] Configs (GRPO post-training presets)
-  - [x] Add `configs/fusion/base/dense_grpo_mixed.yaml` (dense targets + summary sources; exclude LVIS/chat; include irrelevant).
-  - [x] Add `configs/fusion/variants/bbu_rru_dense_grpo_mixed_2048.yaml` (2048 JSONL paths).
-  - [x] Add `configs/components/rlhf/dense_summary_grpo_mixed.yaml` (reward funcs + weights; max_completion_length=2048).
-  - [x] Add `configs/train/grpo/dense_summary_mixed_base.yaml` (base training preset).
-  - [x] Add `configs/train/grpo/dense_summary_mixed_2048.yaml` (select fusion variant).
+  - [x] Add `configs/fusion/base/dense_grpo.yaml` (dense targets only; no summary mixing).
+  - [x] Add `configs/fusion/variants/bbu_rru_dense_grpo_2048.yaml` (2048 JSONL paths).
+  - [x] Add `configs/components/rlhf/dense_grpo.yaml` (reward funcs + weights; dense-only).
+  - [x] Add `configs/train/grpo/dense_base.yaml` (base training preset).
+  - [x] Add `configs/train/grpo/dense_2048.yaml` (select fusion variant).
 
 - [x] Offline evaluation alignment
   - [x] Extend `vis_tools/geometry_eval_metrics.py` to report:
@@ -57,9 +57,9 @@
   - [x] Unit tests for dense parsing/schema/desc parsing (including duplicate keys).
   - [x] Unit tests for strict poly/line validity enforcement (no AABB fallback).
   - [x] Unit tests for attribute weighting rules (可见性 down-weight; 文本/备注 bonus-only; 站点距离 strict).
-  - [x] Add a tiny GRPO smoke config (`configs/smoke/grpo_dense_summary_mixed.yaml`) and a config-load test.
+  - [x] Add a tiny GRPO smoke config (`configs/smoke/grpo_dense.yaml`) and a config-load test.
   - [ ] Run the smoke config (1–2 steps) to confirm trainer init + reward logging (requires GPU + checkpoint).
 
 - [x] Docs
-  - [x] Update `docs/training/TRAINING_PLAYBOOK.md` and `docs/training/REFERENCE.md` to include the new mixed-mode GRPO preset and the reward intent (localization-first).
+  - [x] Update `docs/training/TRAINING_PLAYBOOK.md` and `docs/training/REFERENCE.md` to include the dense GRPO preset and the reward intent (localization-first).
   - [x] Add an operator recipe for offline evaluation of dense dumps with the new attribute metrics.

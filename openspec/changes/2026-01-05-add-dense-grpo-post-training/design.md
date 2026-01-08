@@ -116,30 +116,27 @@ For RRU objects with `类别=站点距离`:
 - Require key `站点距离=<int>` and reward only when the integer value matches exactly.
 - This term is weighted highly relative to other attributes to reflect business criticality.
 
-## 6) Summary rewards in mixed-mode
-Summary rewards remain responsible for summary contract stability and are included as regularization signal in the mixed-mode run.
-
-Key rule: summary rewards MUST no-op on dense samples to avoid template mapping assumptions (e.g., `target_dense_bbu` is not a summary template).
+## 6) Summary rewards
+This project supports summary-mode GRPO rewards, but the dense GRPO presets are **dense-only** and do not mix summary samples or summary rewards.
 
 ## 7) Config surface (new presets)
 
 ### 7.1 Fusion configs
-- `configs/fusion/base/dense_grpo_mixed.yaml`
-- `configs/fusion/variants/bbu_rru_dense_grpo_mixed_2048.yaml`
+- `configs/fusion/base/dense_grpo.yaml`
+- `configs/fusion/variants/bbu_rru_dense_grpo_2048.yaml`
 
 These configs enforce:
-- dense targets (bbu/rru)
-- summary sources + irrelevant
-- exclusion of LVIS/chat
+- dense targets only (bbu/rru)
+- no summary sources (no regularization mix)
 
 ### 7.2 Training presets
-- `configs/components/rlhf/dense_summary_grpo_mixed.yaml`
-- `configs/train/grpo/dense_summary_mixed_base.yaml`
-- `configs/train/grpo/dense_summary_mixed_2048.yaml`
+- `configs/components/rlhf/dense_grpo.yaml`
+- `configs/train/grpo/dense_base.yaml`
+- `configs/train/grpo/dense_2048.yaml`
 
 Constraints:
-- `rlhf.max_completion_length = 2048`
-- `rlhf.reward_funcs` includes both `dense.*` and selected `summary.*` rewards
+- `rlhf.max_completion_length = 4096`
+- `rlhf.reward_funcs` includes only `dense.*` rewards
 - `rlhf.num_generations` divides `rlhf.generation_batch_size`
 
 ### 7.3 Recommended default reward weights (non-normative starting point)
@@ -153,7 +150,7 @@ Dense-mode reward weights (applied only when `metadata._fusion_mode == "dense"`)
 - `dense.cat_mean_f1`: `0.3` (secondary)
 - `dense.attr_weighted_recall`: `0.2` (tertiary; matched-pair only)
 
-Summary-mode reward weights reuse the existing summary GRPO preset (unchanged), and summary rewards no-op on dense samples.
+Summary-mode reward weights reuse the existing summary GRPO preset (unchanged).
 
 ## 8) Offline evaluation alignment
 `vis_tools/geometry_eval_metrics.py` is extended to report:
