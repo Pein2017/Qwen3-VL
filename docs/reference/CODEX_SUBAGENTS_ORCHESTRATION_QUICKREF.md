@@ -31,7 +31,7 @@ Server name: `codex-cli-wrapper` → tool identifiers start with `mcp__codex-cli
 1) Preflight: record baseline state (dirty OK): `git status --porcelain`, `git diff --name-only`.
 2) Spawn: use `codex_spawn` for delegated jobs; follow the canonical defaults for analysis vs edit concurrency.
 3) Monitor: `codex_wait_any` for completion, `codex_events` for progress if needed.
-4) Collect: `codex_result(view="finalMessage")` for each job; require job to list `modifiedFiles`.
+4) Collect: `codex_result()` for each job (default returns final message); require job to list `modifiedFiles`.
 5) Overlap: overlap in `modifiedFiles` ⇒ order-dependent edits; prefer chaining or a reconcile job, not automatic rollback.
 6) Recover: on cancellation/crash, run `git status --porcelain` and decide whether to reconcile or roll back.
 

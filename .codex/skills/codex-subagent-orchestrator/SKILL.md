@@ -1,6 +1,6 @@
 ---
 name: codex-subagent-orchestrator
-description: Orchestrate async Codex sub-agent jobs via MCP job tools (codex_spawn/codex_wait_any/codex_events/codex_result/codex_cancel) using A2 optimistic concurrency + git rollback in a shared worktree; safe when auto-loaded inside delegated jobs.
+description: Orchestrate async Codex sub-agent jobs via MCP job tools (codex_spawn/codex_wait_any/codex_events/codex_result/codex_cancel) in a shared worktree with workspace-write defaults and last-writer-wins tolerance; safe when auto-loaded inside delegated jobs.
 ---
 
 # Async Sub-Agent Orchestration (Job-Based, Option 1)
@@ -44,7 +44,7 @@ Job-based tool identifiers:
 - `mcp__codex-cli-wrapper__codex_status` (poll job status)
 - `mcp__codex-cli-wrapper__codex_events` (poll normalized incremental events; cursor-based)
 - `mcp__codex-cli-wrapper__codex_wait_any` (wait for first completion among `jobIds`)
-- `mcp__codex-cli-wrapper__codex_result` (job result; use `view:"finalMessage"` to return only the final message as plain text)
+- `mcp__codex-cli-wrapper__codex_result` (job result; default returns the final message as plain text; use `view:"full"` for status + tails)
 - `mcp__codex-cli-wrapper__codex_cancel` (cancel running job; SIGTERM default, SIGKILL on `force=true`)
 
 If the MCP server is renamed in `~/.codex/config.toml`, the tool prefix changes accordingly.
@@ -148,6 +148,7 @@ Constraints:
 - Do not spawn additional sub-agents or attempt orchestration.
 - Do not create git commits/branches; do not `git checkout`, `git reset`, or `git stash`.
 - Prefer minimal edits; avoid drive-by refactors.
+- Assume the workspace may be dirty and may be modified by other delegated jobs; re-read any file you touch and integrate with current content.
 - If scope ambiguity exists, make a reasonable assumption and state it explicitly in the final response.
 
 Output format:
@@ -193,8 +194,8 @@ mcp__codex-cli-wrapper__codex_spawn({ prompt: "...task C...", sandbox: "workspac
 # Step 2: React to first completion
 mcp__codex-cli-wrapper__codex_wait_any({ jobIds: [jobIdA, jobIdB, jobIdC], timeoutMs: 60000 }) -> { completedJobId, timedOut }
 
-# Step 3: Inspect result, adapt (prefer the final message view to avoid extra process noise)
-mcp__codex-cli-wrapper__codex_result({ jobId: completedJobId, view: "finalMessage" }) -> "<final delegated message>"
+# Step 3: Inspect result, adapt (default returns final message to avoid process noise)
+mcp__codex-cli-wrapper__codex_result({ jobId: completedJobId }) -> "<final delegated message>"
 
 # Step 4: Continue waiting, or cancel no-longer-needed work
 mcp__codex-cli-wrapper__codex_wait_any({ jobIds: [remaining...], timeoutMs: 60000 })

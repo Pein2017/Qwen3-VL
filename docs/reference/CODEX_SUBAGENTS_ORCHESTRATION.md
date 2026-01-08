@@ -86,7 +86,7 @@ These tools are the only required interface for orchestration.
 |------|---------|
 | `codex_spawn` | Start worker, return `jobId` immediately |
 | `codex_status` | Get job status |
-| `codex_result` | Get final result; use `view="finalMessage"` to return only the final message |
+| `codex_result` | Get final delegated message (default); use `view="full"` for status + stdout/stderr tails |
 | `codex_events` | Poll incremental events (cursor-based) |
 | `codex_wait_any` | Wait for first completion among jobs |
 | `codex_cancel` | Cancel running job (SIGTERM default, SIGKILL when `force=true`) |
@@ -98,7 +98,7 @@ The main agent coordinates delegated jobs as background processes and produces a
 1) **Dispatch**: coordinator spawns N delegated jobs via `codex_spawn` (non-blocking)
 2) **Monitor**: coordinator polls progress via `codex_events` and/or uses `codex_wait_any`
 3) **React**: coordinator cancels jobs or adjusts strategy based on intermediate results
-4) **Collect**: coordinator gathers final delegated messages via `codex_result(view="finalMessage")`
+4) **Collect**: coordinator gathers final delegated messages via `codex_result()` (default is final message)
 5) **Decide**: coordinator synthesizes results, then either finishes or spawns follow-up delegated jobs
 
 Delegated jobs:
@@ -138,7 +138,7 @@ This protocol supports dirty worktrees and overlapping intent by treating the cu
 ### Post-Completion Phase (Coordinator)
 For each completed job:
 1) Fetch the final delegated message:
-   - `codex_result({ jobId, view: "finalMessage" })`
+   - `codex_result({ jobId })`
 2) Record delegated-job-reported `modifiedFiles` from the final message (required by the Delegated Prompt Contract).
 3) Optionally extract file touches from `codex_events` (when `file_change` events are present).
 
