@@ -1,0 +1,110 @@
+extends:
+  - dense_2048.yaml
+
+training:
+  # Lower policy update aggressiveness (LLM + aligner).
+  # Note: logged `learning_rate` often corresponds to the first optimizer param-group (may be ViT),
+  # so don't rely on logs to confirm LLM/aligner LR without inspecting optimizer groups.
+  run_name: epoch_3-ebs32-gbs32-temp0.4-llm_lr-4e-6-vit_lr-2e-7-aligner_lr-6e-6-lowaug
+  learning_rate: 4.0e-6
+  aligner_lr: 7.5e-6
+  vit_lr: 2.0e-7
+
+
+rlhf:
+  # Reduce rollout variance / KL drift.
+  temperature: 0.4
+  top_p: 0.9
+
+custom:
+  # RL is variance-sensitive; keep augmentation *much* lighter than SFT.
+  # We do this via:
+  # 1) higher bypass probability, and
+  # 2) lower op probabilities + weaker ranges.
+  augmentation:
+    enabled: true
+    bypass_prob: 0.35
+    ops:
+      - name: hflip
+        params: { prob: 0.15 }
+      - name: vflip
+        params: { prob: 0.02 }
+      - name: rotate
+        params: { max_deg: 10.0, prob: 0.12 }
+      - name: random_crop
+        params:
+          scale: [0.88, 1.0]
+          aspect_ratio: [0.95, 1.05]
+          min_coverage: 0.5
+          completeness_threshold: 0.97
+          min_objects: 4
+          skip_if_line: true
+          prob: 0.08
+      - name: small_object_zoom_paste
+        params:
+          prob: 0.08
+          max_targets: 3
+          max_attempts: 16
+          scale: [1.12, 1.45]
+          max_size: 96
+          max_line_length: 128
+          overlap_threshold: 0.1
+          context: 4
+          line_buffer: 4
+          class_whitelist:
+            - "类别=BBU安装螺丝"
+            - "类别=地排处接地螺丝"
+            - "类别=机柜处接地螺丝"
+            - "类别=BBU端光纤插头"
+            - "类别=ODF端光纤插头"
+            - "类别=RRU接地端"
+            - "类别=地排接地端螺丝"
+            - "类别=站点距离"
+            - "类别=标签"
+      - name: resize_by_scale
+        params: { lo: 0.96, hi: 1.04, align_multiple: 32, prob: 0.25 }
+      - name: color_jitter
+        params: { brightness: [0.94, 1.06], contrast: [0.94, 1.06], saturation: [0.94, 1.06], prob: 0.12 }
+      - name: gamma
+        params: { gamma: [0.94, 1.06], prob: 0.06 }
+      - name: hsv
+        params: { hue_delta_deg: [-3, 3], sat: [0.97, 1.03], val: [0.97, 1.03], prob: 0.06 }
+      - name: clahe
+        params: { clip_limit: 1.3, tile_grid_size: [8, 8], prob: 0.03 }
+      - name: auto_contrast
+        params: { cutoff: 0, prob: 0.03 }
+      - name: sharpness
+        params: { factor: [0.95, 1.08], prob: 0.06 }
+      - name: expand_to_fit_affine
+        params:
+          multiple: 32
+          max_pixels: 2097152
+
+  augmentation_curriculum:
+    # Keep curriculum but significantly reduce strength vs default:
+    # higher bypass_prob throughout and no extra per-phase strengthening.
+    phases:
+      - until_percent: 2
+        bypass_prob: 1.0
+        ops: {}
+      - until_percent: 6
+        bypass_prob: 0.85
+        ops: {}
+      - until_percent: 12
+        bypass_prob: 0.70
+        ops: {}
+      - until_percent: 18
+        bypass_prob: 0.60
+        ops: {}
+      - until_percent: 25
+        bypass_prob: 0.55
+        ops: {}
+      - until_percent: 40
+        bypass_prob: 0.50
+        ops: {}
+      - until_percent: 65
+        bypass_prob: 0.45
+        ops: {}
+      - until_percent: 100
+        bypass_prob: 0.40
+        ops: {}
