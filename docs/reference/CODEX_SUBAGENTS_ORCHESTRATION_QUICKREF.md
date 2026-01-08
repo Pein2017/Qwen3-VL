@@ -1,63 +1,80 @@
-# Codex Subagents Orchestration (Quick Reference)
+# Codex Async Sub-Agents Orchestration (Quick Reference)
 
 Status: Active  
-Scope: Fast checklist for orchestrating Codex subagents via MCP.  
+Scope: Fast checklist for orchestrating Codex async sub-agents (boss–worker) via MCP job tools.  
 Owners: Tooling / DX  
-Last updated: 2026-01-07
+Last updated: 2026-01-08
 
 ## Core Mental Model
 
-- One “main agent” Codex session orchestrates multiple subagents.
-- Subagents share the same workspace (same worktree/branch).
-- Parallelism is achieved by issuing multiple MCP tool calls in a single assistant turn.
+- One boss main agent orchestrates multiple worker jobs.
+- Concurrency comes from background jobs (worker processes), not from “parallel tool calls” (which may serialize upstream).
+- Workers share the same workspace (shared worktree); workers edit files but MUST NOT commit.
+- Coordination is A2 (optimistic concurrency) with git-based rollback on conflict.
 
 ## Tool Names (this repo config)
 
-- `mcp__codex-cli-wrapper__codex` (synchronous subagent run; blocks until complete)
+The server name is `codex-cli-wrapper`, so tool identifiers are prefixed with `mcp__codex-cli-wrapper__...`.
+
 - `mcp__codex-cli-wrapper__codex_spawn` (async; returns `jobId` immediately)
-- `mcp__codex-cli-wrapper__codex_wait_any` (wait for first completion among jobIds)
-- `mcp__codex-cli-wrapper__codex_events` (poll normalized incremental events)
+- `mcp__codex-cli-wrapper__codex_wait_any` (wait for first completion among `jobIds`)
+- `mcp__codex-cli-wrapper__codex_events` (poll normalized incremental events; cursor-based)
 - `mcp__codex-cli-wrapper__codex_result` (final/partial job result)
-- `mcp__codex-cli-wrapper__codex_cancel` (cancel running job)
+- `mcp__codex-cli-wrapper__codex_status` (poll job status)
+- `mcp__codex-cli-wrapper__codex_cancel` (cancel running job; SIGTERM default, SIGKILL when `force=true`)
 
-## Default Safe Pattern (Exploration → Writes → Validate)
+## Defaults (Locked)
 
-1) Exploration (parallel, `read-only`)
-2) Writes (serialized or non-overlapping, `workspace-write`)
-3) Validation (tests/lint)
+- `K_read = 8` (read-only workers; `sandbox="read-only"`)
+- `K_write = 2` (write-enabled workers; `sandbox="workspace-write"`)
+- Cancellation default: best-effort (SIGTERM)
+- Git is required for rollback; workers never commit
 
-## Reactive Async Pattern (spawn → wait_any → result)
+## A2 Protocol Summary (Optimistic + Git)
 
-Use when the main agent must react early (“first-completed-wins”).
+### Pre-spawn (boss)
+1) Ensure clean baseline (stash or roll back until `git status --porcelain` is empty).
+2) Record baseline HEAD: `git rev-parse HEAD`.
+
+### Execute (boss + workers)
+1) Spawn workers via `codex_spawn` (read-only and write workers as needed).
+2) Monitor with `codex_wait_any` (and optionally `codex_events` for progress).
+3) Collect outputs via `codex_result` after completion.
+
+### Post-completion (boss)
+1) For each worker, extract `modifiedFiles` from the worker’s final message (required).
+2) Detect conflicts: if the same file is listed by multiple workers → conflict.
+3) On conflict: roll back to baseline and re-run conflicting work sequentially (or resolve manually).
+
+Important: per-worker `git status` snapshots are not reliable under concurrent writers. Treat git as the source of truth for rollback and final diff, not per-worker attribution.
+
+## Reactive Pattern (spawn → wait_any → result)
+
+Use when early results should influence follow-up actions.
 
 ```
-# Spawn N jobs (prefer parallel calls in one assistant response)
 codex_spawn(...) -> jobIdA
 codex_spawn(...) -> jobIdB
-codex_spawn(...) -> jobIdC
 
-# React to first completion
-codex_wait_any({ jobIds: [jobIdA, jobIdB, jobIdC], timeoutMs: 60000 })
+codex_wait_any({ jobIds: [jobIdA, jobIdB], timeoutMs: 1000 })
   -> { completedJobId }
 
-# Inspect and adapt
 codex_result({ jobId: completedJobId })
-  -> { exitCode, finalMessage, ... }
-
-# Continue or cancel
-codex_wait_any({ jobIds: [remaining...], timeoutMs: 60000 })
-codex_cancel({ jobId: jobIdC })
+  -> { status, exitCode, finalMessage, ... }
 ```
 
-## Write Lock Rule (instruction-based)
+## Worker Prompt Contract (minimum)
 
-- Parallel writes to the same file: forbidden
-- Parallel writes to different files: allowed if explicitly scoped
-- Default to a single writer (main agent) if overlap risk exists
+Role: Sub-agent worker.
+
+Constraints:
+- Complete the assigned task only.
+- Do NOT spawn sub-agents or call orchestration tools.
+- Do NOT create git commits or branches.
+- Report modified files in the final response.
 
 ## Common Pitfalls
 
-- Jobs are in-memory: MCP server restart invalidates job IDs.
-- Subagents must not call MCP tools (no recursion).
-- Use `workspace-write` for file edits; `read-only` blocks writes by design.
-
+- Jobs are in-memory: MCP server restart invalidates `jobId` values.
+- Cancellation can leave partial changes: always run `git status --porcelain` and roll back if needed.
+- Missing `modifiedFiles` reporting makes conflict detection unreliable; require it in every worker prompt.

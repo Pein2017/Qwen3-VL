@@ -104,8 +104,11 @@ The MCP tool prefix preserves the server name, including hyphens:
 
 Example tool identifiers:
 - `mcp__codex-cli-wrapper__ping`
-- `mcp__codex-cli-wrapper__codex`
-- `mcp__codex-cli-wrapper__codex_spawn` (async job tools)
+- `mcp__codex-cli-wrapper__codex_spawn` (async job spawn; returns `jobId` immediately)
+- `mcp__codex-cli-wrapper__codex_wait_any` (wait for first completion among `jobIds`)
+- `mcp__codex-cli-wrapper__codex_events` (poll normalized incremental events; cursor-based)
+- `mcp__codex-cli-wrapper__codex_result` (final/partial job result)
+- `mcp__codex-cli-wrapper__codex_cancel` (cancel running job)
 
 ## Verify Health & Tool Registration
 
