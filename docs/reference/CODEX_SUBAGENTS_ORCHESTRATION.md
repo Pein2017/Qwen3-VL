@@ -25,6 +25,19 @@ Finalize the async sub-agent mechanism design and document how the main agent or
 4) **Git is required** — conflict detection and rollback MUST use git
 5) **A2 coordination strategy** — optimistic concurrency with git-based recovery (no lock tools)
 
+## Document Map (Avoid Redundancy)
+
+This repository intentionally keeps **one canonical runbook** and treats other documents as thin entrypoints:
+
+- Canonical runbook (this file): `docs/reference/CODEX_SUBAGENTS_ORCHESTRATION.md`
+  - Owns: architecture model, A2 protocol, worker prompt contract, and default concurrency limits.
+- Quick reference: `docs/reference/CODEX_SUBAGENTS_ORCHESTRATION_QUICKREF.md`
+  - Owns: short checklist and tool list only; MUST NOT re-specify full protocols.
+- OpenSpec (normative requirements): `openspec/changes/2026-01-07-add-codex-subagents-mcp/specs/codex-mcp-subagents/spec.md`
+  - Owns: requirements and scenarios; SHOULD link here for operational detail.
+- Boss instructions (skill): `.codex/skills/codex-subagent-orchestrator/SKILL.md`
+  - Owns: “how to apply” guidance inside Codex; SHOULD point here rather than duplicating long prose.
+
 ## Why Job Semantics (Not “Parallel Tool Calls”)
 
 Upstream Codex has a global tool execution gate that may serialize tool calls, including MCP tool calls:
@@ -98,7 +111,7 @@ Workers:
 The boss MUST apply bounded concurrency to reduce conflict risk.
 
 - `K_read = 8` for read-only workers (`sandbox="read-only"`)
-- `K_write = 2` for write-enabled workers (`sandbox="workspace-write"`)
+- `K_write = 3` for write-enabled workers (`sandbox="workspace-write"`)
 
 Notes:
 - Server-side cap remains authoritative (`CODEX_MCP_MAX_JOBS`, default `32`) in `mcp/codex-mcp-server/src/jobs/job_manager.ts`.
@@ -192,7 +205,7 @@ Action: treat as lost; re-spawn work if still needed.
 
 ### Conflicts are frequent
 Actions:
-- Reduce `K_write` from `2` to `1` for the affected run.
+- Reduce `K_write` from `3` to `1` for the affected run.
 - Increase task decomposition granularity (smaller edits per worker).
 - Strengthen worker prompts to reduce scope creep and file overlap.
 

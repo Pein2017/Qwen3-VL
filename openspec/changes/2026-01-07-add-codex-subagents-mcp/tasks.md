@@ -1,13 +1,14 @@
-# Tasks: Codex Subagent Orchestration
+# Tasks: Async Codex Sub-Agents (Option A)
 
 ## Primary Tasks
 
-- [x] Create orchestration instruction document at `openspec/changes/2026-01-07-add-codex-subagents-mcp/orchestration-instructions.md`
-- [ ] Add orchestration instructions to Codex profile/system prompt configuration
-- [x] Document parallel tool invocation examples in `mcp/codex-mcp-server/README.md`
-- [x] Create example prompts demonstrating orchestration patterns (main agent + async subagents)
+- [x] Update OpenSpec delta spec for Option A (job-based, A2 coordination)
+- [x] Update canonical orchestration runbook in `docs/reference/`
+- [x] Update quick reference card in `docs/reference/`
+- [x] Update boss orchestration skill in `.codex/skills/`
+- [ ] Add orchestration instructions to Codex profile/system prompt configuration (operational wiring)
 
-## Async Subagent MCP Tools (Option B)
+## Async Sub-Agent MCP Job Tools (Already Implemented)
 
 - [x] Add `codex_spawn` tool definition and schema
 - [x] Add `codex_status` tool definition and schema
@@ -20,25 +21,17 @@
 - [x] Add unit tests covering spawn/status/result/events lifecycle
 - [x] Update `mcp/codex-mcp-server/docs/api-reference.md` for async subagent tools
 
-## Optional Enhancement Tasks
-
-- [ ] Add `includeGitSnapshot` parameter to `codex` tool schema in `src/tools/definitions.ts`
-- [ ] Implement git snapshot collection in `src/tools/handlers.ts`
-- [ ] Add tests for git snapshot functionality
-
 ## Validation Tasks
 
-- [x] Smoke test: Main agent spawns 2 parallel read-only subagents ✓ CONFIRMED
-- [x] Verify parallel MCP tool calls execute concurrently ✓ CONFIRMED
 - [x] Smoke test: `codex_spawn` returns a `jobId` immediately in a live Codex session ✓ CONFIRMED
 - [x] Smoke test: `codex_events` can be polled and returns normalized events ✓ CONFIRMED
 - [x] Smoke test: `codex_wait_any` returns the first completed job (reactive orchestration) ✓ CONFIRMED
-- [ ] Smoke test: Main agent spawns sequential write subagents to different files
-- [ ] Smoke test: Main agent synthesizes results from multiple subagents
+- [ ] Acceptance test (primary): disjoint-file edits with 2+ write-enabled workers (no conflict)
+- [ ] Acceptance test (secondary): same-file edits trigger conflict detection + git rollback + safe re-run
 - [x] Run `openspec validate 2026-01-07-add-codex-subagents-mcp --strict`
 
 ## Documentation Tasks
 
-- [x] Update `mcp/codex-mcp-server/README.md` with subagent orchestration section
-- [x] Add anti-patterns and troubleshooting guide
-- [x] Create quick-reference card for orchestration patterns
+- [x] Update `docs/reference/CODEX_SUBAGENTS_ORCHESTRATION.md` to be canonical
+- [x] Update `docs/reference/CODEX_SUBAGENTS_ORCHESTRATION_QUICKREF.md` to be a thin checklist
+- [x] Update `.codex/skills/codex-subagent-orchestrator/SKILL.md` to reference the canonical docs (avoid redundancy)

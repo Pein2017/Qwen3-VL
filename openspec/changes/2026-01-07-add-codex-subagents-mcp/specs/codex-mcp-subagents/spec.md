@@ -32,7 +32,7 @@ Finalize the async sub-agent mechanism design and update the OpenSpec + document
 | Git requirement | **Required** | Essential for conflict detection and rollback |
 | Cancellation default | **Best-effort (SIGTERM)** | Allows graceful cleanup; SIGKILL on `force=true` |
 | Event buffer | **Unbounded** | External periodic cleanup |
-| `K_read / K_write` | **8 / 2** | Balance parallelism vs conflict risk |
+| `K_read / K_write` | **8 / 3** | Balance parallelism vs conflict risk |
 
 ## ADDED Requirements
 
@@ -154,7 +154,7 @@ The boss MUST implement the following phases:
 ### Requirement: Bounded Concurrency (`K_read / K_write`)
 The boss MUST enforce bounded concurrency across worker jobs:
 - Default `K_read = 8` (read-only workers)
-- Default `K_write = 2` (write-enabled workers)
+- Default `K_write = 3` (write-enabled workers)
 
 The boss MUST NOT exceed the MCP server’s configured maximum concurrent jobs.
 

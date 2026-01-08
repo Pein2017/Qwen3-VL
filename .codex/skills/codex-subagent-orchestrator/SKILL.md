@@ -5,7 +5,7 @@ description: Orchestrate async Codex worker jobs via MCP job tools (codex_spawn/
 
 # Codex Sub-Agent Orchestrator (Job-Based, Option 1)
 
-This skill provides a job-based orchestration playbook so a single Codex “boss” agent can delegate work to multiple “worker” sub-agents using MCP **async job primitives**.
+This skill enables job-based orchestration so a single Codex “boss” agent can delegate work to multiple “worker” sub-agents using MCP **async job primitives**.
 
 **Option selection**: Boss logic lives in the main agent via skill/prompt instructions (MCP server remains a primitives layer).
 
@@ -15,6 +15,14 @@ This skill provides a job-based orchestration playbook so a single Codex “boss
 - Shared worktree model: workers edit the same workspace; workers MUST NOT create git commits.
 - Git is REQUIRED for conflict detection and rollback.
 - Coordination is A2: optimistic concurrency + git-based recovery.
+
+## Canonical References (Avoid Redundancy)
+
+This skill intentionally stays short and defers protocol details to canonical docs:
+
+- Canonical runbook: `docs/reference/CODEX_SUBAGENTS_ORCHESTRATION.md`
+- Quick checklist: `docs/reference/CODEX_SUBAGENTS_ORCHESTRATION_QUICKREF.md`
+- Normative spec delta: `openspec/changes/2026-01-07-add-codex-subagents-mcp/specs/codex-mcp-subagents/spec.md`
 
 ## Tool Naming (Verified)
 
@@ -56,12 +64,12 @@ Avoid subagents for:
 - tasks with tight sequential dependencies
 - tasks that require a single cohesive edit in one file
 
-## Concurrency Defaults (Locked)
+## Concurrency Defaults
 
-- Default `K_read = 8` for exploration/review workers (`sandbox="read-only"`).
-- Default `K_write = 2` for edit workers (`sandbox="workspace-write"`).
+Do not re-specify numeric defaults in this skill (to avoid drift).
 
-If conflict frequency is high, temporarily reduce `K_write` to `1`.
+- Use the canonical defaults defined in `docs/reference/CODEX_SUBAGENTS_ORCHESTRATION.md`.
+- If conflicts are frequent, temporarily reduce write concurrency (often `K_write=1`).
 
 ## Default Permissions (Sandbox)
 
@@ -81,79 +89,25 @@ To ensure the main agent and subagents behave identically, prefer inheriting fro
 - Do not set `model` in subagent calls unless an override is explicitly required.
 - Do not set `reasoningEffort` in subagent calls unless an override is explicitly required.
 
-## A2 Coordination Protocol (Optimistic + Git Rollback)
+## Boss Algorithm (A2, Shared Worktree)
 
-This skill uses A2 coordination (no lock tools):
-- Workers may edit freely (within prompt-scoped intent).
-- The boss detects conflicts after completion.
-- Git provides rollback to a known baseline.
+Follow the full A2 protocol in `docs/reference/CODEX_SUBAGENTS_ORCHESTRATION.md`. Minimum boss loop:
 
-Boss MUST follow this protocol for any write-enabled workers:
-
-**Pre-spawn**
-1) Ensure a clean working tree (or stash/rollback to a clean baseline).
-2) Record baseline HEAD: `git rev-parse HEAD`.
-3) Record baseline status: `git status --porcelain` (must be empty after baseline preparation).
-
-**Execution**
-1) Spawn workers via `codex_spawn` (read-only and write workers separately).
-2) Monitor via `codex_wait_any` and/or polling `codex_events`.
-3) Collect via `codex_result` when complete.
-
-**Post-completion**
-1) Require each worker to report `modifiedFiles` in its final response.
-2) Detect conflicts by overlap in `modifiedFiles` across jobs.
-3) If conflict detected:
-   - Roll back to baseline (git restore / checkout), then re-run conflicting tasks sequentially.
-
-Important: Per-worker `git status` snapshots are not reliable under concurrent writers; attribution MUST come from worker self-report (and optionally job event streams).
+1) Preflight: ensure a clean baseline (`git status --porcelain`), record baseline HEAD (`git rev-parse HEAD`).
+2) Spawn: use `codex_spawn` for workers (read vs write). Keep within the canonical `K_read` / `K_write`.
+3) Monitor: prefer `codex_wait_any` for completions; use `codex_events` for progress when needed.
+4) Collect: call `codex_result` for completed jobs; extract worker-reported `modifiedFiles`.
+5) Detect conflict: overlap in `modifiedFiles` across jobs ⇒ conflict.
+6) Recover: roll back to baseline and re-run conflicting work safely (usually reduce write concurrency).
 
 ## Tool Call Template (Subagent Prompt Header)
 
-For every subagent call, prepend a strict header to the subagent prompt to avoid recursion and reduce risk:
+Do not maintain a separate worker contract template in this skill.
 
-- State that this run is a subagent.
-- Forbid spawning additional subagents or calling MCP tools.
-- Require a concise, structured output.
-- Constrain scope (paths, files, or a single concern).
+- Use the **Worker Prompt Contract** from `docs/reference/CODEX_SUBAGENTS_ORCHESTRATION.md`.
+- Require the worker to list `modifiedFiles` explicitly (one per line) to enable A2 conflict detection.
 
-Suggested header:
-
-```
-Role: Subagent worker.
-Constraints:
-- Complete the assigned task only.
-- Do NOT spawn sub-agents or call orchestration tools.
-- Do NOT create git commits or branches.
-- Track and report modified files in the final response.
-Output format:
-- Summary of actions taken
-- Modified files (one per line)
-- Any issues encountered
-```
-
-## Orchestration Patterns
-
-### Pattern A: Parallel exploration (job-based)
-
-Spawn multiple read-only workers with:
-- `sandbox="read-only"`
-- shared `workingDirectory` (repo root)
-- disjoint investigation questions (avoid duplicate work)
-
-Then synthesize results in the main agent.
-
-### Pattern B: Parallel writes + A2 recovery (shared worktree)
-
-Phase 1: parallel exploration (read-only; up to `K_read`).
-
-Phase 2: spawn write workers (up to `K_write`) with strict Worker Prompt Contract.
-
-Phase 3: after all workers complete, run conflict detection (overlapping `modifiedFiles`), then:
-- No conflicts → proceed
-- Conflicts → rollback and re-run sequentially (temporary `K_write=1`) or manually resolve
-
-### Pattern C: Reactive orchestration (“first-completed-wins”)
+## Reactive Orchestration (“first-completed-wins”)
 
 Use the async job tools when orchestration must be reactive (do not wait for the slowest job):
 
@@ -192,7 +146,7 @@ mcp__codex-cli-wrapper__codex_cancel({ jobId: jobIdC })
 
 ## Result Synthesis Checklist
 
-After tool calls return:
-- Validate each subagent output for errors and scope violations.
-- Detect overlap/conflicts via `modifiedFiles` overlap (A2 protocol).
-- Combine into a single coherent answer and propose the next action (apply patch, run tests, etc.).
+- Validate worker outputs for errors/scope violations.
+- Detect conflicts via overlapping `modifiedFiles` (A2 protocol).
+- On conflict: roll back to baseline and re-run safely.
+- Combine into one coherent final answer (single consolidated user response).

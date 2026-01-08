@@ -1,45 +1,46 @@
-# Proposal: Codex Subagent Orchestration via Instructions
+# Proposal: Async Codex Sub-Agents (Job-Based, Option A)
 
 ## Summary
-Enable Codex CLI to orchestrate multiple subagent runs in parallel by leveraging the existing `codex` MCP tool with enhanced main-agent instructions. This approach mirrors Claude Code's native subagent workflow without requiring significant new MCP server code.
+Enable Codex to orchestrate multiple worker “sub-agents” concurrently using **MCP async job primitives** (`codex_spawn` / `codex_events` / `codex_wait_any` / `codex_result` / `codex_cancel`) with a boss–worker pattern.
+
+The boss is the main agent (prompt/skill-driven). The MCP server remains a primitives layer.
 
 ## Motivation
-Codex CLI can consume MCP tools, but lacks guidance on how to use the existing `codex` tool for parallel task delegation. Claude Code achieves powerful subagent orchestration primarily through **well-crafted system instructions**, not complex orchestration infrastructure.
+Upstream Codex tool execution may serialize MCP tool calls, so “parallel tool calls” are not a reliable concurrency primitive. Concurrency must come from **background job semantics**: workers are separate `codex exec --json` processes that continue running after `codex_spawn` returns.
 
-Key insight: The existing `codex-mcp-server` already supports:
-- Multiple parallel tool invocations (MCP protocol feature)
-- Shared working directory (`workingDirectory` parameter)
-- Sandbox control (`sandbox` parameter)
-- Session continuity (`sessionId` parameter)
+The local `codex-mcp-server` already provides:
+- An async job model (spawn, poll events/status, collect results, cancel)
+- Structured event streams (JSONL → normalized events)
+- A server-side maximum concurrent job cap
 
-What's missing is **instruction-based guidance** that teaches the main agent when and how to orchestrate subagents effectively.
+What is required is a **coherent orchestration strategy** and consistent documentation:
+- Boss–worker workflow model
+- A2 coordination protocol (optimistic concurrency + git rollback)
+- Worker prompt contract (no recursion, no commits, `modifiedFiles` reporting)
 
 ## Scope
-1. **Primary**: Create comprehensive orchestration instructions for Codex main agent
-2. **Secondary**: Add minimal MCP enhancements (optional `includeGitSnapshot` parameter)
-3. **Documentation**: Best practices, patterns, and anti-patterns for subagent orchestration
+1) Update OpenSpec requirements/scenarios for Option A (job-based)
+2) Update canonical orchestration documentation + quick reference
+3) Update the boss orchestration skill (Codex-internal instructions)
 
-## Approach Comparison
-
-| Aspect | Heavy MCP Approach | Instruction-Based Approach (Chosen) |
-|--------|-------------------|-------------------------------------|
-| New MCP tools | `spawnSubagents` tool | None (use existing `codex` tool) |
-| Complexity | High | Low |
-| Flexibility | Fixed patterns | Agent-driven, adaptive |
-| Maintenance | More code | More documentation |
-| Claude Code parity | Partial | High (same philosophy) |
+## Hard Constraints (Locked)
+- No upstream Codex changes (`/references/codex` is read-only)
+- No recursive sub-agents (worker prompt contract; prompt-only enforcement)
+- Shared worktree model; workers do not commit
+- Git required; rollback is acceptable
+- Coordination strategy A2 (optimistic + git rollback)
 
 ## Non-Goals
-- No new `spawnSubagents` MCP tool (existing `codex` tool suffices)
-- No complex concurrency management in MCP server (agent handles this)
-- No automatic conflict resolution (document as caveat)
+- No upstream Codex modifications
+- No new “orchestration mega-tool” in MCP (boss logic stays in the main agent)
+- No hard enforcement mechanism for blocking worker MCP tools (prompt-only is sufficient)
+- No per-worker commits or branches
 
 ## Risks
-- Main agent may not follow orchestration patterns consistently
-- Parallel writes to same files can cause conflicts (mitigated by instructions)
-- Token usage increases with multiple subagent calls
+- Worker prompt contract violations (missed `modifiedFiles`, scope creep)
+- Conflicts between concurrent writers (handled by A2 rollback + re-run)
+- Cancellation mid-write leaving partial changes (handled by git integrity checks + rollback)
 
 ## Success Criteria
-- Codex main agent can successfully orchestrate 2+ parallel subagent tasks
-- Clear documentation enables consistent orchestration patterns
-- Workflow mirrors Claude Code's Task tool behavior
+- Happy path: boss can spawn 2+ write-enabled workers editing disjoint files; both complete; no conflict detected.
+- Robustness: boss can detect a same-file overlap and roll back to baseline, then re-run safely.
