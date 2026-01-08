@@ -1,8 +1,8 @@
 extends:
-  - ../train/grpo/dense_summary_mixed_2048.yaml
+  - ../train/grpo/dense_2048.yaml
 
 training:
-  run_name: smoke_dense_summary_grpo_mixed
+  run_name: smoke_dense_grpo
   eval_strategy: "no"
   save_strategy: "no"
   logging_steps: 1

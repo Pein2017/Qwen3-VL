@@ -10,13 +10,13 @@ extends:
   - ../../components/custom/assistant_prefix.yaml
   - ../../components/custom/augmentation_dense.yaml
   - ../../components/deepspeed/zero3.yaml
-  - ../../components/rlhf/dense_summary_grpo_mixed.yaml
+  - ../../components/rlhf/dense_grpo.yaml
 
 model:
   model: null
 
 custom:
-  # Mixed-mode: fusion config declares per-dataset modes; keep default dense.
+  # Dense-only: keep default dense.
   use_summary: false
   val_sample_limit: 360
   # Optional: CHORD-style SFT mixing for GRPO (supervised fallback signal).
@@ -32,3 +32,4 @@ custom:
       mu_peak: 0.05
       mu_valley: 0.05
       enable_phi_function: false
+

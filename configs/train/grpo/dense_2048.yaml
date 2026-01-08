@@ -1,5 +1,5 @@
 extends:
-  - dense_summary_mixed_base.yaml
+  - dense_base.yaml
 
 model:
   model: output/1-4/2048_res_dense_merged/epoch_4-ckpt-5960
@@ -10,10 +10,10 @@ template:
   max_pixels: 209715200
 
 training:
-  run_name: epoch_2-ebs32-gbs32-llm_lr-8e-6-vit_lr-2e-7-aligner_lr-1.5e-5
-  output_dir: ./output/1-6/new_schema-4B-dense-summary-grpo-2048
-  logging_dir: ./tb/1-6/new_schema-4B-dense-summary-grpo-2048
-  num_train_epochs: 2
+  run_name: epoch_3-ebs32-gbs32-llm_lr-8e-6-vit_lr-2e-7-aligner_lr-1.5e-5
+  output_dir: ./output/1-7/new_schema-4B-dense-grpo-2048
+  logging_dir: ./tb/1-7/new_schema-4B-dense-grpo-2048
+  num_train_epochs: 3
   learning_rate: 8.0e-6
   vit_lr: 2.0e-7
   aligner_lr: 1.5e-5
@@ -37,9 +37,10 @@ rlhf:
   vllm_gpu_memory_utilization: 0.5
 
 custom:
-  fusion_config: configs/fusion/variants/bbu_rru_dense_grpo_mixed_2048.yaml
+  fusion_config: configs/fusion/variants/bbu_rru_dense_grpo_2048.yaml
   val_sample_limit: 240
   # Disable CHORD (SFT-mixed loss) to reduce VRAM / step time in GRPO.
   grpo:
     chord:
       enabled: false
+

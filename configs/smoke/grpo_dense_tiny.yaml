@@ -1,5 +1,5 @@
 extends:
-  - grpo_dense_summary_mixed.yaml
+  - grpo_dense.yaml
 
 # Smoke preset with:
 # - Tiny fusion JSONLs (where available)
@@ -7,7 +7,7 @@ extends:
 # - Few steps only (fast wiring validation)
 
 training:
-  run_name: smoke_dense_summary_grpo_mixed_tiny
+  run_name: smoke_dense_grpo_tiny
   eval_strategy: steps
   eval_steps: 1
   save_strategy: "no"
@@ -16,7 +16,7 @@ training:
   max_steps: 2
 
 custom:
-  fusion_config: configs/fusion/variants/bbu_rru_dense_grpo_mixed_2048_tiny.yaml
+  fusion_config: configs/fusion/variants/bbu_rru_dense_grpo_2048_tiny.yaml
   # Tiny sample limits as an extra safety net.
   train_sample_limit: 2
   val_sample_limit: 2
