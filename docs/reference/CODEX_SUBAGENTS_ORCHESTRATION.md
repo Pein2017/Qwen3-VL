@@ -165,6 +165,9 @@ Optional recovery (when needed):
 - Default cancellation is best-effort (SIGTERM): `codex_cancel({ jobId, force: false })`
 - Forced kill is allowed when explicitly required (SIGKILL): `codex_cancel({ jobId, force: true })`
 
+`codex_result` behavior on cancellation:
+- If a job was canceled before emitting any `agent_message` event, `codex_result` (finalMessage-only) returns a small structured cancellation summary instead of an empty string.
+
 After any cancellation of an edit job, the coordinator MUST treat the workspace as potentially inconsistent and run recovery checks (`git status --porcelain`, `git diff --name-only`) before continuing.
 
 ## Delegated Prompt Contract

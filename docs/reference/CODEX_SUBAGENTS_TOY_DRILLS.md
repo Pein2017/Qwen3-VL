@@ -88,7 +88,7 @@ Phase C — cancellation:
 - Cancel it using codex_cancel(force=false); if it does not stop quickly, use force=true.
 - Report final status for Job E.
 
-Note: A canceled job may legitimately have an empty finalMessage if it never produced an agent_message event.
+Expected: Even if the job is canceled before emitting any agent_message event, `codex_result` (finalMessage-only) SHOULD still return a small cancellation summary (not an empty string).
 
 Cleanup (coordinator-only):
 - Remove the scratch dir: rm -rf tmp/subagents_toy/
@@ -114,7 +114,7 @@ Rules:
 - Do NOT run git commits/branches/reset/checkout/stash.
 - Only modify files under tmp/subagents_toy/.
 - Keep output short and structured.
-- If you are about to run a long tool command, emit a short assistant message first (so cancellation still leaves a lastAgentMessage).
+- If you are about to run a long tool command, emit a short assistant message first (this makes cancellation outcomes more informative).
 
 Final response MUST contain only:
 Summary:
@@ -143,8 +143,7 @@ modifiedFiles:
 5) cancellation
 - Did cancel work reliably (SIGTERM then SIGKILL if needed)?
 - Did the canceled job end as `canceled` (not `failed`)?
-- Was the canceled job’s finalMessage empty? (If yes, that can be expected depending on whether it emitted an agent message before cancellation.)
+- Did `codex_result` (finalMessage-only) return a non-empty cancellation summary for the canceled job?
 
 6) UX / teammate coherence
 - Were the prompts and final outputs coherent and teammate-like without role confusion?
-
