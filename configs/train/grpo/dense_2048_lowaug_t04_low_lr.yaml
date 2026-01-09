@@ -5,7 +5,7 @@ training:
   # Lower policy update aggressiveness (LLM + aligner).
   # Note: logged `learning_rate` often corresponds to the first optimizer param-group (may be ViT),
   # so don't rely on logs to confirm LLM/aligner LR without inspecting optimizer groups.
-  run_name: epoch_3-ebs32-gbs32-temp0.4-beta0.6-llm_lr-4e-6-vit_lr-2e-7-aligner_lr-7.5e-6-aug_off-doraLast12VIT-last8LLM-alignerMLP
+  run_name: epoch_3-ebs32-gbs32-temp0.4-beta0.3-llm_lr-4e-6-vit_lr-2e-7-aligner_lr-7.5e-6-aug_off-doraLast12VIT-last8LLM-alignerMLP
   output_dir: ./output/1-7/new_schema-4B-dense-grpo-2048
   logging_dir: ./tb/1-7/new_schema-4B-dense-grpo-2048
   learning_rate: 4.0e-6
@@ -17,7 +17,7 @@ rlhf:
   # Reduce rollout variance / KL drift.
   temperature: 0.4
   top_p: 0.9
-  beta: 0.6
+  beta: 0.3
 
 tuner:
   # DoRA placement policy for post-GRPO dense runs:

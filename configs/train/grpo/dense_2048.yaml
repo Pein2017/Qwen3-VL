@@ -32,7 +32,7 @@ rlhf:
   # Avoid inheriting global_max_length=16000 into vLLM max_model_len; keep rollout KV planning bounded.
   # Empirically measured (256 samples): prompt_len max/p99=3050 with image tokens max=2040.
   # With max_completion_length=4096 => needed=7146; use 7424 (=ceil256(7146+128)).
-  max_completion_length: 3072
+  max_completion_length: 2500
   vllm_max_model_len: 8192
   # Keep headroom for training model forward/backward on the same GPUs in colocate mode.
   vllm_gpu_memory_utilization: 0.5
