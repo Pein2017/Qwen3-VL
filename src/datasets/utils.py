@@ -1,7 +1,7 @@
 """Shared utilities for dataset operations"""
 
 import json
-from collections.abc import MutableMapping
+from collections.abc import Mapping, MutableMapping, Sequence
 from pathlib import Path
 from typing import cast
 
@@ -114,9 +114,48 @@ def is_same_record(record_a: ConversationRecord, record_b: ConversationRecord) -
     return record_a is record_b
 
 
+def extract_assistant_text(messages: Sequence[Mapping[str, object]]) -> str | None:
+    """Extract the assistant text payload from a message list.
+
+    This is a best-effort helper used for debugging/telemetry (e.g., GRPO rollout dumps).
+    It intentionally supports the mixed content schemas used by multimodal chat:
+    - content as a raw string
+    - content as a list of {type: ..., text: ...} items
+    """
+
+    for msg in reversed(messages):
+        role = msg.get("role")
+        if role != "assistant":
+            continue
+
+        content = msg.get("content")
+        if isinstance(content, str):
+            return content
+
+        if isinstance(content, Mapping):
+            text = content.get("text")
+            if isinstance(text, str):
+                return text
+            continue
+
+        if isinstance(content, Sequence) and not isinstance(content, (str, bytes)):
+            for item in content:
+                if not isinstance(item, Mapping):
+                    continue
+                if item.get("type") != "text":
+                    continue
+                text = item.get("text")
+                if isinstance(text, str):
+                    return text
+            continue
+
+    return None
+
+
 __all__ = [
     "load_jsonl",
     "extract_object_points",
     "extract_geometry",
     "is_same_record",
+    "extract_assistant_text",
 ]

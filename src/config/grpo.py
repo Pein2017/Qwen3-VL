@@ -38,6 +38,12 @@ def validate_grpo_config(config: TrainingConfig) -> None:
             "custom.grpo.chord.enabled=true is only supported when rlhf.rlhf_type=grpo"
         )
 
+    dump = config.custom.grpo.dump
+    if dump.enabled and rlhf_type != "grpo":
+        raise ValueError(
+            "custom.grpo.dump.enabled=true is only supported when rlhf.rlhf_type=grpo"
+        )
+
     if rlhf_type != "grpo":
         return
 

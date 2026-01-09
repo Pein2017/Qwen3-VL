@@ -21,7 +21,7 @@ from .assistant_prefix import (
 )
 from .contracts import ConversationRecord, validate_conversation_record
 from .preprocessors import AugmentationPreprocessor, SequentialPreprocessor
-from .utils import extract_object_points, load_jsonl
+from .utils import extract_assistant_text, extract_object_points, load_jsonl
 
 # Exposed for debugging (e.g., OOM tracing)
 LAST_SAMPLE_DEBUG: UnstructuredMutableMapping = {}
@@ -70,16 +70,25 @@ class BaseCaptionDataset(Dataset[object]):
         system_prompt_summary: str | None = None,
         bypass_prob: float = 0.0,
         seed: int = 2025,
+        shuffle: bool = True,
         curriculum_state: UnstructuredMutableMapping | None = None,
         dataset_name: str | None = None,
         allow_empty: bool = False,
     ):
+        if not isinstance(shuffle, bool):
+            raise TypeError("shuffle must be a boolean value")
+        # Use a private attribute name that does NOT collide with subclasses
+        # like `FusionCaptionDataset`, which already uses `_shuffle` for its own
+        # schedule shuffling. (Attribute collision would change sampling order.)
+        self._shuffle_records = shuffle
         self.use_summary = bool(use_summary)
         self.system_prompt_dense = system_prompt_dense
         self.system_prompt_summary = system_prompt_summary
         self.user_prompt = user_prompt
         self.user_prompt_summary = (
-            user_prompt_summary if user_prompt_summary is not None else USER_PROMPT_SUMMARY
+            user_prompt_summary
+            if user_prompt_summary is not None
+            else USER_PROMPT_SUMMARY
         )
         self.emit_norm: Literal["none", "norm100", "norm1000"] = emit_norm
         self.json_format: Literal["standard"] = json_format
@@ -228,7 +237,7 @@ class BaseCaptionDataset(Dataset[object]):
     def _rebuild_perm_for_epoch(self) -> None:
         base_len = len(self.base_records)
         perm = list(range(base_len))
-        if len(perm) > 1:
+        if self._shuffle_records and len(perm) > 1:
             self._rng.shuffle(perm)
         self._index_perm = perm
 
@@ -390,6 +399,7 @@ class BaseCaptionDataset(Dataset[object]):
 
         # Attach the original conversation so RLHF/GKD trainers can re-encode.
         encoded["messages"] = conversation_messages
+        encoded["solution"] = extract_assistant_text(conversation_messages) or ""
         for key in ("assistant_payload", "objects", "metadata"):
             if key in merged:
                 encoded[key] = copy.deepcopy(merged[key])

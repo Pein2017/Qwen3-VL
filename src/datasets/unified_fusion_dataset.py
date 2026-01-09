@@ -35,7 +35,7 @@ from .dense_caption import LAST_SAMPLE_DEBUG, BaseCaptionDataset, TemplateProtoc
 from .fusion import FusionConfig, _compute_target_quotas, _sample_indices
 from .fusion_types import DatasetSpec
 from .preprocessors import AugmentationPreprocessor, ObjectCapPreprocessor
-from .utils import extract_object_points, load_jsonl
+from .utils import extract_assistant_text, extract_object_points, load_jsonl
 
 
 @dataclass(frozen=True)
@@ -330,9 +330,7 @@ class FusionCaptionDataset(BaseCaptionDataset):
         return annotated
 
     @staticmethod
-    def _load_records(
-        path: Path, *, limit: int | None
-    ) -> list[ConversationRecord]:
+    def _load_records(path: Path, *, limit: int | None) -> list[ConversationRecord]:
         records = load_jsonl(str(path), resolve_relative=True)
         if limit is not None and limit > 0:
             records = records[:limit]
@@ -821,6 +819,7 @@ class FusionCaptionDataset(BaseCaptionDataset):
                     pass
 
         encoded["messages"] = conversation_messages
+        encoded["solution"] = extract_assistant_text(conversation_messages) or ""
         for key in ("assistant_payload", "objects", "metadata"):
             if key in merged:
                 encoded[key] = copy.deepcopy(merged[key])

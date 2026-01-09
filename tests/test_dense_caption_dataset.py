@@ -55,6 +55,9 @@ def test_dense_caption_dataset_embeds_conversation_metadata():
     sample = dataset[0]
 
     assert "messages" in sample
+    assert "solution" in sample
+    assert isinstance(sample["solution"], str)
+    assert sample["solution"]
     assert sample["messages"][0]["role"] == "system"
     assert sample["messages"][1]["role"] == "user"
     assert "input_ids" in sample

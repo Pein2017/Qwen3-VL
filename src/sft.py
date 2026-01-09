@@ -180,7 +180,9 @@ def main():
         )
     forbidden_packing_keys = {
         "custom.packing_group_key": getattr(custom_config, "packing_group_key", None),
-        "custom.packing_length_override": getattr(custom_config, "packing_length_override", None),
+        "custom.packing_length_override": getattr(
+            custom_config, "packing_length_override", None
+        ),
         "custom.cached_lengths": getattr(custom_config, "cached_lengths", None),
     }
     for key, val in forbidden_packing_keys.items():
@@ -285,10 +287,18 @@ def main():
                 "GKD mode requires a teacher_model. Set rlhf.teacher_model in the YAML and ensure it loads."
             )
         student_config = getattr(sft.model, "config", None)
-        student_vocab = getattr(student_config, "vocab_size", None) if student_config is not None else None
-        
+        student_vocab = (
+            getattr(student_config, "vocab_size", None)
+            if student_config is not None
+            else None
+        )
+
         teacher_config = getattr(teacher_model, "config", None)
-        teacher_vocab = getattr(teacher_config, "vocab_size", None) if teacher_config is not None else None
+        teacher_vocab = (
+            getattr(teacher_config, "vocab_size", None)
+            if teacher_config is not None
+            else None
+        )
         if isinstance(student_vocab, int) and isinstance(teacher_vocab, int):
             if student_vocab != teacher_vocab:
                 raise ValueError(
@@ -359,7 +369,6 @@ def main():
         logger.info(f"Train sample limit: {train_sample_limit}")
     if val_sample_limit is not None:
         logger.info(f"Val sample limit: {val_sample_limit}")
-
 
     # Build training dataset
     logger.info(f"Loading training dataset: {str(train_jsonl)}")
@@ -552,7 +561,9 @@ def main():
             if args_obj is None:
                 continue
             try:
-                setattr(args_obj, "chord_sft_per_device_train_batch_size", sft_per_device_bs)
+                setattr(
+                    args_obj, "chord_sft_per_device_train_batch_size", sft_per_device_bs
+                )
                 setattr(args_obj, "chord_mu_warmup_steps", mu_warmup_steps)
                 setattr(args_obj, "chord_mu_decay_steps", mu_decay_steps)
                 setattr(args_obj, "chord_mu_peak", mu_peak)
@@ -606,13 +617,15 @@ def main():
             raise ValueError(
                 "CHORD is enabled (custom.grpo.chord.enabled=true) but DeepSpeed ZeRO stage is "
                 f"{ds_stage}. This configuration is known to trigger DeepSpeed assertions like "
-                "\"Gradient computed twice for this partition\". "
+                '"Gradient computed twice for this partition". '
                 "Set deepspeed.config to zero3/zero3_offload (recommended) or disable CHORD."
             )
 
     # Calculate total_steps and initialize curriculum_state if needed
     if curriculum_scheduler is not None:
-        requires_total_steps = bool(getattr(curriculum_scheduler, "_requires_total_steps", False))
+        requires_total_steps = bool(
+            getattr(curriculum_scheduler, "_requires_total_steps", False)
+        )
         if requires_total_steps:
             # Calculate total_steps from dataset length, epochs, batch size, etc.
             num_train_epochs = getattr(train_args, "num_train_epochs", None)
@@ -643,7 +656,9 @@ def main():
                 num_update_steps_per_epoch = max(
                     len_dataset // total_train_batch_size, 1
                 )
-                total_steps = math.ceil(float(str(num_train_epochs)) * num_update_steps_per_epoch)
+                total_steps = math.ceil(
+                    float(str(num_train_epochs)) * num_update_steps_per_epoch
+                )
             else:
                 raise ValueError(
                     "Cannot calculate total_steps for curriculum scheduler. "
@@ -658,11 +673,11 @@ def main():
         curriculum_state = cast(
             MutableMapping[str, object],
             manager.dict(
-            {
-                "step": 0,
-                "bypass_prob": initial_state["bypass_prob"],
-                "ops": copy.deepcopy(initial_state["ops"]),
-            }
+                {
+                    "step": 0,
+                    "bypass_prob": initial_state["bypass_prob"],
+                    "ops": copy.deepcopy(initial_state["ops"]),
+                }
             ),
         )
         # Update dataset's curriculum_state
@@ -770,7 +785,9 @@ def main():
             assistant_gt = None
             try:
                 # Re-assign to typed variable to help linter
-                dataset_for_dump: Union["FusionCaptionDataset", "BaseCaptionDataset"] = dataset
+                dataset_for_dump: Union[
+                    "FusionCaptionDataset", "BaseCaptionDataset"
+                ] = dataset
                 record_clone = copy.deepcopy(dataset_for_dump.base_records[0])
                 builder = dataset_for_dump._create_builder(dataset_for_dump.mode)
                 merged = builder.build_many([record_clone])
@@ -877,6 +894,7 @@ def main():
                 use_summary=use_summary,
                 system_prompt_dense=system_prompt_dense,
                 system_prompt_summary=system_prompt_summary,
+                shuffle=False,
                 seed=dataset_seed,
                 assistant_prefix_format=None,
             )
@@ -921,9 +939,12 @@ def main():
     # Add SaveDelayCallback if save_delay_steps is configured
     callbacks = sft.callbacks.copy() if sft.callbacks else []
     cuda_memory_cb: CudaMemoryCallback | None = None
+    rollout_dump_cb: Any | None = None
     cuda_memory_cfg = getattr(custom_config, "cuda_memory", None)
     cuda_memory_cfg_enabled = bool(getattr(cuda_memory_cfg, "enabled", False))
-    disable_cuda_cleanup = os.environ.get("QWEN3VL_DISABLE_CUDA_EVAL_CLEANUP", "0").strip().lower() in (
+    disable_cuda_cleanup = os.environ.get(
+        "QWEN3VL_DISABLE_CUDA_EVAL_CLEANUP", "0"
+    ).strip().lower() in (
         "1",
         "true",
         "yes",
@@ -932,19 +953,30 @@ def main():
     )
     cuda_memory_cfg_effective = (
         replace(cuda_memory_cfg, cleanup=False)
-        if cuda_memory_cfg is not None and disable_cuda_cleanup and bool(getattr(cuda_memory_cfg, "cleanup", False))
+        if cuda_memory_cfg is not None
+        and disable_cuda_cleanup
+        and bool(getattr(cuda_memory_cfg, "cleanup", False))
         else cuda_memory_cfg
     )
     if cuda_memory_cfg_effective is not None and cuda_memory_cfg_enabled:
         cuda_memory_cb = CudaMemoryCallback(cuda_memory_cfg_effective)
         callbacks.append(cuda_memory_cb)
-        if bool(getattr(cuda_memory_cfg_effective, "profile", False)) or disable_cuda_cleanup:
+        if (
+            bool(getattr(cuda_memory_cfg_effective, "profile", False))
+            or disable_cuda_cleanup
+        ):
             logger.info(
                 "CUDA memory callback active: profile=%s cleanup=%s rank0_only=%s",
                 getattr(cuda_memory_cfg_effective, "profile", None),
                 getattr(cuda_memory_cfg_effective, "cleanup", None),
                 getattr(cuda_memory_cfg_effective, "rank0_only", None),
             )
+    dump_cfg = getattr(custom_config.grpo, "dump", None)
+    if dump_cfg is not None and bool(getattr(dump_cfg, "enabled", False)):
+        from .callbacks.rollout_dump import RolloutDumpCallback
+
+        rollout_dump_cb = RolloutDumpCallback(dump_cfg)
+        callbacks.append(rollout_dump_cb)
     if curriculum_scheduler is not None and curriculum_state is not None:
         from .callbacks.augmentation_curriculum import (
             AugmentationCurriculumCallback,
@@ -1009,6 +1041,13 @@ def main():
     )
     if cuda_memory_cb is not None:
         cuda_memory_cb.attach_trainer(trainer)
+    if rollout_dump_cb is not None:
+        try:
+            attach_trainer = getattr(rollout_dump_cb, "attach_trainer", None)
+            if callable(attach_trainer):
+                attach_trainer(trainer)
+        except Exception:
+            pass
 
     # Post-init CHORD wiring (GRPO-only). This must happen after trainer.accelerator exists.
     if chord_enabled and chord_dataset is not None:
@@ -1023,7 +1062,11 @@ def main():
             setattr(trainer, "chord_sft_iterator", chord_iter)
             logger.info(
                 "CHORD SFT iterator prepared (post-init): sft_per_device_bs=%s",
-                getattr(getattr(trainer, "args", None), "chord_sft_per_device_train_batch_size", None),
+                getattr(
+                    getattr(trainer, "args", None),
+                    "chord_sft_per_device_train_batch_size",
+                    None,
+                ),
             )
         except Exception as exc:
             raise RuntimeError(

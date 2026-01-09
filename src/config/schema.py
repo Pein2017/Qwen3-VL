@@ -74,7 +74,6 @@ def _require_number(value: Any, field_name: str) -> float:
     return parsed
 
 
-
 @dataclass(frozen=True)
 class PromptOverrides:
     system: str | None = None
@@ -96,7 +95,9 @@ class TokenTypeMetricsConfig:
         object.__setattr__(self, "exclude", exc)
 
     @classmethod
-    def from_mapping(cls, payload: Mapping[str, Any] | None) -> "TokenTypeMetricsConfig":
+    def from_mapping(
+        cls, payload: Mapping[str, Any] | None
+    ) -> "TokenTypeMetricsConfig":
         if payload is None:
             return cls()
         if not isinstance(payload, Mapping):
@@ -126,9 +127,7 @@ class DeepSpeedConfig:
     config: Any
 
     @classmethod
-    def from_mapping(
-        cls, payload: Mapping[str, Any] | None
-    ) -> DeepSpeedConfig | None:
+    def from_mapping(cls, payload: Mapping[str, Any] | None) -> DeepSpeedConfig | None:
         if payload is None:
             return None
         if not isinstance(payload, Mapping):
@@ -319,7 +318,9 @@ class GrpoChordConfig:
         def _require_int(name: str, *, min_value: int = 0) -> int:
             raw = payload.get(name)
             if raw is None:
-                raise ValueError(f"custom.grpo.chord.{name} must be provided when enabled")
+                raise ValueError(
+                    f"custom.grpo.chord.{name} must be provided when enabled"
+                )
             try:
                 value = int(raw)
             except (TypeError, ValueError) as exc:
@@ -337,7 +338,9 @@ class GrpoChordConfig:
         ) -> float:
             raw = payload.get(name)
             if raw is None:
-                raise ValueError(f"custom.grpo.chord.{name} must be provided when enabled")
+                raise ValueError(
+                    f"custom.grpo.chord.{name} must be provided when enabled"
+                )
             try:
                 value = float(raw)
             except (TypeError, ValueError) as exc:
@@ -364,8 +367,146 @@ class GrpoChordConfig:
 
 
 @dataclass(frozen=True)
+class GrpoDumpConfig:
+    """Periodic rollout dumps for GRPO training/evaluation.
+
+    This is intended for lightweight debugging/telemetry: dumping a small number of
+    recent rollouts during training, and a fixed subset of eval samples across time.
+    """
+
+    enabled: bool = False
+    dump_step: int | None = None
+    dump_sample_size: int = 8
+    dump_dir: str | None = None
+    eval_sample_size: int | None = None
+    eval_seed: int = 2025
+
+    @classmethod
+    def disabled(cls) -> "GrpoDumpConfig":
+        return cls(enabled=False)
+
+    @classmethod
+    def from_mapping(cls, payload: Mapping[str, Any] | None) -> "GrpoDumpConfig":
+        if payload is None:
+            return cls.disabled()
+        if not isinstance(payload, Mapping):
+            raise TypeError("custom.grpo.dump must be a mapping when provided")
+
+        data = dict(payload)
+        enabled = bool(data.pop("enabled", False))
+
+        def _parse_int(
+            name: str, *, min_value: int = 0, allow_none: bool = False
+        ) -> int | None:
+            raw = data.pop(name, None)
+            if raw is None:
+                return None if allow_none else None
+            if isinstance(raw, bool):
+                raise TypeError(
+                    f"custom.grpo.dump.{name} must be an integer, got {raw!r}"
+                )
+            try:
+                value = int(raw)
+            except (TypeError, ValueError) as exc:
+                raise TypeError(
+                    f"custom.grpo.dump.{name} must be an integer, got {raw!r}"
+                ) from exc
+            if value < min_value:
+                raise ValueError(
+                    f"custom.grpo.dump.{name} must be >= {min_value}, got {value}"
+                )
+            return value
+
+        dump_step = _parse_int("dump_step", min_value=1, allow_none=True)
+        dump_sample_size = _parse_int("dump_sample_size", min_value=1) or 8
+        eval_sample_size_raw = data.pop("eval_sample_size", None)
+        eval_sample_size: int | None
+        if eval_sample_size_raw is None:
+            eval_sample_size = None
+        elif isinstance(eval_sample_size_raw, bool):
+            raise TypeError(
+                "custom.grpo.dump.eval_sample_size must be an integer (or 'all'/'val_sample_limit'), "
+                f"got {eval_sample_size_raw!r}"
+            )
+        elif isinstance(eval_sample_size_raw, str):
+            normalized = eval_sample_size_raw.strip().lower()
+            if normalized in {"all", "full", "val_sample_limit"}:
+                eval_sample_size = None
+            elif normalized.isdigit():
+                eval_sample_size = int(normalized)
+                if eval_sample_size < 1:
+                    raise ValueError(
+                        "custom.grpo.dump.eval_sample_size must be >= 1, got "
+                        + str(eval_sample_size)
+                    )
+            else:
+                raise ValueError(
+                    "custom.grpo.dump.eval_sample_size must be an integer, 'all', or 'val_sample_limit', "
+                    f"got {eval_sample_size_raw!r}"
+                )
+        else:
+            try:
+                eval_sample_size = int(eval_sample_size_raw)
+            except (TypeError, ValueError) as exc:
+                raise TypeError(
+                    "custom.grpo.dump.eval_sample_size must be an integer, got "
+                    + repr(eval_sample_size_raw)
+                ) from exc
+            if eval_sample_size < 1:
+                raise ValueError(
+                    "custom.grpo.dump.eval_sample_size must be >= 1, got "
+                    + str(eval_sample_size)
+                )
+        eval_seed = _parse_int("eval_seed", min_value=0) or 2025
+
+        dump_dir_raw = data.pop("dump_dir", None)
+        dump_dir = None
+        if dump_dir_raw is not None:
+            if not isinstance(dump_dir_raw, str):
+                raise TypeError(
+                    "custom.grpo.dump.dump_dir must be a string when provided"
+                )
+            dump_dir = dump_dir_raw.strip()
+            if not dump_dir:
+                raise ValueError("custom.grpo.dump.dump_dir must be a non-empty string")
+
+        if data:
+            unknown = ", ".join(sorted(str(k) for k in data))
+            raise ValueError(f"Unknown custom.grpo.dump fields: {unknown}")
+
+        if not enabled:
+            # If the user provided dump knobs without enabling, fail fast to avoid silent misconfig.
+            if (
+                dump_step is not None
+                or dump_dir is not None
+                or eval_sample_size is not None
+            ):
+                raise ValueError(
+                    "custom.grpo.dump is configured but disabled; set custom.grpo.dump.enabled=true to activate it."
+                )
+            return cls.disabled()
+
+        if dump_step is None:
+            raise ValueError("custom.grpo.dump.dump_step must be provided when enabled")
+
+        return cls(
+            enabled=True,
+            dump_step=int(dump_step),
+            dump_sample_size=int(dump_sample_size),
+            dump_dir=dump_dir,
+            # None means "dump the full eval dataset" (which is already bounded by
+            # custom.val_sample_limit when Qwen3-VL builds eval_dataset).
+            eval_sample_size=int(eval_sample_size)
+            if eval_sample_size is not None
+            else None,
+            eval_seed=int(eval_seed),
+        )
+
+
+@dataclass(frozen=True)
 class GrpoConfig:
     chord: GrpoChordConfig = field(default_factory=GrpoChordConfig.disabled)
+    dump: GrpoDumpConfig = field(default_factory=GrpoDumpConfig.disabled)
     extra: Mapping[str, Any] = field(default_factory=_empty_str_any_dict)
 
     @classmethod
@@ -376,7 +517,8 @@ class GrpoConfig:
             raise TypeError("custom.grpo must be a mapping when provided")
         data = dict(payload)
         chord = GrpoChordConfig.from_mapping(data.pop("chord", None))
-        return cls(chord=chord, extra=dict(data))
+        dump = GrpoDumpConfig.from_mapping(data.pop("dump", None))
+        return cls(chord=chord, dump=dump, extra=dict(data))
 
 
 @dataclass(frozen=True)
@@ -507,7 +649,9 @@ class CustomConfig:
     val_jsonl: str | None = None
     output_variant: Literal["dense", "summary"] = "dense"
     visual_kd: VisualKDConfig = field(default_factory=VisualKDConfig.disabled)
-    token_type_metrics: TokenTypeMetricsConfig = field(default_factory=TokenTypeMetricsConfig)
+    token_type_metrics: TokenTypeMetricsConfig = field(
+        default_factory=TokenTypeMetricsConfig
+    )
     cuda_memory: CudaMemoryConfig = field(default_factory=CudaMemoryConfig)
     extra: Mapping[str, Any] = field(default_factory=_empty_str_any_dict)
     fusion_config: str | None = None
@@ -613,10 +757,15 @@ class CustomConfig:
         augmentation_curriculum = data.pop("augmentation_curriculum", None)
         if augmentation is not None and not isinstance(augmentation, Mapping):
             raise TypeError("custom.augmentation must be a mapping when provided")
-        if augmentation_curriculum is not None and not isinstance(augmentation_curriculum, Mapping):
-            raise TypeError("custom.augmentation_curriculum must be a mapping when provided")
+        if augmentation_curriculum is not None and not isinstance(
+            augmentation_curriculum, Mapping
+        ):
+            raise TypeError(
+                "custom.augmentation_curriculum must be a mapping when provided"
+            )
         bypass_prob = float(data.pop("bypass_prob", 0.0))
         trainer_variant = data.pop("trainer_variant", None)
+
         def _parse_sample_limit(value: Any, field_name: str) -> int | None:
             if value is None:
                 return None
@@ -624,9 +773,7 @@ class CustomConfig:
                 raise TypeError(f"{field_name} must be an integer when provided")
             if isinstance(value, (int, float)):
                 if isinstance(value, float) and not value.is_integer():
-                    raise ValueError(
-                        f"{field_name} must be an integer, got {value!r}"
-                    )
+                    raise ValueError(f"{field_name} must be an integer, got {value!r}")
                 int_value = int(value)
                 return int_value if int_value > 0 else None
             if isinstance(value, str):
@@ -699,7 +846,9 @@ class CustomConfig:
             use_summary=use_summary,
             system_prompt_summary=system_prompt_summary,
             augmentation=cast("Mapping[str, Any] | None", augmentation),
-            augmentation_curriculum=cast("Mapping[str, Any] | None", augmentation_curriculum),
+            augmentation_curriculum=cast(
+                "Mapping[str, Any] | None", augmentation_curriculum
+            ),
             bypass_prob=bypass_prob,
             trainer_variant=str(trainer_variant)
             if trainer_variant is not None
