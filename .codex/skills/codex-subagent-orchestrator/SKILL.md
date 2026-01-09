@@ -1,6 +1,6 @@
 ---
 name: codex-subagent-orchestrator
-description: Orchestrate async Codex sub-agent jobs via MCP job tools (codex_spawn/codex_wait_any/codex_events/codex_result/codex_cancel) in a shared worktree with workspace-write defaults and last-writer-wins tolerance; safe when auto-loaded inside delegated jobs.
+description: Orchestrate async Codex sub-agent jobs via MCP job tools (codex_spawn/codex_wait_any/codex_events/codex_result/codex_cancel) in a shared worktree with workspace-write defaults and dirty-worktree tolerance; safe when auto-loaded inside delegated jobs.
 ---
 
 # Async Sub-Agent Orchestration (Job-Based, Option 1)
@@ -27,20 +27,50 @@ This skill may be auto-loaded in either context:
 - Git is available for recovery and for “what changed?” inspection (recommended but not a hard gate for spawning).
 - Coordination uses optimistic concurrency in a shared worktree; when overlapping edits happen, prefer *chaining* follow-up tasks rather than hard rollback.
 
+## Collaboration Philosophy (Dirty Worktree OK)
+
+This repository treats **dirty, dynamically changing worktrees as normal** during orchestration:
+
+- The user (or another agent) may edit files while sub-agents are running.
+- The main agent SHOULD separate work by **task** (not by folder) and keep scopes small.
+- Perfect/complex conflict resolution is intentionally out of scope for this skill today.
+- The default posture is: **trust sub-agents to proceed**, then have the **main agent review** and reconcile if an override looks wrong.
+
+Minimum hygiene rules that make this practical:
+
+- **Refresh-before-write** (delegated jobs that edit): right before applying an edit, re-read the **exact symbol/region** you plan to change
+  (function/class/config block) and integrate with current content. If assumptions no longer hold, stop and report.
+- **Scope declaration** (delegated jobs): explicitly state what files/symbols you intend to touch. If you need to expand scope, ask first (or
+  return a scope-expansion request in your final output for the coordinator to handle).
+
+Quality rules (low-friction, high trust):
+
+- **Evidence hygiene**: keep “observed” separate from “hypothesized”.
+  - If you state a config value, code path, metric definition, etc., include evidence: file path + line-numbered snippet
+    (prefer `nl -ba <path> | sed -n '<a>,<b>p'`).
+  - If you are hypothesizing (plausible failure mode, likely root cause), label it explicitly as a hypothesis.
+- **Recommendations must exist**: if you recommend a script/command/path, verify it exists in the workspace (`ls`, `rg --files`, etc.).
+  If not verified, say so explicitly (do not imply it exists).
+- **modifiedFiles discipline**:
+  - If you did not write files, output `modifiedFiles` as exactly `(none)`.
+  - Do not list pre-existing dirty/untracked files as “modifiedFiles” unless you actually changed them in this job.
+
 ## Canonical References (Avoid Redundancy)
 
-This skill intentionally stays short and defers protocol details to canonical docs:
+This skill intentionally stays short and defers protocol details to its bundled references:
 
-- Canonical runbook: `docs/reference/CODEX_SUBAGENTS_ORCHESTRATION.md`
-- Quick checklist: `docs/reference/CODEX_SUBAGENTS_ORCHESTRATION_QUICKREF.md`
-- Toy drills (safe scratch-only): `docs/reference/CODEX_SUBAGENTS_TOY_DRILLS.md`
+- Canonical runbook: `references/CODEX_SUBAGENTS_ORCHESTRATION.md`
+- Quick checklist: `references/CODEX_SUBAGENTS_ORCHESTRATION_QUICKREF.md`
+- Toy drills (safe scratch-only): `references/CODEX_SUBAGENTS_TOY_DRILLS.md`
+
+Repo-specific (optional, if present in your workspace):
 - Normative spec delta: `openspec/changes/2026-01-07-add-codex-subagents-mcp/specs/codex-mcp-subagents/spec.md`
 
-## Tool Naming (Verified)
+## Tool Naming (Discover in Your Session)
 
-In this repository, the MCP server name is `codex-cli-wrapper`, and callable tool identifiers preserve the hyphenated server name.
+Tool identifiers depend on the MCP server name (prefix). Always trust the tool list from your active Codex session.
 
-Job-based tool identifiers:
+Example job-based tool identifiers when the MCP server name is `codex-cli-wrapper`:
 - `mcp__codex-cli-wrapper__codex_spawn` (async sub-agent spawn; returns `jobId` immediately)
 - `mcp__codex-cli-wrapper__codex_status` (poll job status)
 - `mcp__codex-cli-wrapper__codex_events` (poll normalized incremental events; cursor-based)
@@ -60,7 +90,7 @@ Note: Some Codex environments may accept underscore variants as aliases (e.g., `
 - All jobs operate in a shared worktree by default; safety relies on A2 optimistic concurrency + git rollback.
 
 The canonical orchestration guide lives at:
-- `docs/reference/CODEX_SUBAGENTS_ORCHESTRATION.md`
+- `references/CODEX_SUBAGENTS_ORCHESTRATION.md`
 
 Read it when orchestration is needed, and follow it strictly.
 
@@ -80,7 +110,7 @@ Avoid subagents for:
 
 Do not re-specify numeric defaults in this skill (to avoid drift).
 
-- Use the canonical defaults defined in `docs/reference/CODEX_SUBAGENTS_ORCHESTRATION.md`.
+- Use the canonical defaults defined in `references/CODEX_SUBAGENTS_ORCHESTRATION.md`.
 - If conflicts are frequent, temporarily reduce write concurrency (often `K_write=1`).
 
 ## Default Permissions (Sandbox)
@@ -103,14 +133,15 @@ To ensure the coordinating agent and delegated sub-agents behave identically, pr
 
 ## Coordinator Algorithm (A2, Shared Worktree)
 
-Follow the full coordination protocol in `docs/reference/CODEX_SUBAGENTS_ORCHESTRATION.md`. Minimum coordinator loop:
+Follow the full coordination protocol in `references/CODEX_SUBAGENTS_ORCHESTRATION.md`. Minimum coordinator loop:
 
 1) Preflight: record baseline state (dirty is OK): `git status --porcelain`, optionally baseline HEAD (`git rev-parse HEAD`).
 2) Spawn: use `codex_spawn` for delegated jobs (analysis vs edit). Keep within the canonical `K_read` / `K_write`.
 3) Monitor: prefer `codex_wait_any` for completions; use `codex_events` for progress when needed.
-4) Collect: call `codex_result` for completed jobs; extract delegated-agent-reported `modifiedFiles`.
-5) Detect overlap: overlap in `modifiedFiles` across jobs ⇒ order-dependent edits.
-6) Reconcile: prefer a follow-up “reconcile” job (or a sequential re-run) that continues from the current workspace state.
+4) Collect: call `codex_result` for completed jobs; extract delegated-agent-reported `modifiedFiles` and declared scope.
+5) Detect overlap: overlap in `modifiedFiles` (or declared scope) across jobs ⇒ order-dependent edits.
+6) Reconcile: prefer a follow-up “reconcile” job (or a sequential re-run) that continues from the current workspace state. Avoid rollback unless
+   strictly necessary; default to forward reconciliation + main-agent review.
 
 ## Coordinator Waiting Pattern (Don’t Busy-Poll)
 
@@ -145,16 +176,26 @@ Subtask label:
 Task:
 <specific assignment; keep scope narrow and testable>
 
+Expected scope (files/symbols):
+<list the file paths and/or functions/classes you expect to touch; keep it small. If you need to expand scope, request it.>
+
 Constraints:
 - Do not spawn additional sub-agents or attempt orchestration.
 - Do not create git commits/branches; do not `git checkout`, `git reset`, or `git stash`.
 - Prefer minimal edits; avoid drive-by refactors.
-- Assume the workspace may be dirty and may be modified by other delegated jobs; re-read any file you touch and integrate with current content.
+- Assume the workspace may be dirty and may be modified by the user or other jobs.
+- **Refresh-before-write**: immediately before editing, re-read the exact symbol/region you will change and integrate with current content.
+  If the change is no longer valid or is ambiguous, stop and report instead of guessing.
 - If scope ambiguity exists, make a reasonable assumption and state it explicitly in the final response.
 
 Output format:
 - Summary (what was done)
-- Findings / decisions (bullet list)
+- Observations (confirmed facts)
+- Evidence (file paths + small snippets / commands run)
+- Hypotheses (explicitly labeled; plausible but not confirmed)
+- Tests / next checks (how to validate or falsify hypotheses)
+- Scope (what you intended to touch; what you actually touched)
+- Refresh-before-write (yes/no, and what changed if applicable)
 - modifiedFiles (one path per line; required)
 - Follow-ups (optional recommendations)
 ```
@@ -170,7 +211,9 @@ If the current process is a spawned job, treat the current role as a delegated t
 - Do not perform git write operations (commit/checkout/reset/stash); edits are file-based only.
 - Provide an early acknowledgement + short plan in the first assistant message (improves progress visibility via `codex_events`).
 - If you are about to run a long tool command, emit a short assistant message first (so cancellation still leaves a `lastAgentMessage`).
-- In the final response, list `modifiedFiles` explicitly (one per line) so the coordinator can apply A2 conflict detection.
+- **Refresh-before-write**: before you apply an edit, re-read the exact symbol/region you will change; integrate if the change is incremental,
+  otherwise stop and report.
+- In the final response, list `modifiedFiles` explicitly (one per line) so the coordinator can review for overlaps/overrides.
 
 ## Reactive Orchestration (“first-completed-wins”)
 
@@ -212,6 +255,6 @@ mcp__codex-cli-wrapper__codex_cancel({ jobId: jobIdC })
 ## Result Synthesis Checklist
 
 - Validate delegated outputs for errors/scope violations.
-- Detect conflicts via overlapping `modifiedFiles` (A2 protocol).
-- On conflict: roll back to baseline and re-run safely.
+- Detect conflicts via overlapping `modifiedFiles` and/or overlapping declared scope.
+- On overlap or suspicious overrides: prefer forward reconciliation (spawn a reconcile job or fix sequentially) + main-agent review.
 - Combine into one coherent final answer (single consolidated user response).
