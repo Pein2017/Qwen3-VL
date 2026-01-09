@@ -5,7 +5,9 @@ training:
   # Lower policy update aggressiveness (LLM + aligner).
   # Note: logged `learning_rate` often corresponds to the first optimizer param-group (may be ViT),
   # so don't rely on logs to confirm LLM/aligner LR without inspecting optimizer groups.
-  run_name: epoch_3-ebs32-gbs32-temp0.4-llm_lr-4e-6-vit_lr-2e-7-aligner_lr-6e-6-lowaug
+  run_name: epoch_3-ebs32-gbs32-temp0.4-beta0.6-llm_lr-4e-6-vit_lr-2e-7-aligner_lr-7.5e-6-aug_off-doraLast12VIT-last8LLM-alignerMLP
+  output_dir: ./output/1-7/new_schema-4B-dense-grpo-2048
+  logging_dir: ./tb/1-7/new_schema-4B-dense-grpo-2048
   learning_rate: 4.0e-6
   aligner_lr: 7.5e-6
   vit_lr: 2.0e-7
@@ -15,9 +17,20 @@ rlhf:
   # Reduce rollout variance / KL drift.
   temperature: 0.4
   top_p: 0.9
+  beta: 0.6
 
-# NOTE: This is a low-LR + low-aug baseline config. For the unified "last 12 ViT + last 8 LLM + aligner MLP"
-# DoRA policy and beta setting, prefer dense_2048_lowaug_t04_low_lr_unified.yaml.
+tuner:
+  # DoRA placement policy for post-GRPO dense runs:
+  # - Always adapt aligner MLPs (merger + deepstack_merger_list.*)
+  # - Adapt the later half of ViT blocks (12-23 for depth=24) => "last 12"
+  # - Adapt the last 8 LLM blocks (28-35 for num_hidden_layers=36)
+  #
+  # NOTE: this regex matches MODULE NAMES (not parameter names).
+  # Keep this as a SINGLE LINE (no YAML folding), otherwise whitespace becomes part of the regex
+  # and LoRA/DoRA injection can silently match nothing.
+  target_regex: '^(model\.visual\.merger\.(linear_fc1|linear_fc2)|model\.visual\.deepstack_merger_list\.(0|1|2)\.(linear_fc1|linear_fc2)|model\.visual\.blocks\.(1[2-9]|2[0-3])\.(attn\.(qkv|proj)|mlp\.(linear_fc1|linear_fc2))|model\.language_model\.layers\.(2[8-9]|3[0-5])\.(self_attn\.(q_proj|k_proj|v_proj|o_proj)|mlp\.(gate_proj|up_proj|down_proj)))$'
+  # Ensure no full-module finetuning is enabled implicitly.
+  modules_to_save: []
 
 custom:
   # RL is variance-sensitive; keep augmentation *much* lighter than SFT.
@@ -25,7 +38,7 @@ custom:
   # 1) higher bypass probability, and
   # 2) lower op probabilities + weaker ranges.
   augmentation:
-    enabled: true
+    enabled: false
     bypass_prob: 0.35
     ops:
       - name: hflip
