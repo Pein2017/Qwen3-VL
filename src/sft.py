@@ -314,8 +314,13 @@ def main():
     augmenter = None
     bypass_prob = float(custom_config.bypass_prob)
     aug_cfg = custom_config.augmentation
+    augmentation_enabled = True
+    if aug_cfg is None:
+        augmentation_enabled = False
+    elif isinstance(aug_cfg, dict):
+        augmentation_enabled = bool(aug_cfg.get("enabled", True))
     curriculum_cfg = None
-    if isinstance(aug_cfg, dict) and aug_cfg.get("enabled", True):
+    if isinstance(aug_cfg, dict) and augmentation_enabled:
         try:
             # Ensure ops are registered by importing ops module
             from .datasets.augmentation import ops as _register_ops  # noqa: F401
@@ -338,10 +343,17 @@ def main():
     if curriculum_cfg is None:
         curriculum_cfg = custom_config.augmentation_curriculum
     if curriculum_cfg:
-        if augmenter is None:
+        if not augmentation_enabled:
+            logger.info(
+                "Augmentation is disabled (custom.augmentation.enabled=false); "
+                "ignoring augmentation curriculum config."
+            )
+            curriculum_cfg = None
+        elif augmenter is None:
             raise ValueError(
                 "augmentation curriculum requires a built augmentation pipeline"
             )
+    if curriculum_cfg:
         try:
             scheduler = AugmentationCurriculumScheduler.from_config(
                 base_bypass=bypass_prob,
