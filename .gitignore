@@ -74,7 +74,11 @@
 **/.DS_Store
 **/.vscode/
 **/.idea/
-**/.codex/
+# Ignore Codex runtime state, but keep checked-in skills portable
+**/.codex/**
+!**/.codex/
+!**/.codex/skills/
+!**/.codex/skills/**
 **/*.swp
 **/*.swo
 **/*~
