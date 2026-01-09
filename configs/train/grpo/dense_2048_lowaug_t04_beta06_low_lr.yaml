@@ -1,0 +1,10 @@
+extends:
+  - dense_2048_lowaug_t04_low_lr.yaml
+
+training:
+  # Stronger KL regularization vs beta=0.04 to reduce eval_kl drift.
+  run_name: epoch_3-ebs32-gbs32-temp0.4-beta0.06-llm_lr-4e-6-vit_lr-2e-7-aligner_lr-7.5e-6-lowaug-smoothcurr
+
+rlhf:
+  beta: 0.06
+

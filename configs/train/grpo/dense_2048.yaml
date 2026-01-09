@@ -40,7 +40,4 @@ custom:
   fusion_config: configs/fusion/variants/bbu_rru_dense_grpo_2048.yaml
   val_sample_limit: 240
   # Disable CHORD (SFT-mixed loss) to reduce VRAM / step time in GRPO.
-  grpo:
-    chord:
-      enabled: false
 

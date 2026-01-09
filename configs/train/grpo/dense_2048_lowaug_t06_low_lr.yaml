@@ -1,0 +1,10 @@
+extends:
+  - dense_2048_lowaug_t04_low_lr.yaml
+
+training:
+  # More exploration vs temp=0.4, while keeping the same low-LR + low-aug baseline.
+  run_name: epoch_3-ebs32-gbs32-temp0.6-llm_lr-4e-6-vit_lr-2e-7-aligner_lr-7.5e-6-lowaug-smoothcurr
+
+rlhf:
+  temperature: 0.6
+
