@@ -2,24 +2,27 @@ extends:
   - dense_2048_lowaug_t04_low_lr.yaml
 
 training:
-  # DoRA placement policy for post-GRPO dense runs:
-  # - Always adapt aligner MLPs (merger + deepstack_merger_list.*)
-  # - Adapt the later half of ViT blocks (12-23 for depth=24)
-  # - Adapt the last 8 LLM blocks (28-35 for num_hidden_layers=36)
-  #
-  # Motivation: small-object misses are typically vision-limited; keep LLM changes local to the tail to
-  # reduce language drift after SFT.
-  run_name: epoch_3-ebs32-gbs32-temp0.4-llm_lr-4e-6-vit_lr-2e-7-aligner_lr-7.5e-6-lowaug-smoothcurr-doraPolicyA
+  # Unified GRPO dense config:
+  # - Low LR baseline (inherit vit/llm/aligner LR unchanged)
+  # - Low-strength augmentation + curriculum (inherit)
+  # - temperature=0.4 (inherit)
+  # - beta=0.6 (override)
+  # - DoRA policy: last 12 ViT blocks + last 8 LLM blocks + all aligner MLPs
+  run_name: epoch_3-ebs32-gbs32-temp0.4-beta0.6-llm_lr-4e-6-vit_lr-2e-7-aligner_lr-7.5e-6-lowaug-smoothcurr-doraLast12VIT-last8LLM-alignerMLP
+
+rlhf:
+  beta: 0.6
 
 tuner:
-  # Keep DoRA enabled (inherited), but restrict where adapters are injected.
   # NOTE: this regex matches MODULE NAMES (not parameter names).
   #
   # Layer indices are derived from the model checkpoint:
   # - ViT depth=24 => blocks 0..23 (use 12..23)
   # - LLM num_hidden_layers=36 => layers 0..35 (use 28..35)
+  #
   # Keep this as a SINGLE LINE (no YAML folding), otherwise whitespace becomes part of the regex
-  # and LoRA injection can silently match nothing.
+  # and LoRA/DoRA injection can silently match nothing.
   target_regex: '^(model\.visual\.merger\.(linear_fc1|linear_fc2)|model\.visual\.deepstack_merger_list\.(0|1|2)\.(linear_fc1|linear_fc2)|model\.visual\.blocks\.(1[2-9]|2[0-3])\.(attn\.(qkv|proj)|mlp\.(linear_fc1|linear_fc2))|model\.language_model\.layers\.(2[8-9]|3[0-5])\.(self_attn\.(q_proj|k_proj|v_proj|o_proj)|mlp\.(gate_proj|up_proj|down_proj)))$'
   # Ensure no full-module finetuning is enabled implicitly.
   modules_to_save: []
+

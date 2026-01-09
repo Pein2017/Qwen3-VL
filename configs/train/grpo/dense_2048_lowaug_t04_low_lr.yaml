@@ -16,6 +16,9 @@ rlhf:
   temperature: 0.4
   top_p: 0.9
 
+# NOTE: This is a low-LR + low-aug baseline config. For the unified "last 12 ViT + last 8 LLM + aligner MLP"
+# DoRA policy and beta setting, prefer dense_2048_lowaug_t04_low_lr_unified.yaml.
+
 custom:
   # RL is variance-sensitive; keep augmentation *much* lighter than SFT.
   # We do this via:
