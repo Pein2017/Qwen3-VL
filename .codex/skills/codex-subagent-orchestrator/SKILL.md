@@ -167,7 +167,7 @@ Use a consistent prompt envelope to keep cross-agent “conversation” coherent
 ```
 Context: Delegated sub-agent task (spawned job).
 
-Shared objective (1–2 sentences):
+Shared objective (within 5 sentences):
 <why this subtask exists / what the user ultimately needs>
 
 Subtask label:

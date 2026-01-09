@@ -1,6 +1,6 @@
 # Technical Report: AI Group Quality Inspection Pipeline (Qwen3‑VL)
 
-This report documents the end-to-end “group quality inspection” system in this repository: offline data preprocessing → supervised fine-tuning (SFT) training → two-stage inference (Stage‑A/Stage‑B) for mission-scoped group-level pass/fail verdicts. It focuses on **processes, stages, and workflows**; configuration syntax and CLI flags are intentionally de-emphasized.
+This report documents the end-to-end “group quality inspection” system in this repository: offline data preprocessing → **two-stage training (SFT → GRPO post-training)** → two-stage inference (Stage‑A/Stage‑B) for mission-scoped group-level pass/fail verdicts. It focuses on **processes, stages, and workflows**; configuration syntax and CLI flags are intentionally de-emphasized.
 
 Scope emphasis:
 - Stage‑B rule-search (tree‑growth / decision‑tree‑like exploration) as the primary training‑free optimization path.
@@ -16,7 +16,8 @@ This report is **self‑contained**: assumptions, interfaces, and behaviors are 
 
 The system reviews **missions** (inspection programs) for telecom equipment installation quality (BBU/RRU). Each **ticket/group** is a set of images for a single mission, labeled as pass/fail by human operations. The pipeline produces:
 
-- **Training-ready JSONL** for dense-caption and summary-mode SFT (optional offline preprocessing).
+- **Training-ready JSONL** for dense-caption and summary-mode training (consumed by both SFT and GRPO post-training).
+- **A shared Qwen3‑VL checkpoint** produced by SFT → GRPO post-training (typically adapter-based and then merged for inference).
 - **Stage‑A evidence JSONL**: per-image structured summaries designed to cover rare/long-tail objects.
 - **Stage‑B verdicts**: group-level binary decisions; the underlying *model output* is enforced to follow a strict two-line protocol:
   - `Verdict: 通过 / 不通过`
@@ -25,7 +26,7 @@ The system reviews **missions** (inspection programs) for telecom equipment inst
 
 Stage‑B is **training‑free**: instead of fine‑tuning per mission, it refines **mission guidance** via rule‑search (proposer‑generated candidates + metric gates) rather than unconstrained self‑reflection.
 
-> Update (2025‑12): Stage‑B executes rule_search only. Legacy selection/need‑review loops are inactive; compatibility types (e.g., deterministic signals) remain but are not used for selection.
+> Update (2026‑01): Stage‑B executes `rule_search` only. Legacy selection/need‑review loops are inactive; compatibility types (e.g., deterministic signals) remain but are not used for selection.
 
 Canonical mission names and focus definitions (used across Stage‑A and Stage‑B) live in `src/config/missions.py`:
 - `BBU安装方式检查（正装）`
@@ -39,17 +40,20 @@ Canonical mission names and focus definitions (used across Stage‑A and Stage�
 flowchart LR
   A[Raw annotations + images] --> B[data_conversion/ (optional offline conversion)]
   B --> C[Training JSONL (dense + summary contract)]
-  C --> D[SFT training (src/sft.py)]
-  D --> E[Qwen3‑VL checkpoint (+ optional LoRA)]
-  E --> F[Stage‑A per-image summarization (src/stage_a/)]
-  F --> G[Stage‑A evidence JSONL]
-  G --> H[Stage‑B rule-search loop (src/stage_b/)]
-  H --> I[rule_candidates.jsonl / benchmarks.jsonl]
-  H --> J[guidance.json + snapshots (auditable)]
+  C --> D[SFT (src/sft.py / SwiftSft)]
+  D --> E[SFT checkpoint (+LoRA/DoRA)]
+  E --> F[GRPO post-training (src/sft.py / SwiftRLHF, rlhf_type=grpo)]
+  F --> G[Qwen3‑VL checkpoint (GRPO, merged or adapter)]
+  G --> H[Stage‑A per-image summarization (src/stage_a/)]
+  H --> I[Stage‑A evidence JSONL]
+  I --> J[Stage‑B rule-search loop (src/stage_b/)]
+  J --> K[rule_candidates.jsonl / benchmarks.jsonl]
+  J --> L[guidance.json + snapshots (auditable)]
 ```
 
 Key entrypoints (orchestration wrappers):
-- Training: `scripts/train.sh` → `src/sft.py`
+- Training (SFT/GRPO): `scripts/train.sh` → `src/sft.py` (SwiftSft or SwiftRLHF)
+- GRPO server-rollout (optional): `scripts/grpo_server_train.sh` → `swift rollout` + `src/sft.py`
 - Stage‑A: `scripts/stage_a.sh` → `src/stage_a/cli.py`
 - Stage‑B: `scripts/stage_b.sh` → `src/stage_b/runner.py`
 - Dataset fusion (optional): `scripts/fuse_datasets.py` → `src/datasets/unified_fusion_dataset.py`
@@ -104,8 +108,9 @@ The pipeline is organized around `UnifiedProcessor` (`data_conversion/pipeline/u
 
 6. **Summary generation**
    - `data_conversion/pipeline/summary_builder.py` produces a **JSON-string** `summary` with per-category stats:
-     - required keys: `dataset`, `统计`
-     - `异常` is included only when non-zero; BBU includes `备注` only when non-empty; RRU may include `分组统计`
+     - required key: `统计`
+     - BBU includes `备注` only when non-empty; RRU may include `分组统计`
+     - `dataset` and `异常` keys are **not emitted** (and are treated as contract violations in training corpora)
    - Only observed values are counted (no missing/third-state/遮挡 placeholders).
    - OCR/备注 are free text: whitespace removed only; punctuation preserved; unreadable → `可读性=不可读`.
    - Fail-fast if objects are missing or any `desc` is empty; irrelevant-image samples keep `summary: 无关图片` and bypass the builder.
@@ -135,6 +140,7 @@ Key invariants (contract-level):
 - Top-level keys: `images`, `objects`, `width`, `height`, optional `summary`, optional `metadata`.
 - Dense mode requires a non-empty `objects` list; each object must include `desc` and **exactly one** geometry key among `bbox_2d`, `poly`, `line` (flat even-length list of x/y values). `quad` is rejected in favor of `poly`.
 - Summary mode requires a non-empty `summary` JSON string (single line) or the literal `无关图片`; `objects` may be present but is not required for summary-only training.
+- Summary JSON structure (BBU/RRU): top-level `统计` is required; `备注` (BBU only, non-empty) and `分组统计` (RRU only) are optional. `dataset` / `异常` keys are forbidden to keep the contract stable.
 - `desc` must be a non-empty string with no control newlines/tabs. For BBU/RRU it uses comma‑separated `key=value` pairs with **no spaces** and `类别` first. `文本`/`备注` are free text: whitespace removed only; punctuation (including `,|=`) is preserved; unreadable → `可读性=不可读`. Any third-state placeholders are not emitted.
 - **Groups (RRU only)**: group membership is encoded directly in `desc` as `组=<id>` (multiple groups joined with `|` if present). BBU MUST NOT include `组`. There is **no top‑level** `groups` field.
 - **Station distance (RRU only)**: represented as `类别=站点距离,站点距离=<int>` and carried through to summary stats as `站点距离`.
@@ -143,7 +149,7 @@ Key invariants (contract-level):
 #### Example: minimal (demo) record
 
 ```json
-{"images":["../images/QC-20230106-0000211_16517.jpeg"],"objects":[{"bbox_2d":[48, 76, 312, 428],"desc":"类别=BBU设备,品牌=示例,可见性=部分,挡风板需求=免装"},{"poly":[360, 120, 480, 120, 480, 260, 360, 260],"poly_points":4,"desc":"类别=标签,文本=NR900-BBU"}],"summary":"{\"dataset\": \"BBU\", \"统计\": [{\"类别\": \"BBU设备\", \"品牌\": {\"示例\": 1}, \"可见性\": {\"部分\": 1}, \"挡风板需求\": {\"免装\": 1}}, {\"类别\": \"标签\", \"文本\": {\"NR900-BBU\": 1}}]}","width":532,"height":728}
+{"images":["../images/QC-20230106-0000211_16517.jpeg"],"objects":[{"bbox_2d":[48, 76, 312, 428],"desc":"类别=BBU设备,品牌=示例,可见性=部分,挡风板需求=免装"},{"poly":[360, 120, 480, 120, 480, 260, 360, 260],"poly_points":4,"desc":"类别=标签,文本=NR900-BBU"}],"summary":"{\"统计\": [{\"类别\": \"BBU设备\", \"品牌\": {\"示例\": 1}, \"可见性\": {\"部分\": 1}, \"挡风板需求\": {\"免装\": 1}}, {\"类别\": \"标签\", \"文本\": {\"NR900-BBU\": 1}}]}","width":532,"height":728}
 ```
 
 #### Example: BBU record with mixed geometry + summary
@@ -171,7 +177,7 @@ Key invariants (contract-level):
       "desc": "类别=标签,文本=5GBBU接地线"
     }
   ],
-  "summary": "{\"dataset\": \"BBU\", \"统计\": [{\"类别\": \"BBU设备\", \"品牌\": {\"华为\": 1}, \"可见性\": {\"部分\": 1}, \"挡风板需求\": {\"免装\": 1}}, {\"类别\": \"BBU安装螺丝\", \"符合性\": {\"符合\": 1}}, {\"类别\": \"电线\", \"捆扎\": {\"整齐\": 1}}, {\"类别\": \"标签\", \"文本\": {\"5GBBU接地线\": 1}}], \"备注\": [\"无法判断品牌\"]}",
+  "summary": "{\"统计\": [{\"类别\": \"BBU设备\", \"品牌\": {\"华为\": 1}, \"可见性\": {\"部分\": 1}, \"挡风板需求\": {\"免装\": 1}}, {\"类别\": \"BBU安装螺丝\", \"符合性\": {\"符合\": 1}}, {\"类别\": \"电线\", \"捆扎\": {\"整齐\": 1}}, {\"类别\": \"标签\", \"文本\": {\"5GBBU接地线\": 1}}], \"备注\": [\"无法判断品牌\"]}",
   "width": 768,
   "height": 1024
 }
@@ -190,7 +196,7 @@ Key invariants (contract-level):
     { "line": [40, 1111, 16, 833, 165, 540, 138, 118], "desc": "类别=尾纤,标签=有标签,套管保护=有套管,组=1" },
     { "poly": [128, 840, 86, 852, 104, 954, 149, 941], "desc": "类别=标签,文本=900M-RRU2-接地,组=2" }
   ],
-  "summary": "{\"dataset\": \"RRU\", \"统计\": [{\"类别\": \"站点距离\", \"站点距离\": {\"98\": 1}}, {\"类别\": \"接地线\", \"标签\": {\"有标签\": 1}}, {\"类别\": \"尾纤\", \"标签\": {\"有标签\": 1}, \"套管保护\": {\"有套管\": 1}}, {\"类别\": \"标签\", \"文本\": {\"900M-RRU2-接地\": 1}}], \"分组统计\": {\"1\": 1, \"2\": 2}}",
+  "summary": "{\"统计\": [{\"类别\": \"站点距离\", \"站点距离\": {\"98\": 1}}, {\"类别\": \"接地线\", \"标签\": {\"有标签\": 1}}, {\"类别\": \"尾纤\", \"标签\": {\"有标签\": 1}, \"套管保护\": {\"有套管\": 1}}, {\"类别\": \"标签\", \"文本\": {\"900M-RRU2-接地\": 1}}], \"分组统计\": {\"1\": 1, \"2\": 2}}",
   "width": 672,
   "height": 1504
 }
@@ -198,13 +204,15 @@ Key invariants (contract-level):
 
 ---
 
-## 3. Training Pipeline (SFT)
+## 3. Training Pipeline (SFT → GRPO)
 
-Training is a **config-first** SFT pipeline designed to learn:
-- **Dense captioning**: geometry-grounded object descriptions (bbox/poly/line + hierarchical `desc`).
-- **Summary mode**: single-line per-image summaries consistent with production formatting rules.
+Training is a **config-first, two-stage** pipeline:
+- **Stage 1 (SFT)** learns dense captioning and summary-mode formatting.
+- **Stage 2 (GRPO post-training)** refines the same model checkpoint with reward functions (format stability for summary, localization-first scoring for dense).
 
-Implementation anchors: `src/sft.py`, `src/config/loader.py`, `src/config/schema.py`, `src/datasets/`
+Both stages use the same YAML-driven entrypoint (`scripts/train.sh` → `src/sft.py`): the presence of `rlhf.rlhf_type` in the YAML switches the runner from `SwiftSft` (SFT) to `SwiftRLHF` (GRPO).
+
+Implementation anchors: `src/sft.py`, `src/config/loader.py`, `src/config/schema.py`, `src/config/grpo.py`, `src/rlhf/grpo/`, `src/datasets/`, `configs/train/`
 
 ### 3.1 Config-first training lifecycle
 
@@ -212,9 +220,14 @@ The training runner (`src/sft.py`) intentionally minimizes runtime CLI surface a
 
 1. **Load + validate configuration**
    - `src/config/loader.py::ConfigLoader.load_training_config(...)` loads YAML (with inheritance), resolves prompts, and materializes typed dataclasses (`TrainingConfig`) via `src/config/schema.py`.
+   - GRPO-only knobs are validated by `src/config/grpo.py::validate_grpo_config(...)` (called from both `scripts/validate_sft_config.py` and `src/sft.py`).
    - Training fails fast if the configuration requests deprecated features (e.g., packing is explicitly rejected in `src/sft.py`).
 
-2. **Build datasets (direct or fused)**
+2. **Select the training pipeline (SFT vs GRPO)**
+   - If `rlhf.rlhf_type` is set (e.g., `grpo`), `src/sft.py` runs a post-training pipeline (`SwiftRLHF`) and registers custom GRPO rewards (`src/rlhf/grpo/`).
+   - Otherwise, `src/sft.py` runs a supervised pipeline (`SwiftSft`).
+
+3. **Build datasets (direct or fused)**
    - Direct JSONL: `src/datasets/dense_caption.py::BaseCaptionDataset.from_jsonl(...)`
    - Fusion (target + auxiliary sources): `src/datasets/unified_fusion_dataset.py::FusionCaptionDataset` with config types in `src/datasets/fusion.py`.
 
@@ -237,10 +250,10 @@ The training runner (`src/sft.py`) intentionally minimizes runtime CLI surface a
    - **Prompt priority**: fusion resolves prompts with a clear precedence (global defaults → template/domain prompts → per-dataset overrides) via `src/config/prompts.py` and `FusionCaptionDataset._resolve_prompts(...)`.
    - **Telemetry and metrics**: the training collator attaches `dataset_labels` derived from `_fusion_source` (`src/data_collators/dataset_metrics.py`), enabling per-dataset/per-domain metrics and debugging (useful to confirm sources are doing their “anti-forgetting” job without dominating training).
 
-3. **Prepare the model (LoRA/adapters) before trainer construction**
-   - `src/sft.py` calls `SwiftSft.prepare_model(...)` before creating the trainer, ensuring adapter state is correct for optimization and checkpointing.
+4. **Prepare the model (LoRA/adapters) before trainer construction**
+   - `src/sft.py` calls `prepare_model(...)` on the underlying ms-swift pipeline (SwiftSft for SFT, SwiftRLHF for GRPO) before creating the trainer, ensuring adapter state is correct for optimization and checkpointing.
 
-4. **Train with padded batches**
+5. **Train with padded batches**
    - Packing is removed from this runtime; the system uses padded batches only and enforces this by validation in `src/sft.py`.
 
 ### 3.2 Dataset builders and message formatting (dense vs summary)
@@ -301,13 +314,36 @@ Rank-aware logging is standardized via `src/utils/logger.py`:
 - `get_logger(...)` emits only from rank 0 by default, with opt-in verbose mode for all ranks.
 - This is used throughout training and inference entrypoints (`src/sft.py`, `src/stage_a/`, `src/stage_b/`).
 
+### 3.7 GRPO post-training (reward-driven refinement)
+
+GRPO (Group Relative Policy Optimization) is the **second stage after SFT**. Unlike Stage‑B rule‑search (which is training-free), GRPO is a **weight-updating** post-training stage (typically adapter-based) that uses reward functions to stabilize and improve outputs while keeping the same chat template and dataset contracts.
+
+Implementation anchors: `src/rlhf/grpo/`, `src/config/grpo.py`, `configs/train/grpo/`, `scripts/grpo_server_train.sh`
+
+**Enable and run**
+- Enable GRPO by setting `rlhf.rlhf_type: grpo` in the training YAML (see `configs/train/grpo/`).
+- Config examples: `configs/train/grpo/summary_2048.yaml`, `configs/train/grpo/dense_2048.yaml` (and server-rollout variants like `configs/train/grpo/summary_server.yaml`).
+- Launch via `scripts/train.sh` (vLLM colocate rollouts) or `scripts/grpo_server_train.sh` (server vLLM rollout + training in one wrapper).
+
+**Reward interface**
+- Rewards are selected by `rlhf.reward_funcs` using namespaced identifiers (e.g., `summary.format`, `dense.loc_mean_fbeta`); optional weights are provided via `rlhf.reward_weights`.
+- Grouped sampling is controlled by `rlhf.num_generations` and `rlhf.generation_batch_size` (validated to be divisible in `src/config/grpo.py`).
+
+**GRPO data contract (reward-time inputs)**
+- Summary GRPO consumes `metadata.summary_ref` (ground-truth summary JSON from the dataset loader) and treats the literal `无关图片` as a special case.
+- Dense GRPO consumes `assistant_payload` (ground-truth object payload emitted by the dataset builder) to score schema correctness, geometry, and attributes.
+
+**Stability toggles**
+- Optional CHORD-style supervised mixing is exposed as `custom.grpo.chord` to stabilize training when reward variance collapses.
+- Optional periodic rollout dumps are exposed as `custom.grpo.dump` for lightweight debugging/telemetry.
+
 ---
 
 ## 4. Stage‑A Inference (Per-image Object Recognition & Summarization)
 
 Stage‑A generates **per-image evidence summaries** from raw images, producing an evidence JSONL that Stage‑B consumes.
 
-Implementation anchors: `src/stage_a/inference.py`, `src/stage_a/prompts.py`, `src/stage_a/cli.py`, `src/config/missions.py`
+Implementation anchors: `src/stage_a/inference.py`, `src/stage_a/prompts.py`, `src/stage_a/cli.py`, `src/prompts/summary_core.py`, `src/prompts/stage_a_summary.py`, `src/prompts/summary_profiles.py`, `src/generation/`, `src/config/missions.py`
 
 ### 4.1 Input discovery and ticket semantics
 
@@ -324,10 +360,10 @@ Key semantics:
 ### 4.2 Mission-aware prompting (runtime vs training)
 
 Stage‑A uses a **runtime** summary prompt that is richer than the training-minimal summary prompt:
-- System prompt: `src/stage_a/prompts.py::SUMMARY_SYSTEM_PROMPT` (derived from `src/config/prompts.py::SYSTEM_PROMPT_SUMMARY_RUNTIME`)
-- User prompt builder: `src/stage_a/prompts.py::build_user_prompt(...)`
-  - appends a “drawing/document image” guardrail (force `无关图片` for blueprint/CAD-like images)
-  - optionally appends a mission focus hint from `src/config/missions.py::STAGE_A_MISSION_FOCUS`
+- System prompt: built by `src/stage_a/prompts.py::build_system_prompt(...)`, which delegates to `src/prompts/stage_a_summary.py` and the active summary profile (`src/prompts/summary_profiles.py`).
+- User prompt: built by `src/stage_a/prompts.py::build_user_prompt(...)`, which includes the domain pack (BBU/RRU) when the selected profile enables it.
+- The “non-site / blueprint / document” guardrail (force the literal `无关图片`) is a hard rule in the Stage‑A runtime prompt (`src/prompts/stage_a_summary.py`).
+- Mission-specific prior rules (when present) are injected via `src/prompts/summary_core.py::MISSION_SPECIFIC_PRIOR_RULES` (profile-dependent), not via a separate mission-focus injection table under `src/config/missions.py`.
 
 This separation keeps SFT from overfitting to business priors while Stage‑A runtime still gets operational guardrails.
 
@@ -339,7 +375,7 @@ Stage‑A writes streaming JSONL records (one per group) with strict coverage va
 - `label` (`pass|fail`)
 - `images` (list of filenames; traceability only)
 - `per_image` (object mapping `image_1`, `image_2`, … to summary strings)
-- Optional: `label_source`, `label_timestamp` (if upstream adds provenance)
+- Optional postprocess may add annotation fields (e.g., `gt_fail_reason_text`) via scripts (see `scripts/stage_a.sh` and `scripts/add_gt_fail_reason_to_stage_a.py`), but Stage‑A itself emits only the fields above.
 
 Example record:
 
@@ -354,15 +390,15 @@ Example record:
     "QC-20231218-0025165_4127784.jpeg"
   ],
   "per_image": {
-    "image_1": "<DOMAIN=BBU>, <TASK=SUMMARY>\\n{\"dataset\": \"BBU\", \"统计\": [{\"类别\": \"BBU设备\", \"品牌\": {\"华为\": 1}, \"可见性\": {\"部分\": 1}}, {\"类别\": \"BBU安装螺丝\", \"符合性\": {\"符合\": 1}}, {\"类别\": \"标签\", \"文本\": {\"5GBBU接地线\": 1}}]}",
-    "image_2": "<DOMAIN=BBU>, <TASK=SUMMARY>\\n{\"dataset\": \"BBU\", \"统计\": [{\"类别\": \"电线\", \"捆扎\": {\"整齐\": 1}}, {\"类别\": \"标签\", \"文本\": {\"NR900-BBU\": 1}}]}",
-    "image_3": "<DOMAIN=BBU>, <TASK=SUMMARY>\\n{\"dataset\": \"BBU\", \"统计\": [{\"类别\": \"挡风板\", \"安装方向\": {\"方向正确\": 1}}]}"
+    "image_1": "{\"统计\": [{\"类别\": \"BBU设备\", \"品牌\": {\"华为\": 1}, \"可见性\": {\"部分\": 1}}, {\"类别\": \"BBU安装螺丝\", \"符合性\": {\"符合\": 1}}, {\"类别\": \"标签\", \"文本\": {\"5GBBU接地线\": 1}}]}",
+    "image_2": "{\"统计\": [{\"类别\": \"电线\", \"捆扎\": {\"整齐\": 1}}, {\"类别\": \"标签\", \"文本\": {\"NR900-BBU\": 1}}]}",
+    "image_3": "{\"统计\": [{\"类别\": \"挡风板\", \"安装方向\": {\"方向正确\": 1}}]}"
   }
 }
 ```
 
 Notes:
-- Stage‑A attempts to sanitize model outputs that accidentally return JSON objects (it extracts `image_1`/`图片_1` or joins string values) while otherwise preserving raw content, including the optional `<DOMAIN=...>, <TASK=...>` prefix line (`sanitize_single_image_summary` in `src/stage_a/inference.py`).
+- Stage‑A sanitizes model outputs into a stable single-line summary string: it extracts the JSON line from the typical two-line output (`<DOMAIN=...>, <TASK=SUMMARY>` + JSON), normalizes separators, and falls back to raw text only when JSON extraction fails (`sanitize_single_image_summary` in `src/stage_a/inference.py`).
 - Stage‑A applies EXIF orientation fixes (`data_conversion/utils/exif_utils.py`, `apply_exif_orientation`) before encoding images.
 
 ### 4.4 Operational verification hooks
@@ -371,12 +407,13 @@ Stage‑A supports optional verification logging to debug token/grid alignment a
 - broken image decoding
 - incorrect processor pixel budgets
 - mismatched image token counts vs `image_grid_thw`
+- Stage‑A uses the centralized `src/generation` engine; batched VLM generation defaults to **left padding** (`VlmPreprocessOptions.padding_side="left"`) for stability with variable-length prompts.
 
 ---
 
 ## 5. Stage‑B Inference (Rule‑Search, Training‑Free)
 
-Stage‑B consumes Stage‑A evidence summaries and produces mission‑scoped group verdicts. It is **training‑free**: the model weights remain fixed, while **mission guidance** is evolved via **rule‑search** (tree‑growth / decision‑tree‑like exploration). Rule‑search is the only active Stage‑B mode in the current implementation; legacy selection/need‑review loops are not executed, though compatibility types remain.
+Stage‑B consumes Stage‑A evidence summaries and produces mission‑scoped group verdicts. It is **training‑free**: the model weights remain fixed, while **mission guidance** is evolved via **rule‑search** (tree‑growth / decision‑tree‑like exploration). Rule‑search is the only active Stage‑B mode in the current implementation (configs require `rule_search`, and `src/stage_b/runner.py` executes rule_search only); legacy selection/need‑review loops are not executed, though compatibility types remain.
 
 ### 5.1 Input contract: Stage‑A JSONL → `GroupTicket`
 
@@ -414,7 +451,7 @@ Each ticket is prompted with a system+user pair:
   - per‑image summaries (sanitized), plus a derived `ImageN(obj=...)` statistic,
   - optional aggregation blocks for RRU missions (installation/position/cable summaries by station distance).
 
-Stage‑A summaries are expected to contain **no third‑state markers**. Any stray forbidden tokens are rejected before Stage‑B prompting to avoid third‑state leakage.
+Stage‑B forbids “third-state / pending” language in its **own outputs** (strict two-line verdict parsing) and in candidate rule text/rationales used for guidance evolution. Stage‑A summaries are treated as evidence text and are passed through after sanitization.
 
 **Output contract (strict two lines):**
 - `Verdict: 通过|不通过` (binary only)
@@ -488,7 +525,8 @@ This section ties the stages together as an operational workflow.
    - Outputs can be validated with `scripts/validate_dense_jsonl_contract.py`.
 
 2. **Train / update the shared Qwen3‑VL checkpoint**
-   - SFT training is executed via `src/sft.py` (wrapped by `scripts/train.sh`).
+   - Stage 1 SFT is executed via `src/sft.py` (wrapped by `scripts/train.sh`).
+   - Stage 2 GRPO post-training is executed via the same entrypoint when `rlhf.rlhf_type=grpo` is set in the YAML (optionally with `scripts/grpo_server_train.sh` for server rollouts).
    - Training may be direct JSONL or fusion-based; augmentation is applied only when configured and preserves geometry.
 
 3. **Stage‑A evidence generation**
@@ -512,10 +550,12 @@ flowchart TD
   subgraph Training["Training"]
     A3 --> B1[src/datasets/ + template encode]
     B1 --> B2[src/sft.py (SwiftSft)]
-    B2 --> B3[checkpoint (+LoRA)]
+    B2 --> B3[SFT checkpoint (+LoRA)]
+    B3 --> B4[src/sft.py (SwiftRLHF / GRPO)]
+    B4 --> B5[GRPO checkpoint (merged or adapter)]
   end
   subgraph Runtime["Runtime"]
-    B3 --> C1[Stage‑A: src/stage_a]
+    B5 --> C1[Stage‑A: src/stage_a]
     C1 --> C2[Stage‑A evidence JSONL]
     C2 --> D1[Stage‑B: src/stage_b]
     D1 --> D2[rule_candidates.jsonl + benchmarks.jsonl]
