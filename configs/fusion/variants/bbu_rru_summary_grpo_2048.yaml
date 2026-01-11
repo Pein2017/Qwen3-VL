@@ -4,6 +4,15 @@ targets:
   - name: bbu_summary
     train_jsonl: data_new_schema/bbu_full_2048_poly/train.jsonl
     val_jsonl: data_new_schema/bbu_full_2048_poly/val.jsonl
+    augmentation_enabled: true
+    curriculum_enabled: false
   - name: rru_summary
     train_jsonl: data_new_schema/rru_full_2048_poly/train.jsonl
     val_jsonl: data_new_schema/rru_full_2048_poly/val.jsonl
+    augmentation_enabled: true
+    curriculum_enabled: false
+  # Keep irrelevant summary data small to avoid dominating the policy gradient.
+  - name: irrelevant_summary
+    ratio: 0.1
+
+sources: []

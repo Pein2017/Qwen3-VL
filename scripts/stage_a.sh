@@ -9,9 +9,9 @@ set -euo pipefail
 
 # Fixed configuration
 # CHECKPOINT="output/11-30/summary_merged/epoch_10-lr_2e-4-bs_32-res_1024"
-CHECKPOINT="output/1-1/grpo-merged/checkpoint-500"
+CHECKPOINT="output/1-8/grpo_summary_merged/checkpoint-800"
 BASE_INPUT_DIR="group_data/scene_2.0_order"
-BASE_OUTPUT_DIR="output_post/stage_a_grpo-1-4"
+BASE_OUTPUT_DIR="output_post/stage_a_grpo-1-8"
 
 # Environment variable overrides (lowercase)
 # BBU接地线检查
@@ -79,7 +79,7 @@ fi
 
 # Fixed parameters (with env overrides)
 BATCH_SIZE_PER_RANK="${batch_size_per_rank:-32}"
-MAX_PIXELS="${max_pixels:-1048576}"
+MAX_PIXELS="${max_pixels:-2097152}"
 MAX_NEW_TOKENS="${max_new_tokens:-1024}"
 TEMPERATURE="0.0001"
 TOP_P="1.0"

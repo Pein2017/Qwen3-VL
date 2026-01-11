@@ -6,7 +6,7 @@ rlhf:
   beta: 0.04
   advantage_estimator: reinforce_plus_plus
   scale_rewards: batch
-  kl_in_reward: true
+  kl_in_reward: false
   num_generations: 4
   temperature: 0.7
   repetition_penalty: 1.05
