@@ -22,16 +22,16 @@ tuner:
   lora_bias: none
 
 training:
-  output_dir: ./output/12-27/new_schema-4B-dense
-  run_name: epoch_30-2_1_6
-  num_train_epochs: 30
+  output_dir: ./output/1-13/new_schema-4B-dense
+  run_name: epoch_50-eff_bs_32-llm_lr-8e-5-vit_lr-5e-5-alinger_lr-2e-4
+  num_train_epochs: 50
   per_device_train_batch_size: 1
   per_device_eval_batch_size: 2
   effective_batch_size: 32
   optimizer: multimodal
-  learning_rate: 2.0e-4
-  vit_lr: 1.0e-4
-  aligner_lr: 6.0e-4
+  learning_rate: 8.0e-5
+  vit_lr: 5.0e-5
+  aligner_lr: 2.0e-4
   lr_scheduler_type: cosine_warmup_with_min_lr
   lr_scheduler_kwargs:
     min_lr: 1.0e-6
@@ -54,8 +54,8 @@ training:
   save_only_model: true
   metric_for_best_model: eval_token_acc
   greater_is_better: true
-  save_delay_steps: 1800
-  logging_dir: ./tb/12-27/new_schema-4B
+  save_delay_steps: 2400
+  logging_dir: ./tb/1-13/new_schema-4B
   logging_steps: 10
   logging_first_step: true
 
