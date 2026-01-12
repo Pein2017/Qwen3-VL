@@ -79,12 +79,12 @@ custom:
   train_jsonl: data/bbu_full_768_poly/train.jsonl
   val_jsonl: data/bbu_full_768_poly/val.jsonl
   dump_conversation_path: output/conversation_text.txt
-  fusion_config: configs/fusion/variants/bbu_rru_dense_1024.yaml
+  fusion_config: configs/fusion/variants/bbu_rru_dense_plus_summary_1024.yaml
   token_type_metrics:
     enabled: true
     include: [bbu, rru, lvis]
     exclude: [lang_chat]
-  assistant_prefix_format: "<DOMAIN={domain}>, <TASK={task}>"
+  assistant_prefix_format: "<TASK={task}>, <DATASET={dataset}>"
   augmentation:
     enabled: true
     # NOTE (Curriculum Plan A): the curriculum scheduler starts from this base config
