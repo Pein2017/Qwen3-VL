@@ -7,6 +7,7 @@ from typing import Literal
 _DOMAIN_TOKENS = {
     "bbu": "BBU",
     "rru": "RRU",
+    "irrelevant": "IRRELEVANT",
 }
 
 
@@ -21,8 +22,8 @@ def resolve_task_token(mode: Literal["dense", "summary"]) -> str:
     return "SUMMARY" if mode == "summary" else "DETECTION"
 
 
-def build_assistant_prefix(*, fmt: str, domain: str, task: str) -> str:
-    return fmt.format(domain=domain, task=task).strip()
+def build_assistant_prefix(*, fmt: str, domain: str, task: str, dataset: str) -> str:
+    return fmt.format(domain=domain, task=task, dataset=dataset).strip()
 
 
 __all__ = [

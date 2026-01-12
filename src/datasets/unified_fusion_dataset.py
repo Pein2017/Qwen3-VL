@@ -750,13 +750,23 @@ class FusionCaptionDataset(BaseCaptionDataset):
                 prompt_template = alt_template
                 metadata["_fusion_template"] = alt_template
 
-        if self._assistant_prefix_format and policy.spec.domain == "target":
-            if mode == "summary":
-                metadata = record.get("metadata")
-                if not isinstance(metadata, dict):
-                    metadata = {}
-                    record["metadata"] = metadata
-                if metadata.get("_fusion_source") != self._IRRELEVANT_SOURCE:
+        if self._assistant_prefix_format:
+            metadata = record.get("metadata")
+            if not isinstance(metadata, dict):
+                metadata = {}
+                record["metadata"] = metadata
+
+            fusion_source = str(metadata.get("_fusion_source") or "").strip().lower()
+            dataset_token = str(policy.spec.key).strip().lower()
+            if fusion_source.startswith("irrelevant"):
+                dataset_token = "irrelevant"
+
+            should_prefix = (
+                policy.spec.domain == "target" or dataset_token == "irrelevant"
+            )
+
+            if should_prefix:
+                if mode == "summary":
                     template_name = metadata.get("_fusion_template")
                     if template_name == "summary_bbu":
                         domain_token = "BBU"
@@ -771,18 +781,23 @@ class FusionCaptionDataset(BaseCaptionDataset):
                         fmt=self._assistant_prefix_format,
                         domain=domain_token,
                         task=resolve_task_token(mode),
+                        dataset=dataset_token,
                     )
-            else:
-                domain_token = resolve_domain_token(policy.spec.key)
-                if domain_token is None:
-                    raise ValueError(
-                        f"assistant_prefix_format configured but unsupported dataset key {policy.spec.key}."
+                else:
+                    domain_token = resolve_domain_token(
+                        dataset_token
+                    ) or resolve_domain_token(policy.spec.key)
+                    if domain_token is None:
+                        raise ValueError(
+                            "assistant_prefix_format configured but unsupported dataset key "
+                            f"{policy.spec.key}."
+                        )
+                    assistant_prefix = build_assistant_prefix(
+                        fmt=self._assistant_prefix_format,
+                        domain=domain_token,
+                        task=resolve_task_token(mode),
+                        dataset=dataset_token,
                     )
-                assistant_prefix = build_assistant_prefix(
-                    fmt=self._assistant_prefix_format,
-                    domain=domain_token,
-                    task=resolve_task_token(mode),
-                )
 
         builder = JSONLinesBuilder(
             user_prompt=user_prompt,

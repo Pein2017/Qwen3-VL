@@ -189,6 +189,7 @@ class BaseCaptionDataset(Dataset[object]):
             fmt=self.assistant_prefix_format,
             domain=domain_token,
             task=resolve_task_token(mode),
+            dataset=self.dataset_name,
         )
 
     @staticmethod

@@ -680,9 +680,13 @@ class CustomConfig:
                 raise ValueError(
                     "custom.assistant_prefix_format must be a single-line string"
                 )
-            if "{domain}" not in fmt or "{task}" not in fmt:
+            if "{task}" not in fmt:
                 raise ValueError(
-                    "custom.assistant_prefix_format must include '{domain}' and '{task}' placeholders"
+                    "custom.assistant_prefix_format must include '{task}' placeholder"
+                )
+            if "{domain}" not in fmt and "{dataset}" not in fmt:
+                raise ValueError(
+                    "custom.assistant_prefix_format must include '{domain}' or '{dataset}' placeholder"
                 )
 
     @classmethod
