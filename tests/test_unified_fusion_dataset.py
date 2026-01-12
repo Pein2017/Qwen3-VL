@@ -200,6 +200,61 @@ def test_unified_fusion_mixed_modes(tmp_path: Path) -> None:
     assert template.system == "BASE_SYS"
 
 
+def test_unified_fusion_irrelevant_dense_emits_single_line(tmp_path: Path) -> None:
+    target_jsonl = tmp_path / "target.jsonl"
+    source_jsonl = tmp_path / "source.jsonl"
+    _write_jsonl(target_jsonl, [_basic_record()])
+    _write_jsonl(
+        source_jsonl,
+        [
+            {
+                "images": ["img.jpg"],
+                "objects": [{"bbox_2d": [0, 0, 10, 10], "desc": "irrelevant"}],
+                "summary": "无关图片",
+                "width": 10,
+                "height": 10,
+            }
+        ],
+    )
+
+    config_path = tmp_path / "fusion.json"
+    _write_fusion_config(
+        config_path,
+        target_train=target_jsonl,
+        source_train=source_jsonl,
+        ratio=1.0,
+        source_name="irrelevant_dense",
+        target_template="target_dense",
+        source_template="source_dense",
+        source_mode="dense",
+    )
+
+    dataset = FusionCaptionDataset(
+        fusion_config=FusionConfig.from_file(str(config_path)),
+        base_template=_StubTemplate(),
+        user_prompt="DEFAULT_USER",
+        emit_norm="none",
+        json_format="standard",
+        assistant_prefix_format="<TASK={task}>, <DATASET={dataset}>",
+        augmenter=None,
+        bypass_prob=0.0,
+        curriculum_state=None,
+        use_summary=False,
+        system_prompt_dense=None,
+        system_prompt_summary=None,
+        seed=23,
+        shuffle=False,
+    )
+
+    target_sample = dataset[0]
+    target_text = target_sample["messages"][-1]["content"][0]["text"]
+    assert target_text.splitlines()[0] == "<TASK=DETECTION>, <DATASET=bbu>"
+
+    irrelevant_sample = dataset[1]
+    irrelevant_text = irrelevant_sample["messages"][-1]["content"][0]["text"]
+    assert irrelevant_text == "无关图片"
+
+
 def test_unified_fusion_dense_requires_geometry(tmp_path: Path) -> None:
     target_jsonl = tmp_path / "target.jsonl"
     source_jsonl = tmp_path / "source.jsonl"

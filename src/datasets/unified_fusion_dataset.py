@@ -718,91 +718,93 @@ class FusionCaptionDataset(BaseCaptionDataset):
                 if mode == "summary"
                 else self.system_prompt_dense
             )
-        if mode == "summary":
-            metadata = record.get("metadata")
-            if not isinstance(metadata, dict):
-                metadata = {}
-                record["metadata"] = metadata
+        metadata = record.get("metadata")
+        if not isinstance(metadata, dict):
+            metadata = {}
+            record["metadata"] = metadata
+
+        fusion_source = str(metadata.get("_fusion_source") or "").strip().lower()
+        is_irrelevant = bool(fusion_source) and fusion_source.startswith("irrelevant")
+        builder_mode = "summary" if is_irrelevant else mode
+
+        # Summary mode (and irrelevant streams) store a reference for downstream auditors.
+        if mode == "summary" or is_irrelevant:
             summary_ref = record.get("summary")
             if isinstance(summary_ref, str) and summary_ref.strip():
                 metadata["summary_ref"] = summary_ref
-            if metadata.get("_fusion_source") == self._IRRELEVANT_SOURCE:
-                assistant_prefix = None
-                if self._split == "train":
-                    alt_template = self._pick_irrelevant_template(
-                        record,
-                        dataset_name=dataset_name,
-                        base_idx=base_idx,
-                        epoch=self._epoch,
-                    )
-                else:
-                    alt_template = self._pick_irrelevant_template(
-                        record,
-                        dataset_name=dataset_name,
-                        base_idx=base_idx,
-                    )
-                alt_system, alt_user = get_template_prompts(alt_template)
-                if alt_user:
-                    user_prompt = alt_user
-                if alt_system is not None:
-                    system_prompt = alt_system
-                prompt_source = "domain"
-                prompt_template = alt_template
-                metadata["_fusion_template"] = alt_template
 
-        if self._assistant_prefix_format:
-            metadata = record.get("metadata")
-            if not isinstance(metadata, dict):
-                metadata = {}
-                record["metadata"] = metadata
+        # Irrelevant streams always emit a single-line "无关图片" assistant payload
+        # (regardless of declared mode) and reuse summary prompts (alternating BBU/RRU).
+        if is_irrelevant:
+            assistant_prefix = None
+            summary = record.get("summary")
+            if not isinstance(summary, str) or not summary.strip():
+                record["summary"] = "无关图片"
 
-            fusion_source = str(metadata.get("_fusion_source") or "").strip().lower()
+            if self._split == "train":
+                alt_template = self._pick_irrelevant_template(
+                    record,
+                    dataset_name=dataset_name,
+                    base_idx=base_idx,
+                    epoch=self._epoch,
+                )
+            else:
+                alt_template = self._pick_irrelevant_template(
+                    record,
+                    dataset_name=dataset_name,
+                    base_idx=base_idx,
+                )
+            alt_system, alt_user = get_template_prompts(alt_template)
+            if alt_user:
+                user_prompt = alt_user
+            if alt_system is not None:
+                system_prompt = alt_system
+            prompt_source = "domain"
+            prompt_template = alt_template
+            metadata["_fusion_template"] = alt_template
+
+        if (
+            self._assistant_prefix_format
+            and policy.spec.domain == "target"
+            and not is_irrelevant
+        ):
             dataset_token = str(policy.spec.key).strip().lower()
-            if fusion_source.startswith("irrelevant"):
-                dataset_token = "irrelevant"
 
-            should_prefix = (
-                policy.spec.domain == "target" or dataset_token == "irrelevant"
-            )
-
-            if should_prefix:
-                if mode == "summary":
-                    template_name = metadata.get("_fusion_template")
-                    if template_name == "summary_bbu":
-                        domain_token = "BBU"
-                    elif template_name == "summary_rru":
-                        domain_token = "RRU"
-                    else:
-                        raise ValueError(
-                            "Summary template must be summary_bbu or summary_rru "
-                            f"for header construction; got {template_name!r}."
-                        )
-                    assistant_prefix = build_assistant_prefix(
-                        fmt=self._assistant_prefix_format,
-                        domain=domain_token,
-                        task=resolve_task_token(mode),
-                        dataset=dataset_token,
-                    )
+            if mode == "summary":
+                template_name = metadata.get("_fusion_template")
+                if template_name == "summary_bbu":
+                    domain_token = "BBU"
+                elif template_name == "summary_rru":
+                    domain_token = "RRU"
                 else:
-                    domain_token = resolve_domain_token(
-                        dataset_token
-                    ) or resolve_domain_token(policy.spec.key)
-                    if domain_token is None:
-                        raise ValueError(
-                            "assistant_prefix_format configured but unsupported dataset key "
-                            f"{policy.spec.key}."
-                        )
-                    assistant_prefix = build_assistant_prefix(
-                        fmt=self._assistant_prefix_format,
-                        domain=domain_token,
-                        task=resolve_task_token(mode),
-                        dataset=dataset_token,
+                    raise ValueError(
+                        "Summary template must be summary_bbu or summary_rru "
+                        f"for header construction; got {template_name!r}."
                     )
+                assistant_prefix = build_assistant_prefix(
+                    fmt=self._assistant_prefix_format,
+                    domain=domain_token,
+                    task=resolve_task_token(mode),
+                    dataset=dataset_token,
+                )
+            else:
+                domain_token = resolve_domain_token(policy.spec.key)
+                if domain_token is None:
+                    raise ValueError(
+                        "assistant_prefix_format configured but unsupported dataset key "
+                        f"{policy.spec.key}."
+                    )
+                assistant_prefix = build_assistant_prefix(
+                    fmt=self._assistant_prefix_format,
+                    domain=domain_token,
+                    task=resolve_task_token(mode),
+                    dataset=dataset_token,
+                )
 
         builder = JSONLinesBuilder(
             user_prompt=user_prompt,
             emit_norm=self.emit_norm,
-            mode=mode,
+            mode=builder_mode,
             json_format=self.json_format,
             assistant_prefix=assistant_prefix,
         )
