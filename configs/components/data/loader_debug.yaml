@@ -1,7 +1,0 @@
-data:
-  # Required by ms-swift validation; actual dataset comes from custom.*_jsonl.
-  dataset: ["dummy"]
-  val_dataset: ["dummy"]
-  dataset_num_proc: 1
-  dataloader_num_workers: 0
-  dataloader_pin_memory: false

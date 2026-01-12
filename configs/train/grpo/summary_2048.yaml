@@ -1,22 +1,144 @@
 extends:
-  - summary_base.yaml
-  # Enable global semantic-invariant summary augmentation preset.
-  - ../../components/custom/augmentation_summary.yaml
+  - ../../base.yaml
+
+global_max_length: 16000
 
 model:
   model: output/1-4/2048_res_dense_merged/epoch_4-ckpt-5960
 
+tuner:
+  train_type: lora
+  use_swift_lora: false
+  use_dora: true
+  freeze_llm: false
+  freeze_vit: false
+  freeze_aligner: false
+  target_modules: [all-linear]
+  target_regex: null
+  modules_to_save: []
+  lora_rank: 32
+  lora_alpha: 64
+  lora_dropout: 0.1
+  lora_bias: none
+
 training:
   output_dir: ./output/1-8/grpo_summary_2048
   run_name: grpo_summary_2048-lrs_1e-5-epochs_4-chord_sft
-  logging_dir: ./tb/1-8/grpo_summary_2048
   num_train_epochs: 4
   learning_rate: 8.0e-6
   vit_lr: 1.0e-7
   aligner_lr: 1.0e-6
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 2
+  effective_batch_size: 24
+  metric_for_best_model: eval_reward
+  logging_steps: 10
+  logging_first_step: true
+  eval_steps: 100
+  warmup_ratio: 0.05
+  save_delay_steps: 400
+  optimizer: multimodal
+  lr_scheduler_type: cosine_warmup_with_min_lr
+  lr_scheduler_kwargs:
+    min_lr: 1.0e-6
+  gradient_checkpointing: true
+  bf16: true
+  report_to: [tensorboard]
+  seed: 17
+  max_grad_norm: 0.5
+  weight_decay: 0.0
+  packing: false
+  add_version: true
+  save_safetensors: true
+  eval_strategy: steps
+  save_strategy: best
+  save_steps: 40
+  save_total_limit: 2
+  save_last_epoch: true
+  save_only_model: true
+  greater_is_better: true
+  logging_dir: ./tb/1-8/grpo_summary_2048
 
-rlhf:
-  temperature: 0.5
+data:
+  dataset: ["dummy"]
+  val_dataset: ["dummy"]
+  dataset_num_proc: 8
+  dataloader_num_workers: 4
+  dataloader_pin_memory: true
+  dataloader_prefetch_factor: 2
+  dataloader_persistent_workers: true
+
+prompts:
+  profile: summary_runtime
+  domain: bbu
 
 custom:
+  use_summary: true
+  json_format: standard
+  emit_norm: norm1000
+  train_jsonl: data/bbu_full_768_poly/train.jsonl
+  val_jsonl: data/bbu_full_768_poly/val.jsonl
+  dump_conversation_path: output/conversation_text.txt
   fusion_config: configs/fusion/variants/bbu_rru_summary_grpo_2048.yaml
+  token_type_metrics:
+    enabled: true
+    include: [bbu, rru, lvis]
+    exclude: [lang_chat]
+  assistant_prefix_format: "<DOMAIN={domain}>, <TASK={task}>"
+
+  val_sample_limit: 240
+  grpo:
+    chord:
+      enabled: true
+      sft_per_device_train_batch_size: 1
+      mu_warmup_steps: 100
+      mu_decay_steps: 0
+      mu_peak: 0.05
+      mu_valley: 0.05
+      enable_phi_function: false
+
+  augmentation:
+    enabled: true
+    bypass_prob: 0.40
+    ops:
+      - name: resize_by_scale
+        params: { lo: 0.95, hi: 1.05, align_multiple: 32, prob: 0.25 }
+      - name: color_jitter
+        params: { brightness: [0.92, 1.08], contrast: [0.92, 1.08], saturation: [0.92, 1.08], prob: 0.25 }
+      - name: gamma
+        params: { gamma: [0.95, 1.05], prob: 0.12 }
+      - name: hsv
+        params: { hue_delta_deg: [-4, 4], sat: [0.95, 1.05], val: [0.95, 1.05], prob: 0.12 }
+      - name: clahe
+        params: { clip_limit: 1.5, tile_grid_size: [8, 8], prob: 0.05 }
+      - name: auto_contrast
+        params: { cutoff: 0, prob: 0.04 }
+      - name: sharpness
+        params: { factor: [0.95, 1.08], prob: 0.10 }
+  augmentation_curriculum: null
+
+rlhf:
+  rlhf_type: grpo
+  reward_funcs: [summary.format, summary.header, summary.strict, summary.parse, summary.no_dup_keys, summary.dataset, summary.category_recall, summary.content_structured_tversky, summary.text_bbu, summary.notes_bbu, summary.group_stats_presence]
+  reward_weights: [1.0, 2.0, 2.0, 1.5, 2.0, 0.5, 0.5, 1.8, 0.8, 0.3, 0.2]
+  beta: 0.04
+  advantage_estimator: reinforce_plus_plus
+  scale_rewards: batch
+  kl_in_reward: true
+  num_generations: 4
+  temperature: 0.5
+  repetition_penalty: 1.05
+  max_completion_length: 2048
+  truncation_strategy: delete
+  generation_batch_size: 24
+  dynamic_sample: true
+  max_resample_times: 1
+  use_vllm: true
+  vllm_mode: colocate
+  vllm_gpu_memory_utilization: 0.50
+  vllm_enable_prefix_caching: true
+  vllm_enable_lora: false
+
+deepspeed:
+  enabled: true
+  config: zero3

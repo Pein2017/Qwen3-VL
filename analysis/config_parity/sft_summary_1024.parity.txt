@@ -1,0 +1,27 @@
+Left extends chain (low → high precedence):
+   1. analysis/config_parity/head_snapshot_components/configs/base.yaml
+   2. analysis/config_parity/head_snapshot_components/configs/components/global/max_length_16000.yaml
+   3. analysis/config_parity/head_snapshot_components/configs/components/tuner/dora_full.yaml
+   4. analysis/config_parity/head_snapshot_components/configs/components/tuner/summary_freeze.yaml
+   5. analysis/config_parity/head_snapshot_components/configs/components/training/sft_defaults.yaml
+   6. analysis/config_parity/head_snapshot_components/configs/components/training/summary_sft.yaml
+   7. analysis/config_parity/head_snapshot_components/configs/components/data/loader_defaults.yaml
+   8. analysis/config_parity/head_snapshot_components/configs/components/prompts/summary_runtime_bbu.yaml
+   9. analysis/config_parity/head_snapshot_components/configs/components/custom/common_fusion.yaml
+  10. analysis/config_parity/head_snapshot_components/configs/components/custom/assistant_prefix.yaml
+  11. analysis/config_parity/head_snapshot_components/configs/components/custom/summary_mode.yaml
+  12. analysis/config_parity/head_snapshot_components/configs/components/custom/augmentation_summary.yaml
+  13. analysis/config_parity/head_snapshot_components/configs/components/deepspeed/zero2.yaml
+  14. analysis/config_parity/head_snapshot_components/configs/train/sft/summary_base.yaml
+  15. analysis/config_parity/head_snapshot_components/configs/train/sft/summary_1024.yaml
+Right extends chain (low → high precedence):
+   1. configs/base.yaml
+   2. configs/train/sft/summary_1024.yaml
+
+Resolved config diff:
+  left:  analysis/config_parity/head_snapshot_components/configs/train/sft/summary_1024.yaml
+  right: configs/train/sft/summary_1024.yaml
+  total_diffs: 0
+
+[OK] No differences.
+

@@ -1,0 +1,22 @@
+Left extends chain (low → high precedence):
+   1. analysis/config_parity/head_snapshot_components/configs/base.yaml
+   2. analysis/config_parity/head_snapshot_components/configs/components/global/max_length_12000.yaml
+   3. analysis/config_parity/head_snapshot_components/configs/components/tuner/dora_full.yaml
+   4. analysis/config_parity/head_snapshot_components/configs/components/tuner/stage_b_distill.yaml
+   5. analysis/config_parity/head_snapshot_components/configs/components/training/sft_defaults.yaml
+   6. analysis/config_parity/head_snapshot_components/configs/components/data/loader_defaults.yaml
+   7. analysis/config_parity/head_snapshot_components/configs/components/custom/common_fusion.yaml
+   8. analysis/config_parity/head_snapshot_components/configs/components/custom/augmentation_disabled.yaml
+   9. analysis/config_parity/head_snapshot_components/configs/components/deepspeed/zero2.yaml
+  10. analysis/config_parity/head_snapshot_components/configs/train/stage_b/distill.yaml
+Right extends chain (low → high precedence):
+   1. configs/base.yaml
+   2. configs/train/stage_b/distill.yaml
+
+Resolved config diff:
+  left:  analysis/config_parity/head_snapshot_components/configs/train/stage_b/distill.yaml
+  right: configs/train/stage_b/distill.yaml
+  total_diffs: 0
+
+[OK] No differences.
+

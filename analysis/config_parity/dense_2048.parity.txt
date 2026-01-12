@@ -1,0 +1,24 @@
+Left extends chain (low → high precedence):
+   1. analysis/config_parity/head_snapshot_components/configs/base.yaml
+   2. analysis/config_parity/head_snapshot_components/configs/components/global/max_length_12000.yaml
+   3. analysis/config_parity/head_snapshot_components/configs/components/tuner/dora_full.yaml
+   4. analysis/config_parity/head_snapshot_components/configs/components/training/sft_defaults.yaml
+   5. analysis/config_parity/head_snapshot_components/configs/components/data/loader_defaults.yaml
+   6. analysis/config_parity/head_snapshot_components/configs/components/prompts/summary_runtime_bbu.yaml
+   7. analysis/config_parity/head_snapshot_components/configs/components/custom/common_fusion.yaml
+   8. analysis/config_parity/head_snapshot_components/configs/components/custom/assistant_prefix.yaml
+   9. analysis/config_parity/head_snapshot_components/configs/components/custom/augmentation_dense.yaml
+  10. analysis/config_parity/head_snapshot_components/configs/components/deepspeed/zero2.yaml
+  11. analysis/config_parity/head_snapshot_components/configs/train/sft/dense_base.yaml
+  12. analysis/config_parity/head_snapshot_components/configs/train/sft/dense_2048.yaml
+Right extends chain (low → high precedence):
+   1. configs/base.yaml
+   2. configs/train/sft/dense_2048.yaml
+
+Resolved config diff:
+  left:  analysis/config_parity/head_snapshot_components/configs/train/sft/dense_2048.yaml
+  right: configs/train/sft/dense_2048.yaml
+  total_diffs: 0
+
+[OK] No differences.
+

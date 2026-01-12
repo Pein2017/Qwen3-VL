@@ -1,0 +1,33 @@
+Left extends chain (low → high precedence):
+   1. analysis/config_parity/head_snapshot_components/configs/base.yaml
+   2. analysis/config_parity/head_snapshot_components/configs/components/global/max_length_16000.yaml
+   3. analysis/config_parity/head_snapshot_components/configs/components/tuner/dora_full.yaml
+   4. analysis/config_parity/head_snapshot_components/configs/components/training/sft_defaults.yaml
+   5. analysis/config_parity/head_snapshot_components/configs/components/training/grpo_summary.yaml
+   6. analysis/config_parity/head_snapshot_components/configs/components/data/loader_defaults.yaml
+   7. analysis/config_parity/head_snapshot_components/configs/components/prompts/summary_runtime_bbu.yaml
+   8. analysis/config_parity/head_snapshot_components/configs/components/custom/common_fusion.yaml
+   9. analysis/config_parity/head_snapshot_components/configs/components/custom/assistant_prefix.yaml
+  10. analysis/config_parity/head_snapshot_components/configs/components/custom/augmentation_dense.yaml
+  11. analysis/config_parity/head_snapshot_components/configs/components/deepspeed/zero3.yaml
+  12. analysis/config_parity/head_snapshot_components/configs/components/rlhf/dense_grpo.yaml
+  13. analysis/config_parity/head_snapshot_components/configs/train/grpo/dense_base.yaml
+  14. analysis/config_parity/head_snapshot_components/configs/train/grpo/dense_2048.yaml
+  15. analysis/config_parity/head_snapshot_components/configs/train/grpo/dense_2048_lowaug_t04_low_lr.yaml
+Right extends chain (low → high precedence):
+   1. configs/base.yaml
+   2. configs/train/grpo/dense_2048.yaml
+   3. configs/train/grpo/dense_2048_lowaug_t04_low_lr.yaml
+
+Resolved config diff:
+  left:  analysis/config_parity/head_snapshot_components/configs/train/grpo/dense_2048_lowaug_t04_low_lr.yaml
+  right: configs/train/grpo/dense_2048_lowaug_t04_low_lr.yaml
+  total_diffs: 3
+
+Allowed diffs (3):
+  - custom.augmentation.bypass_prob: 0.35 -> 1.0
+  - custom.augmentation.ops: [{"name": "hflip", "params": {"prob": 0.15}}, {"name": "vflip", "params": {"prob": 0.02}}, {"name": "rotate", "params": {"max_deg": 10.0, "prob": 0.12}}, {"name": "random_crop", "params": {"aspect_... -> []
+  - custom.augmentation_curriculum: {"phases": [{"bypass_prob": 1.0, "ops": {}, "until_percent": 2}, {"bypass_prob": 0.85, "ops": {}, "until_percent": 6}, {"bypass_prob": 0.7, "ops": {}, "until_percent": 12}, {"bypass_prob": 0.6, "op... -> null
+
+[OK] Parity profile passed (only allowed diffs).
+

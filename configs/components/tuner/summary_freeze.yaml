@@ -1,7 +1,0 @@
-tuner:
-  # Summary tuning: keep vision/aligner stable and adapt the LLM.
-  freeze_vit: true
-  freeze_aligner: true
-  modules_to_save: []
-  lora_rank: 8
-  lora_alpha: 16

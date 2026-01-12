@@ -1,8 +1,0 @@
-tuner:
-  # Freeze multimodal components; adapt only the LLM via LoRA/DoRA.
-  freeze_llm: false
-  freeze_vit: true
-  freeze_aligner: true
-  modules_to_save: []
-  lora_rank: 16
-  lora_alpha: 32

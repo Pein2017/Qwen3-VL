@@ -1,5 +1,0 @@
-deepspeed:
-  enabled: true
-  # CHORD adds an extra forward graph per step. With ZeRO-2 this can trigger
-  # "Gradient computed twice for this partition" assertions. Prefer ZeRO-3 for CHORD runs.
-  config: zero3

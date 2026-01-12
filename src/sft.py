@@ -96,8 +96,8 @@ Examples:
   # Basic training with config
   python -m src.sft --config configs/train/sft/dense_1024.yaml
   
-  # With an extra override layer (optional)
-  python -m src.sft --config configs/train/sft/dense_1024.yaml --base_config configs/components/training/sft_defaults.yaml
+  # With an extra low-precedence overlay (optional)
+  python -m src.sft --config configs/train/sft/dense_1024.yaml --base_config /abs/path/to/override.yaml
   
   # Debug mode
   python -m src.sft --config configs/debug.yaml --debug

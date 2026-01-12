@@ -1,13 +1,7 @@
 extends:
   - ../../base.yaml
-  - ../../components/global/max_length_12000.yaml
-  - ../../components/tuner/dora_full.yaml
-  - ../../components/tuner/stage_b_distill.yaml
-  - ../../components/training/sft_defaults.yaml
-  - ../../components/data/loader_defaults.yaml
-  - ../../components/custom/common_fusion.yaml
-  - ../../components/custom/augmentation_disabled.yaml
-  - ../../components/deepspeed/zero2.yaml
+
+global_max_length: 12000
 
 # Stage-B verdict distillation SFT (text-only ChatML).
 #
@@ -23,24 +17,87 @@ model:
   # Example (update to the real checkpoint used in production):
   model: output/12-23/summary_merged/epoch_2-bbu_rru-more_irrelevant-ocr
 
+tuner:
+  train_type: lora
+  use_swift_lora: false
+  use_dora: true
+  freeze_llm: false
+  freeze_vit: true
+  freeze_aligner: true
+  target_modules: [all-linear]
+  target_regex: null
+  modules_to_save: []
+  lora_rank: 16
+  lora_alpha: 32
+  lora_dropout: 0.1
+  lora_bias: none
+
 training:
-  per_device_train_batch_size: 2
-  per_device_eval_batch_size: 4
-  effective_batch_size: 32
-  num_train_epochs: 2
   output_dir: ./output/12-25/stageb_distill
   logging_dir: ./tb/12-25/stageb_distill
   run_name: epoch_2-stageb_distill-verdict
+  num_train_epochs: 2
+  per_device_train_batch_size: 2
+  per_device_eval_batch_size: 4
+  effective_batch_size: 32
+  optimizer: multimodal
   # Conservative LR to avoid overwriting summary/dense skills while restoring Stage-B verdict behavior.
   learning_rate: 5.0e-5
   vit_lr: 1.0e-7
   aligner_lr: 1.0e-7
+  lr_scheduler_type: cosine_warmup_with_min_lr
+  lr_scheduler_kwargs:
+    min_lr: 1.0e-6
+  warmup_ratio: 0.1
+  gradient_checkpointing: true
+  bf16: true
+  report_to: [tensorboard]
+  seed: 17
+  max_grad_norm: 0.5
+  weight_decay: 0.0
+  packing: false
+  add_version: true
+  save_safetensors: true
+  eval_strategy: steps
+  eval_steps: 40
+  save_strategy: best
+  save_steps: 40
+  save_total_limit: 2
+  save_last_epoch: true
+  save_only_model: true
+  metric_for_best_model: eval_token_acc
+  greater_is_better: true
   save_delay_steps: 200
+  logging_steps: 10
+  logging_first_step: true
+
+data:
+  dataset: ["dummy"]
+  val_dataset: ["dummy"]
+  dataset_num_proc: 8
+  dataloader_num_workers: 4
+  dataloader_pin_memory: true
+  dataloader_prefetch_factor: 2
+  dataloader_persistent_workers: true
 
 custom:
   # Dummy base path for ROOT_IMAGE_DIR auto-derivation; for fusion runs this is not used as the dataset.
+  use_summary: false
+  json_format: standard
+  emit_norm: norm1000
   train_jsonl: data/stage_b/distill.train.jsonl
   val_jsonl: data/stage_b/distill.val.jsonl
+  dump_conversation_path: output/conversation_text.txt
   fusion_config: configs/fusion/stage_b_distill.yaml
-  use_summary: false
   dump_conversation_text: false
+  token_type_metrics:
+    enabled: true
+    include: [bbu, rru, lvis]
+    exclude: [lang_chat]
+  augmentation:
+    enabled: false
+  augmentation_curriculum: null
+
+deepspeed:
+  enabled: true
+  config: zero2

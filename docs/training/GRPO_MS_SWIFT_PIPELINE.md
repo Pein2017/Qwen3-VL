@@ -3,8 +3,8 @@
 Status: Active
 Scope: Code-derived GRPO pipeline notes for ms-swift integration (internal reference).
 Owners: Training
-Last updated: 2026-01-07
-Related: [REFERENCE.md](REFERENCE.md), [configs/train/grpo/summary_base.yaml](../../configs/train/grpo/summary_base.yaml)
+Last updated: 2026-01-11
+Related: [REFERENCE.md](REFERENCE.md), [configs/train/grpo/summary_1024.yaml](../../configs/train/grpo/summary_1024.yaml)
 
 ## Scope and Sources
 - Source of truth: local ms-swift repository (external to this repo; see [docs/ops/UPSTREAM_DEPENDENCIES.md](../ops/UPSTREAM_DEPENDENCIES.md)).
@@ -352,11 +352,11 @@ Implication:
 
 ## Config Mapping (Qwen3-VL Examples)
 
-### `configs/train/grpo/summary_base.yaml`
+### `configs/train/grpo/summary_1024.yaml`
 - `rlhf.rlhf_type: grpo` routes to `GRPOTrainer` / `GRPOConfig`.
 - `rlhf.reward_funcs` must be non-empty (or set `reward_model`).
 - `rlhf.reward_weights` length must match `reward_funcs`.
-- Summary-mode reward funcs used by the base template are implemented in `src/rlhf/grpo/rewards/summary/rewards.py` and include:
+- Summary-mode reward funcs used by the default preset are implemented in `src/rlhf/grpo/rewards/summary/rewards.py` and include:
   - Contract + guardrails: `summary.format`, `summary.header`, `summary.strict`, `summary.parse`
   - Hard JSON correctness: `summary.no_dup_keys` (hard-penalize duplicate JSON keys, including nested dicts)
   - Core content alignment (strict-format gated, GT treated as lower bound):
@@ -373,13 +373,13 @@ Implication:
 - `training.eval_strategy: no` bypasses GRPO eval batch divisibility checks.
 
 Locations:
-- Config file: `configs/train/grpo/summary_base.yaml`
+- Config file: `configs/train/grpo/summary_1024.yaml`
 - Requirement for reward source: `swift/trainers/rlhf_trainer/grpo_trainer.py:86-87`
 - Divisibility checks: `swift/trainers/rlhf_arguments.py:89-110`
 - Eval strategy check: `swift/trainers/rlhf_arguments.py:111-121`
 
 ### `configs/train/grpo/summary_server.yaml`
-- Extends `summary_2048.yaml` (which extends `summary_base.yaml`) and switches vLLM to server mode.
+- Extends `summary_2048.yaml` (self-contained base preset) and switches vLLM to server mode.
 - Sets `rlhf.vllm_mode: server` plus server host/port/timeouts and tensor parallel sizing.
 
 ## External Dependencies (Not in ms-swift Tree)

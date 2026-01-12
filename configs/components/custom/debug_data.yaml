@@ -1,6 +1,0 @@
-custom:
-  json_format: standard
-  emit_norm: norm1000
-  train_jsonl: demo/data/train_tiny.jsonl
-  val_jsonl: demo/data/val_tiny.jsonl
-  use_summary: false

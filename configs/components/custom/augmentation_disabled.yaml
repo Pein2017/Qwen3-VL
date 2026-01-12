@@ -1,4 +1,0 @@
-custom:
-  augmentation:
-    enabled: false
-  augmentation_curriculum: null

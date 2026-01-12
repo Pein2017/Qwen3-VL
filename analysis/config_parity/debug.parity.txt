@@ -1,0 +1,18 @@
+Left extends chain (low → high precedence):
+   1. analysis/config_parity/head_snapshot_components/configs/base.yaml
+   2. analysis/config_parity/head_snapshot_components/configs/components/tuner/debug_lora.yaml
+   3. analysis/config_parity/head_snapshot_components/configs/components/training/debug.yaml
+   4. analysis/config_parity/head_snapshot_components/configs/components/data/loader_debug.yaml
+   5. analysis/config_parity/head_snapshot_components/configs/components/custom/debug_data.yaml
+   6. analysis/config_parity/head_snapshot_components/configs/debug.yaml
+Right extends chain (low → high precedence):
+   1. configs/base.yaml
+   2. configs/debug.yaml
+
+Resolved config diff:
+  left:  analysis/config_parity/head_snapshot_components/configs/debug.yaml
+  right: configs/debug.yaml
+  total_diffs: 0
+
+[OK] No differences.
+

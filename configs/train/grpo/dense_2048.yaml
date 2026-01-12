@@ -1,5 +1,7 @@
 extends:
-  - dense_base.yaml
+  - ../../base.yaml
+
+global_max_length: 16000
 
 model:
   model: output/1-4/2048_res_dense_merged/epoch_4-ckpt-5960
@@ -9,36 +11,278 @@ template:
   # Keeps prompt token length stable and reduces outlier-driven vLLM KV cache waste.
   max_pixels: 209715200
 
+tuner:
+  train_type: lora
+  use_swift_lora: false
+  use_dora: true
+  freeze_llm: false
+  freeze_vit: false
+  freeze_aligner: false
+  target_modules: [all-linear]
+  target_regex: null
+  modules_to_save: []
+  lora_rank: 32
+  lora_alpha: 64
+  lora_dropout: 0.1
+  lora_bias: none
+
 training:
-  run_name: epoch_3-ebs32-gbs32-llm_lr-8e-6-vit_lr-2e-7-aligner_lr-1.5e-5
   output_dir: ./output/1-7/new_schema-4B-dense-grpo-2048
-  logging_dir: ./tb/1-7/new_schema-4B-dense-grpo-2048
+  run_name: epoch_3-ebs32-gbs32-llm_lr-8e-6-vit_lr-2e-7-aligner_lr-1.5e-5
   num_train_epochs: 3
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 2
+  effective_batch_size: 32
+  optimizer: multimodal
   learning_rate: 8.0e-6
   vit_lr: 2.0e-7
   aligner_lr: 1.5e-5
-  # Keep micro-batch minimal; scale via grad accumulation (auto-derived from effective_batch_size).
-  effective_batch_size: 32
+  lr_scheduler_type: cosine_warmup_with_min_lr
+  lr_scheduler_kwargs:
+    min_lr: 1.0e-6
+  warmup_ratio: 0.05
+  gradient_checkpointing: true
+  bf16: true
+  report_to: [tensorboard]
+  seed: 17
+  max_grad_norm: 0.5
+  weight_decay: 0.0
+  packing: false
+  add_version: true
+  save_safetensors: true
+  eval_strategy: steps
+  eval_steps: 100
+  save_strategy: best
+  save_steps: 40
+  save_total_limit: 2
+  save_last_epoch: true
+  save_only_model: true
+  metric_for_best_model: eval_reward
+  greater_is_better: true
+  save_delay_steps: 400
+  logging_dir: ./tb/1-7/new_schema-4B-dense-grpo-2048
+  logging_steps: 10
+  logging_first_step: true
 
-rlhf:
-  # Increase rollout prompt count (8 GPUs, per_device_train_batch_size=1):
-  # generation_batch_size=32 => steps_per_generation=4, prompt_batch_size=8 (with num_generations=4).
-  generation_batch_size: 32
-  temperature: 0.7
-  top_p: 1.0
-  # vLLM colocate sizing depends on vllm_tensor_parallel_size * steps_per_generation.
-  # Use TP=4 as a safer default than 8 to reduce KV/cache preallocation pressure.
-  vllm_tensor_parallel_size: 4
-  # Avoid inheriting global_max_length=16000 into vLLM max_model_len; keep rollout KV planning bounded.
-  # Empirically measured (256 samples): prompt_len max/p99=3050 with image tokens max=2040.
-  # With max_completion_length=4096 => needed=7146; use 7424 (=ceil256(7146+128)).
-  max_completion_length: 2500
-  vllm_max_model_len: 8192
-  # Keep headroom for training model forward/backward on the same GPUs in colocate mode.
-  vllm_gpu_memory_utilization: 0.5
+data:
+  dataset: ["dummy"]
+  val_dataset: ["dummy"]
+  dataset_num_proc: 8
+  dataloader_num_workers: 4
+  dataloader_pin_memory: true
+  dataloader_prefetch_factor: 2
+  dataloader_persistent_workers: true
+
+prompts:
+  profile: summary_runtime
+  domain: bbu
 
 custom:
+  use_summary: false
+  json_format: standard
+  emit_norm: norm1000
+  train_jsonl: data/bbu_full_768_poly/train.jsonl
+  val_jsonl: data/bbu_full_768_poly/val.jsonl
+  dump_conversation_path: output/conversation_text.txt
   fusion_config: configs/fusion/variants/bbu_rru_dense_grpo_2048.yaml
-  val_sample_limit: 240
-  # Disable CHORD (SFT-mixed loss) to reduce VRAM / step time in GRPO.
+  token_type_metrics:
+    enabled: true
+    include: [bbu, rru, lvis]
+    exclude: [lang_chat]
+  assistant_prefix_format: "<DOMAIN={domain}>, <TASK={task}>"
 
+  val_sample_limit: 240
+  grpo:
+    dump:
+      enabled: true
+      dump_step: 40
+      dump_sample_size: 16
+      dump_dir: logging_dir
+      eval_sample_size: val_sample_limit
+    chord:
+      enabled: false
+      sft_per_device_train_batch_size: 1
+      mu_warmup_steps: 100
+      mu_decay_steps: 0
+      mu_peak: 0.05
+      mu_valley: 0.05
+      enable_phi_function: false
+
+  augmentation:
+    enabled: true
+    bypass_prob: 0.12
+    ops:
+      - name: hflip
+        params: { prob: 0.25 }
+      - name: vflip
+        params: { prob: 0.06 }
+      - name: rotate
+        params: { max_deg: 14.0, prob: 0.24 }
+      - name: random_crop
+        params:
+          scale: [0.82, 1.0]
+          aspect_ratio: [0.93, 1.07]
+          min_coverage: 0.4
+          completeness_threshold: 0.95
+          min_objects: 4
+          skip_if_line: true
+          prob: 0.16
+      - name: small_object_zoom_paste  # fixed strength across training
+        params:
+          prob: 0.18
+          max_targets: 4
+          max_attempts: 20
+          scale: [1.15, 1.6]
+          max_size: 96
+          max_line_length: 128
+          overlap_threshold: 0.1
+          context: 4
+          line_buffer: 4
+          class_whitelist:
+            - "类别=BBU安装螺丝"
+            - "类别=地排处接地螺丝"
+            - "类别=机柜处接地螺丝"
+            - "类别=BBU端光纤插头"
+            - "类别=ODF端光纤插头"
+            - "类别=RRU接地端"
+            - "类别=地排接地端螺丝"
+            - "类别=站点距离"
+            - "类别=标签"
+      - name: resize_by_scale
+        params: { lo: 0.92, hi: 1.10, align_multiple: 32, prob: 0.40 }
+      - name: color_jitter
+        params: { brightness: [0.90, 1.10], contrast: [0.90, 1.10], saturation: [0.90, 1.10], prob: 0.20 }
+      - name: gamma
+        params: { gamma: [0.90, 1.10], prob: 0.12 }
+      - name: hsv
+        params: { hue_delta_deg: [-5, 5], sat: [0.95, 1.05], val: [0.95, 1.05], prob: 0.12 }
+      - name: clahe
+        params: { clip_limit: 1.5, tile_grid_size: [8, 8], prob: 0.07 }
+      - name: auto_contrast
+        params: { cutoff: 0, prob: 0.06 }
+      - name: sharpness
+        params: { factor: [0.90, 1.12], prob: 0.12 }
+      - name: expand_to_fit_affine
+        params:
+          multiple: 32
+          max_pixels: 2097152
+
+  augmentation_curriculum:
+    phases:
+      - until_percent: 2
+        bypass_prob: 1.0
+        ops: {}
+      - until_percent: 6
+        bypass_prob: 0.60
+        ops:
+          hflip: { prob: 0.15 }
+          resize_by_scale: { prob: 0.20, lo: 0.96, hi: 1.04 }
+          color_jitter: { prob: 0.08, brightness: [0.95, 1.05], contrast: [0.95, 1.05], saturation: [0.95, 1.05] }
+      - until_percent: 12
+        bypass_prob: 0.32
+        ops:
+          hflip: { prob: 0.20 }
+          vflip: { prob: 0.03 }
+          rotate: { prob: 0.15, max_deg: 10.0 }
+          random_crop: { prob: 0.10, scale: [0.88, 1.00] }
+          resize_by_scale: { prob: 0.30, lo: 0.94, hi: 1.08 }
+          color_jitter: { prob: 0.14, brightness: [0.92, 1.08], contrast: [0.92, 1.08], saturation: [0.92, 1.08] }
+          auto_contrast: { prob: 0.03 }
+      - until_percent: 18
+        bypass_prob: 0.28
+        ops:
+          hflip: { prob: 0.22 }
+          vflip: { prob: 0.04 }
+          rotate: { prob: 0.18, max_deg: 12.0 }
+          random_crop: { prob: 0.12, scale: [0.87, 1.00] }
+          resize_by_scale: { prob: 0.34, lo: 0.94, hi: 1.08 }
+          color_jitter: { prob: 0.16, brightness: [0.92, 1.08], contrast: [0.92, 1.08], saturation: [0.92, 1.08] }
+          hsv: { prob: 0.05, hue_delta_deg: [-3, 3], sat: [0.97, 1.03], val: [0.97, 1.03] }
+          auto_contrast: { prob: 0.04 }
+          clahe: { prob: 0.04 }
+      - until_percent: 25
+        bypass_prob: 0.22
+        ops:
+          hflip: { prob: 0.23 }
+          vflip: { prob: 0.05 }
+          rotate: { prob: 0.20, max_deg: 13.0 }
+          random_crop: { prob: 0.14, scale: [0.86, 0.99] }
+          resize_by_scale: { prob: 0.36, lo: 0.93, hi: 1.09 }
+          color_jitter: { prob: 0.18, brightness: [0.91, 1.09], contrast: [0.91, 1.09], saturation: [0.91, 1.09] }
+          hsv: { prob: 0.08, hue_delta_deg: [-4, 4], sat: [0.96, 1.04], val: [0.96, 1.04] }
+          small_object_zoom_paste: { prob: 0.15, scale: [1.15, 1.50] }
+          auto_contrast: { prob: 0.05 }
+          clahe: { prob: 0.05 }
+      - until_percent: 40
+        bypass_prob: 0.19
+        ops:
+          hflip: { prob: 0.24 }
+          vflip: { prob: 0.05 }
+          rotate: { prob: 0.22, max_deg: 14.0 }
+          random_crop: { prob: 0.15, scale: [0.85, 0.98] }
+          resize_by_scale: { prob: 0.38, lo: 0.93, hi: 1.09 }
+          color_jitter: { prob: 0.19, brightness: [0.91, 1.09], contrast: [0.91, 1.09], saturation: [0.91, 1.09] }
+          hsv: { prob: 0.09, hue_delta_deg: [-5, 5], sat: [0.95, 1.05], val: [0.95, 1.05] }
+          small_object_zoom_paste: { prob: 0.19, scale: [1.15, 1.55] }
+          gamma: { prob: 0.10, gamma: [0.92, 1.08] }
+          auto_contrast: { prob: 0.05 }
+          clahe: { prob: 0.06 }
+      - until_percent: 65
+        bypass_prob: 0.16
+        ops:
+          hflip: { prob: 0.25 }
+          vflip: { prob: 0.06 }
+          rotate: { prob: 0.24, max_deg: 15.0 }
+          random_crop: { prob: 0.17, scale: [0.84, 0.97] }
+          resize_by_scale: { prob: 0.40, lo: 0.92, hi: 1.10 }
+          color_jitter: { prob: 0.21, brightness: [0.90, 1.10], contrast: [0.90, 1.10], saturation: [0.90, 1.10] }
+          hsv: { prob: 0.10, hue_delta_deg: [-5, 5], sat: [0.94, 1.06], val: [0.94, 1.06] }
+          gamma: { prob: 0.13, gamma: [0.90, 1.10] }
+          sharpness: { prob: 0.10, factor: [0.92, 1.10] }
+          small_object_zoom_paste: { prob: 0.22, scale: [1.18, 1.60] }
+          auto_contrast: { prob: 0.06 }
+          clahe: { prob: 0.07 }
+      - until_percent: 100
+        bypass_prob: 0.12
+        ops:
+          hflip: { prob: 0.25 }
+          vflip: { prob: 0.06 }
+          rotate: { prob: 0.28, max_deg: 17.0 }
+          random_crop: { prob: 0.20, scale: [0.81, 0.96] }
+          resize_by_scale: { prob: 0.45, lo: 0.92, hi: 1.10 }
+          color_jitter: { prob: 0.24, brightness: [0.90, 1.10], contrast: [0.90, 1.10], saturation: [0.90, 1.10] }
+          hsv: { prob: 0.13, hue_delta_deg: [-6, 6], sat: [0.94, 1.06], val: [0.94, 1.06] }
+          gamma: { prob: 0.16, gamma: [0.90, 1.10] }
+          sharpness: { prob: 0.15, factor: [0.90, 1.12] }
+          small_object_zoom_paste: { prob: 0.25, scale: [1.20, 1.65] }
+          auto_contrast: { prob: 0.06 }
+          clahe: { prob: 0.07 }
+
+rlhf:
+  rlhf_type: grpo
+  reward_funcs: [dense.format, dense.parse_schema_strict, dense.loc_mean_fbeta, dense.loc_soft_recall, dense.cat_mean_f1, dense.attr_weighted_recall]
+  reward_weights: [0.1, 0.2, 1.0, 0.5, 0.3, 0.2]
+  beta: 0.04
+  advantage_estimator: reinforce_plus_plus
+  scale_rewards: batch
+  kl_in_reward: false
+  num_generations: 4
+  temperature: 0.7
+  top_p: 1.0
+  repetition_penalty: 1.05
+  max_completion_length: 2500
+  truncation_strategy: delete
+  generation_batch_size: 32
+  dynamic_sample: true
+  max_resample_times: 1
+  use_vllm: true
+  vllm_mode: colocate
+  vllm_gpu_memory_utilization: 0.5
+  vllm_enable_prefix_caching: true
+  vllm_enable_lora: false
+  vllm_max_model_len: 8192
+  vllm_tensor_parallel_size: 4
+
+deepspeed:
+  enabled: true
+  config: zero3

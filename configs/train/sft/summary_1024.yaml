@@ -1,17 +1,110 @@
 extends:
-  - summary_base.yaml
+  - ../../base.yaml
+
+global_max_length: 16000
 
 model:
   model: output/12-27/new_schema-4B-dense-merged/checkpoint-4470
+
+tuner:
+  train_type: lora
+  use_swift_lora: false
+  use_dora: true
+  freeze_llm: false
+  freeze_vit: true
+  freeze_aligner: true
+  target_modules: [all-linear]
+  target_regex: null
+  modules_to_save: []
+  lora_rank: 8
+  lora_alpha: 16
+  lora_dropout: 0.1
+  lora_bias: none
 
 training:
   output_dir: ./output/12-27/new_schema-4B-summary
   run_name: epoch_2
   num_train_epochs: 2
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 2
+  effective_batch_size: 32
+  optimizer: multimodal
   learning_rate: 1.0e-4
   vit_lr: 1.0e-7
   aligner_lr: 1.0e-7
+  lr_scheduler_type: cosine_warmup_with_min_lr
+  lr_scheduler_kwargs:
+    min_lr: 1.0e-6
+  warmup_ratio: 0.05
+  gradient_checkpointing: true
+  bf16: true
+  report_to: [tensorboard]
+  seed: 17
+  max_grad_norm: 0.5
+  weight_decay: 0.0
+  packing: false
+  add_version: true
+  save_safetensors: true
+  eval_strategy: steps
+  eval_steps: 40
+  save_strategy: best
+  save_steps: 40
+  save_total_limit: 2
+  save_last_epoch: true
+  save_only_model: true
+  metric_for_best_model: eval_token_acc
+  greater_is_better: true
+  save_delay_steps: 300
   logging_dir: ./tb/12-27/new_schema-4B-summary
+  logging_steps: 10
+  logging_first_step: true
+
+data:
+  dataset: ["dummy"]
+  val_dataset: ["dummy"]
+  dataset_num_proc: 8
+  dataloader_num_workers: 4
+  dataloader_pin_memory: true
+  dataloader_prefetch_factor: 2
+  dataloader_persistent_workers: true
+
+prompts:
+  profile: summary_runtime
+  domain: bbu
 
 custom:
+  use_summary: true
+  json_format: standard
+  emit_norm: norm1000
+  train_jsonl: data/bbu_full_768_poly/train.jsonl
+  val_jsonl: data/bbu_full_768_poly/val.jsonl
+  dump_conversation_path: output/conversation_text.txt
   fusion_config: configs/fusion/variants/bbu_rru_summary_1024.yaml
+  token_type_metrics:
+    enabled: true
+    include: [bbu, rru, lvis]
+    exclude: [lang_chat]
+  assistant_prefix_format: "<DOMAIN={domain}>, <TASK={task}>"
+  augmentation:
+    enabled: true
+    bypass_prob: 0.40
+    ops:
+      - name: resize_by_scale
+        params: { lo: 0.95, hi: 1.05, align_multiple: 32, prob: 0.25 }
+      - name: color_jitter
+        params: { brightness: [0.92, 1.08], contrast: [0.92, 1.08], saturation: [0.92, 1.08], prob: 0.25 }
+      - name: gamma
+        params: { gamma: [0.95, 1.05], prob: 0.12 }
+      - name: hsv
+        params: { hue_delta_deg: [-4, 4], sat: [0.95, 1.05], val: [0.95, 1.05], prob: 0.12 }
+      - name: clahe
+        params: { clip_limit: 1.5, tile_grid_size: [8, 8], prob: 0.05 }
+      - name: auto_contrast
+        params: { cutoff: 0, prob: 0.04 }
+      - name: sharpness
+        params: { factor: [0.95, 1.08], prob: 0.10 }
+  augmentation_curriculum: null
+
+deepspeed:
+  enabled: true
+  config: zero2

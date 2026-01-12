@@ -1,0 +1,23 @@
+extends:
+  - dense_1024.yaml
+
+# Example GKD overlay (experiment-layer): copy and edit before running.
+# This overlay intentionally limits changes to the GKD-related `rlhf` keys and
+# (optionally) `custom.trainer_variant`, per spec.
+#
+# NOTE: Set `rlhf.teacher_model` to an absolute path that exists on your machine.
+
+rlhf:
+  rlhf_type: gkd
+  teacher_model: /abs/path/to/Qwen3-VL-4B-Instruct
+  beta: 0.5
+  sft_alpha: 0.3
+  seq_kd: true
+  lmbda: 0.5
+  max_completion_length: 256
+  temperature: 0.9
+
+custom:
+  # Enable the metrics/telemetry wrapper for KD monitoring.
+  trainer_variant: gkd_monitor
+

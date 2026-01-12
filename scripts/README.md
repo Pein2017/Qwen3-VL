@@ -15,13 +15,14 @@ Canonical entrypoints for training, inference, and inspection runs. Prefer these
 | `postprocess_rule_search_hard_cases.py` | Extracts GT-fail & pred-pass hard cases and attaches GT fail reasons from Excel. | `docs/runtime/STAGE_B_RUNTIME.md` |
 | `run_rule_search_postprocess.sh` | Wrapper for rule-search hard-case postprocess with local paths. | `docs/runtime/STAGE_B_RUNTIME.md` |
 | `debug_fusion_template_clone.py` | Regression probe for fusion template reuse (mask ratio / template cloning). | `docs/data/UNIFIED_FUSION_DATASET.md` |
+| `config_tools/inspect_config.py` | Extends-aware config inspection + parity diff (prints resolved config + full `extends` chain). | `docs/training/TRAINING_PLAYBOOK.md`, `docs/training/REFERENCE.md` |
 | `validate_sft_config.py` | Fast YAML validation for SFT configs (no model weights). | `docs/training/REFERENCE.md` |
 | `validate_dense_jsonl_contract.py` | Fast JSONL contract validation for dense-caption records. | `docs/data/DATA_JSONL_CONTRACT.md` |
 | `build_irrelevant_summary_jsonl.py` | Builds `data/irrelevant_summary/train.jsonl` from `data/irrelevant_summary/images/*.jpg|*.jpeg` with summary `无关图片` (dummy full-frame bbox). | `docs/data/DATA_JSONL_CONTRACT.md` |
 
 Usage tips
 - Run with `ms` conda env activated (`conda activate ms`), unless the script handles it.
-- Training configs now live under `configs/train/` (runnable presets) and `configs/components/` (reusable blocks); `configs/debug.yaml` remains the default quick entrypoint.
+- Training configs use a shallow, layer-aligned hierarchy: `configs/base.yaml` → `configs/train/**` (self-contained runnable presets + optional overlays); `configs/fusion/**` remains the dataset mix overlay system.
 - Prefer setting seeds in configs; scripts propagate env when present.
 - Keep inputs/output paths mission-specific to avoid cross-run collisions.
 - Stage‑B no-model audit: `bash scripts/stage_b.sh smoke`
