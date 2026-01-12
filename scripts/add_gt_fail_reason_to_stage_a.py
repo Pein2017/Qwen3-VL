@@ -84,42 +84,50 @@ def _process_stage_a_jsonl(
     updated = 0
     missing_reason = 0
 
-    records = []
-    with input_file.open("r", encoding="utf-8") as fin:
-        for line in fin:
-            line = line.strip()
-            if not line:
-                continue
-            total += 1
-            obj = json.loads(line)
+    tmp_path: Path | None = None
+    fout = None
+    try:
+        if inplace:
+            tmp_path = input_file.with_suffix(input_file.suffix + ".tmp")
+            fout = tmp_path.open("w", encoding="utf-8")
 
-            # Only add gt_fail_reason_text for fail-labeled records
-            label = _normalize_label(obj.get("label"))
-            if label == "fail":
-                group_id = str(obj.get("group_id", "")).strip()
-                mission = str(obj.get("mission", "")).strip()
-                reasons = reason_map.get((group_id, mission), [])
+        with input_file.open("r", encoding="utf-8") as fin:
+            for line in fin:
+                line = line.strip()
+                if not line:
+                    continue
+                total += 1
+                obj = json.loads(line)
 
-                if reasons:
-                    obj["gt_fail_reason_texts"] = reasons
-                    obj["gt_fail_reason_text"] = " | ".join(reasons)
-                    updated += 1
+                # Only add gt_fail_reason_text for fail-labeled records
+                label = _normalize_label(obj.get("label"))
+                if label == "fail":
+                    group_id = str(obj.get("group_id", "")).strip()
+                    mission = str(obj.get("mission", "")).strip()
+                    reasons = reason_map.get((group_id, mission), [])
+
+                    if reasons:
+                        obj["gt_fail_reason_texts"] = reasons
+                        obj["gt_fail_reason_text"] = " | ".join(reasons)
+                        updated += 1
+                    else:
+                        # Still add fields but with None/empty list for records without reasons
+                        obj["gt_fail_reason_texts"] = []
+                        obj["gt_fail_reason_text"] = None
+                        missing_reason += 1
+
+                if inplace:
+                    assert fout is not None
+                    fout.write(json.dumps(obj, ensure_ascii=False) + "\n")
                 else:
-                    # Still add fields but with None/empty list for records without reasons
-                    obj["gt_fail_reason_texts"] = []
-                    obj["gt_fail_reason_text"] = None
-                    missing_reason += 1
+                    print(json.dumps(obj, ensure_ascii=False))
+    finally:
+        if fout is not None:
+            fout.close()
 
-    records.append(obj)
-
-    # Write output
     if inplace:
-        with input_file.open("w", encoding="utf-8") as fout:
-            for obj in records:
-                fout.write(json.dumps(obj, ensure_ascii=False) + "\n")
-    else:
-        for obj in records:
-            print(json.dumps(obj, ensure_ascii=False))
+        assert tmp_path is not None
+        tmp_path.replace(input_file)
 
     return {
         "total": total,
