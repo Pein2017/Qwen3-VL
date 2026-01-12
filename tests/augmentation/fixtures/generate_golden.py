@@ -35,7 +35,9 @@ def _make_base_images() -> List[Path]:
     img1 = Image.new("RGB", size, (110, 110, 110))
     d1 = ImageDraw.Draw(img1)
     d1.rectangle([12, 14, 28, 32], outline=(255, 64, 0), width=2)
-    d1.polygon([42, 17, 54, 16, 57, 27, 44, 28], outline=(0, 200, 80), fill=(0, 200, 80))
+    d1.polygon(
+        [42, 17, 54, 16, 57, 27, 44, 28], outline=(0, 200, 80), fill=(0, 200, 80)
+    )
     d1.line([17, 42, 52, 47, 62, 57], fill=(0, 0, 220), width=2)
     path1 = INPUT_DIR / "scene0_img1.png"
     img1.save(path1)
@@ -46,21 +48,22 @@ def _make_base_images() -> List[Path]:
 
 def _build_record(img_paths: List[Path]) -> Dict[str, Any]:
     return {
-        "images": [str(p) for p in img_paths],
+        "images": [str(p.relative_to(ROOT)) for p in img_paths],
         "width": 80,
         "height": 64,
         "objects": [
             {
                 "bbox_2d": [10.0, 12.0, 26.0, 30.0],
-                "desc": "螺丝/fastener",
+                "desc": "类别=紧固件,可见性=完整,备注=螺丝/fastener",
             },
             {
                 "poly": [40.0, 15.0, 52.0, 14.0, 55.0, 25.0, 42.0, 26.0],
-                "desc": "金属板/plate",
+                # Use this as the ROI-crop anchor object.
+                "desc": "类别=BBU设备,可见性=完整,备注=金属板/plate",
             },
             {
                 "line": [15.0, 40.0, 50.0, 45.0, 60.0, 55.0],
-                "desc": "线缆/cable",
+                "desc": "类别=线缆,可见性=完整,备注=线缆/cable",
             },
         ],
     }
@@ -70,38 +73,22 @@ def _build_pipeline():
     cfg = {
         "ops": [
             {"name": "hflip", "params": {"prob": 0.9}},
-            {"name": "rotate", "params": {"max_deg": 8.0, "prob": 1.0}},
-            {"name": "scale", "params": {"lo": 0.9, "hi": 1.1, "prob": 1.0}},
-            {"name": "expand_to_fit_affine", "params": {"multiple": 16, "max_pixels": 262144}},
             {
-                "name": "random_crop",
+                "name": "roi_crop",
                 "params": {
-                    "scale": [0.7, 1.0],
-                    "aspect_ratio": [0.8, 1.2],
+                    "anchor_classes": ["BBU设备"],
+                    "scale_range": [1.2, 1.8],
+                    "min_crop_size": 32,
                     "min_coverage": 0.25,
                     "completeness_threshold": 0.9,
-                    "min_objects": 1,
-                    "skip_if_line": False,
                     "prob": 1.0,
                 },
             },
+            {"name": "rotate", "params": {"max_deg": 8.0, "prob": 1.0}},
+            {"name": "scale", "params": {"lo": 0.9, "hi": 1.1, "prob": 1.0}},
             {
                 "name": "resize_by_scale",
                 "params": {"lo": 0.9, "hi": 1.1, "align_multiple": 8, "prob": 1.0},
-            },
-            {
-                "name": "small_object_zoom_paste",
-                "params": {
-                    "prob": 0.8,
-                    "max_targets": 2,
-                    "max_attempts": 10,
-                    "scale": [1.4, 1.8],
-                    "max_size": 96.0,
-                    "max_line_length": 128.0,
-                    "context": 2.0,
-                    "overlap_threshold": 0.05,
-                    "line_buffer": 3.0,
-                },
             },
             {
                 "name": "color_jitter",
@@ -113,6 +100,10 @@ def _build_pipeline():
                 },
             },
             {"name": "gamma", "params": {"gamma": [0.8, 1.2], "prob": 0.5}},
+            {
+                "name": "expand_to_fit_affine",
+                "params": {"multiple": 16, "max_pixels": 262144},
+            },
         ]
     }
     return build_compose_from_config(cfg)
@@ -145,7 +136,9 @@ def _telemetry_to_dict(telemetry: Any) -> Dict[str, Any]:
     return {
         "kept_indices": list(getattr(telemetry, "kept_indices", []) or []),
         "coverages": list(getattr(telemetry, "coverages", []) or []),
-        "allows_geometry_drops": bool(getattr(telemetry, "allows_geometry_drops", False)),
+        "allows_geometry_drops": bool(
+            getattr(telemetry, "allows_geometry_drops", False)
+        ),
         "width": getattr(telemetry, "width", None),
         "height": getattr(telemetry, "height", None),
         "padding_ratio": getattr(telemetry, "padding_ratio", None),

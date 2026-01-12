@@ -7,6 +7,7 @@ will have these fields added.
 
 Note: Currently only supports BBU dataset. RRU support is not yet available.
 """
+
 import argparse
 import json
 import sys
@@ -51,9 +52,9 @@ def _load_fail_reasons(excel_path: Path) -> dict[tuple[str, str], list[str]]:
     df = df.dropna(subset=["group_id", "mission", "reason_text"])
 
     mapping: dict[tuple[str, str], set[str]] = {}
-    for group_id, mission, reason in df[["group_id", "mission", "reason_text"]].itertuples(
-        index=False
-    ):
+    for group_id, mission, reason in df[
+        ["group_id", "mission", "reason_text"]
+    ].itertuples(index=False):
         gid = str(group_id).strip()
         mis = str(mission).strip()
         reason_text = str(reason).strip()
@@ -109,10 +110,9 @@ def _process_stage_a_jsonl(
                     obj["gt_fail_reason_text"] = None
                     missing_reason += 1
 
-            records.append(obj)
+    records.append(obj)
 
     # Write output
-    output_file = input_file if inplace else sys.stdout
     if inplace:
         with input_file.open("w", encoding="utf-8") as fout:
             for obj in records:
@@ -185,4 +185,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

@@ -132,26 +132,5 @@ class TestTranslateGeometry:
         assert result == {"line": [5.0, 10.0, 45.0, 50.0]}
 
 
-class TestCropOperatorIntegration:
-    """Integration tests for crop operators (requires full augmentation stack)."""
-
-    @pytest.mark.skip(reason="Integration test - requires full pipeline setup")
-    def test_random_crop_filters_objects(self):
-        """RandomCrop should filter objects based on min_coverage."""
-        # This would test the full RandomCrop.apply() method
-        # Requires setting up PIL images, geometries, and RNG
-        pass
-
-    @pytest.mark.skip(reason="Integration test - requires full pipeline setup")
-    def test_crop_skip_on_min_objects(self):
-        """Crop should skip if < min_objects remain."""
-        pass
-
-    @pytest.mark.skip(reason="Integration test - requires full pipeline setup")
-    def test_crop_skip_on_line_objects(self):
-        """Crop should skip if skip_if_line=True and line present."""
-        pass
-
-
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

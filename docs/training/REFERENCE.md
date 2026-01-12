@@ -109,7 +109,7 @@ Comprehensive guide for training, inference, deployment, and advanced topics.
 ```
 
 **Copy/Paste Patch Bank** (single-node):
-- Enabled by copy/paste PatchOps (`small_object_zoom_paste`, `object_cluster_copy_paste`, `line_segment_copy_paste`) when `source_mode: mixed|bank` and `bank_add_prob > 0`.
+- Enabled by copy/paste PatchOps (`object_cluster_copy_paste`, `line_segment_copy_paste`) when `source_mode: mixed|bank` and `bank_add_prob > 0`.
 - Directory is `QWEN3_VL_PATCH_BANK_DIR` (defaults to `<output_dir>/patch_bank` via `src/sft.py`).
 - Shared across dataloader workers and distributed ranks **on a single node**; multi-node jobs are not supported (fail-fast).
 - Sampling is deterministic when step context is available (selection derived from per-record `sample_id`, not by consuming RNG).

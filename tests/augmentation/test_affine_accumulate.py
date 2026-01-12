@@ -102,7 +102,15 @@ def test_color_after_warp_no_geom_change():
     img = _make_img(w, h)
     geoms = _geom_samples()
     pipe1 = Compose([HFlip(1.0), Rotate(10.0, 1.0), Scale(0.9, 1.1, 1.0)])
-    pipe2 = Compose([HFlip(1.0), Rotate(10.0, 1.0), Scale(0.9, 1.1, 1.0), ColorJitter(prob=1.0), Gamma(prob=1.0)])
+    pipe2 = Compose(
+        [
+            HFlip(1.0),
+            Rotate(10.0, 1.0),
+            Scale(0.9, 1.1, 1.0),
+            ColorJitter(prob=1.0),
+            Gamma(prob=1.0),
+        ]
+    )
     _, g1 = pipe1.apply([img], geoms, width=w, height=h, rng=Random(42))
     _, g2 = pipe2.apply([img], geoms, width=w, height=h, rng=Random(42))
     assert g1 == g2

@@ -1,7 +1,7 @@
 {
   "images": [
-    "/data/Qwen3-VL/tests/augmentation/fixtures/input/scene0_img0.png",
-    "/data/Qwen3-VL/tests/augmentation/fixtures/input/scene0_img1.png"
+    "input/scene0_img0.png",
+    "input/scene0_img1.png"
   ],
   "width": 80,
   "height": 64,
@@ -13,7 +13,7 @@
         26.0,
         30.0
       ],
-      "desc": "螺丝/fastener"
+      "desc": "类别=紧固件,可见性=完整,备注=螺丝/fastener"
     },
     {
       "poly": [
@@ -26,7 +26,7 @@
         42.0,
         26.0
       ],
-      "desc": "金属板/plate"
+      "desc": "类别=BBU设备,可见性=完整,备注=金属板/plate"
     },
     {
       "line": [
@@ -37,7 +37,7 @@
         60.0,
         55.0
       ],
-      "desc": "线缆/cable"
+      "desc": "类别=线缆,可见性=完整,备注=线缆/cable"
     }
   ]
 }

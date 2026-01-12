@@ -332,17 +332,23 @@ custom:
   augmentation:
     enabled: true
     bypass_prob: 0.1              # 10% clean samples
-    ops:
-      - name: hflip
-        params: { prob: 0.5 }
-      - name: rotate
-        params: { max_deg: 25.0, prob: 0.4 }
-      - name: random_crop
-        params: { scale: [0.7, 1.0], prob: 0.3 }
-      - name: resize_by_scale
-        params: { lo: 0.9, hi: 1.1, prob: 0.5 }
-      - name: color_jitter
-        params: { brightness: [0.75, 1.25], prob: 0.5 }
+	    ops:
+	      - name: hflip
+	        params: { prob: 0.5 }
+	      - name: roi_crop
+	        params:
+	          anchor_classes: ["BBU设备", "RRU设备", "紧固件"]
+	          scale_range: [1.25, 2.3]
+	          min_crop_size: 384
+	          min_coverage: 0.4
+	          completeness_threshold: 0.95
+	          prob: 0.3
+	      - name: rotate
+	        params: { max_deg: 25.0, prob: 0.4 }
+	      - name: resize_by_scale
+	        params: { lo: 0.9, hi: 1.1, prob: 0.5 }
+	      - name: color_jitter
+	        params: { brightness: [0.75, 1.25], prob: 0.5 }
       # ✅ MUST be last: ensures final padding to multiple of 32
       - name: expand_to_fit_affine
         params: { multiple: 32 }

@@ -53,8 +53,6 @@ def _build_datasets(train_args, training_cfg, template):
     curriculum_cfg = custom_cfg.augmentation_curriculum
     curriculum_state = curriculum_cfg if curriculum_cfg else None
 
-
-
     system_prompt_dense = getattr(train_args, "system_prompt", None)
     system_prompt_summary = getattr(custom_cfg, "system_prompt_summary", None)
     dataset_seed = 42
@@ -105,6 +103,7 @@ def _compute_lengths(dataset) -> dict[int, int]:
     pbar = tqdm(
         range(dataset_len), desc="Computing lengths", mininterval=0.5, file=sys.stdout
     )
+    try:
         for idx in pbar:
             if hasattr(dataset, "_schedule") and hasattr(dataset, "_record_pools"):
                 dataset_name, base_idx = dataset._schedule[idx]

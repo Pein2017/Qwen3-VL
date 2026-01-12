@@ -20,8 +20,8 @@ from src.datasets.augmentation.curriculum import AugmentationCurriculumScheduler
 from src.datasets.augmentation.ops import (
     ExpandToFitAffine,
     HFlip,
-    RandomCrop,
     ResizeByScale,
+    RoiCrop,
     Rotate,
     Scale,
     VFlip,
@@ -55,7 +55,7 @@ class VisConfig:
     respect_bypass_prob: bool = True  # mirror training bypass chance
     save_state_summary: bool = True
 
-    # Optional: focus on a single op (e.g., small_object_zoom_paste) ignoring curriculum
+    # Optional: focus on a single op (e.g., roi_crop) ignoring curriculum
     focus_op_name: str | None = None
     focus_force_prob: float | None = None  # if set, overrides that op's prob in vis
 
@@ -77,13 +77,16 @@ class VisConfig:
     resize_hi: float = 1.8  # Extreme grow (180%)
     resize_align_multiple: int = 32
 
-    # SMART CROPPING (test label filtering & geometry truncation)
-    random_crop_p: float = 0.5  # Test crop filtering
-    random_crop_scale_lo: float = 0.6
-    random_crop_scale_hi: float = 1.0
-    crop_min_coverage: float = 0.25  # More aggressive filtering
-    crop_min_objects: int = 3  # Lower threshold for testing
-    crop_skip_if_line: bool = True
+    # ROI CROPPING (tests filtering & geometry truncation)
+    roi_crop_p: float = 0.5
+    roi_crop_scale_lo: float = 1.2
+    roi_crop_scale_hi: float = 2.0
+    roi_crop_min_crop_size: int = 320
+    roi_crop_anchor_classes: List[str] = field(
+        default_factory=lambda: ["BBU设备", "RRU设备", "机柜"]
+    )
+    roi_crop_min_coverage: float = 0.25
+    roi_crop_completeness_threshold: float = 0.95
 
     # EXTREME COLOR AUGMENTATIONS (test visual changes)
     color_p: float = 0.0
@@ -361,20 +364,20 @@ def _build_random_pipeline(rng: Random, cfg: VisConfig):
     ops.append(ExpandToFitAffine(multiple=cfg.pad_multiple))
     labels.append("expand")
 
-    # === SMART CROPPING (barrier - filters labels) ===
-    if rng.random() < cfg.random_crop_p:
+    # === ROI CROPPING (barrier - filters labels) ===
+    if rng.random() < cfg.roi_crop_p:
         ops.append(
-            RandomCrop(
-                scale=(cfg.random_crop_scale_lo, cfg.random_crop_scale_hi),
-                aspect_ratio=(0.9, 1.1),
-                min_coverage=cfg.crop_min_coverage,
-                min_objects=cfg.crop_min_objects,
-                skip_if_line=cfg.crop_skip_if_line,
+            RoiCrop(
+                anchor_classes=cfg.roi_crop_anchor_classes,
+                scale_range=(cfg.roi_crop_scale_lo, cfg.roi_crop_scale_hi),
+                min_crop_size=cfg.roi_crop_min_crop_size,
+                min_coverage=cfg.roi_crop_min_coverage,
+                completeness_threshold=cfg.roi_crop_completeness_threshold,
                 prob=1.0,
             )
         )
         labels.append(
-            f"crop({cfg.random_crop_scale_lo:.1f}-{cfg.random_crop_scale_hi:.1f})"
+            f"roi_crop({cfg.roi_crop_scale_lo:.1f}-{cfg.roi_crop_scale_hi:.1f})"
         )
 
     # === RESOLUTION RESIZING (barrier - tests coordinate scaling) ===
@@ -845,10 +848,10 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--mode",
-        choices=["curriculum", "zoom"],
+        choices=["curriculum", "roi_crop"],
         default="curriculum",
         help="Visualization mode: 'curriculum' for full pipeline with curriculum, "
-        "'zoom' for small_object_zoom_paste only.",
+        "'roi_crop' for roi_crop only.",
     )
     parser.add_argument(
         "--config-yaml",
@@ -887,8 +890,8 @@ if __name__ == "__main__":
 
     if args.out_dir:
         out_dir = args.out_dir
-    elif args.mode == "zoom":
-        out_dir = "vis_out/augment_zoom_small_object"
+    elif args.mode == "roi_crop":
+        out_dir = "vis_out/augment_roi_crop_focus"
     else:
         out_dir = "vis_out/augment_curriculum_dense_1024"
 
@@ -901,16 +904,16 @@ if __name__ == "__main__":
         config_yaml=args.config_yaml,
     )
 
-    if args.mode == "zoom":
+    if args.mode == "roi_crop":
         cfg = VisConfig(
             **base_kwargs,
             curriculum_marks=None,
             respect_bypass_prob=False,  # always apply op; bypass handled via focus_prob
-            focus_op_name="small_object_zoom_paste",
+            focus_op_name="roi_crop",
             focus_force_prob=1.0,
         )
         print("=" * 72)
-        print("SMALL_OBJECT_ZOOM_PASTE VISUALIZATION")
+        print("ROI_CROP VISUALIZATION")
         print(f"  YAML:          {cfg.config_yaml}")
         print(f"  JSONL:         {cfg.jsonl_path}")
         print(f"  Output Dir:    {cfg.out_dir}")

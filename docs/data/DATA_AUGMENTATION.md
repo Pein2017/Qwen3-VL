@@ -69,8 +69,8 @@ The augmentation pipeline handles 3 geometry types (bbox, poly, polyline) with p
 **Change ID**: `2025-10-27-add-smart-crop-with-label-filter`
 
 **What Changed**:
-- Added `RandomCrop` operator with automatic label filtering and geometry truncation
-- Removed redundant operators: `CenterCrop` (use RandomCrop with fixed scale), `Equalize` (use AutoContrast)
+- Added a crop operator with automatic label filtering and geometry truncation (later superseded by `roi_crop`)
+- Removed redundant operators: `CenterCrop` (use `roi_crop`), `Equalize` (use AutoContrast)
 - Fixed polygon rotation preservation (no unnecessary AABB conversion for polygons inside canvas)
 - Enhanced visualization script with extreme testing mode for all augmentation operations
 
@@ -83,17 +83,17 @@ The augmentation pipeline handles 3 geometry types (bbox, poly, polyline) with p
 1. **Coverage-based filtering**: Objects <30% visible are dropped from GT
 2. **Geometry truncation**: Bbox/poly/line clipped to crop boundaries
 3. **Completeness tracking**: Automatic `可见性=完整` ↔ `可见性=部分` updates based on coverage (including `attributes.completeness` when present)
-4. **Smart skip conditions**: Preserves dense scenes (<4 objects) and line objects; emits telemetry on skip reasons
+4. **Smart skip conditions**: Skips when no anchor is found; emits telemetry on skip reasons
 
 **Configuration Example**:
 ```yaml
-- name: random_crop
+- name: roi_crop
   params:
-    scale: [0.7, 1.0]               # Crop 70-100% of image
+    anchor_classes: ["BBU设备", "RRU设备", "机柜"]
+    scale_range: [1.2, 2.0]         # Expansion factor around anchor
+    min_crop_size: 384
     min_coverage: 0.3               # Drop if <30% visible
     completeness_threshold: 0.95    # Mark partial if <95% visible
-    min_objects: 4                  # Skip crop if <4 objects
-    skip_if_line: true              # Preserve cables/fibers
     prob: 0.3                       # 30% of samples
 ```
 
@@ -107,7 +107,7 @@ The augmentation pipeline handles 3 geometry types (bbox, poly, polyline) with p
 
 - **What Changed**:
 - Pixel-cap enforcement re-runs after 32× alignment and rounds down to the nearest legal multiple, guaranteeing `max_pixels` is never exceeded.
-- RandomCrop now measures polygons via polygon clipping (shoelace area computation) rather than AABB overlap.
+- Crop coverage now measures polygons via polygon clipping (shoelace area computation) rather than AABB overlap.
 - Completeness updates propagate to structured metadata fields (`attributes.completeness`, `attributes.完整性`), with debug logging when replacements are skipped.
 - Compose skips redundant identity warps; telemetry captures padding ratios, crop skip reasons, and kept-object coverage summaries via logger `augmentation.telemetry`.
 - Regression tests cover pixel-cap enforcement (including identity alignment) and polygon coverage edge cases.
@@ -125,12 +125,12 @@ The augmentation pipeline handles 3 geometry types (bbox, poly, polyline) with p
 **Change ID**: `2026-01-12-add-device-anchored-roi-crop`
 
 **Why**:
-- BBU/RRU巡检数据中线缆/尾纤占比高，`random_crop(skip_if_line=true)` 会频繁跳过裁剪，导致小目标长期处于低像素占比（漏检）。
+- BBU/RRU巡检数据中线缆/尾纤占比高，传统“遇到线段就跳过”的随机裁剪会频繁跳过，导致小目标长期处于低像素占比（漏检）。
 - 盲目随机裁剪容易切断线缆拓扑（描述“连接A和B”，crop后B消失），对语义一致性不友好。
 
 **What Changed**:
 - Added `RoiCrop` operator (`roi_crop`) that crops around an anchor device/cabinet ROI (matched by the structured token `类别=...` in `desc`, exact match).
-- Unlike `RandomCrop`, `roi_crop` keeps line objects by clipping them to the crop box (no “skip if line” behavior).
+- Unlike skip-based random crops, `roi_crop` keeps line objects by clipping them to the crop box.
 - Dense augmentation presets now use `roi_crop` in the curriculum schedule (see dense presets under `configs/train/**`, e.g. `configs/train/sft/dense_1024.yaml`).
 
 **Configuration Example**:
@@ -146,7 +146,7 @@ The augmentation pipeline handles 3 geometry types (bbox, poly, polyline) with p
 ```
 
 **Notes**:
-- `RandomCrop` is still available and useful for non-domain data; prefer `roi_crop` when you have reliable device anchors.
+- `random_crop` and `small_object_zoom_paste` were removed; use `roi_crop` for BBU/RRU-style zoom-in.
 - Anchor matching is strict (exact `类别=` match): use **exact 类别 values** (e.g., `BBU设备`, `RRU设备`) and avoid ambiguous categories that can match small parts.
 
 ---
@@ -179,18 +179,15 @@ custom:
       - name: gamma
         params: { gamma: [0.8, 1.3], prob: 0.3 }
 
-      # Small-object recall (single-image crop→scale→translate for tiny targets)
-      - name: small_object_zoom_paste
+      # ROI zoom-in (device-anchored crop)
+      - name: roi_crop
         params:
+          anchor_classes: ["BBU设备", "RRU设备", "机柜"]
+          scale_range: [1.2, 2.0]
+          min_crop_size: 384
+          min_coverage: 0.4
+          completeness_threshold: 0.95
           prob: 0.2
-          max_targets: 1
-          scale: [1.4, 1.8]
-          max_size: 96          # bbox long side threshold
-          max_line_length: 128  # line length threshold
-          overlap_threshold: 0.1
-          max_attempts: 20
-          context: 4            # extra pixels around patch
-          line_buffer: 4        # buffer when computing IoU for lines
       
       # ✅ Final padding: MUST be last to ensure all images are multiple of 32
       # Applied after all size-changing operations to guarantee final alignment
@@ -247,7 +244,7 @@ No additional logging is emitted by default; the training loop applies the share
 ### Order Matters!
 
 1. **Affine ops** (hflip, vflip, rotate, scale) - accumulated
-2. **Patch / size-changing ops** (roi_crop, random_crop, resize_by_scale) - flush affines, change dimensions
+2. **Patch / size-changing ops** (roi_crop, resize_by_scale) - flush affines, change dimensions
 3. **Color ops** - applied after size changes (don't affect geometry)
 4. **expand_to_fit_affine** - keep a **final** one last to ensure padding to multiple of 32
 
@@ -296,52 +293,47 @@ No additional logging is emitted by default; the training loop applies the share
 - They intentionally interrupt accumulation to lock in image size, then let later affines accumulate again.
 
 **Recommended placement**:
-- Put `random_crop` / `resize_by_scale` before color ops.
+- Put `roi_crop` / `resize_by_scale` before color ops.
 - Keep `expand_to_fit_affine` at the very end to enforce final padding/alignment (32×).
 
 ### 4. Crop Operators with Label Filtering (`kind="barrier"`)
-**Example**: `RandomCrop`
+**Example**: `RoiCrop`
 
-**New in v1.1**: Smart cropping with automatic label filtering and completeness tracking for dense captioning tasks.
+`roi_crop` is the supported crop operator for dense-caption pipelines. It selects an anchor object via
+the structured `desc` token `类别=...` (exact match against `anchor_classes`), then crops around the anchor
+and performs coverage-based filtering + geometry truncation.
 
-**How they work**:
-- Crop image to random or center region
-- **Filter objects** based on visibility (drop if <30% visible by default)
-- **Truncate geometries** of partially visible objects to crop boundary
-- **Update completeness field**: `"可见性=完整"` → `"可见性=部分"` for objects <95% visible
-- **Skip crop** if <4 objects remain or line objects present (preserves cable/fiber integrity)
-- Translate retained geometries to crop-relative coordinates
+**How it works**:
+- Select an anchor object by exact `类别=` match (`anchor_classes`)
+- Crop a region around the anchor AABB expanded by `scale_range` (clamped by `min_crop_size`)
+- **Filter objects** based on visibility (drop bbox/poly objects if coverage < `min_coverage`)
+- **Truncate geometries** of partially visible objects to the crop boundary (bbox/poly/line)
+- **Update completeness field** tokens when coverage < `completeness_threshold`
+- **Skip crop** when no anchor is found (no fallback)
 
-**Business Rules**:
-- `min_coverage` (default: 0.3): Drop objects with <30% area inside crop
-- `completeness_threshold` (default: 0.95): Mark `可见性=部分` if <95% visible
-- `min_objects` (default: 4): Skip crop if <4 objects would remain (dense scenes requirement)
-- `skip_if_line` (default: true): Skip crop if any line object present (preserve cable/fiber paths)
-
-**Perfect Visual-Label Alignment**: Only describes objects that are actually visible in the cropped image.
+**Key parameters**:
+- `anchor_classes`: allowed category values (strict match on `类别=...`)
+- `scale_range`: expansion factor range around the anchor box
+- `min_crop_size`: minimum crop side length in pixels
+- `min_coverage`, `completeness_threshold`, `prob`
 
 **Configuration Example**:
 ```yaml
-# Random crop for scale variation and small object focus
-- name: random_crop
+- name: roi_crop
   params:
-    scale: [0.7, 1.0]               # Crop 70-100% of image
-    aspect_ratio: [0.9, 1.1]        # Nearly square
-    min_coverage: 0.3               # Drop if <30% visible
-    completeness_threshold: 0.95    # Mark partial if <95% visible
-    min_objects: 4                  # Skip crop if <4 objects (dense scenes)
-    skip_if_line: true              # Skip if line objects present
-    prob: 0.3                       # 30% of samples
-
+    anchor_classes: ["BBU设备", "RRU设备", "机柜"]
+    scale_range: [1.25, 2.3]
+    min_crop_size: 384
+    min_coverage: 0.4
+    completeness_threshold: 0.95
+    prob: 0.3
 ```
 
 **When to Use**:
 - ✅ Dense captioning with object descriptions
-- ✅ Need to focus on small objects via zooming
-- ✅ Want perfect visual-label alignment (no hallucinated objects)
-- ✅ Have `可见性=完整`/`可见性=部分` completeness fields in your data
-- ❌ Single-object detection (use `min_objects=1`)
-- ❌ Images with <4 objects total (crop will always skip)
+- ✅ Cable-heavy scenes (line objects are clipped, not skip-gated)
+- ✅ Have reliable device anchors encoded as `类别=...` tokens
+- ❌ Datasets without anchors (roi_crop will skip; use resize/rotate only)
 
 **Metadata Propagation**:
 Crop operators store metadata that the preprocessor uses to filter and update objects:
@@ -574,18 +566,18 @@ Outputs to `vis_out/augment_stage3_exact/` showing original vs augmented with ov
 **Cause**: Missing `expand_to_fit_affine` after rotation, or placed in wrong position
 **Fix**: Add `expand_to_fit_affine` at the **end** of the pipeline (after all size-changing operations):
 ```yaml
-- name: rotate
-  params: { max_deg: 25.0, prob: 0.4 }
-- name: random_crop
-  params: { scale: [0.7, 1.0], prob: 0.3 }
+- name: roi_crop
+  params: { anchor_classes: ["BBU设备", "RRU设备", "机柜"], prob: 0.3 }
 - name: resize_by_scale
   params: { lo: 0.9, hi: 1.1, prob: 0.5 }
+- name: rotate
+  params: { max_deg: 25.0, prob: 0.4 }
 # ... color ops ...
 - name: expand_to_fit_affine  # MUST be last
   params: { multiple: 32 }
 ```
 
-**Note**: Placing `expand_to_fit_affine` before size-changing operations (like `random_crop` or `resize_by_scale`) will cause the final image to not be a multiple of 32, breaking ViT requirements.
+**Note**: Placing `expand_to_fit_affine` before size-changing operations (like `roi_crop` or `resize_by_scale`) will cause the final image to not be a multiple of 32, breaking ViT requirements.
 
 ### OOM during training
 **Cause**: max_pixels too high or batch too large
@@ -612,31 +604,17 @@ Outputs to `vis_out/augment_stage3_exact/` showing original vs augmented with ov
 ```
 
 ### Crop always skipping (high skip rate)
-**Cause**: Too few objects, line objects present, or min_objects threshold too high
+**Cause**: No anchor objects matched (`roi_crop` requires strict `类别=...` tokens and exact category match)
 
 **Symptoms**:
 ```
-[DEBUG] Crop would filter to 2 < 4 objects. Skipping crop.
-[DEBUG] Crop region contains line object. Skipping crop to preserve cable/fiber integrity.
+[DEBUG] roi_crop: no_anchor
 ```
 
 **Fix**:
-1. **For datasets with few objects** (2-3 per image):
-   ```yaml
-   - name: random_crop
-     params:
-       min_objects: 2  # Lower threshold (default: 4)
-   ```
-
-2. **For datasets with line objects** (cables/fibers):
-   ```yaml
-   - name: random_crop
-     params:
-       skip_if_line: false  # Allow line truncation if needed
-       # WARNING: May lose cable routing information
-   ```
-
-3. **Check your data**: If average object count < min_objects, disable crop or lower threshold
+1. Ensure objects include a structured `desc` token like `类别=BBU设备` (comma-separated tokens).
+2. Set `roi_crop.anchor_classes` to the exact category values present in your dataset.
+3. If anchors are not reliably present, disable `roi_crop` (it has no fallback).
 
 ### Too many objects dropped by crop
 **Cause**: min_coverage threshold too high or crops too small
@@ -649,16 +627,16 @@ Outputs to `vis_out/augment_stage3_exact/` showing original vs augmented with ov
 **Fix**:
 1. **Lower coverage threshold** (more lenient):
    ```yaml
-   - name: random_crop
+   - name: roi_crop
      params:
-       min_coverage: 0.2  # Keep objects with >20% visible (default: 0.3)
+       min_coverage: 0.2  # Keep objects with >20% visible (default: 0.4)
    ```
 
-2. **Use larger crops** (less aggressive):
+2. **Use larger ROI windows** (less aggressive):
    ```yaml
-   - name: random_crop
+   - name: roi_crop
      params:
-       scale: [0.8, 1.0]  # Crop 80-100% (default: [0.6, 1.0])
+       scale_range: [1.6, 2.8]  # Larger crops preserve more context (default: ~[1.25, 2.3])
    ```
 
 3. **Monitor logs**: If consistently dropping >50% of objects, tune parameters
@@ -670,7 +648,7 @@ Outputs to `vis_out/augment_stage3_exact/` showing original vs augmented with ov
 1. Verify your data uses exact field names: `"可见性=完整"` and `"可见性=部分"`
 2. Coverage may be ≥95% (above completeness_threshold):
    ```yaml
-   - name: random_crop
+   - name: roi_crop
      params:
        completeness_threshold: 0.90  # Lower threshold (default: 0.95)
    ```
@@ -678,44 +656,45 @@ Outputs to `vis_out/augment_stage3_exact/` showing original vs augmented with ov
 3. Ensure crop is actually applied (check for skip conditions)
 
 ### Visual-label misalignment persists
-**Cause**: Using `scale` zoom-in instead of `center_crop`
+**Cause**: Using `scale` zoom-in instead of `roi_crop`
 
-**Fix**: Replace scale with center_crop:
+**Fix**: Replace `scale` zoom-in with device-anchored ROI crop (filters labels + clips geometries):
 ```yaml
 # OLD (causes misalignment):
 # - name: scale
 #   params: { lo: 1.1, hi: 1.4, prob: 0.25 }
 
-# NEW (perfect alignment):
-- name: center_crop
+# NEW (recommended for BBU/RRU):
+- name: roi_crop
   params:
-    scale: 0.75  # 1.33x zoom (1 / 0.75 = 1.33)
-    min_coverage: 0.3
+    anchor_classes: ["BBU设备", "RRU设备", "紧固件"]
+    scale_range: [1.25, 2.3]
+    min_crop_size: 384
+    min_coverage: 0.4
     completeness_threshold: 0.95
-    min_objects: 4
-    skip_if_line: true
     prob: 0.25
 ```
 
 ### Crop with rotation produces unexpected results
-**Cause**: Crop applied BEFORE rotation (wrong order), or `expand_to_fit_affine` placed incorrectly
+**Cause**: `roi_crop` placed AFTER `rotate`, or `expand_to_fit_affine` placed too early
 
-**Fix**: Apply crop AFTER affine transforms, and place `expand_to_fit_affine` at the END:
+**Fix**: Place `roi_crop` before `rotate`, keep `rotate` late, and place `expand_to_fit_affine` at the END:
 ```yaml
 # CORRECT order:
-- name: rotate
-  params: { max_deg: 25.0, prob: 0.4 }
-- name: random_crop           # After affines, before final padding
-  params: { scale: [0.7, 1.0], prob: 0.3 }
+- name: roi_crop
+  params: { prob: 0.3 }
 - name: resize_by_scale
   params: { lo: 0.9, hi: 1.1, prob: 0.5 }
+# Rotate late so its affine flush is handled by expand_to_fit_affine (no corner cropping).
+- name: rotate
+  params: { max_deg: 25.0, prob: 0.4 }
 # ... color ops ...
 - name: expand_to_fit_affine  # MUST be last for final 32× padding
   params: { multiple: 32 }
 
-# WRONG order (crop before rotation):
-# - name: random_crop
-# - name: rotate  # Will re-crop rotated content!
+# WRONG order (`roi_crop` after `rotate`):
+# - name: rotate
+# - name: roi_crop
 
 # WRONG order (expand_to_fit_affine too early):
 # - name: expand_to_fit_affine  # Too early!
@@ -781,15 +760,14 @@ Replace `scale` zoom-in with smart cropping:
 - name: scale
   params: { lo: 1.1, hi: 1.4, prob: 0.25 }
 
-# ✅ NEW (perfect alignment, use RandomCrop with fixed scale for center-crop behavior)
-- name: random_crop
+# ✅ NEW (recommended for BBU/RRU: device-anchored ROI crop)
+- name: roi_crop
   params:
-    scale: [0.75, 0.75]          # Fixed 75% = 1.33x zoom
-    aspect_ratio: [1.0, 1.0]     # Fixed aspect
-    min_coverage: 0.3
+    anchor_classes: ["BBU设备", "RRU设备", "紧固件"]
+    scale_range: [1.25, 2.3]          # Larger => more context, smaller => more zoom-in
+    min_crop_size: 384
+    min_coverage: 0.4
     completeness_threshold: 0.95
-    min_objects: 4
-    skip_if_line: true
     prob: 0.25
 ```
 
@@ -797,42 +775,38 @@ Replace `scale` zoom-in with smart cropping:
 
 | Parameter | Default | What It Does | Tune If... |
 |-----------|---------|--------------|------------|
-| **scale** | `[0.6, 1.0]` | Crop size (0.7 = 70% of image) | Images too large/small |
-| **aspect_ratio** | `[0.8, 1.2]` | Width/height variation | Need square crops |
-| **min_coverage** | `0.3` | Drop if <30% visible | Too many/few dropped |
-| **completeness_threshold** | `0.95` | Mark partial if <95% | Completeness field tuning |
-| **min_objects** | `4` | Skip crop if <4 remain | Samples being skipped |
-| **skip_if_line** | `true` | Skip if line objects present | Cable/fiber integrity |
-| **prob** | `1.0` | Crop probability | Sample diversity |
+| **anchor_classes** | `[...]` | Which `desc` token `类别=...` values can trigger ROI crop (exact match) | Crop always skipping (`no_anchor`) |
+| **scale_range** | `[1.25, 2.3]` | ROI window size relative to anchor size | Too much/too little zoom |
+| **min_crop_size** | `384` | Lower bound on crop size (pixels) | Anchors are small; crop too tiny |
+| **min_coverage** | `0.4` | Drop objects with lower visible coverage after crop | Too many/few dropped |
+| **completeness_threshold** | `0.95` | Mark partial if below threshold | Completeness field tuning |
+| **prob** | `0.0~0.5` | Apply probability (often ramped by curriculum) | Want more/less ROI zoom-in |
 
 ### Common Configurations
 
 **Conservative** (start here):
 ```yaml
-scale: [0.7, 1.0]           # 70-100% crop
-min_coverage: 0.3           # Drop <30%
-min_objects: 4              # Preserve dense scenes
-skip_if_line: true          # Preserve cables
-prob: 0.3                   # 30% of samples
+scale_range: [1.6, 2.8]     # Larger crops preserve more context
+min_coverage: 0.4
+min_crop_size: 384
+prob: 0.2
 ```
 
 **Aggressive** (small object focus):
 ```yaml
-scale: [0.5, 0.8]           # 50-80% crop
-min_coverage: 0.3           # Drop <30%
-min_objects: 2              # Allow sparse scenes
-skip_if_line: false         # Allow line truncation
-prob: 0.5                   # 50% of samples
+scale_range: [1.15, 2.0]    # Stronger zoom-in
+min_coverage: 0.4
+min_crop_size: 320
+prob: 0.5
 ```
 
 ### Troubleshooting
 
 | Issue | Cause | Solution |
 |-------|-------|----------|
-| Too many skipped crops | `min_objects` too high | Lower to 2-3 |
-| Objects hallucinated | `min_coverage` too low | Raise to 0.4-0.5 |
-| Line objects broken | `skip_if_line=false` | Set to `true` |
-| No completeness updates | Threshold too low | Check coverage distribution |
+| Crop always skipped | No anchor matched | Ensure `desc` contains `类别=...` and `anchor_classes` matches exactly |
+| Too many objects dropped | Crop too small or `min_coverage` too high | Increase `scale_range` / `min_crop_size`, or lower `min_coverage` |
+| No completeness updates | Coverage stays above threshold | Lower `completeness_threshold` slightly (e.g., 0.90) |
 
 ---
 
@@ -852,30 +826,24 @@ After scale=1.3x:
 
 ### Migration Steps
 
-**Step 1**: Convert zoom factor to crop scale
-```
-crop_scale = 1 / zoom_factor
-```
+**Step 1**: Decide anchor categories (exact `类别=` tokens)
 
-Examples:
-- `scale lo: 1.2` → `crop scale: 0.83`
-- `scale lo: 1.3` → `crop scale: 0.77`
-- `scale lo: 1.4` → `crop scale: 0.71`
+For BBU/RRU inspection data, typical anchors are `BBU设备`, `RRU设备`, `紧固件`.
 
-**Step 2**: Replace with `random_crop` (fixed scale for center-crop behavior)
+**Step 2**: Replace with `roi_crop` (device-anchored ROI crop)
 ```yaml
 # Before
 - name: scale
   params: { lo: 1.3, hi: 1.3, prob: 0.25 }
 
 # After
-- name: random_crop
+- name: roi_crop
   params:
-    scale: [0.77, 0.77]          # 1/1.3 = 0.77
-    aspect_ratio: [1.0, 1.0]     # Fixed aspect for center-crop
-    min_coverage: 0.3
-    min_objects: 4
-    skip_if_line: true
+    anchor_classes: ["BBU设备", "RRU设备", "紧固件"]
+    scale_range: [1.25, 2.3]
+    min_crop_size: 384
+    min_coverage: 0.4
+    completeness_threshold: 0.95
     prob: 0.25
 ```
 
@@ -906,7 +874,7 @@ python vis_tools/vis_augment_compare.py
 - Enhanced CLAHE configuration validation (accepts list or tuple for `tile_grid_size`)
 
 **Why This Matters**:
-- Placing `expand_to_fit_affine` before size-changing operations (like `random_crop` or `resize_by_scale`) breaks the 32× alignment requirement
+- Placing `expand_to_fit_affine` before size-changing operations (like `roi_crop` or `resize_by_scale`) breaks the 32× alignment requirement
 - Final padding ensures all images are compatible with Qwen3-VL's ViT requirements
 - Type safety fixes prevent runtime errors from float dimensions in PIL operations
 

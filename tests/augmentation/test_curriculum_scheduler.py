@@ -7,7 +7,7 @@ from PIL import Image
 
 from src.datasets.augmentation.base import Compose
 from src.datasets.augmentation.curriculum import AugmentationCurriculumScheduler
-from src.datasets.augmentation.ops import SmallObjectZoomPaste
+from src.datasets.augmentation.ops import RoiCrop
 from src.datasets.preprocessors.augmentation import AugmentationPreprocessor
 
 
@@ -115,18 +115,22 @@ def test_probability_bounds_enforced():
 
 
 def test_curriculum_override_preserves_types_for_ops():
-    op = SmallObjectZoomPaste(
-        prob=1.0, max_targets=1, max_attempts=3, scale=(1.2, 1.3), max_size=96
+    op = RoiCrop(
+        anchor_classes=["BBU设备"],
+        scale_range=(1.2, 1.3),
+        min_crop_size=320,
+        min_coverage=0.4,
+        completeness_threshold=0.95,
+        prob=1.0,
     )
     pipeline = Compose([op])
     state = {
         "step": 0,
         "bypass_prob": 0.0,
         "ops": {
-            "small_object_zoom_paste": {
-                "max_targets": 1.0,
-                "max_attempts": 2.0,
-                "scale": [1.1, 1.4],
+            "roi_crop": {
+                "min_crop_size": 384.0,
+                "scale_range": [1.1, 1.4],
             }
         },
     }
@@ -136,13 +140,12 @@ def test_curriculum_override_preserves_types_for_ops():
 
     pre._sync_curriculum()
 
-    assert isinstance(op.max_targets, int)
-    assert isinstance(op.max_attempts, int)
-    assert isinstance(op.scale, tuple)
+    assert isinstance(op.min_crop_size, int)
+    assert isinstance(op.scale_range, tuple)
 
     # Should run without TypeError from float indices
     img = Image.new("RGB", (32, 32), (128, 128, 128))
-    geoms = [{"bbox_2d": [2, 2, 6, 6], "desc": "test"}]
+    geoms = [{"bbox_2d": [2, 2, 30, 30], "desc": "类别=BBU设备,可见性=完整"}]
     imgs = [img]
     out_images, _ = op.apply(imgs, geoms, width=32, height=32, rng=Random(1))
     assert len(out_images) == len(imgs)

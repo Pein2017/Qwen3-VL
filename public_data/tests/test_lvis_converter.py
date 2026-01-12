@@ -24,7 +24,6 @@ def test_annotation_loading():
     # Get the project root directory (two levels up from public_data/tests)
     base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     annotation_path = os.path.join(base_dir, "lvis/raw/annotations/lvis_v1_train.json")
-    image_root = os.path.join(base_dir, "lvis/raw/images")
 
     # Create minimal config (images don't need to exist for this test)
     with tempfile.TemporaryDirectory() as tmpdir:

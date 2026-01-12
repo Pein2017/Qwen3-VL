@@ -134,15 +134,16 @@ class AugmentationPreprocessor(BasePreprocessor):
         )
 
         # Extract geometries and keep an index mapping back to the object list.
-        # This lets us append new duplicated objects when PatchOps increase geometry count
-        # (e.g., small_object_zoom_paste).
+        #
+        # Note: PatchOps may drop geometries (e.g., crop/filter) or otherwise reorder them, so we
+        # carry an index mapping to update `objects` safely.
         per_obj_geoms: list[DatasetObject] = []
         obj_idx_with_geom: list[int] = []
         for idx, obj in enumerate(objs):
             g = cast(DatasetObject, extract_geometry(obj))
             if g:
-                # Attach desc metadata for class-aware PatchOps (e.g., small_object_zoom_paste).
-                # This enables whitelist matching against the full desc string, including 备注/文本.
+                # Attach desc metadata for PatchOps that use structured tokens in `desc`
+                # (e.g., roi_crop anchor matching via `类别=...`).
                 desc = obj.get("desc")
                 if desc is not None:
                     g["desc"] = str(desc)

@@ -11,6 +11,8 @@ Usage:
 
 from __future__ import annotations
 
+# ruff: noqa: E402
+
 import argparse
 import sys
 from pathlib import Path
@@ -25,9 +27,18 @@ from src.datasets.fusion import FusionConfig
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Validate SFT training YAML config (no model)")
-    parser.add_argument("--config", type=Path, required=True, help="Path to training YAML")
-    parser.add_argument("--base-config", type=Path, default=None, help="Optional base YAML for inheritance")
+    parser = argparse.ArgumentParser(
+        description="Validate SFT training YAML config (no model)"
+    )
+    parser.add_argument(
+        "--config", type=Path, required=True, help="Path to training YAML"
+    )
+    parser.add_argument(
+        "--base-config",
+        type=Path,
+        default=None,
+        help="Optional base YAML for inheritance",
+    )
     args = parser.parse_args()
 
     if not args.config.is_file():

@@ -1,18 +1,12 @@
 {
-  "kept_indices": [
-    0,
-    1,
-    2
-  ],
-  "coverages": [
-    1.0,
-    1.0,
-    1.0
-  ],
+  "kept_indices": [],
+  "coverages": [],
   "allows_geometry_drops": true,
-  "width": 74,
-  "height": 74,
+  "width": 80,
+  "height": 64,
   "padding_ratio": null,
-  "skip_reason": null,
-  "skip_counts": {}
+  "skip_reason": "no_anchor",
+  "skip_counts": {
+    "no_anchor": 1
+  }
 }

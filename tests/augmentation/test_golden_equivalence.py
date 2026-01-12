@@ -29,7 +29,13 @@ def _load_record() -> Dict[str, Any]:
 
 
 def _load_images(img_paths: List[str]) -> List[Image.Image]:
-    return [Image.open(p).convert("RGB") for p in img_paths]
+    images: List[Image.Image] = []
+    for p in img_paths:
+        path = Path(p)
+        if not path.is_absolute():
+            path = FIXTURE_ROOT / path
+        images.append(Image.open(path).convert("RGB"))
+    return images
 
 
 def _load_expected(seed: int):
@@ -52,7 +58,9 @@ def _telemetry_to_dict(telemetry: Any) -> Dict[str, Any]:
     return {
         "kept_indices": list(getattr(telemetry, "kept_indices", []) or []),
         "coverages": list(getattr(telemetry, "coverages", []) or []),
-        "allows_geometry_drops": bool(getattr(telemetry, "allows_geometry_drops", False)),
+        "allows_geometry_drops": bool(
+            getattr(telemetry, "allows_geometry_drops", False)
+        ),
         "width": getattr(telemetry, "width", None),
         "height": getattr(telemetry, "height", None),
         "padding_ratio": getattr(telemetry, "padding_ratio", None),
@@ -124,7 +132,9 @@ def test_golden_equivalence_matches_pre_refactor_outputs():
     for seed in (7, 42, 1337, 2024):
         pipeline = _build_pipeline()
         rng = random.Random(seed)
-        out_imgs_bytes, out_geoms = apply_augmentations(images, geoms, pipeline, rng=rng)
+        out_imgs_bytes, out_geoms = apply_augmentations(
+            images, geoms, pipeline, rng=rng
+        )
         cur_images = _decode_images(out_imgs_bytes)
 
         expected_imgs, expected_geoms, expected_telemetry = _load_expected(seed)
