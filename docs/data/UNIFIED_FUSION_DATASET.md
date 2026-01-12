@@ -3,7 +3,7 @@
 Status: Active
 Scope: Fusion dataset design, sampling policies, and metadata semantics.
 Owners: Data Pipeline + Training
-Last updated: 2026-01-02
+Last updated: 2026-01-12
 Related: [DATA_AND_DATASETS.md](DATA_AND_DATASETS.md), [DATA_JSONL_CONTRACT.md](DATA_JSONL_CONTRACT.md), [training/REFERENCE.md](../training/REFERENCE.md)
 
 ## Executive Summary
@@ -108,7 +108,7 @@ FusionCaptionDataset
 
 - Prompt priority: `default < domain < dataset-specific` for both user/system prompts; template.system is restored after each sample.
 - Per-epoch schedule: per-target coverage scales by `quota_i = round(len_i * ratio_i)` (ratio defaults to 1.0; <1 downsample, >1 upsample with replacement); each source draws `round(ratio * N_target_total)` with optional `sample_without_replacement` (unique draws when quota ≤ pool, otherwise deterministic fallback to replacement); deterministic shuffling using fusion seed + optional per-dataset seed; raises on empty source pool when ratio > 0.
-- Irrelevant summary pools may be listed under targets to consume all samples, but remain identifiable via `metadata._fusion_source` (e.g., `irrelevant_summary`) and should be treated as source-like for analytics/handling. For `irrelevant_summary`, prompts alternate per epoch between `summary_bbu` and `summary_rru` (~50/50 within an epoch) without changing `_fusion_source` (eval uses a deterministic mapping); assistant prefixes are suppressed so labels stay single-line `无关图片`.
+- Irrelevant pools: any stream whose `_fusion_source` starts with `irrelevant` (e.g., `irrelevant_summary`, `irrelevant_dense`) is treated as irrelevant and should be treated as source-like for analytics/handling. Prompts reuse summary templates and alternate per epoch between `summary_bbu` and `summary_rru` (~50/50 within an epoch) without changing `_fusion_source` (eval uses a deterministic mapping); assistant prefixes are suppressed and the assistant payload is always the single line `无关图片` (even if the stream is declared as `mode: dense`).
 - Per-dataset policies: sources default to clean (no augmentation/curriculum) and cap objects (default 64); targets inherit global augmentation/curriculum and can opt into a cap.
 - Object caps: applied after augmentation and before encoding; deterministic with the dataset/epoch/worker seed.
 - Evaluation: target eval by default; optional source `val_jsonl` included (no shuffle) when present and prepared offline (no splitting inside the loader).
@@ -122,16 +122,17 @@ FusionCaptionDataset
 
 ```python
 def __init__(self, fusion_config, base_template, ...):
-    # Load target records
-    target_records = self._load_records(fusion_config.target.train_jsonl)
-    for record in target_records:
-        annotated = self._annotate_record(record, fusion_config.target)
-        all_records.append(annotated)
+    # Load all target records (multi-target)
+    for target in fusion_config.targets:
+        target_records = self._load_records(target.train_jsonl)
+        for record in target_records:
+            annotated = self._annotate_record(record, target)
+            all_records.append(annotated)
     
     # Load source records with ratio-based sampling
     for source in fusion_config.sources:
         source_records = self._load_records(source.train_jsonl)
-        quota = round(source.ratio * target_count)
+        quota = round(source.ratio * total_target_quota)
         for _ in range(quota):
             choice = rng.choice(source_records)
             annotated = self._annotate_record(choice, source)
@@ -143,12 +144,9 @@ def __init__(self, fusion_config, base_template, ...):
 ```python
 # Build prompt map for each dataset
 prompt_map = {}
-target_system, target_user = get_template_prompts(fusion_config.target.template)
-prompt_map[fusion_config.target.name] = (target_user, target_system)
-
-for source in fusion_config.sources:
-    source_system, source_user = get_template_prompts(source.template)
-    prompt_map[source.name] = (source_user, source_system)
+for spec in [*fusion_config.targets, *fusion_config.sources]:
+    system_prompt, user_prompt = get_template_prompts(spec.template)
+    prompt_map[spec.name] = (user_prompt, system_prompt)
 ```
 
 #### 3. Dynamic Prompt Selection in __getitem__
@@ -237,8 +235,23 @@ The `FusionCaptionDataset` (alias `UnifiedFusionDataset`) is automatically used 
 
 ```yaml
 custom:
-  fusion_config: configs/fusion/variants/bbu_rru_dense_1024.yaml
+  fusion_config: configs/fusion/variants/bbu_rru_dense_plus_summary_1024.yaml
 ```
+
+#### Current SFT mix (dense_1024 preset)
+
+`configs/train/sft/dense_1024.yaml` uses `configs/fusion/variants/bbu_rru_dense_plus_summary_1024.yaml` and sets `custom.assistant_prefix_format` for target streams.
+
+- **Targets** (pool-scaled ratios):
+  - `bbu_dense` (mode `dense`, ratio `1.0`)
+  - `rru_dense` (mode `dense`, ratio `1.0`)
+  - `bbu_summary` (mode `summary`, ratio `0.2`)
+  - `rru_summary` (mode `summary`, ratio `0.2`)
+- **Sources** (quota = `round(source_ratio * total_target_quota)`):
+  - `lvis` (ratio `0.2`)
+  - `lang_chat` (ratio `0.15`)
+  - `irrelevant_dense` (ratio `0.1`) → assistant output is exactly `无关图片` (single line, no prefix)
+  - `irrelevant_summary` (ratio `0.1`) → assistant output is exactly `无关图片` (single line, no prefix)
 
 #### Summary fusion + irrelevant negatives
 
@@ -326,7 +339,7 @@ if custom_config.fusion_config:
 
 - **Implementation**: `src/datasets/unified_fusion_dataset.py`
 - **Verification Script**: `check_mask_labels_simple.py`
-- **Fusion Config**: `configs/fusion/variants/bbu_rru_dense_1024.yaml`
+- **Fusion Config**: `configs/fusion/variants/bbu_rru_dense_plus_summary_1024.yaml`
 - **Summary Fusion Config**: `configs/fusion/variants/bbu_rru_summary_1024.yaml`
 - **Summary GRPO Fusion Config**: `configs/fusion/variants/bbu_rru_summary_grpo_1024.yaml`
 - **Irrelevant JSONL Helper**: `scripts/build_irrelevant_summary_jsonl.py`

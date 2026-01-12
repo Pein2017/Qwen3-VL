@@ -3,7 +3,7 @@
 Status: Active
 Scope: Detailed reference for training, inference, configs, and troubleshooting.
 Owners: Training + Runtime
-Last updated: 2026-01-02
+Last updated: 2026-01-12
 Related: [TRAINING_PLAYBOOK.md](TRAINING_PLAYBOOK.md), [runtime/STAGE_A_STAGE_B.md](../runtime/STAGE_A_STAGE_B.md), [reference/PROMPTS_REFERENCE.md](../reference/PROMPTS_REFERENCE.md)
 
 Comprehensive guide for training, inference, deployment, and advanced topics.
@@ -242,6 +242,8 @@ Core SFT/LoRA recipes, KL anchoring overlays, augmentation telemetry, and troubl
 - Metrics: per dataset label, logs `{label}_token_acc` (all supervised tokens, naturally weighted), type-sliced accuracies `{label}_{desc|coord|format}_token_acc`.  
 - Validation: smoke run on 2025-12-04 with `configs/smoke/group_metrics.yaml` (4B checkpoint, fusion `configs/fusion/variants/bbu_rru_dense_1024.yaml`, `logging_steps=1`, `eval_steps=1`, `save_strategy=no`, `max_steps=20`) produced the expected token-type metrics; see `output/smoke/group_metrics/v0-20251204-062817/smoke_group_metrics_4b/logging.jsonl`.
 
+**Preset note**: `configs/train/sft/dense_1024.yaml` uses `custom.fusion_config: configs/fusion/variants/bbu_rru_dense_plus_summary_1024.yaml` and sets `custom.assistant_prefix_format: "<TASK={task}>, <DATASET={dataset}>"` for target streams.
+
 Keep configs under `configs/` in sync with the playbook when making behavioral changes.
 
 ### Summary Prompt Profiles (Training vs Inference)
@@ -250,7 +252,7 @@ Keep configs under `configs/` in sync with the playbook when making behavioral c
   - `prompts.profile`: `summary_runtime`
   - `prompts.domain`: `bbu` | `rru` (required for runtime profile)
   - `prompts.system` / `prompts.user` remain authoritative overrides and bypass profile composition.
-  - `custom.assistant_prefix_format`: required for BBU/RRU targets to prepend `<DOMAIN=...>, <TASK=...>` + newline before assistant payloads (dense + summary). Source datasets remain unchanged.
+  - `custom.assistant_prefix_format`: required for BBU/RRU **target streams** to prepend a single prefix line + newline before assistant payloads (dense + summary). The current standard is `<TASK={task}>, <DATASET={dataset}>` (always first line, before any other content). Source datasets remain unchanged.
 - **Stage-A runtime composition**: system prompt = summary task base + 全局“非现场/图纸”规则；user prompt = summary instruction + BBU/RRU 场景提示块 + 可选任务重点。
 
 ### Summary GRPO Post-Training (Format Stabilization)
@@ -264,7 +266,7 @@ Keep configs under `configs/` in sync with the playbook when making behavioral c
     - `training.effective_batch_size` (backward global batch), `rlhf.generation_batch_size` (rollout global trajectories)
     - `prompts.profile=summary_runtime`, `custom.assistant_prefix_format`, `custom.fusion_config`
     - Tune `rlhf.temperature` based on contract stability vs exploration.
-- **Metadata contract**: summary-mode rows attach `metadata.summary_ref` (ground-truth JSON) and `_fusion_template` for header-domain rewards; irrelevant rows keep `_fusion_source=irrelevant_summary` and suppress assistant prefixes so labels remain single-line `无关图片`.
+- **Metadata contract**: summary-mode rows attach `metadata.summary_ref` (ground-truth JSON) and `_fusion_template` for header-domain rewards; any `irrelevant*` fused stream (e.g., `irrelevant_summary`, `irrelevant_dense`) suppresses assistant prefixes and emits assistant text exactly `无关图片` (single line, no prefix), regardless of declared mode.
 - **Dry-run recipe**: clone the example config, set `training.max_steps: 2`, `training.eval_strategy: "no"`, `training.save_strategy: "no"`, `custom.train_sample_limit: 2`, `custom.val_sample_limit: 2`, then launch via `scripts/train.sh config=<new-config.yaml> gpus=0 debug=true`.
   - **Success criteria**: job starts, reward metrics appear (format/header/strict/parse + dup-key penalty + structured content rewards), and 1–2 steps complete without dataset or format exceptions.
 

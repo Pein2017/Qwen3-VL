@@ -3,7 +3,7 @@
 Status: Active
 Scope: Dataset schema, builders, preprocessing, and conversion/fusion integration.
 Owners: Data Pipeline + Training
-Last updated: 2026-01-02
+Last updated: 2026-01-12
 Related: [DATA_JSONL_CONTRACT.md](DATA_JSONL_CONTRACT.md), [DATA_PREPROCESSING_PIPELINE.md](DATA_PREPROCESSING_PIPELINE.md), [UNIFIED_FUSION_DATASET.md](UNIFIED_FUSION_DATASET.md)
 
 Comprehensive guide to data format, schema, dataset builders, and preprocessing pipeline.
@@ -225,9 +225,14 @@ Fusion can mix multiple record styles as long as the base template is compatible
 - **Telemetry**: `last_sample_debug` exposes `dataset`, `prompt_source`, augmentation on/off, cap applied/limit, and input length for every sample; per-epoch `epoch_plan` reports counts and policy flags.
 - **No online smart-resize**: inputs are assumed pre-filtered/resized offline; resizing occurs only through augmentation ops when configured. If you need smart-resize, run it during conversion and provide the resized `train/val` JSONLs explicitly.
 
-### Irrelevant Summary Target (Negative Stream)
+### Irrelevant Streams (Negative Pools)
 
-For summary-mode SFT regularization (reduce hallucinations on out-of-domain images), you can add a small **irrelevant** target stream whose samples always have `summary: 无关图片`. The loader keeps `_fusion_source=irrelevant_summary` and alternates prompts per epoch between `summary_bbu` and `summary_rru` (~50/50 within an epoch) without changing the dataset identity (eval uses a deterministic mapping). Irrelevant targets suppress the assistant prefix so labels remain single-line `无关图片`.
+For SFT regularization (reduce hallucinations on out-of-domain images), you can add small **irrelevant** streams (e.g., `irrelevant_summary`, `irrelevant_dense`). Irrelevant streams are identified by `_fusion_source` starting with `irrelevant` and have special handling:
+- **Assistant text is always exactly** `无关图片` (**single line**, **no prefix**), even if the stream is declared as `mode: dense`.
+- Prompts reuse summary templates and alternate per epoch between `summary_bbu` and `summary_rru` (~50/50 within an epoch) without changing `_fusion_source` (eval uses a deterministic mapping).
+- Use `data/irrelevant_summary/train.jsonl` as the shared backing pool; records keep `summary: 无关图片` and include a dummy full-frame bbox to satisfy the global JSONL contract.
+
+See `configs/fusion/variants/bbu_rru_dense_plus_summary_1024.yaml` for the current dense+summary SFT mix (targets + irrelevant streams + public sources).
 
 - Generate the JSONL from a folder of JPEGs (EXIF-aware width/height) and keep the global contract by emitting a single dummy full-frame bbox per image:
   - `conda run -n ms python scripts/build_irrelevant_summary_jsonl.py --images-dir data/irrelevant_summary/images --output-jsonl data/irrelevant_summary/train.jsonl`
@@ -236,23 +241,34 @@ For summary-mode SFT regularization (reduce hallucinations on out-of-domain imag
 Example fusion config:
 
 ```yaml
-target:
-  dataset: bbu
-  params:
+targets:
+  - name: bbu_dense
+    dataset: bbu
     train_jsonl: data/bbu/train.jsonl
     val_jsonl: data/bbu/val.jsonl
+    template: target_dense_bbu
+    mode: dense
+    ratio: 1.0
 sources:
-  - dataset: coco
+  - name: coco
+    dataset: coco
     ratio: 0.1
-    params:
-      train_jsonl: data/coco/train.jsonl
-      user_prompt: "List objects in JSON."        # optional override
-      max_objects_per_image: 48                  # optional cap override
-      seed: 123                                  # optional per-source seed
-  - dataset: objects365
+    train_jsonl: data/coco/train.jsonl
+    template: source_dense
+    mode: dense
+    user_prompt: "List objects in JSON."          # optional override
+    max_objects_per_image: 48                     # optional cap override
+    seed: 123                                     # optional per-source seed
+    augmentation_enabled: false
+    curriculum_enabled: false
+  - name: objects365
+    dataset: objects365
     ratio: 0.05
-    params:
-      train_jsonl: data/objects365/train.jsonl
+    train_jsonl: data/objects365/train.jsonl
+    template: source_dense
+    mode: dense
+    augmentation_enabled: false
+    curriculum_enabled: false
 ```
 
 Runtime loader: `custom.fusion_config` always uses `FusionCaptionDataset` (alias `UnifiedFusionDataset`) with a single shared template. For deterministic static mixes, you can still precompute fused JSONLs with `scripts/fuse_datasets.py --config <path>`.
@@ -277,7 +293,7 @@ For the universal JSONL record contract shared by all domains, see `./DATA_JSONL
 
 # Assistant message: minimal object hierarchy (no per-image wrapper)
 # (When assistant_prefix_format is enabled, prepend the prefix line + newline.)
-<DOMAIN=BBU>, <TASK=DETECTION>
+<TASK=DETECTION>, <DATASET=bbu>
 {
   "object_1": {"bbox_2d": [...], "desc": "类别=BBU设备,品牌=华为,可见性=部分"},
   "object_2": {"line_points": 4, "line": [...], "desc": "类别=站点距离,站点距离=51"}
@@ -288,7 +304,7 @@ For the universal JSONL record contract shared by all domains, see `./DATA_JSONL
 **Summary Mode**:
 ```text
 # Assistant message: single summary string (JSON), with optional prefix line.
-<DOMAIN=BBU>, <TASK=SUMMARY>
+<TASK=SUMMARY>, <DATASET=bbu>
 {"统计": [{"类别": "BBU设备", "品牌": {"华为": 1}}]}
 ```
 
@@ -297,7 +313,8 @@ For the universal JSONL record contract shared by all domains, see `./DATA_JSONL
 - Geometries normalized based on `emit_norm` setting
 - Deterministic ordering of object indices (`object_1`, `object_2`, ...)
 - Assistant JSON/summary serialization uses separators `", "` and `": "` to preserve spaces in coordinate lists (tokenizer stability).
-- When `custom.assistant_prefix_format` is set (e.g., `<DOMAIN={domain}>, <TASK={task}>`), assistant text is prefixed with that line plus a newline for target BBU/RRU samples (source datasets are unchanged).
+- When `custom.assistant_prefix_format` is set (e.g., `<TASK={task}>, <DATASET={dataset}>`), assistant text is prefixed with that line plus a newline for **target** BBU/RRU samples (non-irrelevant only; sources are unchanged).
+- For `irrelevant*` streams (e.g., `irrelevant_summary`, `irrelevant_dense`), the assistant payload is always the single line `无关图片` and the prefix is suppressed.
 - Consumes validated `ConversationRecord` objects and exposes augmentation telemetry (`pipeline.last_summary`) for downstream health checks.
 
 ---

@@ -3,7 +3,7 @@
 Status: Active
 Scope: Practical training runbook and configuration checklist.
 Owners: Training
-Last updated: 2026-01-11
+Last updated: 2026-01-12
 Related: [REFERENCE.md](REFERENCE.md), [data/DATA_AND_DATASETS.md](../data/DATA_AND_DATASETS.md), [reference/PROMPTS_REFERENCE.md](../reference/PROMPTS_REFERENCE.md)
 
 ## Training
@@ -172,11 +172,11 @@ Use Generalized Knowledge Distillation (GKD) when dense-caption SFT starts hallu
 
 ### Summary GRPO Post-Training (Format Stabilization)
 
-Use GRPO to stabilize summary outputs (two-line header + JSON for BBU/RRU, single-line `无关图片` for irrelevant).
+Use GRPO to stabilize summary outputs (two-line: `<DOMAIN=BBU|RRU>, <TASK=SUMMARY>` then JSON for non-irrelevant; single-line `无关图片` for `irrelevant*` streams).
 
 - **Activation**: start from `configs/train/grpo/summary_2048.yaml` (uses `configs/fusion/variants/bbu_rru_summary_grpo_2048.yaml`), or use `configs/train/grpo/summary_server.yaml` for vLLM server mode.
 - **Reward funcs** (summary mode):
-  - Core contract + safety: `summary.format` (irrelevant must be single-line `无关图片`), `summary.header`, `summary.strict` (penalize extra lines / wrong header), `summary.parse` (JSON parse penalty).
+  - Core contract + safety: `summary.format` (`irrelevant*` must be single-line `无关图片`, no prefix), `summary.header`, `summary.strict` (penalize extra lines / wrong header), `summary.parse` (JSON parse penalty).
   - Hard JSON correctness: `summary.no_dup_keys` (hard-penalize duplicate JSON keys, including nested dicts).
   - Content alignment (strict-format gated; missing annotated facts > spurious extras):
     - `summary.dataset` (header domain matches `_fusion_template` mapping)
@@ -189,7 +189,7 @@ Use GRPO to stabilize summary outputs (two-line header + JSON for BBU/RRU, singl
   - Implementation lives in `src/rlhf/grpo/rewards/summary/rewards.py`; strict-format gating ensures content rewards only fire when the two-line contract is obeyed.
 - **Rollout settings**: set backward size via `training.effective_batch_size` (with `per_device_train_batch_size` as the micro-batch), and set rollout size via `rlhf.generation_batch_size` (global trajectories per generation). `rlhf.num_generations` must divide `generation_batch_size`. Keep `rlhf.max_completion_length=2048` unless retuning; tune `rlhf.temperature` based on format stability vs diversity.
 - **LoRA note**: keep `train_type: lora` and do **not** set `rlhf.ref_model` (ms-swift treats LoRA refs via adapter disabling or `ref_adapters` when explicitly provided).
-- **Irrelevant handling**: prompts alternate per epoch (~50/50) between `summary_bbu`/`summary_rru`; assistant prefixes are suppressed so labels stay single-line `无关图片`.
+- **Irrelevant handling**: prompts alternate per epoch (~50/50) between `summary_bbu`/`summary_rru`; assistant prefixes are suppressed and the assistant payload is always single-line `无关图片`.
 
 ### Dense GRPO Post-Training (Localization-first)
 
