@@ -17,6 +17,34 @@ from ..utils import extract_geometry
 from .base import BasePreprocessor
 
 
+def _update_desc_visibility_to_partial(desc: str) -> tuple[str, bool]:
+    """Update only the structured `可见性=` token in a dense-caption `desc` string.
+
+    This intentionally avoids substring replacements like `"完整" -> "部分"` which can
+    corrupt unrelated semantics (e.g., `备注=无法框选完整`, `备注=品牌未显示完整`).
+
+    The `data_new_schema` desc format is comma-separated key=value tokens, where
+    values may contain Chinese punctuation such as `，` inside a single token.
+    """
+    tokens = desc.split(",")
+    updated = False
+    out_tokens: list[str] = []
+    for token in tokens:
+        t = token.strip()
+        if t.startswith("可见性="):
+            _, value = t.split("=", 1)
+            if value == "完整":
+                out_tokens.append("可见性=部分")
+                updated = True
+                continue
+            if value == "显示完整":
+                out_tokens.append("可见性=只显示部分")
+                updated = True
+                continue
+        out_tokens.append(t)
+    return ",".join(out_tokens), updated
+
+
 class AugmentationPreprocessor(BasePreprocessor):
     """Preprocessor that applies augmentations to records.
 
@@ -207,35 +235,29 @@ class AugmentationPreprocessor(BasePreprocessor):
 
                 # Update completeness field if below threshold
                 if cov < completeness_threshold:
-                    desc = str(obj.get("desc", ""))
-                    if "可见性=完整" in desc:
-                        obj["desc"] = desc.replace("可见性=完整", "可见性=部分")
-                        completeness_updates += 1
-                    elif "可见性=显示完整" in desc:
-                        # Legacy key=value tokens.
-                        obj["desc"] = desc.replace(
-                            "可见性=显示完整", "可见性=只显示部分"
+                    did_update_desc = False
+                    desc_raw = obj.get("desc")
+                    if isinstance(desc_raw, str) and desc_raw.strip():
+                        new_desc, did_update = _update_desc_visibility_to_partial(
+                            desc_raw
                         )
-                        completeness_updates += 1
-                    elif "显示完整" in desc:
-                        # Legacy (slash-delimited) completeness token fallback.
-                        obj["desc"] = desc.replace("显示完整", "只显示部分")
-                        completeness_updates += 1
-                    elif "完整" in desc:
-                        obj["desc"] = desc.replace("完整", "部分")
-                        completeness_updates += 1
+                        did_update_desc = did_update
+                        if did_update:
+                            obj["desc"] = new_desc
+                            completeness_updates += 1
                     # Structured completeness metadata support
                     attrs = obj.get("attributes")
                     if isinstance(attrs, dict):
-                        completeness_key = None
-                        for key in ("completeness", "完整性", "complete"):
-                            if key in attrs:
+                        attrs_map = cast(dict[str, object], attrs)
+                        completeness_key: str | None = None
+                        for key in ("completeness", "完整性", "complete", "可见性"):
+                            if key in attrs_map:
                                 completeness_key = key
                                 break
                         if completeness_key is not None:
-                            value = attrs.get(completeness_key)
-                            if value in {"显示完整", "完整"}:
-                                attrs[completeness_key] = (
+                            value = attrs_map.get(completeness_key)
+                            if isinstance(value, str) and value in {"显示完整", "完整"}:
+                                attrs_map[completeness_key] = (
                                     "只显示部分" if value == "显示完整" else "部分"
                                 )
                                 structured_updates += 1
@@ -243,7 +265,7 @@ class AugmentationPreprocessor(BasePreprocessor):
                             logger = get_logger("augmentation.preprocessor")
                             logger.debug(
                                 "Completeness metadata missing expected key on object; desc_updated=%s",
-                                ("可见性=显示完整" in desc) or ("显示完整" in desc),
+                                did_update_desc,
                             )
 
                 filtered_objects.append(obj)
@@ -324,9 +346,11 @@ class AugmentationPreprocessor(BasePreprocessor):
                     f"Curriculum bypass_prob must be within [0, 1]; got {value}"
                 )
             self.bypass_prob = value
-        ops = state.get("ops") or {}
-        if isinstance(ops, Mapping):
-            self._apply_curriculum_overrides(ops)
+        ops_raw: object = state.get("ops") or {}
+        if isinstance(ops_raw, Mapping):
+            self._apply_curriculum_overrides(
+                cast(Mapping[str, Mapping[str, object]], ops_raw)
+            )
         self._curriculum_last_step = step
 
     def _apply_curriculum_overrides(
@@ -352,16 +376,20 @@ class AugmentationPreprocessor(BasePreprocessor):
             if isinstance(current, tuple):
                 if not isinstance(new_value, (list, tuple)):
                     raise TypeError("tuple override must be list/tuple")
+                current_seq = cast(tuple[object, ...], current)
+                new_value_seq = cast(tuple[object, ...] | list[object], new_value)
                 return tuple(
-                    _coerce_value(current[i], new_value[i])
-                    for i in range(len(new_value))
+                    _coerce_value(current_seq[i], new_value_seq[i])
+                    for i in range(len(new_value_seq))
                 )
             if isinstance(current, list):
                 if not isinstance(new_value, (list, tuple)):
                     raise TypeError("list override must be list/tuple")
+                current_seq = cast(list[object], current)
+                new_value_seq = cast(tuple[object, ...] | list[object], new_value)
                 return [
-                    _coerce_value(current[i], new_value[i])
-                    for i in range(len(new_value))
+                    _coerce_value(current_seq[i], new_value_seq[i])
+                    for i in range(len(new_value_seq))
                 ]
             return new_value
 
@@ -389,7 +417,8 @@ class AugmentationPreprocessor(BasePreprocessor):
                 if callable(raw_curr):
                     raw_curr = raw_curr()
                 if isinstance(raw_curr, Mapping):
-                    for param_name, value in raw_curr.items():
+                    raw_curr_typed = cast(Mapping[str, object], raw_curr)
+                    for param_name, value in raw_curr_typed.items():
                         numeric = (
                             value
                             if isinstance(value, NumericParam)

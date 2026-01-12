@@ -7,12 +7,13 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from random import Random
-from typing import Any, Dict, List
+from typing import Any, Dict, List, cast
 
 import matplotlib.pyplot as plt
 from PIL import Image
 
 from src.config import ConfigLoader
+from src.datasets.contracts import DatasetObject
 from src.datasets.augmentation.base import Compose
 from src.datasets.augmentation.builder import build_compose_from_config
 from src.datasets.augmentation.curriculum import AugmentationCurriculumScheduler
@@ -27,6 +28,9 @@ from src.datasets.augmentation.ops import (
 )
 from src.datasets.preprocessors.augmentation import AugmentationPreprocessor
 from vis_tools.vis_helper import create_legend, draw_objects, generate_colors
+
+# Matplotlib types are not fully available in the runtime environment; treat as Any for tooling.
+plt = cast(Any, plt)
 
 
 @dataclass
@@ -44,7 +48,9 @@ class VisConfig:
     seed: int = 2021
 
     # Curriculum visualization
-    curriculum_marks: List[float] | None = None  # percent checkpoints; None => auto from config + [0,30,100]
+    curriculum_marks: List[float] | None = (
+        None  # percent checkpoints; None => auto from config + [0,30,100]
+    )
     curriculum_total_steps: int = 1000  # steps used to resolve percent curriculum
     respect_bypass_prob: bool = True  # mirror training bypass chance
     save_state_summary: bool = True
@@ -81,15 +87,15 @@ class VisConfig:
 
     # EXTREME COLOR AUGMENTATIONS (test visual changes)
     color_p: float = 0.0
-    color_brightness: tuple = (0.5, 1.5)
-    color_contrast: tuple = (0.5, 1.5)
-    color_saturation: tuple = (0.5, 1.5)
+    color_brightness: tuple[float, float] = (0.5, 1.5)
+    color_contrast: tuple[float, float] = (0.5, 1.5)
+    color_saturation: tuple[float, float] = (0.5, 1.5)
     gamma_p: float = 0.0
-    gamma_range: tuple = (0.6, 1.6)
+    gamma_range: tuple[float, float] = (0.6, 1.6)
     hsv_p: float = 0.0
     hsv_hue_delta: int = 25
-    hsv_sat: tuple = (0.6, 1.5)
-    hsv_val: tuple = (0.6, 1.5)
+    hsv_sat: tuple[float, float] = (0.6, 1.5)
+    hsv_val: tuple[float, float] = (0.6, 1.5)
     clahe_p: float = 0.0
     clahe_clip_limit: float = 4.0
     auto_contrast_p: float = 0.0
@@ -98,7 +104,7 @@ class VisConfig:
     posterize_p: float = 0.0
     posterize_bits: int = 3
     sharpness_p: float = 0.0
-    sharpness_range: tuple = (0.3, 2.5)
+    sharpness_range: tuple[float, float] = (0.3, 2.5)
     albumentations_p: float = 0.0
     albumentations_preset: str = "strong"
 
@@ -144,6 +150,7 @@ def _extract_description(obj: Dict[str, Any]) -> str:
 
     attrs = obj.get("attributes")
     if isinstance(attrs, dict):
+        attrs_typed = cast(Dict[str, Any], attrs)
         attr_keys = (
             "desc",
             "text",
@@ -155,7 +162,7 @@ def _extract_description(obj: Dict[str, Any]) -> str:
             "名称",
         )
         for key in attr_keys:
-            value = attrs.get(key)
+            value = attrs_typed.get(key)
             if isinstance(value, str) and value.strip():
                 return value.strip()
 
@@ -163,7 +170,7 @@ def _extract_description(obj: Dict[str, Any]) -> str:
 
 
 def _geom_to_objects(
-    geoms: List[Dict[str, Any]],
+    geoms: List[DatasetObject],
     descs: List[str] | None = None,
 ) -> List[Dict[str, Any]]:
     objs: List[Dict[str, Any]] = []
@@ -184,7 +191,10 @@ def _geom_to_objects(
 
 def _load_pil(img_entry: Any, *, jsonl_path: str) -> Image.Image:
     if isinstance(img_entry, dict) and "bytes" in img_entry:
-        return Image.open(io.BytesIO(img_entry["bytes"])).convert("RGB")
+        raw = img_entry["bytes"]
+        if not isinstance(raw, (bytes, bytearray)):
+            raise TypeError(f"Unsupported image bytes type: {type(raw)}")
+        return Image.open(io.BytesIO(bytes(raw))).convert("RGB")
     if isinstance(img_entry, str):
         if not os.path.isabs(img_entry):
             root_dir = os.environ.get("ROOT_IMAGE_DIR") or os.path.dirname(
@@ -206,17 +216,39 @@ def _build_pipeline_from_yaml(cfg: VisConfig) -> PipelineSpec:
     if not os.path.isfile(cfg.config_yaml):
         raise FileNotFoundError(f"config_yaml file not found: {cfg.config_yaml}")
 
-    conf = ConfigLoader.load_yaml_with_extends(cfg.config_yaml)
-    custom = (conf or {}).get("custom") or {}
-    aug_cfg = custom.get("augmentation") or {}
-    curriculum_cfg = aug_cfg.get("curriculum") or custom.get("augmentation_curriculum")
+    conf_raw = ConfigLoader.load_yaml_with_extends(cfg.config_yaml)
+    conf: Dict[str, Any] = (
+        cast(Dict[str, Any], conf_raw) if isinstance(conf_raw, dict) else {}
+    )
+
+    custom_raw = conf.get("custom")
+    custom: Dict[str, Any] = (
+        cast(Dict[str, Any], custom_raw) if isinstance(custom_raw, dict) else {}
+    )
+
+    aug_cfg_raw = custom.get("augmentation")
+    aug_cfg: Dict[str, Any] = (
+        cast(Dict[str, Any], aug_cfg_raw) if isinstance(aug_cfg_raw, dict) else {}
+    )
+
+    curriculum_cfg_raw = aug_cfg.get("curriculum") or custom.get(
+        "augmentation_curriculum"
+    )
+    curriculum_cfg: Dict[str, Any] | None = (
+        cast(Dict[str, Any], curriculum_cfg_raw)
+        if isinstance(curriculum_cfg_raw, dict)
+        else None
+    )
 
     # Optional focus mode: keep only a single op, disable curriculum, and optionally override prob
     focus_name = cfg.focus_op_name
     if focus_name:
-        ops_raw = aug_cfg.get("ops") or []
+        ops_raw = aug_cfg.get("ops")
+        ops_list: List[Dict[str, Any]] = (
+            cast(List[Dict[str, Any]], ops_raw) if isinstance(ops_raw, list) else []
+        )
         filtered_ops: List[Dict[str, Any]] = []
-        for op in ops_raw:
+        for op in ops_list:
             if not isinstance(op, dict):
                 continue
             if op.get("name") != focus_name:
@@ -229,9 +261,12 @@ def _build_pipeline_from_yaml(cfg: VisConfig) -> PipelineSpec:
                     params["prob"] = cfg.focus_force_prob
             filtered_ops.append({"name": focus_name, "params": params})
         if not filtered_ops:
+            available = [
+                op.get("name") for op in ops_list if op.get("name") is not None
+            ]
             raise ValueError(
                 f"focus_op_name={focus_name!r} not found in augmentation.ops; "
-                f"available ops: {[op.get('name') for op in aug_cfg.get('ops') or []]}"
+                f"available ops: {available}"
             )
         aug_cfg = dict(aug_cfg)
         aug_cfg["ops"] = filtered_ops
@@ -243,7 +278,9 @@ def _build_pipeline_from_yaml(cfg: VisConfig) -> PipelineSpec:
         return PipelineSpec(
             compose=Compose([]),
             label="yaml:no-augmentation",
-            bypass_prob=float(aug_cfg.get("bypass_prob", custom.get("bypass_prob", 0.0))),
+            bypass_prob=float(
+                aug_cfg.get("bypass_prob", custom.get("bypass_prob", 0.0))
+            ),
             curriculum=None,
             curriculum_phase_percents=[],
             augmentation_cfg=aug_cfg,
@@ -260,7 +297,7 @@ def _build_pipeline_from_yaml(cfg: VisConfig) -> PipelineSpec:
 
     curriculum_scheduler = None
     curriculum_phase_percents: List[float] = []
-    if curriculum_cfg:
+    if curriculum_cfg is not None:
         curriculum_scheduler = AugmentationCurriculumScheduler.from_config(
             base_bypass=base_bypass,
             op_meta=getattr(compose, "_augmentation_meta", []),
@@ -492,7 +529,16 @@ def visualize_samples(cfg: VisConfig) -> None:
                 except Exception:
                     core = f"p={prob}"
             ranges = []
-            for key in ("max_deg", "scale", "lo", "hi", "brightness", "contrast", "saturation", "hue_delta_deg"):
+            for key in (
+                "max_deg",
+                "scale",
+                "lo",
+                "hi",
+                "brightness",
+                "contrast",
+                "saturation",
+                "hue_delta_deg",
+            ):
                 if key in params:
                     val = params[key]
                     if isinstance(val, (list, tuple)) and len(val) == 2:
@@ -527,18 +573,18 @@ def visualize_samples(cfg: VisConfig) -> None:
             for idx, rec in enumerate(records):
                 images = rec.get("images") or []
                 objs = rec.get("objects") or []
-                per_obj_geoms: List[Dict[str, Any]] = []
+                per_obj_geoms: List[DatasetObject] = []
                 per_obj_descs: List[str] = []
                 for o in objs:
-                    g: Dict[str, Any] = {}
+                    g_raw: Dict[str, Any] = {}
                     if o.get("bbox_2d") is not None:
-                        g["bbox_2d"] = o["bbox_2d"]
+                        g_raw["bbox_2d"] = o["bbox_2d"]
                     if o.get("poly") is not None:
-                        g["poly"] = o["poly"]
+                        g_raw["poly"] = o["poly"]
                     if o.get("line") is not None:
-                        g["line"] = o["line"]
-                    if g:
-                        per_obj_geoms.append(g)
+                        g_raw["line"] = o["line"]
+                    if g_raw:
+                        per_obj_geoms.append(cast(DatasetObject, g_raw))
                         per_obj_descs.append(_extract_description(o))
 
                 # Resolve images to PIL
@@ -584,14 +630,16 @@ def visualize_samples(cfg: VisConfig) -> None:
                                 hasattr(stage.pipeline, "last_object_coverages")
                                 and stage.pipeline.last_object_coverages
                             ):
-                                avg_cov = sum(stage.pipeline.last_object_coverages) / len(
+                                avg_cov = sum(
                                     stage.pipeline.last_object_coverages
-                                )
+                                ) / len(stage.pipeline.last_object_coverages)
                                 print(
                                     f"         Avg coverage of kept objects: {avg_cov:.2%}"
                                 )
 
-                    variants_imgs.append(_load_pil(out_imgs[0], jsonl_path=cfg.jsonl_path))
+                    variants_imgs.append(
+                        _load_pil(out_imgs[0], jsonl_path=cfg.jsonl_path)
+                    )
                     kept_indices = getattr(stage.pipeline, "last_kept_indices", None)
                     if isinstance(kept_indices, list):
                         descs_new = [
@@ -610,69 +658,68 @@ def visualize_samples(cfg: VisConfig) -> None:
                             f"{stage.tag} v{j + 1}: bypass ({stage.bypass_prob:.2f})"
                         )
                     else:
-                        variant_titles.append(
-                            f"{stage.tag} v{j + 1}: {ops_summary}"
-                        )
+                        variant_titles.append(f"{stage.tag} v{j + 1}: {ops_summary}")
 
-                cols = 1 + len(variants_imgs)
-                fig, axes = plt.subplots(1, cols, figsize=(6 * cols, 6))
-                if cols == 1:
-                    axes = [axes]
+                # Export as pairwise comparisons only (Original vs Aug) to preserve resolution.
+                # One JPG per variant: vis_XXXXX_vYY.jpg (or vis_XXXXX.jpg if only 1 variant).
+                if not variants_imgs:
+                    variants_imgs = [im0]
+                    variants_objs = [objs0]
+                    variant_titles = [f"{stage.tag}: no_aug"]
 
+                # Keep a stable color map across variants for the same sample/stage.
                 labels_all = [o["desc"] for o in objs0]
                 for arr in variants_objs:
                     labels_all.extend([o["desc"] for o in arr])
                 color_map = generate_colors(labels_all)
 
-                counts: Dict[str, List[int]] = {}
-                for o in objs0:
-                    key = o.get("desc", "")
-                    counts.setdefault(key, [0, 0])[0] += 1
-                if variants_objs:
-                    for o in variants_objs[0]:
+                for v_idx, (aug_img, aug_objs, aug_title) in enumerate(
+                    zip(variants_imgs, variants_objs, variant_titles), start=1
+                ):
+                    counts: Dict[str, List[int]] = {}
+                    for o in objs0:
+                        key = o.get("desc", "")
+                        counts.setdefault(key, [0, 0])[0] += 1
+                    for o in aug_objs:
                         key = o.get("desc", "")
                         counts.setdefault(key, [0, 0])[1] += 1
 
-                draw_objects(axes[0], im0, objs0, color_map, scaled=True)
-                axes[0].set_title(f"Original (GT) - {len(objs0)} objects")
-                for c in range(1, cols):
-                    draw_objects(
-                        axes[c],
-                        variants_imgs[c - 1],
-                        variants_objs[c - 1],
-                        color_map,
-                        scaled=True,
-                    )
-                    obj_count = len(variants_objs[c - 1])
-                    title = f"{variant_titles[c - 1]}\n{obj_count} objects"
+                    fig, axes = plt.subplots(1, 2, figsize=(16, 8))
+                    draw_objects(axes[0], im0, objs0, color_map, scaled=True)
+                    axes[0].set_title(f"Original (GT) - {len(objs0)} objects")
+
+                    draw_objects(axes[1], aug_img, aug_objs, color_map, scaled=True)
+                    obj_count = len(aug_objs)
+                    title = f"{aug_title}\n{obj_count} objects"
                     if obj_count != len(objs0):
                         title += f" ({obj_count - len(objs0):+d})"
-                    axes[c].set_title(title, fontsize=9)
+                    axes[1].set_title(title, fontsize=10)
 
-                create_legend(fig, color_map, counts)
-                out_path = os.path.join(stage_dir, f"vis_{idx:05d}.jpg")
-                fig.tight_layout()
-                fig.savefig(out_path, dpi=120)
-                plt.close(fig)
-                print(f"[INFO] Saved {out_path}")
+                    create_legend(fig, color_map, counts)
+                    suffix = "" if len(variants_imgs) == 1 else f"_v{v_idx:02d}"
+                    out_path = os.path.join(stage_dir, f"vis_{idx:05d}{suffix}.jpg")
+                    fig.tight_layout()
+                    fig.savefig(out_path, dpi=160)
+                    plt.close(fig)
+                    print(f"[INFO] Saved {out_path}")
     else:
         # Fallback to extreme random testing (no YAML)
         print("[INFO] Using extreme testing pipeline (config_yaml=None)")
         for idx, rec in enumerate(records):
             images = rec.get("images") or []
             objs = rec.get("objects") or []
-            per_obj_geoms: List[Dict[str, Any]] = []
+            per_obj_geoms: List[DatasetObject] = []
             per_obj_descs: List[str] = []
             for o in objs:
-                g: Dict[str, Any] = {}
+                g_raw: Dict[str, Any] = {}
                 if o.get("bbox_2d") is not None:
-                    g["bbox_2d"] = o["bbox_2d"]
+                    g_raw["bbox_2d"] = o["bbox_2d"]
                 if o.get("poly") is not None:
-                    g["poly"] = o["poly"]
+                    g_raw["poly"] = o["poly"]
                 if o.get("line") is not None:
-                    g["line"] = o["line"]
-                if g:
-                    per_obj_geoms.append(g)
+                    g_raw["line"] = o["line"]
+                if g_raw:
+                    per_obj_geoms.append(cast(DatasetObject, g_raw))
                     per_obj_descs.append(_extract_description(o))
 
             pil_images: List[Image.Image] = []
@@ -713,7 +760,9 @@ def visualize_samples(cfg: VisConfig) -> None:
                             avg_cov = sum(pipe.last_object_coverages) / len(
                                 pipe.last_object_coverages
                             )
-                            print(f"         Avg coverage of kept objects: {avg_cov:.2%}")
+                            print(
+                                f"         Avg coverage of kept objects: {avg_cov:.2%}"
+                            )
 
                 variants_imgs.append(_load_pil(out_imgs[0], jsonl_path=cfg.jsonl_path))
                 kept_indices = getattr(pipe, "last_kept_indices", None)
@@ -728,47 +777,48 @@ def visualize_samples(cfg: VisConfig) -> None:
                 variants_objs.append(_geom_to_objects(geoms_new, descs_new))
                 variant_titles.append(title)
 
-            cols = 1 + len(variants_imgs)
-            fig, axes = plt.subplots(1, cols, figsize=(6 * cols, 6))
-            if cols == 1:
-                axes = [axes]
+            # Export as pairwise comparisons only (Original vs Aug) to preserve resolution.
+            # One JPG per variant: vis_XXXXX_vYY.jpg (or vis_XXXXX.jpg if only 1 variant).
+            if not variants_imgs:
+                variants_imgs = [im0]
+                variants_objs = [objs0]
+                variant_titles = ["no_aug"]
 
+            # Keep a stable color map across variants for the same sample.
             labels_all = [o["desc"] for o in objs0]
             for arr in variants_objs:
                 labels_all.extend([o["desc"] for o in arr])
             color_map = generate_colors(labels_all)
 
-            counts: Dict[str, List[int]] = {}
-            for o in objs0:
-                key = o.get("desc", "")
-                counts.setdefault(key, [0, 0])[0] += 1
-            if variants_objs:
-                for o in variants_objs[0]:
+            for v_idx, (aug_img, aug_objs, aug_title) in enumerate(
+                zip(variants_imgs, variants_objs, variant_titles), start=1
+            ):
+                counts: Dict[str, List[int]] = {}
+                for o in objs0:
+                    key = o.get("desc", "")
+                    counts.setdefault(key, [0, 0])[0] += 1
+                for o in aug_objs:
                     key = o.get("desc", "")
                     counts.setdefault(key, [0, 0])[1] += 1
 
-            draw_objects(axes[0], im0, objs0, color_map, scaled=True)
-            axes[0].set_title(f"Original (GT) - {len(objs0)} objects")
-            for c in range(1, cols):
-                draw_objects(
-                    axes[c],
-                    variants_imgs[c - 1],
-                    variants_objs[c - 1],
-                    color_map,
-                    scaled=True,
-                )
-                obj_count = len(variants_objs[c - 1])
-                title = f"Aug {c}: {variant_titles[c - 1]}\n{obj_count} objects"
+                fig, axes = plt.subplots(1, 2, figsize=(16, 8))
+                draw_objects(axes[0], im0, objs0, color_map, scaled=True)
+                axes[0].set_title(f"Original (GT) - {len(objs0)} objects")
+
+                draw_objects(axes[1], aug_img, aug_objs, color_map, scaled=True)
+                obj_count = len(aug_objs)
+                title = f"Aug v{v_idx}: {aug_title}\n{obj_count} objects"
                 if obj_count != len(objs0):
                     title += f" ({obj_count - len(objs0):+d})"
-                axes[c].set_title(title, fontsize=9)
+                axes[1].set_title(title, fontsize=10)
 
-            create_legend(fig, color_map, counts)
-            out_path = os.path.join(cfg.out_dir, f"vis_{idx:05d}.jpg")
-            fig.tight_layout()
-            fig.savefig(out_path, dpi=120)
-            plt.close(fig)
-            print(f"[INFO] Saved {out_path}")
+                create_legend(fig, color_map, counts)
+                suffix = "" if len(variants_imgs) == 1 else f"_v{v_idx:02d}"
+                out_path = os.path.join(cfg.out_dir, f"vis_{idx:05d}{suffix}.jpg")
+                fig.tight_layout()
+                fig.savefig(out_path, dpi=160)
+                plt.close(fig)
+                print(f"[INFO] Saved {out_path}")
 
     if cfg.save_state_summary and state_log:
         summary_path = os.path.join(cfg.out_dir, "curriculum_states.json")

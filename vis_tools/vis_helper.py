@@ -70,7 +70,14 @@ def canonicalize_poly(points: List[int | float]) -> List[int]:
     return [int(round(v)) for xy in ordered for v in xy]
 
 
-def draw_objects(ax, img: Image.Image, objects: List[Dict[str, Any]], color_map: Dict[str, str], scaled: bool, show_labels: bool = True) -> None:
+def draw_objects(
+    ax: Any,
+    img: Image.Image,
+    objects: List[Dict[str, Any]],
+    color_map: Dict[str, str],
+    scaled: bool,
+    show_labels: bool = True,
+) -> None:
     ax.imshow(img)
     ax.axis("off")
     w, h = img.size
@@ -82,19 +89,31 @@ def draw_objects(ax, img: Image.Image, objects: List[Dict[str, Any]], color_map:
         # NOTE: Do NOT canonicalize polygon points - they are already in correct clockwise order
         # from geometry transformations. Reordering breaks rotated polygons!
         color = color_map.get(desc) or "#000000"
-        
+
         # Determine label position (top-left corner of geometry)
         label_x, label_y = None, None
-        
+
         if gtype == "bbox_2d" and len(pts_px) == 4:
             x1, y1, x2, y2 = pts_px
-            ax.add_patch(patches.Rectangle((x1, y1), x2 - x1, y2 - y1, fill=False, edgecolor=color, linewidth=2))
+            ax.add_patch(
+                patches.Rectangle(
+                    (x1, y1), x2 - x1, y2 - y1, fill=False, edgecolor=color, linewidth=2
+                )
+            )
             label_x, label_y = x1, y1
         elif gtype == "poly" and len(pts_px) >= 8 and len(pts_px) % 2 == 0:
             # Ensure visualization uses canonical ordering (same as pipeline)
             pts_px = canonicalize_poly(pts_px)
             poly_coords = [(pts_px[i], pts_px[i + 1]) for i in range(0, len(pts_px), 2)]
-            poly = patches.Polygon(poly_coords, closed=True, fill=False, edgecolor=color, linewidth=2, linestyle="--", alpha=0.9)
+            poly = patches.Polygon(
+                poly_coords,
+                closed=True,
+                fill=False,
+                edgecolor=color,
+                linewidth=2,
+                linestyle="--",
+                alpha=0.9,
+            )
             ax.add_patch(poly)
             # Use top-most point for label
             label_x = min(pts_px[::2])
@@ -102,10 +121,19 @@ def draw_objects(ax, img: Image.Image, objects: List[Dict[str, Any]], color_map:
         elif gtype == "line" and len(pts_px) >= 4 and len(pts_px) % 2 == 0:
             xs = pts_px[::2]
             ys = pts_px[1::2]
-            ax.plot(xs, ys, color=color, linewidth=3, linestyle="-", marker="o", markersize=3, alpha=0.9)
+            ax.plot(
+                xs,
+                ys,
+                color=color,
+                linewidth=3,
+                linestyle="-",
+                marker="o",
+                markersize=3,
+                alpha=0.9,
+            )
             # Use first point for label
             label_x, label_y = xs[0], ys[0]
-        
+
         # Draw text label if requested and desc is non-empty
         if show_labels and desc and label_x is not None and label_y is not None:
             ax.text(
@@ -114,10 +142,12 @@ def draw_objects(ax, img: Image.Image, objects: List[Dict[str, Any]], color_map:
                 desc,
                 color=color,
                 fontsize=8,
-                weight='bold',
-                bbox=dict(facecolor='white', alpha=0.7, edgecolor=color, linewidth=1, pad=2),
-                verticalalignment='bottom',
-                horizontalalignment='left',
+                weight="bold",
+                bbox=dict(
+                    facecolor="white", alpha=0.7, edgecolor=color, linewidth=1, pad=2
+                ),
+                verticalalignment="bottom",
+                horizontalalignment="left",
             )
 
 
@@ -139,11 +169,28 @@ def _inverse_scale(points: List[int | float], w: int, h: int) -> List[int]:
 
 def generate_colors(labels: List[str]) -> Dict[str, str]:
     base_colors = [
-        "#FF6B6B", "#4ECDC4", "#45B7D1", "#96CEB4", "#FFEAA7",
-        "#DDA0DD", "#98D8C8", "#F7DC6F", "#BB8FCE", "#85C1E9",
-        "#F8C471", "#82E0AA", "#F1948A", "#85929E", "#F4D03F",
-        "#AED6F1", "#A9DFBF", "#F9E79F", "#D7BDE2", "#A2D9CE",
-        "#FADBD8", "#D5DBDB",
+        "#FF6B6B",
+        "#4ECDC4",
+        "#45B7D1",
+        "#96CEB4",
+        "#FFEAA7",
+        "#DDA0DD",
+        "#98D8C8",
+        "#F7DC6F",
+        "#BB8FCE",
+        "#85C1E9",
+        "#F8C471",
+        "#82E0AA",
+        "#F1948A",
+        "#85929E",
+        "#F4D03F",
+        "#AED6F1",
+        "#A9DFBF",
+        "#F9E79F",
+        "#D7BDE2",
+        "#A2D9CE",
+        "#FADBD8",
+        "#D5DBDB",
     ]
     colors: Dict[str, str] = {}
     for i, label in enumerate(sorted(set(labels))):
@@ -151,15 +198,22 @@ def generate_colors(labels: List[str]) -> Dict[str, str]:
     return colors
 
 
-def create_legend(fig, color_map: Dict[str, str], counts: Dict[str, List[int]]) -> None:
+def create_legend(
+    fig: Any, color_map: Dict[str, str], counts: Dict[str, List[int]]
+) -> None:
     legend_elements = []
     active = [label for label, c in counts.items() if c[0] > 0 or c[1] > 0]
     active.sort(key=lambda label: sum(counts[label]), reverse=True)
     for label in active:
         import matplotlib.patches as patches
+
         gt_c, pr_c = counts[label]
         legend_label = f"{label} ({gt_c}/{pr_c})"
-        legend_elements.append(patches.Patch(facecolor="none", edgecolor=color_map[label], label=legend_label))
+        legend_elements.append(
+            patches.Patch(
+                facecolor="none", edgecolor=color_map[label], label=legend_label
+            )
+        )
     if not legend_elements:
         return
     legend = fig.legend(
@@ -175,7 +229,9 @@ def create_legend(fig, color_map: Dict[str, str], counts: Dict[str, List[int]]) 
     legend.get_frame().set_edgecolor("lightgray")
 
 
-def create_caption_completeness_text(fig, caption_series: Sequence[tuple[str, Dict[str, int]]]) -> None:
+def create_caption_completeness_text(
+    fig, caption_series: Sequence[tuple[str, Dict[str, int]]]
+) -> None:
     if not caption_series:
         return
     headers = [label for label, _ in caption_series]
@@ -209,16 +265,22 @@ __all__ = [
 
 
 _font_candidates = [
-    ("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", [
-        "Noto Sans CJK SC",
-        "Noto Sans CJK JP",
-        "Noto Sans CJK KR",
-    ]),
-    ("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc", [
-        "Noto Sans CJK SC",
-        "Noto Sans CJK JP",
-        "Noto Sans CJK KR",
-    ]),
+    (
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        [
+            "Noto Sans CJK SC",
+            "Noto Sans CJK JP",
+            "Noto Sans CJK KR",
+        ],
+    ),
+    (
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+        [
+            "Noto Sans CJK SC",
+            "Noto Sans CJK JP",
+            "Noto Sans CJK KR",
+        ],
+    ),
     ("/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc", ["WenQuanYi Zen Hei"]),
     ("/usr/share/fonts/truetype/arphic/ukai.ttc", ["AR PL UKai CN"]),
 ]

@@ -64,7 +64,6 @@ from src.generation import (  # noqa: E402
     VlmPreprocessOptions,
     build_hf_engine,
 )
-
 from vis_tools import evaluate as geom_eval  # noqa: E402
 from vis_tools.vis_helper import (  # noqa: E402
     canonicalize_poly,
@@ -284,6 +283,7 @@ def _init_engine() -> None:
     except Exception:
         pass
 
+
 # ======================
 # Inference helpers
 # ======================
@@ -303,6 +303,7 @@ def run_infer_one(pil_img: Any, prompt: str) -> tuple[str, str]:  # type: ignore
             ],
         },
     ]
+
     def _resolve_tokenizer():
         if tokenizer is not None:
             return tokenizer
@@ -351,7 +352,9 @@ def run_infer_one(pil_img: Any, prompt: str) -> tuple[str, str]:  # type: ignore
                     (batch_size,), False, device=device, dtype=torch.bool
                 ).bool()
                 for idx in range(batch_size):
-                    prompt_len = self.prompt_lens[idx] if idx < len(self.prompt_lens) else 0
+                    prompt_len = (
+                        self.prompt_lens[idx] if idx < len(self.prompt_lens) else 0
+                    )
                     seq = input_ids[idx]
                     gen_ids = seq[prompt_len:]
                     if gen_ids.numel() == 0:

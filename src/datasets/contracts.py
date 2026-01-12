@@ -61,8 +61,9 @@ class ConversationRecord(TypedDict, total=False):
 
 
 class GeometryDict(TypedDict, total=False):
-    bbox: Sequence[float]
-    polygon: Sequence[float]
+    bbox_2d: Sequence[float]
+    poly: Sequence[float]
+    line: Sequence[float]
     label: str
     score: float
     object_id: str
@@ -93,34 +94,97 @@ def validate_conversation_record(record: Mapping[str, Any]) -> ConversationRecor
     if not isinstance(messages, Sequence):
         raise ValueError("conversation record 'messages' must be a sequence")
 
-    for index, turn in enumerate(messages):
+    messages_seq = cast(Sequence[Mapping[str, object]], messages)
+    for index, turn in enumerate(messages_seq):
         if not isinstance(turn, Mapping):
             raise ValueError(f"messages[{index}] must be a mapping")
         if "role" not in turn:
             raise ValueError(f"messages[{index}] missing 'role'")
-        content = turn.get("content", [])
-        if not isinstance(content, Sequence):
+        content_raw: object = turn.get("content", [])
+        if not isinstance(content_raw, Sequence):
             raise ValueError(f"messages[{index}]['content'] must be a sequence")
     return cast(ConversationRecord, record)
 
 
 def validate_geometry_sequence(
-    geometries: Iterable[Mapping[str, Any]],
+    geometries: Iterable[Mapping[str, object]],
 ) -> Tuple[GeometryDict, ...]:
+    """Validate a sequence of geometry dictionaries.
+
+    Expected geometry keys (exactly one per entry):
+      - bbox_2d: [x1, y1, x2, y2]
+      - poly:    flat [x0, y0, x1, y1, ...] (>= 3 points)
+      - line:    flat [x0, y0, x1, y1, ...] (>= 2 points)
+
+    Extra metadata keys are allowed (e.g., desc, __src_geom_idx, __aug_op).
+    """
     validated: list[GeometryDict] = []
     for index, geom in enumerate(geometries):
         if not isinstance(geom, Mapping):
-            raise ValueError(f"geometry[{index}] must be a mapping")
-        bbox = geom.get("bbox")
-        if bbox is not None and not isinstance(bbox, Sequence):
+            raise TypeError(f"geometry[{index}] must be a mapping")
+
+        bbox_raw = geom.get("bbox_2d")
+        poly_raw = geom.get("poly")
+        line_raw = geom.get("line")
+
+        has_bbox = bbox_raw is not None
+        has_poly = poly_raw is not None
+        has_line = line_raw is not None
+        num_geoms = int(has_bbox) + int(has_poly) + int(has_line)
+        if num_geoms == 0:
             raise ValueError(
-                f"geometry[{index}]['bbox'] must be a sequence if provided"
+                f"geometry[{index}] must include exactly one of 'bbox_2d', 'poly', or 'line'"
             )
-        polygon = geom.get("polygon")
-        if polygon is not None and not isinstance(polygon, Sequence):
+        if num_geoms != 1:
             raise ValueError(
-                f"geometry[{index}]['polygon'] must be a sequence if provided"
+                f"geometry[{index}] must include exactly one of 'bbox_2d', 'poly', or 'line'"
             )
+
+        if has_bbox:
+            bbox = bbox_raw
+            if not isinstance(bbox, Sequence) or isinstance(bbox, (str, bytes)):
+                raise TypeError(f"geometry[{index}].bbox_2d must be a numeric sequence")
+            bbox_seq = cast(Sequence[object], bbox)
+            if len(bbox_seq) != 4:
+                raise ValueError(
+                    f"geometry[{index}].bbox_2d must have length 4; got {len(bbox_seq)}"
+                )
+            for j, v in enumerate(bbox_seq):
+                if not isinstance(v, (int, float)) or isinstance(v, bool):
+                    raise TypeError(
+                        f"geometry[{index}].bbox_2d[{j}] must be a number; got {type(v)!r}"
+                    )
+
+        if has_poly:
+            poly = poly_raw
+            if not isinstance(poly, Sequence) or isinstance(poly, (str, bytes)):
+                raise TypeError(f"geometry[{index}].poly must be a numeric sequence")
+            poly_seq = cast(Sequence[object], poly)
+            if len(poly_seq) < 6 or len(poly_seq) % 2 != 0:
+                raise ValueError(
+                    f"geometry[{index}].poly must contain even-length >=6 coordinates; got {len(poly_seq)}"
+                )
+            for j, v in enumerate(poly_seq):
+                if not isinstance(v, (int, float)) or isinstance(v, bool):
+                    raise TypeError(
+                        f"geometry[{index}].poly[{j}] must be a number; got {type(v)!r}"
+                    )
+
+        if has_line:
+            line = line_raw
+            if not isinstance(line, Sequence) or isinstance(line, (str, bytes)):
+                raise TypeError(f"geometry[{index}].line must be a numeric sequence")
+            line_seq = cast(Sequence[object], line)
+            if len(line_seq) < 4 or len(line_seq) % 2 != 0:
+                raise ValueError(
+                    f"geometry[{index}].line must contain even-length >=4 coordinates; got {len(line_seq)}"
+                )
+            for j, v in enumerate(line_seq):
+                if not isinstance(v, (int, float)) or isinstance(v, bool):
+                    raise TypeError(
+                        f"geometry[{index}].line[{j}] must be a number; got {type(v)!r}"
+                    )
+
         validated.append(cast(GeometryDict, geom))
     return tuple(validated)
 

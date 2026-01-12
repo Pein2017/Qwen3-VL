@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from typing import NotRequired, Protocol, TypedDict, cast
+from typing import NotRequired, Protocol, TypedDict, TypeVar, cast
 
 from .curriculum import NumericParam
 
@@ -25,6 +25,9 @@ def _is_prob_field(name: str) -> bool:
     return lowered == "prob" or lowered.endswith("_prob")
 
 
+_T = TypeVar("_T")
+
+
 class RngLike(Protocol):
     def random(self) -> float: ...
 
@@ -34,7 +37,7 @@ class RngLike(Protocol):
 
     def randrange(self, start: int, stop: int | None = None, step: int = 1) -> int: ...
 
-    def shuffle(self, x: list[object]) -> None: ...
+    def shuffle(self, x: list[_T]) -> None: ...
 
 
 class AugmentationMeta(TypedDict):
@@ -77,9 +80,7 @@ class AffineOp(CurriculumMixin):
     allows_geometry_drops: bool = False
     curriculum_param_names: tuple[str, ...] = ("prob",)
 
-    def affine(
-        self, width: int, height: int, rng: RngLike
-    ) -> list[list[float]] | None:
+    def affine(self, width: int, height: int, rng: RngLike) -> list[list[float]] | None:
         raise NotImplementedError
 
 
@@ -237,9 +238,12 @@ class Compose:
             if callable(raw_curr):
                 raw_curr = raw_curr()
             if isinstance(raw_curr, dict):
-                for param_name, value in raw_curr.items():
+                raw_curr_typed = cast(dict[str, object], raw_curr)
+                for param_name, value in raw_curr_typed.items():
                     numeric = (
-                        value if isinstance(value, NumericParam) else NumericParam.from_raw(value)
+                        value
+                        if isinstance(value, NumericParam)
+                        else NumericParam.from_raw(value)
                     )
                     if _is_prob_field(param_name):
                         for v in numeric.values:
@@ -369,11 +373,24 @@ class Compose:
             # Barrier or Patch op: flush accumulated affines first
             pre_flush = getattr(op, "pre_flush_hook", None)
             if callable(pre_flush):
-                pre_flush_result = pre_flush(M_total, current_width, current_height, rng)
-                if not isinstance(pre_flush_result, tuple) or len(pre_flush_result) != 3:
-                    raise TypeError("pre_flush_hook must return (M_total, width, height)")
-                M_total, current_width, current_height = pre_flush_result
-            force_flush = getattr(op, "force_flush_affine", False) or _is_patch_op(op)
+                pre_flush_result = pre_flush(
+                    M_total, current_width, current_height, rng
+                )
+                if (
+                    not isinstance(pre_flush_result, tuple)
+                    or len(pre_flush_result) != 3
+                ):
+                    raise TypeError(
+                        "pre_flush_hook must return (M_total, width, height)"
+                    )
+                M_total, current_width, current_height = cast(
+                    tuple[list[list[float]], int, int], pre_flush_result
+                )
+            # Only force a warp when the operator explicitly requests it (e.g. canvas
+            # expansion/padding barriers). PatchOps still trigger a flush, but we
+            # avoid redundant identity warps (extra resample) when no affine was
+            # accumulated.
+            force_flush = bool(getattr(op, "force_flush_affine", False))
             _flush_affine(force=force_flush)
 
             out_images, out_geoms = op.apply(
@@ -406,7 +423,9 @@ class Compose:
                 )
                 if has_crop_meta:
                     self._record_telemetry(op)
-            elif hasattr(op, "last_kept_indices") or hasattr(op, "last_crop_skip_reason"):
+            elif hasattr(op, "last_kept_indices") or hasattr(
+                op, "last_crop_skip_reason"
+            ):
                 self._record_telemetry(op)
 
         # Final flush for any remaining accumulated affines
@@ -425,21 +444,45 @@ class Compose:
         return out_images, out_geoms
 
     def _record_telemetry(self, op: object) -> None:
-        kept = getattr(op, "last_kept_indices", None) or []
-        coverages = getattr(op, "last_object_coverages", None) or []
-        skip_reason = getattr(op, "last_crop_skip_reason", None)
+        kept: list[int] = []
+        kept_raw = getattr(op, "last_kept_indices", None)
+        if isinstance(kept_raw, list):
+            for idx in cast(list[object], kept_raw):
+                if not isinstance(idx, (int, float, str)):
+                    continue
+                try:
+                    kept.append(int(idx))
+                except (TypeError, ValueError):
+                    continue
+
+        coverages: list[float] = []
+        coverages_raw = getattr(op, "last_object_coverages", None)
+        if isinstance(coverages_raw, list):
+            for c in cast(list[object], coverages_raw):
+                if not isinstance(c, (int, float, str)):
+                    continue
+                try:
+                    coverages.append(float(c))
+                except (TypeError, ValueError):
+                    continue
+
+        skip_reason_raw = getattr(op, "last_crop_skip_reason", None)
+        skip_reason = str(skip_reason_raw) if skip_reason_raw is not None else None
+
         skip_counts_raw = getattr(op, "last_skip_counters", {}) or {}
         skip_counts: dict[str, int] = {}
         if isinstance(skip_counts_raw, dict):
-            for key, value in skip_counts_raw.items():
+            for key, value in cast(dict[object, object], skip_counts_raw).items():
+                if not isinstance(value, (int, float, str)):
+                    continue
                 try:
                     skip_counts[str(key)] = int(value)
                 except (TypeError, ValueError):
                     continue
 
         telemetry = AugmentationTelemetry(
-            kept_indices=tuple(int(idx) for idx in kept),
-            coverages=tuple(float(c) for c in coverages),
+            kept_indices=tuple(kept),
+            coverages=tuple(coverages),
             allows_geometry_drops=bool(self.allows_geometry_drops),
             width=self.last_image_width,
             height=self.last_image_height,

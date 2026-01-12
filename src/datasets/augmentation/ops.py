@@ -494,11 +494,11 @@ class ResizeByScale(CurriculumMixin, ImageAugmenter):
                 out_geoms.append(cast(DatasetObject, {**meta, "bbox_2d": bb}))
             elif "poly" in g:
                 pts = g["poly"]
-                scaled: list[float] = []
+                scaled_poly: list[float] = []
                 for i in range(0, len(pts), 2):
-                    scaled.append(float(pts[i]) * sx)
-                    scaled.append(float(pts[i + 1]) * sy)
-                clipped = sutherland_hodgman_clip(scaled, new_w, new_h)
+                    scaled_poly.append(float(pts[i]) * sx)
+                    scaled_poly.append(float(pts[i + 1]) * sy)
+                clipped = sutherland_hodgman_clip(scaled_poly, new_w, new_h)
                 if len(clipped) // 2 >= 3:
                     # Valid polygon after clipping
                     if len(clipped) // 2 != 4:
@@ -511,22 +511,22 @@ class ResizeByScale(CurriculumMixin, ImageAugmenter):
                     out_geoms.append(cast(DatasetObject, {**meta, "poly": q}))
                 else:
                     # Degenerate: preserve by clamping original scaled coords
-                    q = clamp_points(to_clockwise(scaled), new_w, new_h)
+                    q = clamp_points(to_clockwise(scaled_poly), new_w, new_h)
                     out_geoms.append(cast(DatasetObject, {**meta, "poly": q}))
             elif "line" in g:
                 pts = g["line"]
-                scaled: list[float] = []
+                scaled_line: list[float] = []
                 for i in range(0, len(pts), 2):
-                    scaled.append(float(pts[i]) * sx)
-                    scaled.append(float(pts[i + 1]) * sy)
-                clipped = clip_polyline_to_rect(scaled, new_w, new_h)
+                    scaled_line.append(float(pts[i]) * sx)
+                    scaled_line.append(float(pts[i + 1]) * sy)
+                clipped = clip_polyline_to_rect(scaled_line, new_w, new_h)
                 clipped = clamp_points(clipped, new_w, new_h)
                 clipped = dedupe_consecutive_points(clipped)
                 if len(clipped) >= 4:
                     out_geoms.append(cast(DatasetObject, {**meta, "line": clipped}))
                 else:
                     # Degenerate: preserve by collapsing to minimal 2-point line
-                    raw = clamp_points(scaled, new_w, new_h)
+                    raw = clamp_points(scaled_line, new_w, new_h)
                     raw = dedupe_consecutive_points(raw)
                     if len(raw) >= 4:
                         out_geoms.append(cast(DatasetObject, {**meta, "line": raw[:4]}))
@@ -655,9 +655,13 @@ class CLAHE(ColorOp):
         if isinstance(tile_grid_size, (list, tuple)):
             self.tile_grid_size = tuple(int(x) for x in tile_grid_size)
         else:
-            raise TypeError(f"tile_grid_size must be a list or tuple, got {type(tile_grid_size)}")
+            raise TypeError(
+                f"tile_grid_size must be a list or tuple, got {type(tile_grid_size)}"
+            )
         if len(self.tile_grid_size) != 2:
-            raise ValueError(f"tile_grid_size must have 2 elements, got {len(self.tile_grid_size)}")
+            raise ValueError(
+                f"tile_grid_size must have 2 elements, got {len(self.tile_grid_size)}"
+            )
         self.prob = float(prob)
 
     @override
@@ -681,9 +685,7 @@ class CLAHE(ColorOp):
         out_imgs: list[Image.Image] = []
         # Ensure tile_grid_size is a tuple of integers for OpenCV (explicit conversion)
         tile_size = tuple(int(x) for x in self.tile_grid_size)
-        clahe = cv2.createCLAHE(
-            clipLimit=self.clip_limit, tileGridSize=tile_size
-        )
+        clahe = cv2.createCLAHE(clipLimit=self.clip_limit, tileGridSize=tile_size)
         for img in images:
             im = _pil(img).convert("RGB")
             arr = np.asarray(im)
@@ -731,9 +733,7 @@ class AutoContrast(ColorOp):
 class Sharpness(ColorOp):
     curriculum_param_names = ("factor", "prob")
 
-    def __init__(
-        self, factor: Sequence[float] = (0.5, 1.8), prob: float = 0.4
-    ):
+    def __init__(self, factor: Sequence[float] = (0.5, 1.8), prob: float = 0.4):
         self.factor = (float(factor[0]), float(factor[1]))
         self.prob = float(prob)
 
@@ -821,12 +821,18 @@ def _geom_mask_iou(
             draw.rectangle([x1 - ux1, y1 - uy1, x2 - ux1, y2 - uy1], fill=255)
         elif "poly" in g:
             pts = g.get("poly") or []
-            xy = [(float(pts[i]) - ux1, float(pts[i + 1]) - uy1) for i in range(0, len(pts), 2)]
+            xy = [
+                (float(pts[i]) - ux1, float(pts[i + 1]) - uy1)
+                for i in range(0, len(pts), 2)
+            ]
             if len(xy) >= 3:
                 draw.polygon(xy, fill=255)
         elif "line" in g:
             pts = g.get("line") or []
-            xy = [(float(pts[i]) - ux1, float(pts[i + 1]) - uy1) for i in range(0, len(pts), 2)]
+            xy = [
+                (float(pts[i]) - ux1, float(pts[i + 1]) - uy1)
+                for i in range(0, len(pts), 2)
+            ]
             if len(xy) >= 2:
                 draw.line(xy, fill=255, width=line_width)
         else:
@@ -895,7 +901,9 @@ class SmallObjectZoomPaste(PatchOp):
                 f"overlap_mode must be one of {{'aabb','mask'}}, got {overlap_mode!r}"
             )
         self.class_whitelist = list(class_whitelist) if class_whitelist else None
-        self.allows_geometry_drops = True  # geometry count may increase; allow validation bypass
+        self.allows_geometry_drops = (
+            True  # geometry count may increase; allow validation bypass
+        )
 
     def _is_small(self, geom: DatasetObject) -> bool:
         aabb = get_aabb(geom)
@@ -943,7 +951,9 @@ class SmallObjectZoomPaste(PatchOp):
         tx, ty = offset
         M = compose_affine(
             translate(tx, ty),
-            compose_affine(scale_matrix(scale_factor, scale_factor), translate(-cx, -cy)),
+            compose_affine(
+                scale_matrix(scale_factor, scale_factor), translate(-cx, -cy)
+            ),
         )
         transformed = transform_geometry(geom, M, width=width, height=height)
         if "line" in transformed and len(transformed["line"]) < 4:
@@ -996,7 +1006,12 @@ class SmallObjectZoomPaste(PatchOp):
         height: int,
         rng: RngLike,
     ):
-        if not images or not geoms or rng.random() >= self.prob or self.max_targets <= 0:
+        if (
+            not images
+            or not geoms
+            or rng.random() >= self.prob
+            or self.max_targets <= 0
+        ):
             return images, geoms
 
         logger = get_logger("augmentation.small_object_zoom_paste")
@@ -1005,7 +1020,7 @@ class SmallObjectZoomPaste(PatchOp):
         working_geoms: list[DatasetObject] = list(geoms)
 
         # Collect candidate indices
-        candidates = []
+        candidates: list[int] = []
         for idx, g in enumerate(geoms):
             if "desc" in g and not self._class_allowed(str(g["desc"])):
                 continue
@@ -1016,7 +1031,7 @@ class SmallObjectZoomPaste(PatchOp):
             return images, geoms
 
         rng.shuffle(candidates)
-        targets = candidates[: self.max_targets]
+        targets: list[int] = candidates[: self.max_targets]
 
         for idx in targets:
             g = geoms[idx]
@@ -1058,7 +1073,9 @@ class SmallObjectZoomPaste(PatchOp):
 
                 # Paste patch onto all images
                 for i, img in enumerate(pil_images):
-                    patch = img.crop((int(x1), int(y1), int(x1 + patch_w), int(y1 + patch_h)))
+                    patch = img.crop(
+                        (int(x1), int(y1), int(x1 + patch_w), int(y1 + patch_h))
+                    )
                     if new_w != patch_w or new_h != patch_h:
                         patch = patch.resize((new_w, new_h), _PIL_BICUBIC)
                     img.paste(patch, (tx, ty))
@@ -1069,9 +1086,306 @@ class SmallObjectZoomPaste(PatchOp):
                 break
 
             if not placed:
-                logger.debug("small_object_zoom_paste: no valid placement for target %d", idx)
+                logger.debug(
+                    "small_object_zoom_paste: no valid placement for target %d", idx
+                )
 
         return pil_images, working_geoms
+
+
+@register("roi_crop")
+@final
+class RoiCrop(PatchOp):
+    """
+    Device-anchored ROI crop.
+
+    Motivation (BBU/RRU巡检场景):
+      - Small targets (e.g. screws/labels) need zoom-in to increase pixel share.
+      - Cable/fiber topology needs wide-angle; blind random crops often sever lines.
+
+    This op crops around an "anchor" object (device/cabinet) selected by strict category
+    match on the `desc` token `类别=...`, then filters objects by coverage and truncates geometries to the crop
+    boundary. Unlike `RandomCrop`, this op does NOT skip when line objects exist; line
+    geometries are clipped and retained as long as any segment remains in the crop.
+
+    Parameters:
+        anchor_classes: category values to match exactly against the `desc` token `类别=...`
+            (default: ("BBU设备", "RRU设备", "机柜"))
+        scale_range: expansion factor range applied to anchor AABB (default: (1.2, 2.0))
+        min_crop_size: minimum crop side length in pixels (default: 320)
+        min_coverage: coverage threshold for keeping bbox/poly objects (default: 0.4)
+        completeness_threshold: coverage threshold for marking partial visibility (default: 0.95)
+        prob: probability of applying ROI crop (default: 0.5)
+    """
+
+    def __init__(
+        self,
+        anchor_classes: Sequence[str] = ("BBU设备", "RRU设备", "机柜"),
+        scale_range: tuple[float, float] = (1.2, 2.0),
+        min_crop_size: int = 320,
+        prob: float = 0.5,
+        *,
+        min_coverage: float = 0.4,
+        completeness_threshold: float = 0.95,
+    ):
+        self.curriculum_param_names = (
+            "scale_range",
+            "min_crop_size",
+            "min_coverage",
+            "completeness_threshold",
+            "prob",
+        )
+        self.anchor_classes = tuple(
+            s_str[len("类别=") :].strip() if s_str.startswith("类别=") else s_str
+            for s in anchor_classes
+            if (s_str := str(s).strip())
+        )
+        self.scale_range = (float(scale_range[0]), float(scale_range[1]))
+        self.min_crop_size = int(min_crop_size)
+        self.min_coverage = float(min_coverage)
+        self.completeness_threshold = float(completeness_threshold)
+        self.prob = float(prob)
+
+        # Metadata storage (set by apply, read by Compose / preprocessor)
+        self.last_kept_indices: list[int] | None = None
+        self.last_object_coverages: list[float] | None = None
+        self.allows_geometry_drops = True  # Signal to validation
+        self.last_skip_reason: str | None = None
+        # Compose looks for `last_crop_skip_reason`; keep both names in sync.
+        self.last_crop_skip_reason: str | None = None
+        self.last_skip_counters: dict[str, int] = {}
+
+    def _desc_is_anchor(self, desc: str) -> bool:
+        if not desc:
+            return False
+        # Strict matching: only consider the structured `类别=` token (no substring matching, no fallbacks).
+        # Note: dataset strings sometimes use Chinese commas; normalize to ',' before splitting.
+        normalized_desc = desc.replace("，", ",")
+        for token in normalized_desc.split(","):
+            token = token.strip()
+            if not token.startswith("类别="):
+                continue
+            category = token[len("类别=") :].strip()
+            if category and category in self.anchor_classes:
+                return True
+        return False
+
+    def _record_skip(self, reason: str) -> None:
+        self.last_skip_reason = reason
+        self.last_crop_skip_reason = reason
+        self.last_skip_counters[reason] = self.last_skip_counters.get(reason, 0) + 1
+
+    @override
+    def apply(
+        self,
+        images: list[Image.Image],
+        geoms: list[DatasetObject],
+        *,
+        width: int,
+        height: int,
+        rng: RngLike,
+    ):
+        logger = get_logger("augmentation.roi_crop")
+
+        # Clear metadata from previous call
+        self.last_kept_indices = None
+        self.last_object_coverages = None
+        self.last_skip_reason = None
+        self.last_crop_skip_reason = None
+        self.last_skip_counters = {}
+
+        if rng.random() >= self.prob:
+            return images, geoms
+
+        # 1) Find anchor candidates (prefer bbox/poly devices/cabinets; never choose a line)
+        anchor_indices: list[int] = []
+        for idx, g in enumerate(geoms):
+            desc = g.get("desc")
+            if not isinstance(desc, str) or not self._desc_is_anchor(desc):
+                continue
+            if "line" in g:
+                continue
+            try:
+                aabb = get_aabb(g)
+            except Exception:
+                continue
+            if aabb_area(aabb) <= 0.0:
+                continue
+            anchor_indices.append(idx)
+
+        # 2) Determine anchor AABB (strict; skip if no anchor is found)
+        if not anchor_indices:
+            self._record_skip("no_anchor")
+            return images, geoms
+
+        chosen = anchor_indices[rng.randrange(0, len(anchor_indices))]
+        anchor_aabb = list(get_aabb(geoms[chosen]))
+
+        # 3) Compute crop bbox around anchor (expanded and clamped to image bounds)
+        x1, y1, x2, y2 = anchor_aabb
+        w = max(1.0, float(x2) - float(x1))
+        h = max(1.0, float(y2) - float(y1))
+        cx = (float(x1) + float(x2)) * 0.5
+        cy = (float(y1) + float(y2)) * 0.5
+
+        s = rng.uniform(self.scale_range[0], self.scale_range[1])
+        crop_w = max(int(round(w * s)), self.min_crop_size)
+        crop_h = max(int(round(h * s)), self.min_crop_size)
+        crop_w = max(1, min(crop_w, width))
+        crop_h = max(1, min(crop_h, height))
+
+        # Center crop around anchor; clamp to fit in [0, W] × [0, H]
+        crop_x = int(round(cx - crop_w / 2.0))
+        crop_y = int(round(cy - crop_h / 2.0))
+        max_x = width - crop_w
+        max_y = height - crop_h
+        crop_x = max(0, min(crop_x, max_x))
+        crop_y = max(0, min(crop_y, max_y))
+
+        crop_bbox = [
+            float(crop_x),
+            float(crop_y),
+            float(crop_x + crop_w),
+            float(crop_y + crop_h),
+        ]
+
+        # 4) Filter geometries by visibility
+        kept_indices: list[int] = []
+        coverages: list[float] = []
+        filtered_geoms: list[DatasetObject] = []
+
+        for idx, g in enumerate(geoms):
+            # Lines: keep if any segment remains after clipping (do not filter by coverage).
+            if "line" in g:
+                pts = g["line"]
+                line_pts_translated_filter: list[float] = []
+                for i in range(0, len(pts), 2):
+                    line_pts_translated_filter.append(pts[i] - crop_bbox[0])
+                    line_pts_translated_filter.append(pts[i + 1] - crop_bbox[1])
+                clipped = clip_polyline_to_rect(
+                    line_pts_translated_filter, crop_w, crop_h
+                )
+                if len(clipped) < 4:
+                    continue
+                cov = compute_polygon_coverage(g, crop_bbox, fallback="bbox")
+                kept_indices.append(idx)
+                coverages.append(cov)
+                filtered_geoms.append(g)
+                continue
+
+            cov = compute_polygon_coverage(g, crop_bbox, fallback="bbox")
+            if cov >= self.min_coverage:
+                kept_indices.append(idx)
+                coverages.append(cov)
+                filtered_geoms.append(g)
+
+        if not filtered_geoms:
+            self._record_skip("no_objects")
+            return images, geoms
+
+        # 5) Proceed with crop - truncate and translate geometries
+        cropped_geoms: list[DatasetObject] = []
+        for g in filtered_geoms:
+            truncated: DatasetObject
+            # Truncate geometry to crop boundary
+            if "bbox_2d" in g:
+                x1, y1, x2, y2 = g["bbox_2d"]
+                clipped_x1 = max(crop_bbox[0], min(crop_bbox[2], x1))
+                clipped_y1 = max(crop_bbox[1], min(crop_bbox[3], y1))
+                clipped_x2 = max(crop_bbox[0], min(crop_bbox[2], x2))
+                clipped_y2 = max(crop_bbox[1], min(crop_bbox[3], y2))
+                truncated = cast(
+                    DatasetObject,
+                    {"bbox_2d": [clipped_x1, clipped_y1, clipped_x2, clipped_y2]},
+                )
+            elif "poly" in g:
+                pts = g["poly"]
+                poly_pts_translated: list[float] = []
+                for i in range(0, len(pts), 2):
+                    poly_pts_translated.append(pts[i] - crop_bbox[0])
+                    poly_pts_translated.append(pts[i + 1] - crop_bbox[1])
+                clipped = sutherland_hodgman_clip(poly_pts_translated, crop_w, crop_h)
+
+                # Reduce redundant vertices introduced by axis-aligned clipping.
+                from ..geometry import simplify_polygon, choose_four_corners
+
+                clipped = simplify_polygon(clipped)
+
+                if len(clipped) // 2 >= 3:
+                    # Prefer true 4-corner representation when possible.
+                    if len(clipped) // 2 > 4:
+                        best4 = choose_four_corners(clipped)
+                        if best4:
+                            clipped = best4
+                    if len(clipped) // 2 != 4:
+                        rect = min_area_rect(clipped)
+                        if rect:
+                            clipped = rect
+                    clipped = to_clockwise(clipped)
+
+                    # Translate back to image coords for final translation step.
+                    final_poly_pts: list[float] = []
+                    for i in range(0, len(clipped), 2):
+                        final_poly_pts.append(clipped[i] + crop_bbox[0])
+                        final_poly_pts.append(clipped[i + 1] + crop_bbox[1])
+                    truncated = cast(DatasetObject, {"poly": final_poly_pts})
+                else:
+                    # Degenerate poly - clamp to crop boundary.
+                    clamped: list[float] = []
+                    for i in range(0, len(pts), 2):
+                        clamped.append(max(crop_bbox[0], min(crop_bbox[2], pts[i])))
+                        clamped.append(max(crop_bbox[1], min(crop_bbox[3], pts[i + 1])))
+                    truncated = cast(DatasetObject, {"poly": clamped})
+            elif "line" in g:
+                pts = g["line"]
+                line_pts_translated_crop: list[float] = []
+                for i in range(0, len(pts), 2):
+                    line_pts_translated_crop.append(pts[i] - crop_bbox[0])
+                    line_pts_translated_crop.append(pts[i + 1] - crop_bbox[1])
+                clipped = clip_polyline_to_rect(
+                    line_pts_translated_crop, crop_w, crop_h
+                )
+
+                final_line_pts: list[float] = []
+                for i in range(0, len(clipped), 2):
+                    final_line_pts.append(clipped[i] + crop_bbox[0])
+                    final_line_pts.append(clipped[i + 1] + crop_bbox[1])
+
+                if len(final_line_pts) >= 4:
+                    truncated = cast(DatasetObject, {"line": final_line_pts})
+                else:
+                    # No segment remains; this should be rare since we filtered for intersection.
+                    truncated = cast(
+                        DatasetObject,
+                        {
+                            "line": [
+                                crop_bbox[0],
+                                crop_bbox[1],
+                                crop_bbox[0],
+                                crop_bbox[1],
+                            ]
+                        },
+                    )
+            else:
+                truncated = g
+
+            translated = translate_geometry(truncated, -crop_bbox[0], -crop_bbox[1])
+            cropped_geoms.append(translated)
+
+        # 6) Crop images
+        out_imgs: list[Image.Image] = []
+        for img in images:
+            im = _pil(img)
+            out_imgs.append(im.crop((crop_x, crop_y, crop_x + crop_w, crop_y + crop_h)))
+
+        # Store metadata for preprocessor/telemetry
+        self.last_kept_indices = kept_indices
+        self.last_object_coverages = coverages
+
+        logger.debug(
+            f"ROI crop applied: {len(geoms)} → {len(cropped_geoms)} objects (region: {crop_bbox})"
+        )
+        return out_imgs, cropped_geoms
 
 
 @register("random_crop")
@@ -1217,6 +1531,7 @@ class RandomCrop(PatchOp):
         # Proceed with crop - truncate and translate geometries
         cropped_geoms: list[DatasetObject] = []
         for g in filtered_geoms:
+            truncated: DatasetObject
             # Truncate geometry to crop boundary
             if "bbox_2d" in g:
                 x1, y1, x2, y2 = g["bbox_2d"]
@@ -1225,17 +1540,18 @@ class RandomCrop(PatchOp):
                 clipped_y1 = max(crop_bbox[1], min(crop_bbox[3], y1))
                 clipped_x2 = max(crop_bbox[0], min(crop_bbox[2], x2))
                 clipped_y2 = max(crop_bbox[1], min(crop_bbox[3], y2))
-                truncated = {
-                    "bbox_2d": [clipped_x1, clipped_y1, clipped_x2, clipped_y2]
-                }
+                truncated = cast(
+                    DatasetObject,
+                    {"bbox_2d": [clipped_x1, clipped_y1, clipped_x2, clipped_y2]},
+                )
             elif "poly" in g:
                 pts = g["poly"]
                 # Translate to crop origin for clipping
-                pts_translated = []
+                poly_pts_translated: list[float] = []
                 for i in range(0, len(pts), 2):
-                    pts_translated.append(pts[i] - crop_bbox[0])
-                    pts_translated.append(pts[i + 1] - crop_bbox[1])
-                clipped = sutherland_hodgman_clip(pts_translated, crop_w, crop_h)
+                    poly_pts_translated.append(pts[i] - crop_bbox[0])
+                    poly_pts_translated.append(pts[i + 1] - crop_bbox[1])
+                clipped = sutherland_hodgman_clip(poly_pts_translated, crop_w, crop_h)
                 # Reduce redundant vertices introduced by axis-aligned clipping
                 from ..geometry import simplify_polygon, choose_four_corners
 
@@ -1253,58 +1569,68 @@ class RandomCrop(PatchOp):
                             clipped = rect
                     clipped = to_clockwise(clipped)
                     # Translate back to image coords for final translation step
-                    final_pts = []
+                    final_poly_pts: list[float] = []
                     for i in range(0, len(clipped), 2):
-                        final_pts.append(clipped[i] + crop_bbox[0])
-                        final_pts.append(clipped[i + 1] + crop_bbox[1])
-                    truncated = {"poly": final_pts}
+                        final_poly_pts.append(clipped[i] + crop_bbox[0])
+                        final_poly_pts.append(clipped[i + 1] + crop_bbox[1])
+                    truncated = cast(DatasetObject, {"poly": final_poly_pts})
                 else:
                     # Degenerate poly - clamp to crop boundary
-                    clamped = []
+                    clamped_poly: list[float] = []
                     for i in range(0, len(pts), 2):
-                        clamped.append(max(crop_bbox[0], min(crop_bbox[2], pts[i])))
-                        clamped.append(max(crop_bbox[1], min(crop_bbox[3], pts[i + 1])))
-                    truncated = {"poly": clamped}
+                        clamped_poly.append(
+                            max(crop_bbox[0], min(crop_bbox[2], pts[i]))
+                        )
+                        clamped_poly.append(
+                            max(crop_bbox[1], min(crop_bbox[3], pts[i + 1]))
+                        )
+                    truncated = cast(DatasetObject, {"poly": clamped_poly})
             elif "line" in g:
                 pts = g["line"]
                 # Translate to crop origin
-                pts_translated = []
+                line_pts_translated: list[float] = []
                 for i in range(0, len(pts), 2):
-                    pts_translated.append(pts[i] - crop_bbox[0])
-                    pts_translated.append(pts[i + 1] - crop_bbox[1])
+                    line_pts_translated.append(pts[i] - crop_bbox[0])
+                    line_pts_translated.append(pts[i + 1] - crop_bbox[1])
                 # Clip line to crop boundary
-                clipped = clip_polyline_to_rect(pts_translated, crop_w, crop_h)
+                clipped = clip_polyline_to_rect(line_pts_translated, crop_w, crop_h)
                 # Translate back
-                final_pts = []
+                final_line_pts: list[float] = []
                 for i in range(0, len(clipped), 2):
-                    final_pts.append(clipped[i] + crop_bbox[0])
-                    final_pts.append(clipped[i + 1] + crop_bbox[1])
+                    final_line_pts.append(clipped[i] + crop_bbox[0])
+                    final_line_pts.append(clipped[i + 1] + crop_bbox[1])
 
-                if len(final_pts) >= 4:
-                    truncated = {"line": final_pts}
+                if len(final_line_pts) >= 4:
+                    truncated = cast(DatasetObject, {"line": final_line_pts})
                 else:
                     # Degenerate line - clamp to crop boundary
-                    clamped = []
+                    clamped_line: list[float] = []
                     for i in range(0, len(pts), 2):
-                        clamped.append(max(crop_bbox[0], min(crop_bbox[2], pts[i])))
-                        clamped.append(max(crop_bbox[1], min(crop_bbox[3], pts[i + 1])))
-                    if len(clamped) >= 4:
-                        truncated = {"line": clamped[:4]}
+                        clamped_line.append(
+                            max(crop_bbox[0], min(crop_bbox[2], pts[i]))
+                        )
+                        clamped_line.append(
+                            max(crop_bbox[1], min(crop_bbox[3], pts[i + 1]))
+                        )
+                    if len(clamped_line) >= 4:
+                        truncated = cast(DatasetObject, {"line": clamped_line[:4]})
                     else:
-                        truncated = {
-                            "line": [
-                                crop_bbox[0],
-                                crop_bbox[1],
-                                crop_bbox[0],
-                                crop_bbox[1],
-                            ]
-                        }
+                        truncated = cast(
+                            DatasetObject,
+                            {
+                                "line": [
+                                    crop_bbox[0],
+                                    crop_bbox[1],
+                                    crop_bbox[0],
+                                    crop_bbox[1],
+                                ]
+                            },
+                        )
             else:
                 truncated = g
 
             # Translate to crop coordinates
-            truncated_obj = cast(DatasetObject, truncated)
-            translated = translate_geometry(truncated_obj, -crop_bbox[0], -crop_bbox[1])
+            translated = translate_geometry(truncated, -crop_bbox[0], -crop_bbox[1])
             cropped_geoms.append(translated)
 
         # Crop images
@@ -1337,5 +1663,6 @@ __all__ = [
     "Sharpness",
     "ExpandToFitAffine",
     "SmallObjectZoomPaste",
+    "RoiCrop",
     "RandomCrop",
 ]

@@ -120,6 +120,37 @@ The augmentation pipeline handles 3 geometry types (bbox, poly, polyline) with p
 
 ---
 
+### January 2026: Device-Anchored ROI Crop (v1.2)
+**Status**: ✅ Deployed  
+**Change ID**: `2026-01-12-add-device-anchored-roi-crop`
+
+**Why**:
+- BBU/RRU巡检数据中线缆/尾纤占比高，`random_crop(skip_if_line=true)` 会频繁跳过裁剪，导致小目标长期处于低像素占比（漏检）。
+- 盲目随机裁剪容易切断线缆拓扑（描述“连接A和B”，crop后B消失），对语义一致性不友好。
+
+**What Changed**:
+- Added `RoiCrop` operator (`roi_crop`) that crops around an anchor device/cabinet ROI (matched by the structured token `类别=...` in `desc`, exact match).
+- Unlike `RandomCrop`, `roi_crop` keeps line objects by clipping them to the crop box (no “skip if line” behavior).
+- Dense augmentation presets now use `roi_crop` in the curriculum schedule (see dense presets under `configs/train/**`, e.g. `configs/train/sft/dense_1024.yaml`).
+
+**Configuration Example**:
+```yaml
+- name: roi_crop
+  params:
+    anchor_classes: ["BBU设备", "RRU设备", "紧固件"]
+    scale_range: [1.15, 1.8]          # Narrower range reduces “full-image crop” no-ops
+    min_crop_size: 384
+    min_coverage: 0.4
+    completeness_threshold: 0.95
+    prob: 0.5                         # 50% ROI zoom-in vs 50% full-scene
+```
+
+**Notes**:
+- `RandomCrop` is still available and useful for non-domain data; prefer `roi_crop` when you have reliable device anchors.
+- Anchor matching is strict (exact `类别=` match): use **exact 类别 values** (e.g., `BBU设备`, `RRU设备`) and avoid ambiguous categories that can match small parts.
+
+---
+
 ## Quick Start
 
 ### Basic Configuration
@@ -216,11 +247,13 @@ No additional logging is emitted by default; the training loop applies the share
 ### Order Matters!
 
 1. **Affine ops** (hflip, vflip, rotate, scale) - accumulated
-2. **Size-changing barriers** (random_crop, resize_by_scale) - flush affines, change dimensions
+2. **Patch / size-changing ops** (roi_crop, random_crop, resize_by_scale) - flush affines, change dimensions
 3. **Color ops** - applied after size changes (don't affect geometry)
-4. **expand_to_fit_affine** - **MUST be last** to ensure final padding to multiple of 32
+4. **expand_to_fit_affine** - keep a **final** one last to ensure padding to multiple of 32
 
-**Important**: `expand_to_fit_affine` should be placed at the **end** of the pipeline (after all size-changing operations) to guarantee that all images are padded to a multiple of 32. This ensures compatibility with Qwen3-VL's ViT requirements. If placed earlier, subsequent operations like `random_crop` or `resize_by_scale` may break the 32× alignment.
+**Important**:
+- Keep a final `expand_to_fit_affine` at the **end** of the pipeline (after all size-changing operations) to guarantee padding to a multiple of 32 (ViT alignment).
+- If you need **rotate without corner cropping**, ensure the rotate affine is flushed through `expand_to_fit_affine` (e.g., place `rotate` immediately before the final `expand_to_fit_affine`, after any crop/resize ops). If you place `rotate` before a crop/resize barrier, that barrier will flush the affine on the original canvas, which can crop rotated corners.
 
 ## Operator Types
 
