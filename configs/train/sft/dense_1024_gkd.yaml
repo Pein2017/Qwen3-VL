@@ -20,4 +20,4 @@ rlhf:
 custom:
   # Enable the metrics/telemetry wrapper for KD monitoring.
   trainer_variant: gkd_monitor
-
+  object_ordering_policy: center_tlbr
