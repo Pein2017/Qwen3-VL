@@ -483,14 +483,22 @@ class AugmentationPreprocessor(BasePreprocessor):
             obj["bbox_2d"] = new_geom["bbox_2d"]
             obj.pop("poly", None)
             obj.pop("line", None)
+            obj.pop("poly_points", None)
+            obj.pop("line_points", None)
         elif "poly" in new_geom:
             obj["poly"] = new_geom["poly"]
             obj.pop("bbox_2d", None)
             obj.pop("line", None)
+            obj.pop("line_points", None)
+            if "poly_points" in obj:
+                obj["poly_points"] = int(len(obj["poly"]) // 2)
         elif "line" in new_geom:
             obj["line"] = new_geom["line"]
             obj.pop("bbox_2d", None)
             obj.pop("poly", None)
+            obj.pop("poly_points", None)
+            if "line_points" in obj:
+                obj["line_points"] = int(len(obj["line"]) // 2)
 
 
 __all__ = ["AugmentationPreprocessor"]

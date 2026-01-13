@@ -3,7 +3,7 @@
 Status: Active
 Scope: Geometry-safe augmentation pipeline, operators, and configuration guidance.
 Owners: Data Pipeline
-Last updated: 2026-01-02
+Last updated: 2026-01-13
 Related: [DATA_AND_DATASETS.md](DATA_AND_DATASETS.md), [POLYGON_SUPPORT.md](POLYGON_SUPPORT.md), [overview/CHANGELOG.md](../overview/CHANGELOG.md)
 
 This document describes the robust geometry-preserving augmentation system for Qwen3-VL training.
@@ -148,6 +148,26 @@ The augmentation pipeline handles 3 geometry types (bbox, poly, polyline) with p
 **Notes**:
 - `random_crop` and `small_object_zoom_paste` were removed; use `roi_crop` for BBU/RRU-style zoom-in.
 - Anchor matching is strict (exact `类别=` match): use **exact 类别 values** (e.g., `BBU设备`, `RRU设备`) and avoid ambiguous categories that can match small parts.
+
+---
+
+### January 2026: Preserve Polygon Shape Under ROI Zoom-in (v1.2.1)
+**Status**: ✅ Deployed  
+**Change ID**: `2026-01-13-preserve-poly-shape-under-roi-zoom-in`
+
+**Why**:
+- Some zoom-in / resize augmentations accidentally changed `poly` into a different shape (e.g., collapsing an irregular device outline into a min-area rectangle). This shows up as “poly 变形” in augmentation visualizations.
+
+**What Changed**:
+- `roi_crop` polygon truncation preserves the clipped polygon silhouette (no fallback to rectangles).
+- `resize_by_scale` treats resize as pure scale for polygons; it no longer collapses polys into rectangles.
+- Polygon clipping may change the number of vertices (this is expected for `poly ∩ crop_rect`), but the output always satisfies the runtime contract `len(poly)/2 >= 4` (≥8 coords):
+  - If clipping yields a triangle (3 vertices), the pipeline inserts a midpoint on the longest edge to form 4 vertices without changing the visible shape.
+- If `poly_points` / `line_points` metadata exists on an object, augmentation keeps it consistent with the updated geometry.
+
+**Impact**:
+- ROI zoom-in augmentation keeps device `poly` aligned with the true contour (shape preserved; only position/scale changes when fully inside the crop).
+- Avoids label-shape drift that can confuse the model under strong curriculum settings.
 
 ---
 
@@ -308,6 +328,9 @@ and performs coverage-based filtering + geometry truncation.
 - Crop a region around the anchor AABB expanded by `scale_range` (clamped by `min_crop_size`)
 - **Filter objects** based on visibility (drop bbox/poly objects if coverage < `min_coverage`)
 - **Truncate geometries** of partially visible objects to the crop boundary (bbox/poly/line)
+  - For `poly`, truncation uses polygon clipping (`poly ∩ crop_rect`): the vertex count may change after crop (this is expected).
+  - The crop pipeline preserves the clipped polygon silhouette (no min-area-rectangle fallback).
+  - If clipping yields 3 vertices, a midpoint is inserted to satisfy the runtime contract `len(poly)/2 >= 4` (≥8 coords) without changing the visible shape.
 - **Update completeness field** tokens when coverage < `completeness_threshold`
 - **Skip crop** when no anchor is found (no fallback)
 
@@ -492,8 +515,12 @@ Under **axis-aligned affines** (flips, uniform scale):
 ### Polygon Handling
 - Flat, even-length list (≥8 values / ≥4 points; current runtime validation)
 - All vertices transformed by affine
-- Clipped to image bounds
-- After clipping the pipeline may simplify to stable corners (e.g., choose four representative points or a min-area rectangle) while preserving polygon orientation
+- Clipped to image bounds when needed (e.g., if objects go partially out-of-canvas after an affine)
+- **Crop-style clipping changes vertex count**: operations like ROI crop compute `poly ∩ rect`, which can add/remove vertices depending on intersections.
+- **Preserve silhouette by default**:
+  - Prefer removing only redundant vertices (e.g., collinear/duplicate points introduced by axis-aligned clipping).
+  - Avoid generic “downgrades” (bounding boxes / min-area rectangles) in zoom-in/crop ops, since that changes the supervision shape.
+  - If an op must enforce a minimum vertex count (runtime contract requires `len(poly)/2 >= 4`), insert extra points on existing edges rather than recomputing a new shape.
 
 ### Polyline (Line) Handling
 - Variable-length point sequence

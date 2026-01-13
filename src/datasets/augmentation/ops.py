@@ -20,7 +20,7 @@ from ..geometry import (
     scale_center,
     scale_matrix,
     sutherland_hodgman_clip,
-    min_area_rect,
+    simplify_polygon,
     canonicalize_polygon,
     clip_polyline_to_rect,
     points_to_xyxy,
@@ -68,6 +68,42 @@ def _pad_to_multiple(img: Image.Image, *, mult: int = 32) -> Image.Image:
     canvas = Image.new("RGB", (new_w, new_h), (128, 128, 128))
     canvas.paste(img, (0, 0))
     return canvas
+
+
+def _pad_triangle_to_quad(points: Sequence[float]) -> list[float]:
+    """Ensure polygon has >= 4 vertices by inserting a midpoint on the longest edge.
+
+    Some clipping operations can produce a triangle (3 vertices). The JSONL contract
+    expects polygons to have at least 4 points; we preserve the triangle silhouette
+    by adding one vertex on an existing edge (no shape change).
+    """
+    if len(points) != 6:
+        return [float(v) for v in points]
+
+    pts = [(float(points[i]), float(points[i + 1])) for i in range(0, 6, 2)]
+
+    def _dist2(i: int, j: int) -> float:
+        dx = pts[i][0] - pts[j][0]
+        dy = pts[i][1] - pts[j][1]
+        return dx * dx + dy * dy
+
+    edges = [(0, 1), (1, 2), (2, 0)]
+    i, j = max(edges, key=lambda e: _dist2(e[0], e[1]))
+    mx = (pts[i][0] + pts[j][0]) * 0.5
+    my = (pts[i][1] + pts[j][1]) * 0.5
+
+    if (i, j) == (0, 1):
+        ordered = [pts[0], (mx, my), pts[1], pts[2]]
+    elif (i, j) == (1, 2):
+        ordered = [pts[0], pts[1], (mx, my), pts[2]]
+    else:
+        # Edge (2,0): insert between last and first
+        ordered = [pts[0], pts[1], pts[2], (mx, my)]
+
+    flat: list[float] = []
+    for x, y in ordered:
+        flat.extend([x, y])
+    return flat
 
 
 @register("hflip")
@@ -495,21 +531,31 @@ class ResizeByScale(CurriculumMixin, ImageAugmenter):
                 for i in range(0, len(pts), 2):
                     scaled_poly.append(float(pts[i]) * sx)
                     scaled_poly.append(float(pts[i + 1]) * sy)
-                clipped = sutherland_hodgman_clip(scaled_poly, new_w, new_h)
-                if len(clipped) // 2 >= 3:
-                    # Valid polygon after clipping
-                    if len(clipped) // 2 != 4:
-                        rect = min_area_rect(clipped)
-                        if rect:
-                            clipped = rect
-                        # else: keep clipped polygon even if not exactly 4 points
-                    clipped = canonicalize_polygon(clipped)
-                    q = clamp_points(clipped, new_w, new_h)
-                    out_geoms.append(cast(DatasetObject, {**meta, "poly": q}))
-                else:
-                    # Degenerate: preserve by clamping original scaled coords
-                    q = clamp_points(canonicalize_polygon(scaled_poly), new_w, new_h)
-                    out_geoms.append(cast(DatasetObject, {**meta, "poly": q}))
+
+                # Resizing is a pure scale in pixel space; preserve the polygon vertex
+                # set (shape) and avoid collapsing arbitrary polys into a min-area
+                # rectangle. Only clip if something goes out of bounds (rare: numeric
+                # drift / upstream malformed inputs).
+                eps = 0.5
+                all_inside = all(
+                    -eps <= scaled_poly[i] < new_w + eps
+                    and -eps <= scaled_poly[i + 1] < new_h + eps
+                    for i in range(0, len(scaled_poly), 2)
+                )
+                poly = scaled_poly
+                if not all_inside:
+                    clipped = sutherland_hodgman_clip(scaled_poly, new_w, new_h)
+                    clipped = simplify_polygon(clipped)
+                    if len(clipped) // 2 >= 3:
+                        poly = clipped
+
+                # Contract requires >= 4 points. If clipping yields a triangle, insert
+                # a midpoint (extra vertex) to keep the triangle silhouette.
+                if len(poly) // 2 == 3:
+                    poly = _pad_triangle_to_quad(poly)
+
+                q = clamp_points(canonicalize_polygon(poly), new_w, new_h)
+                out_geoms.append(cast(DatasetObject, {**meta, "poly": q}))
             elif "line" in g:
                 pts = g["line"]
                 scaled_line: list[float] = []
@@ -968,20 +1014,17 @@ class RoiCrop(PatchOp):
                 clipped = sutherland_hodgman_clip(poly_pts_translated, crop_w, crop_h)
 
                 # Reduce redundant vertices introduced by axis-aligned clipping.
-                from ..geometry import simplify_polygon, choose_four_corners
-
                 clipped = simplify_polygon(clipped)
 
                 if len(clipped) // 2 >= 3:
-                    # Prefer true 4-corner representation when possible.
-                    if len(clipped) // 2 > 4:
-                        best4 = choose_four_corners(clipped)
-                        if best4:
-                            clipped = best4
-                    if len(clipped) // 2 != 4:
-                        rect = min_area_rect(clipped)
-                        if rect:
-                            clipped = rect
+                    # Preserve the polygon shape as much as possible. Historically we
+                    # collapsed clipped polygons to 4 corners (or a min-area rect),
+                    # which can distort non-rectangular device polys.
+                    #
+                    # Contract requires >= 4 points, so if clipping yields a triangle,
+                    # insert a midpoint (extra vertex) instead of falling back to a rectangle.
+                    if len(clipped) // 2 == 3:
+                        clipped = _pad_triangle_to_quad(clipped)
                     clipped = canonicalize_polygon(clipped)
 
                     # Translate back to image coords for final translation step.
