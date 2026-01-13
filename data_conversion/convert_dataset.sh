@@ -45,7 +45,12 @@ DATASET="${DATASET:-bbu}"
 # Processing parameters
 VAL_RATIO="${VAL_RATIO:-0.2}"
 RESIZE="${RESIZE:-true}"
-MAX_PIXELS="${MAX_PIXELS:-2097152}" # 768: 786432
+# Default resize preset aligns with the canonical `data_new_schema/*_1024*` datasets.
+# NOTE: max_pixels is computed as (preset * 32 * 32) in our naming convention:
+#   768  ->  768 * 32 * 32 = 786432
+#   1024 -> 1024 * 32 * 32 = 1048576
+#   2048 -> 2048 * 32 * 32 = 2097152
+MAX_PIXELS="${MAX_PIXELS:-1048576}"
 IMAGE_FACTOR="${IMAGE_FACTOR:-32}"
 LOG_LEVEL="${LOG_LEVEL:-INFO}"
 SEED="${SEED:-17}"
@@ -54,6 +59,9 @@ SANITIZE_TEXT="${SANITIZE_TEXT:-true}"
 STANDARDIZE_LABEL_DESC="${STANDARDIZE_LABEL_DESC:-true}"
 FAIL_FAST="${FAIL_FAST:-true}"
 NUM_WORKERS="${NUM_WORKERS:-16}"
+# Default to center-based ordering so conversion outputs match the new training policy.
+# Override by exporting OBJECT_ORDERING_POLICY=reference_tlbr when needed for legacy diffs.
+OBJECT_ORDERING_POLICY="${OBJECT_ORDERING_POLICY:-center_tlbr}"
 
 # Limit is derived from MODE unless explicitly set
 LIMIT="${LIMIT:-}"
@@ -65,11 +73,11 @@ LIMIT="${LIMIT:-}"
 case "$DATASET" in
   bbu)
     DEFAULT_INPUT="raw_ds/bbu_scene_2.0/bbu_scene_2.0"
-    DEFAULT_NAME="bbu_full_2048_poly"
+    DEFAULT_NAME="bbu_full_1024"
     ;;
   rru)
     DEFAULT_INPUT="raw_ds/rru_scene"
-    DEFAULT_NAME="rru_full_2048_poly"
+    DEFAULT_NAME="rru_full_1024"
     ;;
   *)
     echo "❌ Unknown DATASET: $DATASET (expected 'bbu' or 'rru')"
@@ -90,7 +98,7 @@ if [ "$MODE" = "smoke" ]; then
     LIMIT="2"
   fi
 else
-  OUTPUT_DIR="${OUTPUT_DIR:-data_new_schema}"
+  OUTPUT_DIR="${OUTPUT_DIR:-data_new_schema_center}"
   DATASET_NAME="${DATASET_NAME:-$DEFAULT_NAME}"
   LIMIT="${LIMIT:--1}"
 fi
@@ -142,6 +150,9 @@ echo "   Image Factor: $IMAGE_FACTOR"
 echo "   Log Level: $LOG_LEVEL"
 echo "   Seed: $SEED"
 echo "   Fail Fast: $FAIL_FAST"
+if [ -n "$OBJECT_ORDERING_POLICY" ]; then
+    echo "   Object Ordering Policy: $OBJECT_ORDERING_POLICY"
+fi
 if [ "$LIMIT" = "-1" ]; then
     echo "   Limit: $LIMIT (all images)"
 else
@@ -213,6 +224,10 @@ if [ -n "$NUM_WORKERS" ]; then
     ARGS="$ARGS --num_workers \"$NUM_WORKERS\""
 fi
 
+if [ -n "$OBJECT_ORDERING_POLICY" ]; then
+    ARGS="$ARGS --object_ordering_policy \"$OBJECT_ORDERING_POLICY\""
+fi
+
 echo "🔄 Processing dataset: $DATASET_NAME ($INPUT_DIR)"
 echo "  └─ Executing: $PYTHON_CMD"
 echo "  └─ Logging to: convert.log"
@@ -223,7 +238,7 @@ echo ""
 eval "$PYTHON_CMD $ARGS" 2>&1 | tee convert.log
 EXIT_CODE=${PIPESTATUS[0]}
 
-if [ $EXIT_CODE -eq 0 ]; then
+if [ "$EXIT_CODE" -eq 0 ]; then
     echo ""
     echo "✅ Dataset $DATASET_NAME processed successfully!"
     echo "📁 Output: $OUTPUT_DIR/$DATASET_NAME/"

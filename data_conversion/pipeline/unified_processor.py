@@ -143,7 +143,7 @@ class UnifiedProcessor:
 
         # Initialize hierarchical processor for v2 data support (Chinese only)
         self.hierarchical_processor = HierarchicalProcessor(
-            object_types=set(OBJECT_TYPES),
+            object_types=list(OBJECT_TYPES),
             label_hierarchy=self.label_hierarchy,
         )
 
@@ -1458,8 +1458,8 @@ def main():
     parser.add_argument(
         "--object_ordering_policy",
         choices=["reference_tlbr", "center_tlbr"],
-        default="reference_tlbr",
-        help="Object ordering policy used when reordering is enabled (default: reference_tlbr).",
+        default="center_tlbr",
+        help="Object ordering policy used when reordering is enabled (default: center_tlbr).",
     )
     parser.add_argument(
         "--limit",
