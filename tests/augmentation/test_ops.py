@@ -29,6 +29,19 @@ def test_hflip_bbox_and_line_pixel_space():
     assert len(ln) >= 4 and all(isinstance(v, int) for v in ln)
 
 
+def test_hflip_line_direction_is_endpoint_canonicalized() -> None:
+    img = _mk_img(w=64, h=48)
+    geoms = [{"line": [5, 5, 60, 40]}]
+    pipe = Compose([HFlip(1.0)])
+
+    _, new_geoms = apply_augmentations([img], geoms, pipe, rng=Random(0))
+    line = new_geoms[0]["line"]
+
+    # After hflip (x -> 63-x), endpoints become (58,5) and (3,40).
+    # Canonical direction chooses the lexicographically smaller endpoint (3,40) first.
+    assert line == [3, 40, 58, 5]
+
+
 def test_rotate_poly_preserves_type_and_bounds():
     img = _mk_img()
     geoms = [{"poly": [10, 10, 40, 10, 40, 20, 10, 20]}]

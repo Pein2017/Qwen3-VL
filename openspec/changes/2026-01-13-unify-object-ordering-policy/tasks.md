@@ -1,0 +1,9 @@
+- [ ] Update OpenSpec deltas for ordering defaults + canonicalization (`data-augmentation`, `detection-preprocessor`, `sft-training`)
+- [ ] Switch operational defaults to `center_tlbr` (training presets + conversion wrapper), while keeping `reference_tlbr` supported
+- [ ] Implement endpoint-based line direction canonicalization helper (only full reversal allowed)
+- [ ] Apply line canonicalization after augmentation outputs (pipeline wrapper) and at builder serialization boundaries
+- [ ] Update dense prompts to specify endpoint-based line start (no interior re-indexing)
+- [ ] Fix augmentation registry initialization so Compose can be built without test-order side effects
+- [ ] Update golden augmentation fixtures/tests for canonicalized poly/line serialization
+- [ ] Add unit tests for line canonicalization + ordering drift invariants
+- [ ] Run lint/typecheck (`ruff`, `basedpyright`) and targeted `pytest`

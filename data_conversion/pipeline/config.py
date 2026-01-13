@@ -10,7 +10,7 @@ import logging
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, cast
 
 
 # Configure UTF-8 encoding for stdout/stderr if supported
@@ -55,11 +55,10 @@ class DataConversionConfig:
     val_ratio: float  # e.g., 0.1 for 10% validation - REQUIRED
     seed: int  # e.g., 42 - REQUIRED
 
-    
     # Image resize parameters - REQUIRED
     max_pixels: int  # Maximum pixels for image resizing (e.g., 768 * 32*32 = 786432)
     image_factor: int  # Factor for image dimensions (e.g., 32)
-    
+
     # Optional fields (with defaults)
     dataset_name: Optional[str] = None  # Auto-detected from input_dir if not provided
     # Processing parameters - OPTIONAL WITH DEFAULTS
@@ -70,9 +69,12 @@ class DataConversionConfig:
     remove_occlusion_tokens: bool = False  # Drop tokens containing "遮挡" from desc
     sanitize_text: bool = True  # Apply text normalization/sanitization on descriptions
     standardize_label_desc: bool = True  # Legacy flag (no-op in key=value mode)
-    
+
     # Ordering options - OPTIONAL WITH DEFAULTS
     preserve_annotation_order: bool = False  # Keep original object ordering when True
+    object_ordering_policy: str = (
+        "center_tlbr"  # TLBR ordering policy when reordering is enabled
+    )
 
     # Debugging options - OPTIONAL WITH DEFAULTS
     limit: int = -1  # Limit number of images to process (-1 for all images, positive number for limit)
@@ -115,7 +117,6 @@ class DataConversionConfig:
         if not 0.0 < self.val_ratio < 1.0:
             raise ValueError(f"val_ratio must be between 0 and 1, got {self.val_ratio}")
 
-
         if self.max_pixels <= 0:
             raise ValueError(f"max_pixels must be positive, got {self.max_pixels}")
 
@@ -123,10 +124,14 @@ class DataConversionConfig:
             raise ValueError(f"image_factor must be positive, got {self.image_factor}")
 
         if self.limit < -1:
-            raise ValueError(f"limit must be -1 (all images) or a positive number, got {self.limit}")
+            raise ValueError(
+                f"limit must be -1 (all images) or a positive number, got {self.limit}"
+            )
 
         if self.min_object_size <= 0:
-            raise ValueError(f"min_object_size must be positive, got {self.min_object_size}")
+            raise ValueError(
+                f"min_object_size must be positive, got {self.min_object_size}"
+            )
 
         allowed_modes = {"strict", "lenient", "warning_only"}
         if self.validation_mode not in allowed_modes:
@@ -136,6 +141,17 @@ class DataConversionConfig:
 
         if self.num_workers < 1:
             raise ValueError(f"num_workers must be at least 1, got {self.num_workers}")
+
+        try:
+            from data_conversion.utils.sorting import normalize_object_ordering_policy
+
+            normalized = normalize_object_ordering_policy(self.object_ordering_policy)
+        except Exception as exc:
+            raise ValueError(
+                "object_ordering_policy must be one of {'reference_tlbr', 'center_tlbr'}; "
+                f"got {self.object_ordering_policy!r}"
+            ) from exc
+        object.__setattr__(self, "object_ordering_policy", normalized)
 
     def get_dataset_output_dir(self) -> Path:
         """Get the dataset-specific output directory path."""
@@ -148,7 +164,6 @@ class DataConversionConfig:
     def get_dataset_image_dir(self) -> Path:
         """Get the dataset-specific image output directory path."""
         return self.get_dataset_output_dir() / "images"
-    
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert config to dictionary for compatibility."""
@@ -163,6 +178,7 @@ class DataConversionConfig:
             "sanitize_text": self.sanitize_text,
             "standardize_label_desc": self.standardize_label_desc,
             "preserve_annotation_order": self.preserve_annotation_order,
+            "object_ordering_policy": self.object_ordering_policy,
             "validation_mode": self.validation_mode,
             "min_object_size": self.min_object_size,
             "enable_validation_reports": self.enable_validation_reports,
@@ -170,9 +186,9 @@ class DataConversionConfig:
         }
 
     @classmethod
-    def from_args(cls, args) -> "DataConversionConfig":
+    def from_args(cls, args: object) -> "DataConversionConfig":
         """Create config from command line arguments."""
-        config_dict = {}
+        config_dict: dict[str, Any] = {}
 
         # Map argument names to config fields
         arg_mapping = {
@@ -191,6 +207,7 @@ class DataConversionConfig:
             "image_factor": "image_factor",
             "limit": "limit",
             "preserve_annotation_order": "preserve_annotation_order",
+            "object_ordering_policy": "object_ordering_policy",
             "validation_mode": "validation_mode",
             "min_object_size": "min_object_size",
             "enable_validation_reports": "enable_validation_reports",
@@ -203,7 +220,10 @@ class DataConversionConfig:
                 if value is not None:
                     config_dict[config_field] = value
 
-        return cls(**config_dict)
+        # NOTE: kwargs are assembled dynamically from CLI/env; runtime validation in
+        # __post_init__ enforces correctness. Cast to Any to keep type checkers
+        # from treating the kwargs mapping as Unknown.
+        return cls(**cast(Any, config_dict))
 
     @classmethod
     def from_env(cls) -> "DataConversionConfig":
@@ -249,6 +269,7 @@ class DataConversionConfig:
             "SANITIZE_TEXT": "sanitize_text",
             "STANDARDIZE_LABEL_DESC": "standardize_label_desc",
             "PRESERVE_ANNOTATION_ORDER": "preserve_annotation_order",
+            "OBJECT_ORDERING_POLICY": "object_ordering_policy",
             "LIMIT": "limit",
             "VALIDATION_MODE": "validation_mode",
             "MIN_OBJECT_SIZE": "min_object_size",
@@ -259,7 +280,12 @@ class DataConversionConfig:
         for env_var, config_field in optional_env_vars.items():
             value = os.getenv(env_var)
             if value is not None:
-                if config_field in ("remove_occlusion_tokens", "sanitize_text", "standardize_label_desc", "preserve_annotation_order"):
+                if config_field in (
+                    "remove_occlusion_tokens",
+                    "sanitize_text",
+                    "standardize_label_desc",
+                    "preserve_annotation_order",
+                ):
                     config_dict[config_field] = value.lower() in ("true", "1", "yes")
                 elif config_field == "limit":
                     config_dict[config_field] = int(value)
@@ -301,6 +327,14 @@ def validate_config(config: DataConversionConfig) -> None:
     logger.info(f"  Image Resize: {'Enabled' if config.resize else 'Disabled'}")
     logger.info(f"  Val Ratio: {config.val_ratio}")
     logger.info(f"  Seed: {config.seed}")
-    logger.info(f"  Max Pixels: {config.max_pixels}, Image Factor: {config.image_factor}")
+    logger.info(
+        f"  Max Pixels: {config.max_pixels}, Image Factor: {config.image_factor}"
+    )
+    if config.preserve_annotation_order:
+        logger.info(
+            "  Object Ordering: preserve_annotation_order=true (no TLBR sort applied)"
+        )
+    else:
+        logger.info(f"  Object Ordering: {config.object_ordering_policy}")
     if config.limit > 0:
         logger.info(f"  Limit: {config.limit} images")

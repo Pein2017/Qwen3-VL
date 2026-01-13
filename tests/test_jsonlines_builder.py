@@ -28,7 +28,7 @@ def _sample_dense_record():
 def _sample_summary_record():
     record = _sample_dense_record()
     record["summary"] = (
-        '{'
+        "{"
         '"统计": [{"类别": "BBU设备", "品牌": {"华为": 1}}, '
         '{"类别": "光纤", "保护措施": {"有保护": 1}}]}'
     )
@@ -96,6 +96,33 @@ def test_jsonlines_builder_summary_outputs_plain_string():
     assistant_text = merged["messages"][1]["content"][0]["text"]
 
     assert assistant_text == record["summary"]
+
+
+def test_jsonlines_builder_canonicalizes_line_direction() -> None:
+    builder = JSONLinesBuilder(
+        user_prompt="列出所有对象",
+        emit_norm="none",
+        mode="dense",
+        json_format="standard",
+    )
+    record = {
+        "images": [],
+        "objects": [
+            {
+                # Endpoints are (10,0) and (0,0); canonical start chooses (0,0) so the
+                # builder should reverse the entire polyline direction.
+                "line": [10, 0, 5, 1, 0, 0],
+                "desc": "类别=光纤,保护措施=有保护",
+            }
+        ],
+        "width": 100,
+        "height": 100,
+    }
+
+    merged = builder.build_many([record])
+    assistant_payload = merged["assistant_payload"]
+    line = assistant_payload["object_1"]["line"]
+    assert line == [0.0, 0.0, 5.0, 1.0, 10.0, 0.0]
 
 
 def test_base_builder_rejects_multiple_records():

@@ -909,7 +909,7 @@ If your config has `expand_to_fit_affine` before size-changing operations, move 
   - **ColorOp** defers pixel-only transforms until after affine flush.
   - **PatchOp** (crop/copy-paste) flushes affines first, preserves deterministic ordering, and propagates crop telemetry.
 - All ops expose typed `curriculum_params` (numeric scalar or 2-element range only). Curriculum setup and preprocessor sync now fail fast on unknown params, dimension mismatches, or probability fields outside `[0, 1]`.
-- Dense-caption builders re-sort objects **top-to-bottom, then left-to-right** after augmentation using the same `sort_objects_tlbr` helper as data conversion, guaranteeing `object_n` order matches the prompt contract even after rotate/crop/paste.
+- Dense-caption builders re-sort objects **top-to-bottom, then left-to-right** after augmentation using the same `sort_objects_tlbr` helper as data conversion. The ordering policy is controlled by `custom.object_ordering_policy` (`reference_tlbr` default; `center_tlbr` opt-in), guaranteeing `object_n` order matches the active prompt contract even after rotate/crop/paste.
 
 **Impact**:
 - New ops plug into Compose without custom glue; patch telemetry stays consistent.

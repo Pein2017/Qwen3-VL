@@ -9,7 +9,11 @@ from typing import Literal, Sequence, cast
 
 from ..contracts import ConversationRecord, DatasetObject, validate_conversation_record
 from src.utils.unstructured import UnstructuredMutableMapping
-from ..geometry import normalize_points
+from ..geometry import (
+    canonicalize_polygon,
+    canonicalize_polyline_direction,
+    normalize_points,
+)
 from ..utils import extract_object_points
 from .base import BaseBuilder
 from data_conversion.utils.sorting import sort_objects_tlbr
@@ -36,7 +40,8 @@ class JSONLinesBuilder(BaseBuilder):
         mode: Literal["dense", "summary"] = "dense",
         json_format: Literal["standard"] = "standard",
         assistant_prefix: str | None = None,
-        **kwargs,
+        object_ordering_policy: str | None = None,
+        **kwargs: object,
     ) -> None:
         super().__init__(**kwargs)
         self.user_prompt = user_prompt
@@ -44,6 +49,9 @@ class JSONLinesBuilder(BaseBuilder):
         self.mode = mode
         self.json_format = json_format
         self.assistant_prefix = assistant_prefix.strip() if assistant_prefix else None
+        self.object_ordering_policy = (
+            object_ordering_policy.strip() if object_ordering_policy else None
+        )
 
     def _get_summary_text(self, record: ConversationRecord, record_index: int) -> str:
         """Extract and validate summary from record.
@@ -103,8 +111,26 @@ class JSONLinesBuilder(BaseBuilder):
 
         images = record.get("images", []) or []
         objects_seq: Sequence[DatasetObject] = record.get("objects") or []
-        objects = list(objects_seq)
-        sorted_objects_raw = sort_objects_tlbr(cast(list[dict[str, object]], objects))
+        objects: list[DatasetObject] = []
+        for obj in objects_seq:
+            poly = obj.get("poly")
+            line = obj.get("line")
+            if poly is not None or line is not None:
+                # Defense-in-depth: ensure emitted geometry follows the contract.
+                # - poly: clockwise, start at top-left vertex
+                # - line: endpoint-based direction canonicalization (only full reversal allowed)
+                obj_copy = cast(DatasetObject, dict(obj))
+                if poly is not None:
+                    obj_copy["poly"] = canonicalize_polygon(poly)
+                if line is not None:
+                    obj_copy["line"] = canonicalize_polyline_direction(line)
+                objects.append(obj_copy)
+            else:
+                objects.append(obj)
+        sorted_objects_raw = sort_objects_tlbr(
+            cast(list[dict[str, object]], objects),
+            policy=self.object_ordering_policy,
+        )
         sorted_objects = cast(list[DatasetObject], sorted_objects_raw)
 
         for image in images:
@@ -123,7 +149,7 @@ class JSONLinesBuilder(BaseBuilder):
         if self.assistant_prefix:
             assistant_text = f"{self.assistant_prefix}\n{assistant_text}"
 
-        messages = [
+        conversation_messages: list[dict[str, object]] = [
             {"role": "user", "content": user_contents},
             {
                 "role": "assistant",
@@ -131,7 +157,7 @@ class JSONLinesBuilder(BaseBuilder):
             },
         ]
 
-        merged: UnstructuredMutableMapping = {"messages": messages}
+        merged: UnstructuredMutableMapping = {"messages": conversation_messages}
         if objects_payload:
             merged["assistant_payload"] = objects_payload
         if objects_out["bbox"]:
@@ -240,7 +266,9 @@ class JSONLinesBuilder(BaseBuilder):
         formatted: UnstructuredMutableMapping = {}
         for key, entry in payload.items():
             if isinstance(entry, Mapping):
-                formatted[key] = self._format_object_entry(entry)
+                formatted[key] = self._format_object_entry(
+                    cast(Mapping[str, object], entry)
+                )
             else:
                 formatted[key] = entry
         return formatted
@@ -251,7 +279,9 @@ class JSONLinesBuilder(BaseBuilder):
         formatted_entry: UnstructuredMutableMapping = {}
         for field, value in entry.items():
             if field in {"poly", "line"} and isinstance(value, list):
-                formatted_entry[field] = self._format_geometry_sequence(value)
+                formatted_entry[field] = self._format_geometry_sequence(
+                    cast(list[int | float], value)
+                )
             elif field == "bbox_2d" and isinstance(value, list):
                 formatted_entry[field] = list(value)
             else:
@@ -280,11 +310,11 @@ class JSONLinesBuilder(BaseBuilder):
         - If relative path: prefix with ROOT_IMAGE_DIR when available
         - If absolute path: pass through
         """
-        if isinstance(image, dict) and "bytes" in image:
-            b = image["bytes"]
+        if isinstance(image, Mapping) and "bytes" in image:
+            b = image.get("bytes")
             if not isinstance(b, (bytes, bytearray)):
                 raise TypeError("image bytes must be bytes-like")
-            b64 = base64.b64encode(b).decode("ascii")
+            b64 = base64.b64encode(bytes(b)).decode("ascii")
             return f"data:image/png;base64,{b64}"
         if isinstance(image, str):
             if not os.path.isabs(image):

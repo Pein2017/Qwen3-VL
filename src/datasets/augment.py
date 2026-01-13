@@ -12,6 +12,7 @@ from data_conversion.utils.exif_utils import apply_exif_orientation
 from ..utils.logger import get_logger
 from .augmentation.base import AugmentationPipeline
 from .contracts import AugmentationTelemetry, DatasetObject, validate_geometry_sequence
+from .geometry import canonicalize_polygon, canonicalize_polyline_direction
 
 
 def _image_to_bytes(img: Image.Image) -> bytes:
@@ -109,6 +110,19 @@ def apply_augmentations(
     images_bytes: list[dict[str, bytes]] = [
         {"bytes": _image_to_bytes(img)} for img in out_imgs
     ]
+
+    # Canonicalize geometry serialization as a post-augmentation invariant.
+    # This keeps prompts consistent with targets and reduces label variance under
+    # flip/rotate/crop. (Defense-in-depth: builders also canonicalize.)
+    for g in geoms:
+        poly = g.get("poly")
+        if poly is not None:
+            g["poly"] = canonicalize_polygon(cast(list[float], poly))
+            continue
+        line = g.get("line")
+        if line is not None:
+            g["line"] = canonicalize_polyline_direction(cast(list[float], line))
+            continue
 
     # Attach telemetry for downstream debug consumers
     _ = validate_geometry_sequence(geoms)

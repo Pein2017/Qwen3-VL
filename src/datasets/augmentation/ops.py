@@ -21,7 +21,7 @@ from ..geometry import (
     scale_matrix,
     sutherland_hodgman_clip,
     min_area_rect,
-    to_clockwise,
+    canonicalize_polygon,
     clip_polyline_to_rect,
     points_to_xyxy,
     translate,
@@ -503,12 +503,12 @@ class ResizeByScale(CurriculumMixin, ImageAugmenter):
                         if rect:
                             clipped = rect
                         # else: keep clipped polygon even if not exactly 4 points
-                    clipped = to_clockwise(clipped)
+                    clipped = canonicalize_polygon(clipped)
                     q = clamp_points(clipped, new_w, new_h)
                     out_geoms.append(cast(DatasetObject, {**meta, "poly": q}))
                 else:
                     # Degenerate: preserve by clamping original scaled coords
-                    q = clamp_points(to_clockwise(scaled_poly), new_w, new_h)
+                    q = clamp_points(canonicalize_polygon(scaled_poly), new_w, new_h)
                     out_geoms.append(cast(DatasetObject, {**meta, "poly": q}))
             elif "line" in g:
                 pts = g["line"]
@@ -982,7 +982,7 @@ class RoiCrop(PatchOp):
                         rect = min_area_rect(clipped)
                         if rect:
                             clipped = rect
-                    clipped = to_clockwise(clipped)
+                    clipped = canonicalize_polygon(clipped)
 
                     # Translate back to image coords for final translation step.
                     final_poly_pts: list[float] = []
@@ -996,7 +996,9 @@ class RoiCrop(PatchOp):
                     for i in range(0, len(pts), 2):
                         clamped.append(max(crop_bbox[0], min(crop_bbox[2], pts[i])))
                         clamped.append(max(crop_bbox[1], min(crop_bbox[3], pts[i + 1])))
-                    truncated = cast(DatasetObject, {"poly": clamped})
+                    truncated = cast(
+                        DatasetObject, {"poly": canonicalize_polygon(clamped)}
+                    )
             elif "line" in g:
                 pts = g["line"]
                 line_pts_translated_crop: list[float] = []

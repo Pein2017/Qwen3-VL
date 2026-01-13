@@ -264,11 +264,13 @@ if not CoordinateManager.validate_geometry_bounds(transformed_geom, final_w, fin
 ## Object Ordering Consistency
 
 - 预处理与 prompts 使用同一排序规则：先按 **Y 坐标升序**（自上到下），再按 **X 坐标升序**（自左到右）。
-- 参考点：
+- 默认策略（`reference_tlbr`，兼容历史导出）参考点：
   - `bbox_2d`: 左上角 `(x1, y1)`
   - `poly`: 第一个顶点 `(x1, y1)`
   - `line`: 最左端点（X 最小；如 X 相同取 Y 最小）
+- 可选策略（`center_tlbr`）：使用几何外接 AABB 的中心点 `(cx, cy)` 作为排序参考点（仍按 Y→X 排序）。
 - 默认执行 TLBR 重排；如需与历史导出保持字节级一致，可用 `--preserve_annotation_order` 或在 `DataConversionConfig` 设置 `preserve_annotation_order=True` 跳过重排。
+- 通过 `--object_ordering_policy {reference_tlbr|center_tlbr}` 或环境变量 `OBJECT_ORDERING_POLICY` 选择策略。
 - 实现：`data_conversion/utils/sorting.py`；调用点：`unified_processor.py` 在写出前统一排序；prompt 描述位于 `src/config/prompts.py`。
 - 验证脚本：`verify_ordering_consistency.py`。
 

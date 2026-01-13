@@ -635,6 +635,7 @@ class CustomConfig:
     emit_norm: AllowedNorm
     json_format: AllowedJsonFormat
     assistant_prefix_format: str | None = None
+    object_ordering_policy: str | None = None
     use_summary: bool = False
     system_prompt_summary: str | None = None
     augmentation: Mapping[str, Any] | None = None
@@ -688,6 +689,21 @@ class CustomConfig:
                 raise ValueError(
                     "custom.assistant_prefix_format must include '{domain}' or '{dataset}' placeholder"
                 )
+
+        if self.object_ordering_policy is not None:
+            try:
+                from data_conversion.utils.sorting import (
+                    normalize_object_ordering_policy,
+                )
+
+                normalized = normalize_object_ordering_policy(
+                    self.object_ordering_policy
+                )
+            except Exception as exc:
+                raise ValueError(
+                    "custom.object_ordering_policy must be one of {'reference_tlbr', 'center_tlbr'}"
+                ) from exc
+            object.__setattr__(self, "object_ordering_policy", normalized)
 
     @classmethod
     def from_mapping(
@@ -829,6 +845,15 @@ class CustomConfig:
                 )
             assistant_prefix_format = assistant_prefix_format_raw.strip()
 
+        object_ordering_policy_raw = data.pop("object_ordering_policy", None)
+        object_ordering_policy = None
+        if object_ordering_policy_raw is not None:
+            if not isinstance(object_ordering_policy_raw, str):
+                raise TypeError(
+                    "custom.object_ordering_policy must be a string if provided"
+                )
+            object_ordering_policy = object_ordering_policy_raw.strip()
+
         extra = dict(data)
 
         if emit_norm is None:
@@ -847,6 +872,7 @@ class CustomConfig:
             emit_norm=cast("AllowedNorm", emit_norm_value),
             json_format=json_format,
             assistant_prefix_format=assistant_prefix_format,
+            object_ordering_policy=object_ordering_policy,
             use_summary=use_summary,
             system_prompt_summary=system_prompt_summary,
             augmentation=cast("Mapping[str, Any] | None", augmentation),

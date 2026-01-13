@@ -6,6 +6,7 @@ from typing import cast
 from .base import AugmentationMeta, Compose, ImageAugmenter
 from .curriculum import NumericParam
 from .registry import get as get_augmenter
+from . import ops as _register_builtin_ops  # noqa: F401
 from src.utils import require_mapping
 from src.utils.unstructured import UnstructuredMapping
 
@@ -42,6 +43,7 @@ def build_compose_from_config(cfg: UnstructuredMapping) -> Compose:
     def _is_prob_field(name: str) -> bool:
         n = name.lower()
         return n == "prob" or n.endswith("_prob")
+
     for op in ops_cfg:
         if not isinstance(op, dict):
             raise TypeError(
@@ -65,7 +67,11 @@ def build_compose_from_config(cfg: UnstructuredMapping) -> Compose:
             raw_curr = raw_curr()
         if isinstance(raw_curr, dict):
             for param_name, value in raw_curr.items():
-                numeric = value if isinstance(value, NumericParam) else NumericParam.from_raw(value)
+                numeric = (
+                    value
+                    if isinstance(value, NumericParam)
+                    else NumericParam.from_raw(value)
+                )
                 if _is_prob_field(param_name):
                     for v in numeric.values:
                         if v < 0.0 or v > 1.0:

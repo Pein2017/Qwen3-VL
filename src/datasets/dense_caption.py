@@ -62,6 +62,7 @@ class BaseCaptionDataset(Dataset[object]):
         emit_norm: Literal["none", "norm100", "norm1000"],
         json_format: Literal["standard"],
         assistant_prefix_format: str | None = None,
+        object_ordering_policy: str | None = None,
         user_prompt_summary: str | None = None,
         augmenter: object | None = None,
         preprocessor: object | None = None,
@@ -94,6 +95,9 @@ class BaseCaptionDataset(Dataset[object]):
         self.json_format: Literal["standard"] = json_format
         self.assistant_prefix_format = (
             assistant_prefix_format.strip() if assistant_prefix_format else None
+        )
+        self.object_ordering_policy = (
+            object_ordering_policy.strip() if object_ordering_policy else None
         )
         self.bypass_prob = float(bypass_prob)
         self.seed = int(seed)
@@ -256,6 +260,7 @@ class BaseCaptionDataset(Dataset[object]):
             mode=mode,
             json_format=self.json_format,
             assistant_prefix=assistant_prefix,
+            object_ordering_policy=self.object_ordering_policy,
         )
 
     def __getitem__(self, index: int) -> UnstructuredMutableMapping:

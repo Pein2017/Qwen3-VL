@@ -4,6 +4,8 @@ Updated to key=value descriptions and JSON-string summaries, with dataset-level
 schema hints and prior rules (BBU/RRU) for consistent domain grounding.
 """
 
+from data_conversion.utils.sorting import normalize_object_ordering_policy
+
 from src.prompts.summary_core import (
     MISSION_SPECIFIC_PRIOR_RULES,
     SYSTEM_PROMPT_SUMMARY,
@@ -72,6 +74,42 @@ DATASET_PRIOR_RULES = {
 _DEFAULT_DATASET = "bbu"
 
 
+def _build_dense_ordering_hint(object_ordering_policy: str | None) -> str:
+    policy = normalize_object_ordering_policy(object_ordering_policy)
+    if policy == "center_tlbr":
+        return (
+            "- 对象按**自上到下 → 左到右**排序，编号从 1 递增。\n"
+            "  * 排序规则详解：首先按 **中心点** Y 坐标（纵向）从小到大排列（图像上方优先），Y 坐标相同时按 **中心点** X 坐标（横向）从小到大排列（图像左方优先）。\n"
+            "  * 排序参考点：使用几何外接 AABB 的中心坐标 (cx, cy) 作为该对象的排序位置。\n"
+            "  * poly 顶点顺序仍需规范：顶点按质心顺时针排序，起点为最上最左的顶点。\n"
+            "  * line 点序仍需规范：保持路径顺序（不可重排）；仅允许整段反转；起点在两个端点中按 (x,y) 更小者为先（更靠左；若 x 相同则更靠上）。\n"
+        )
+
+    return (
+        "- 对象按**自上到下 → 左到右**排序，编号从 1 递增。\n"
+        "  * 排序规则详解：首先按 Y 坐标（纵向）从小到大排列（图像上方优先），Y 坐标相同时按 X 坐标（横向）从小到大排列（图像左方优先）。\n"
+        "  * bbox_2d 排序参考点：使用左上角坐标 (x1, y1) 作为该对象的排序位置。\n"
+        "  * poly 排序参考点：顶点按质心顺时针排序，起点为最上最左的顶点；使用首顶点 (x1, y1) 作为排序位置。\n"
+        "  * line 排序参考点：使用最左点（全体点中 X 最小；若 X 相同则取 Y 最小）作为排序参考。\n"
+        "  * line 点序规范：保持路径顺序（不可重排）；仅允许整段反转；起点在两个端点中按 (x,y) 更小者为先（更靠左；若 x 相同则更靠上）。\n"
+    )
+
+
+def build_dense_user_prompt(object_ordering_policy: str | None) -> str:
+    policy = normalize_object_ordering_policy(object_ordering_policy)
+    if policy == "center_tlbr":
+        return (
+            "基于所给图片，检测并列出所有对象：按**中心点自上到下再从左到右**排序，"
+            "坐标使用 norm1000 整数网格。"
+            "输出两行：第1行 `<DOMAIN={domain}>, <TASK={task}>`；第2行输出 JSON。"
+        )
+
+    return (
+        "基于所给图片，检测并列出所有对象：按**自上到下再从左到右**排序，"
+        "坐标使用 norm1000 整数网格。"
+        "输出两行：第1行 `<DOMAIN={domain}>, <TASK={task}>`；第2行输出 JSON。"
+    )
+
 
 # ============================================================================
 # Prompt Schemes
@@ -96,13 +134,9 @@ def _get_dataset(key: str | None) -> str:
     return normalized if normalized in DATASET_PRIOR_RULES else _DEFAULT_DATASET
 
 
-DENSE_SYSTEM_PROMPT_CORE = (
-    '你是图像密集标注助手。输出两行：第1行 `<DOMAIN={domain}>, <TASK={task}>`；第2行输出 JSON 对象 {"object_1":{...}}。\n'
-    "- 对象按**自上到下 → 左到右**排序，编号从 1 递增。\n"
-    "  * 排序规则详解：首先按 Y 坐标（纵向）从小到大排列（图像上方优先），Y 坐标相同时按 X 坐标（横向）从小到大排列（图像左方优先）。\n"
-    "  * bbox_2d 排序参考点：使用左上角坐标 (x1, y1) 作为该对象的排序位置。\n"
-    "  * poly 排序参考点：顶点按质心顺时针排序，起点为最上最左的顶点；使用首顶点 (x1, y1) 作为排序位置。\n"
-    "  * line 排序参考点：使用最左端点（X 坐标最小的点）作为排序参考；若多个点的 X 坐标相同，则取其中 Y 坐标最小的点。\n"
+DENSE_SYSTEM_PROMPT_PREFIX = '你是图像密集标注助手。输出两行：第1行 `<DOMAIN={domain}>, <TASK={task}>`；第2行输出 JSON 对象 {"object_1":{...}}。\n'
+
+DENSE_SYSTEM_PROMPT_COMMON = (
     "- 证据优先：仅写可见证据；未知属性留空；不输出任何第三态占位。\n"
     "- 每个对象仅包含 desc + 单个几何键（bbox_2d/poly/line）；禁止多个几何键。\n"
     "- desc 采用 key=value（逗号分隔、无空格），必须包含 `类别` 且放首位；多值用 `|` 连接。\n"
@@ -115,7 +149,10 @@ DENSE_SYSTEM_PROMPT_CORE = (
 
 
 def build_dense_system_prompt(
-    json_format: str | None, *, dataset: str | None = None
+    json_format: str | None,
+    *,
+    dataset: str | None = None,
+    object_ordering_policy: str | None = None,
 ) -> str:
     ds = _get_dataset(dataset)
     fmt = _normalize_format_key(json_format)
@@ -126,7 +163,9 @@ def build_dense_system_prompt(
         "".join(schema_raw) if isinstance(schema_raw, (tuple, list)) else schema_raw
     )
     prior = "".join(prior_raw) if isinstance(prior_raw, (tuple, list)) else prior_raw
-    return DENSE_SYSTEM_PROMPT_CORE + format_hint + schema + "先验规则：\n" + prior
+    ordering_hint = _build_dense_ordering_hint(object_ordering_policy)
+    core = DENSE_SYSTEM_PROMPT_PREFIX + ordering_hint + DENSE_SYSTEM_PROMPT_COMMON
+    return core + format_hint + schema + "先验规则：\n" + prior
 
 
 # Dense captioning system prompt - default (BBU)
@@ -169,11 +208,7 @@ def build_summary_system_prompt(
     return prompt
 
 
-USER_PROMPT_JSON = (
-    "基于所给图片，检测并列出所有对象：按**自上到下再从左到右**排序，"
-    "坐标使用 norm1000 整数网格。"
-    "输出两行：第1行 `<DOMAIN={domain}>, <TASK={task}>`；第2行输出 JSON。"
-)
+USER_PROMPT_JSON = build_dense_user_prompt("reference_tlbr")
 
 SYSTEM_PROMPT_AUX = (
     "You are a general-purpose detection annotator for source-domain datasets (e.g., LVIS). "
@@ -192,7 +227,9 @@ SYSTEM_PROMPT_CHAT = ""  # Leave system blank for pre-authored chat messages
 USER_PROMPT_CHAT = ""  # Empty for pre-authored messages; messages field in JSONL contains full conversation
 
 
-def get_template_prompts(name: str | None) -> tuple[str, str]:
+def get_template_prompts(
+    name: str | None, *, object_ordering_policy: str | None = None
+) -> tuple[str, str]:
     """Return (system, user) prompts for a known template name.
 
     We disallow silent fallbacks; callers must provide a registered template. Any
@@ -222,17 +259,29 @@ def get_template_prompts(name: str | None) -> tuple[str, str]:
         # Target datasets (BBU, RRU) - unified dense template
         # NOTE: keep legacy alias for backward compatibility (defaults to BBU-flavored dense prompt).
         "target_dense": (
-            build_dense_system_prompt(_DEFAULT_JSON_FORMAT, dataset="bbu"),
-            USER_PROMPT_JSON,
+            build_dense_system_prompt(
+                _DEFAULT_JSON_FORMAT,
+                dataset="bbu",
+                object_ordering_policy=object_ordering_policy,
+            ),
+            build_dense_user_prompt(object_ordering_policy),
         ),
         # Target datasets (domain-specific dense prompts)
         "target_dense_bbu": (
-            build_dense_system_prompt(_DEFAULT_JSON_FORMAT, dataset="bbu"),
-            USER_PROMPT_JSON,
+            build_dense_system_prompt(
+                _DEFAULT_JSON_FORMAT,
+                dataset="bbu",
+                object_ordering_policy=object_ordering_policy,
+            ),
+            build_dense_user_prompt(object_ordering_policy),
         ),
         "target_dense_rru": (
-            build_dense_system_prompt(_DEFAULT_JSON_FORMAT, dataset="rru"),
-            USER_PROMPT_JSON,
+            build_dense_system_prompt(
+                _DEFAULT_JSON_FORMAT,
+                dataset="rru",
+                object_ordering_policy=object_ordering_policy,
+            ),
+            build_dense_user_prompt(object_ordering_policy),
         ),
         # Source datasets (LVIS, COCO, etc.) - unified dense template
         "source_dense": (SYSTEM_PROMPT_AUX, USER_PROMPT_AUX),

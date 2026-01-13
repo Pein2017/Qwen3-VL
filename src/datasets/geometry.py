@@ -220,6 +220,85 @@ def to_clockwise(points: Sequence[float]) -> list[float]:
     return out
 
 
+def rotate_polygon_start_to_top_left(points: Sequence[float]) -> list[float]:
+    """Rotate polygon vertices so the first vertex is the *top-left* one.
+
+    Prompt contract (data_conversion + training prompts):
+    - Polygons must be ordered clockwise around the centroid
+    - Start vertex must be the most top-left vertex (min y, then min x)
+
+    This helper preserves the existing cyclic order and only rotates the start
+    index. It does *not* reverse the polygon; callers should ensure clockwise
+    orientation first when required.
+    """
+    if not points:
+        return []
+    if len(points) % 2 != 0:
+        # Defensive: leave malformed polys unchanged (validation will catch them).
+        return [float(v) for v in points]
+    pts = _pair_points(points)
+    if not pts:
+        return [float(v) for v in points]
+    start_idx = min(range(len(pts)), key=lambda i: (pts[i][1], pts[i][0]))
+    rotated = pts[start_idx:] + pts[:start_idx]
+    flat: list[float] = []
+    for x, y in rotated:
+        flat.extend([float(x), float(y)])
+    return flat
+
+
+def canonicalize_polygon(points: Sequence[float]) -> list[float]:
+    """Canonicalize polygon vertices for stable ordering and prompt alignment.
+
+    Guarantees:
+    - clockwise vertex order
+    - first vertex is the top-left vertex (min y, then min x)
+
+    This is required because some augmentation transforms preserve clockwise
+    order but can change which vertex is listed first, which then breaks the
+    TLBR object ordering used by `sort_objects_tlbr` (poly uses its first vertex
+    as the reference point).
+    """
+    if not points:
+        return []
+    return rotate_polygon_start_to_top_left(to_clockwise(points))
+
+
+def canonicalize_polyline_direction(points: Sequence[float]) -> list[float]:
+    """Canonicalize polyline (line) direction by choosing a deterministic endpoint as start.
+
+    Polylines are not cyclic: interior vertex order is meaningful and MUST NOT be
+    rotated/re-indexed. The only valid normalization is to reverse the entire
+    sequence.
+
+    Canonical rule (shared with conversion):
+    - Compare the two endpoints `(x0, y0)` and `(xn, yn)` lexicographically by
+      `(x, y)` (leftmost first; tie-break by topmost).
+    - If the end endpoint is "smaller", reverse the entire sequence.
+
+    This reduces label variance under hflip/rotate/crop while preserving the
+    path structure.
+    """
+    if not points:
+        return []
+    if len(points) % 2 != 0:
+        # Defensive: leave malformed lines unchanged (validation will catch them).
+        return list(points)
+    if len(points) < 4:
+        return list(points)
+
+    x0, y0 = float(points[0]), float(points[1])
+    xn, yn = float(points[-2]), float(points[-1])
+    if (x0, y0) <= (xn, yn):
+        return list(points)
+
+    out: list[float] = []
+    for i in range(len(points) - 2, -1, -2):
+        out.append(points[i])
+        out.append(points[i + 1])
+    return out
+
+
 def _inside(
     px: float, py: float, edge: str, bounds: tuple[float, float, float, float]
 ) -> bool:
@@ -852,19 +931,19 @@ def translate_geometry(geom: DatasetObject, dx: float, dy: float) -> DatasetObje
         x1, y1, x2, y2 = geom["bbox_2d"]
         return {"bbox_2d": [x1 + dx, y1 + dy, x2 + dx, y2 + dy]}
     elif "poly" in geom:
-        pts = geom.get("poly") or []
-        translated = []
+        pts = cast(Sequence[float], geom.get("poly") or [])
+        translated_poly: list[float] = []
         for i in range(0, len(pts), 2):
-            translated.append(pts[i] + dx)
-            translated.append(pts[i + 1] + dy)
-        return {"poly": translated}
+            translated_poly.append(pts[i] + dx)
+            translated_poly.append(pts[i + 1] + dy)
+        return {"poly": translated_poly}
     elif "line" in geom:
-        pts = geom["line"]
-        translated = []
+        pts = cast(Sequence[float], geom.get("line") or [])
+        translated_line: list[float] = []
         for i in range(0, len(pts), 2):
-            translated.append(pts[i] + dx)
-            translated.append(pts[i + 1] + dy)
-        return {"line": translated}
+            translated_line.append(pts[i] + dx)
+            translated_line.append(pts[i + 1] + dy)
+        return {"line": translated_line}
     else:
         raise ValueError(f"Unknown geometry type: {list(geom.keys())}")
 
@@ -904,18 +983,19 @@ def transform_geometry(
         )
         if all_inside:
             # Polygon fully inside - use rotated points directly, just round/clamp
-            q = clamp_points(to_clockwise(t), width, height)
+            q = clamp_points(canonicalize_polygon(t), width, height)
             return cast(DatasetObject, {**meta, "poly": q})
         # Polygon needs clipping - use Sutherland-Hodgman
         clipped = sutherland_hodgman_clip(t, width, height)
         if len(clipped) // 2 >= 3:
-            poly = to_clockwise(clipped)
+            poly = canonicalize_polygon(clipped)
             if len(poly) // 2 != 4:
                 poly = min_area_rect(poly)
+            poly = canonicalize_polygon(poly)
             q = clamp_points(poly, width, height)
             return cast(DatasetObject, {**meta, "poly": q})
         # fully outside: keep clamped transform to preserve geometry (degenerate possible)
-        q = clamp_points(to_clockwise(t), width, height)
+        q = clamp_points(canonicalize_polygon(t), width, height)
         return cast(DatasetObject, {**meta, "poly": q})
     if isinstance(obj, Polygon):
         t = list(obj.apply_affine(M).points)
@@ -927,17 +1007,18 @@ def transform_geometry(
         )
         if all_inside:
             # Polygon fully inside - use rotated points directly, just round/clamp
-            q = clamp_points(to_clockwise(t), width, height)
+            q = clamp_points(canonicalize_polygon(t), width, height)
             return cast(DatasetObject, {**meta, "poly": q})
         # Polygon needs clipping - use Sutherland-Hodgman
         clipped = sutherland_hodgman_clip(t, width, height)
         if len(clipped) // 2 >= 3:
-            poly = to_clockwise(clipped)
+            poly = canonicalize_polygon(clipped)
             if len(poly) // 2 != 4:
                 poly = min_area_rect(poly)
+            poly = canonicalize_polygon(poly)
             q = clamp_points(poly, width, height)
             return cast(DatasetObject, {**meta, "poly": q})
-        q = clamp_points(to_clockwise(t), width, height)
+        q = clamp_points(canonicalize_polygon(t), width, height)
         return cast(DatasetObject, {**meta, "poly": q})
     # Polyline
     pl = obj.apply_affine(M)

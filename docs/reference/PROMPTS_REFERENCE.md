@@ -3,16 +3,22 @@
 Status: Active
 Scope: Authoritative prompt text for BBU/RRU dense-caption and summary modes, aligned with current template code.
 Owners: Training + Runtime
-Last updated: 2026-01-12
+Last updated: 2026-01-13
 Related: [data/BBU_RRU_BUSINESS_KNOWLEDGE.md](../data/BBU_RRU_BUSINESS_KNOWLEDGE.md), [data/DATA_JSONL_CONTRACT.md](../data/DATA_JSONL_CONTRACT.md), [reference/stage-B-knowledge-Chinese.md](stage-B-knowledge-Chinese.md), [training/REFERENCE.md](../training/REFERENCE.md)
 
 Source of truth: `src/config/prompts.py` and `src/prompts/` (summary/core + Stage-A summary builders). This document mirrors those definitions for review and operations.
 Note: Training JSONL stores `poly`/`line` as flat lists; `src/datasets/builders/jsonlines.py` formats them into paired lists (`[[x,y], ...]`) in the assistant text. The prompts below describe the paired output format.
 
+## Ordering Policy Note (Dense Mode)
+
+Dense-mode object ordering is configurable via `custom.object_ordering_policy`:
+- `reference_tlbr` (**default/legacy**): ordering matches the reference-point rules written in the System Prompt blocks below (bbox top-left / poly first vertex / line leftmost point).
+- `center_tlbr` (opt-in): ordering uses the geometry **AABB center** `(cx, cy)` for TL→BR sorting, and the User Prompt wording changes to “按中心点自上到下再从左到右”.
+
 ## Assistant Output Format (SFT)
 
 When `custom.assistant_prefix_format` is enabled for fusion **target** streams (e.g., `configs/train/sft/dense_1024.yaml`), the assistant output contract is:
-- **Non-irrelevant targets**: assistant text begins with the prefix line `<TASK={task}>, <DATASET={dataset}>`, followed by a newline and then the payload (dense JSON object or summary JSON string).
+- **Non-irrelevant targets**: assistant text begins with the prefix line `<DOMAIN={domain}>, <TASK={task}>`, followed by a newline and then the payload (dense JSON object or summary JSON string).
 - **Irrelevant streams**: `irrelevant_summary` and `irrelevant_dense` both yield assistant text exactly `无关图片` (**single line**, **no prefix**) even if the stream is declared as dense.
 
 Important: `custom.assistant_prefix_format` is a **training-label prefix** added by the dataset builder; it is independent of the prompt text shown below.
@@ -248,33 +254,33 @@ JSON 必须严格有效（双引号、无尾逗号），并以 `}` 结束；禁�
 
 ## Examples (Assistant Outputs)
 
-Assume `custom.assistant_prefix_format: "<TASK={task}>, <DATASET={dataset}>"` is enabled for fusion target streams.
+Assume `custom.assistant_prefix_format: "<DOMAIN={domain}>, <TASK={task}>"` is enabled for fusion target streams.
 
 ### bbu_dense
 
 ```text
-<TASK=DETECTION>, <DATASET=bbu>
+<DOMAIN=BBU>, <TASK=DETECTION>
 {"object_1": {"bbox_2d": [12, 34, 56, 78], "desc": "类别=BBU设备,品牌=华为,可见性=完整"}}
 ```
 
 ### rru_dense
 
 ```text
-<TASK=DETECTION>, <DATASET=rru>
+<DOMAIN=RRU>, <TASK=DETECTION>
 {"object_1": {"bbox_2d": [10, 20, 110, 220], "desc": "类别=站点距离,站点距离=51"}, "object_2": {"bbox_2d": [140, 60, 300, 420], "desc": "类别=RRU设备"}}
 ```
 
 ### bbu_summary
 
 ```text
-<TASK=SUMMARY>, <DATASET=bbu>
+<DOMAIN=BBU>, <TASK=SUMMARY>
 {"统计": [{"类别": "BBU设备", "品牌": {"华为": 1}}], "备注": ["挡风板需求不可见"]}
 ```
 
 ### rru_summary
 
 ```text
-<TASK=SUMMARY>, <DATASET=rru>
+<DOMAIN=RRU>, <TASK=SUMMARY>
 {"统计": [{"类别": "站点距离", "站点距离": {"51": 1}}, {"类别": "RRU设备"}]}
 ```
 
@@ -294,5 +300,5 @@ Assume `custom.assistant_prefix_format: "<TASK={task}>, <DATASET={dataset}>"` is
 
 - **BBU_DENSE** and **RRU_DENSE** share the same user prompt but have different system prompts with domain-specific schema hints and prior rules.
 - **BBU_SUMMARY** and **RRU_SUMMARY** have different system prompts (with domain-specific scenario rules) and different user prompts (with domain-specific hints).
-- All non-irrelevant target outputs use the `<TASK={task}>, <DATASET={dataset}>` prefix line before the payload when `custom.assistant_prefix_format` is enabled.
+- All non-irrelevant target outputs use the `<DOMAIN={domain}>, <TASK={task}>` prefix line before the payload when `custom.assistant_prefix_format` is enabled.
 - Dense mode outputs detailed JSON objects with geometry, while summary mode outputs aggregated JSON statistics.

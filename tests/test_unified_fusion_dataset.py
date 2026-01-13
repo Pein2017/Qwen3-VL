@@ -49,7 +49,7 @@ def _write_jsonl(path: Path, records: list[dict[str, Any]]) -> None:
 
 
 def _basic_record(count: int = 1) -> dict[str, Any]:
-    objects = [
+    objects: list[dict[str, Any]] = [
         {"bbox_2d": [0, 0, 10, 10], "desc": f"obj_{idx}"} for idx in range(count)
     ]
     return {"images": ["img.jpg"], "objects": objects, "width": 10, "height": 10}
@@ -235,7 +235,7 @@ def test_unified_fusion_irrelevant_dense_emits_single_line(tmp_path: Path) -> No
         user_prompt="DEFAULT_USER",
         emit_norm="none",
         json_format="standard",
-        assistant_prefix_format="<TASK={task}>, <DATASET={dataset}>",
+        assistant_prefix_format="<DOMAIN={domain}>, <TASK={task}>",
         augmenter=None,
         bypass_prob=0.0,
         curriculum_state=None,
@@ -248,7 +248,7 @@ def test_unified_fusion_irrelevant_dense_emits_single_line(tmp_path: Path) -> No
 
     target_sample = dataset[0]
     target_text = target_sample["messages"][-1]["content"][0]["text"]
-    assert target_text.splitlines()[0] == "<TASK=DETECTION>, <DATASET=bbu>"
+    assert target_text.splitlines()[0] == "<DOMAIN=BBU>, <TASK=DETECTION>"
 
     irrelevant_sample = dataset[1]
     irrelevant_text = irrelevant_sample["messages"][-1]["content"][0]["text"]
@@ -321,7 +321,7 @@ def test_unified_fusion_respects_source_augmentation_gating(
 
     calls: list[str | None] = []
 
-    def _fake_preprocess(self, row: Any) -> Any:  # noqa: ANN001
+    def _fake_preprocess(self: AugmentationPreprocessor, row: Any) -> Any:
         calls.append(row.get("metadata", {}).get("_fusion_source"))
         return row
 
@@ -513,9 +513,9 @@ def test_unified_fusion_alias_points_to_fusion_class() -> None:
 
 
 def test_fusion_pack_group_key_respects_domain() -> None:
-    rec_target = {"metadata": {"_fusion_domain": "target"}}
-    rec_source = {"metadata": {"_fusion_domain": "source"}}
-    rec_missing = {"metadata": {}}
+    rec_target: dict[str, object] = {"metadata": {"_fusion_domain": "target"}}
+    rec_source: dict[str, object] = {"metadata": {"_fusion_domain": "source"}}
+    rec_missing: dict[str, object] = {"metadata": {}}
 
     assert fusion_pack_group_key(rec_target) == "target"
     assert fusion_pack_group_key(rec_source) == "source"

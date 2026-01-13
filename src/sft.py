@@ -430,7 +430,10 @@ def main():
         if system_prompt_dense is None or use_summary:
             from .config.prompts import build_dense_system_prompt
 
-            system_prompt_dense = build_dense_system_prompt(custom_config.json_format)
+            system_prompt_dense = build_dense_system_prompt(
+                custom_config.json_format,
+                object_ordering_policy=custom_config.object_ordering_policy,
+            )
     except Exception:
         pass
 
@@ -473,6 +476,7 @@ def main():
             emit_norm=custom_config.emit_norm,
             json_format=custom_config.json_format,
             assistant_prefix_format=custom_config.assistant_prefix_format,
+            object_ordering_policy=custom_config.object_ordering_policy,
             augmenter=augmenter,
             bypass_prob=bypass_prob,
             curriculum_state=curriculum_state,
@@ -492,6 +496,7 @@ def main():
             user_prompt=custom_config.user_prompt,
             emit_norm=custom_config.emit_norm,
             json_format=custom_config.json_format,
+            object_ordering_policy=custom_config.object_ordering_policy,
             augmenter=augmenter,
             bypass_prob=bypass_prob,
             curriculum_state=curriculum_state,
@@ -530,6 +535,7 @@ def main():
                 emit_norm=custom_config.emit_norm,
                 json_format=custom_config.json_format,
                 assistant_prefix_format=custom_config.assistant_prefix_format,
+                object_ordering_policy=custom_config.object_ordering_policy,
                 augmenter=augmenter,
                 bypass_prob=bypass_prob,
                 curriculum_state=curriculum_state,
@@ -547,6 +553,7 @@ def main():
                 user_prompt=custom_config.user_prompt,
                 emit_norm=custom_config.emit_norm,
                 json_format=custom_config.json_format,
+                object_ordering_policy=custom_config.object_ordering_policy,
                 augmenter=augmenter,
                 bypass_prob=bypass_prob,
                 curriculum_state=curriculum_state,
@@ -876,6 +883,7 @@ def main():
             emit_norm=custom_config.emit_norm,
             json_format=custom_config.json_format,
             assistant_prefix_format=custom_config.assistant_prefix_format,
+            object_ordering_policy=custom_config.object_ordering_policy,
             augmenter=None,  # No augmentation for validation
             bypass_prob=0.0,
             curriculum_state=None,
@@ -900,6 +908,7 @@ def main():
                 user_prompt=custom_config.user_prompt,
                 emit_norm=custom_config.emit_norm,
                 json_format=custom_config.json_format,
+                object_ordering_policy=custom_config.object_ordering_policy,
                 augmenter=None,  # No augmentation for validation
                 bypass_prob=0.0,  # Explicit: no bypass for validation
                 sample_limit=val_sample_limit,

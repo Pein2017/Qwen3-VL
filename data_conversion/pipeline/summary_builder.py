@@ -64,10 +64,10 @@ def _parse_desc(desc: str) -> Tuple[str, Dict[str, List[str]], Dict[str, bool]]:
             errors["invalid"] = True
             return
         if key in FREE_TEXT_KEYS:
-            value = sanitize_free_text_value(value)
-            if not value:
+            sanitized = sanitize_free_text_value(value)
+            if not sanitized:
                 return
-            kv.setdefault(key, []).append(value)
+            kv.setdefault(key, []).append(sanitized)
         else:
             values = [v for v in value.split("|") if v]
             if not values:
@@ -197,15 +197,24 @@ def build_summary_from_objects(
         "统计": [],
     }
 
-    for category in sorted(summary_stats.keys()):
+    dataset_key = dataset.upper()
+
+    def _category_sort_key(category: str) -> tuple[int, str]:
+        # RRU contract: "站点距离" must be the first stats entry when present.
+        # This aligns with Stage-A prompt constraints and stabilizes training.
+        if dataset_key == "RRU" and category == "站点距离":
+            return (0, "")
+        return (1, category)
+
+    for category in sorted(summary_stats.keys(), key=_category_sort_key):
         entry: Dict[str, Any] = {"类别": category}
         for key in sorted(summary_stats[category].keys()):
             entry[key] = summary_stats[category][key]
         summary_obj["统计"].append(entry)
 
-    if dataset.upper() == "BBU" and remarks:
+    if dataset_key == "BBU" and remarks:
         summary_obj["备注"] = remarks
-    elif dataset.upper() != "BBU" and group_stats:
+    elif dataset_key != "BBU" and group_stats:
         summary_obj["分组统计"] = group_stats
 
     error_fields: Dict[str, Any] = {}

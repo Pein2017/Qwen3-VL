@@ -350,7 +350,8 @@ class UnifiedProcessor:
             if levels:
                 l1_tokens = [t.strip() for t in levels[0].split(",") if t.strip()]
             if obj.startswith("BBU设备") and any(
-                ("机柜空间充足需要安装" in t or "空间充足需安装" in t) for t in l1_tokens
+                ("机柜空间充足需要安装" in t or "空间充足需安装" in t)
+                for t in l1_tokens
             ):
                 structured_count = min(2, len(levels))
             elif obj.startswith("螺丝、光纤插头") and any(
@@ -559,7 +560,10 @@ class UnifiedProcessor:
 
             # Sort objects unless compatibility mode requests preserving the original order
             if not getattr(self.config, "preserve_annotation_order", False):
-                objects = sort_objects_tlbr(objects)
+                objects = sort_objects_tlbr(
+                    objects,
+                    policy=getattr(self.config, "object_ordering_policy", None),
+                )
             else:
                 logger.debug(
                     "Preserving legacy annotation order for %s", image_path.name
@@ -911,7 +915,9 @@ class UnifiedProcessor:
         else:
             return self._process_samples_sequential(json_files)
 
-    def _process_samples_sequential(self, json_files: List[Path]) -> List[Dict[str, Any]]:
+    def _process_samples_sequential(
+        self, json_files: List[Path]
+    ) -> List[Dict[str, Any]]:
         """Process samples sequentially (original implementation)."""
         logger.info("📝 Processing samples sequentially (num_workers=1)")
 
@@ -1359,6 +1365,7 @@ class UnifiedProcessor:
 
         return result
 
+
 # TeacherSelector has been extracted to data_conversion.teacher_selector
 
 
@@ -1447,6 +1454,12 @@ def main():
         "--preserve_annotation_order",
         action="store_true",
         help="Skip TLBR reordering and keep the original annotation order (useful for regression diffs)",
+    )
+    parser.add_argument(
+        "--object_ordering_policy",
+        choices=["reference_tlbr", "center_tlbr"],
+        default="reference_tlbr",
+        help="Object ordering policy used when reordering is enabled (default: reference_tlbr).",
     )
     parser.add_argument(
         "--limit",

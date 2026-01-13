@@ -3,7 +3,7 @@
 Status: Active
 Scope: Dataset schema, builders, preprocessing, and conversion/fusion integration.
 Owners: Data Pipeline + Training
-Last updated: 2026-01-12
+Last updated: 2026-01-13
 Related: [DATA_JSONL_CONTRACT.md](DATA_JSONL_CONTRACT.md), [DATA_PREPROCESSING_PIPELINE.md](DATA_PREPROCESSING_PIPELINE.md), [UNIFIED_FUSION_DATASET.md](UNIFIED_FUSION_DATASET.md)
 
 Comprehensive guide to data format, schema, dataset builders, and preprocessing pipeline.
@@ -293,7 +293,7 @@ For the universal JSONL record contract shared by all domains, see `./DATA_JSONL
 
 # Assistant message: minimal object hierarchy (no per-image wrapper)
 # (When assistant_prefix_format is enabled, prepend the prefix line + newline.)
-<TASK=DETECTION>, <DATASET=bbu>
+<DOMAIN=BBU>, <TASK=DETECTION>
 {
   "object_1": {"bbox_2d": [...], "desc": "类别=BBU设备,品牌=华为,可见性=部分"},
   "object_2": {"line_points": 4, "line": [...], "desc": "类别=站点距离,站点距离=51"}
@@ -304,16 +304,16 @@ For the universal JSONL record contract shared by all domains, see `./DATA_JSONL
 **Summary Mode**:
 ```text
 # Assistant message: single summary string (JSON), with optional prefix line.
-<TASK=SUMMARY>, <DATASET=bbu>
+<DOMAIN=BBU>, <TASK=SUMMARY>
 {"统计": [{"类别": "BBU设备", "品牌": {"华为": 1}}]}
 ```
 
 **Key Behavior**:
 - Attaches top-level `objects` with pixel coords (for template normalization)
 - Geometries normalized based on `emit_norm` setting
-- Deterministic ordering of object indices (`object_1`, `object_2`, ...)
+- Deterministic ordering of object indices (`object_1`, `object_2`, ...) via TL→BR sorting. Policy is configurable via `custom.object_ordering_policy` (`reference_tlbr` default; `center_tlbr` opt-in).
 - Assistant JSON/summary serialization uses separators `", "` and `": "` to preserve spaces in coordinate lists (tokenizer stability).
-- When `custom.assistant_prefix_format` is set (e.g., `<TASK={task}>, <DATASET={dataset}>`), assistant text is prefixed with that line plus a newline for **target** BBU/RRU samples (non-irrelevant only; sources are unchanged).
+- When `custom.assistant_prefix_format` is set (e.g., `<DOMAIN={domain}>, <TASK={task}>`), assistant text is prefixed with that line plus a newline for **target** BBU/RRU samples (non-irrelevant only; sources are unchanged).
 - For `irrelevant*` streams (e.g., `irrelevant_summary`, `irrelevant_dense`), the assistant payload is always the single line `无关图片` and the prefix is suppressed.
 - Consumes validated `ConversationRecord` objects and exposes augmentation telemetry (`pipeline.last_summary`) for downstream health checks.
 

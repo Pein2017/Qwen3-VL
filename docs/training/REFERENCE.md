@@ -242,7 +242,7 @@ Core SFT/LoRA recipes, KL anchoring overlays, augmentation telemetry, and troubl
 - Metrics: per dataset label, logs `{label}_token_acc` (all supervised tokens, naturally weighted), type-sliced accuracies `{label}_{desc|coord|format}_token_acc`.  
 - Validation: smoke run on 2025-12-04 with `configs/smoke/group_metrics.yaml` (4B checkpoint, fusion `configs/fusion/variants/bbu_rru_dense_1024.yaml`, `logging_steps=1`, `eval_steps=1`, `save_strategy=no`, `max_steps=20`) produced the expected token-type metrics; see `output/smoke/group_metrics/v0-20251204-062817/smoke_group_metrics_4b/logging.jsonl`.
 
-**Preset note**: `configs/train/sft/dense_1024.yaml` uses `custom.fusion_config: configs/fusion/variants/bbu_rru_dense_plus_summary_1024.yaml` and sets `custom.assistant_prefix_format: "<TASK={task}>, <DATASET={dataset}>"` for target streams.
+**Preset note**: `configs/train/sft/dense_1024.yaml` uses `custom.fusion_config: configs/fusion/variants/bbu_rru_dense_plus_summary_1024.yaml` and sets `custom.assistant_prefix_format: "<DOMAIN={domain}>, <TASK={task}>"` for target streams.
 
 Keep configs under `configs/` in sync with the playbook when making behavioral changes.
 
@@ -252,7 +252,8 @@ Keep configs under `configs/` in sync with the playbook when making behavioral c
   - `prompts.profile`: `summary_runtime`
   - `prompts.domain`: `bbu` | `rru` (required for runtime profile)
   - `prompts.system` / `prompts.user` remain authoritative overrides and bypass profile composition.
-  - `custom.assistant_prefix_format`: required for BBU/RRU **target streams** to prepend a single prefix line + newline before assistant payloads (dense + summary). The current standard is `<TASK={task}>, <DATASET={dataset}>` (always first line, before any other content). Source datasets remain unchanged.
+  - `custom.assistant_prefix_format`: required for BBU/RRU **target streams** to prepend a single prefix line + newline before assistant payloads (dense + summary). The current standard is `<DOMAIN={domain}>, <TASK={task}>` (always first line, before any other content). Source datasets remain unchanged.
+  - `custom.object_ordering_policy` (dense mode): optional ordering policy for `object_n` enumeration. Defaults to `reference_tlbr` (legacy reference-point ordering). Set to `center_tlbr` to sort by geometry AABB center coordinates; the dense prompts switch wording accordingly.
 - **Stage-A runtime composition**: system prompt = summary task base + 全局“非现场/图纸”规则；user prompt = summary instruction + BBU/RRU 场景提示块 + 可选任务重点。
 
 ### Summary GRPO Post-Training (Format Stabilization)

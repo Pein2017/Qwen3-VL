@@ -83,6 +83,7 @@ class FusionCaptionDataset(BaseCaptionDataset):
     _sample_limit: int | None
     _epoch: int
     _assistant_prefix_format: str | None
+    _object_ordering_policy: str | None
     _target_names: list[str]
     _dataset_order: list[str]
     _primary_target: str
@@ -104,6 +105,7 @@ class FusionCaptionDataset(BaseCaptionDataset):
         system_prompt_dense: str | None,
         system_prompt_summary: str | None,
         assistant_prefix_format: str | None = None,
+        object_ordering_policy: str | None = None,
         seed: int = 42,
         shuffle: bool = True,
         sample_limit: int | None = None,
@@ -134,6 +136,9 @@ class FusionCaptionDataset(BaseCaptionDataset):
         self.epoch_plan: dict[str, EpochPlanEntry] = {}
         self._assistant_prefix_format = (
             assistant_prefix_format.strip() if assistant_prefix_format else None
+        )
+        self._object_ordering_policy = (
+            object_ordering_policy.strip() if object_ordering_policy else None
         )
 
         self._target_names = [t.name for t in fusion_config.targets]
@@ -383,7 +388,10 @@ class FusionCaptionDataset(BaseCaptionDataset):
                 f"Dataset '{spec.name}' is in dense mode but template '{template_name}' "
                 "is a summary template. Use the matching dense template."
             )
-        domain_system, domain_user = get_template_prompts(template_name)
+        domain_system, domain_user = get_template_prompts(
+            template_name,
+            object_ordering_policy=self._object_ordering_policy,
+        )
 
         if mode == "summary":
             default_user_prompt = USER_PROMPT_SUMMARY
@@ -754,7 +762,10 @@ class FusionCaptionDataset(BaseCaptionDataset):
                     dataset_name=dataset_name,
                     base_idx=base_idx,
                 )
-            alt_system, alt_user = get_template_prompts(alt_template)
+            alt_system, alt_user = get_template_prompts(
+                alt_template,
+                object_ordering_policy=self._object_ordering_policy,
+            )
             if alt_user:
                 user_prompt = alt_user
             if alt_system is not None:
@@ -807,6 +818,7 @@ class FusionCaptionDataset(BaseCaptionDataset):
             mode=builder_mode,
             json_format=self.json_format,
             assistant_prefix=assistant_prefix,
+            object_ordering_policy=self._object_ordering_policy,
         )
         merged = builder.build_many([record])
         conversation_messages = copy.deepcopy(merged.get("messages", []) or [])

@@ -10,7 +10,11 @@ import yaml
 from swift.llm.argument import RLHFArguments, TrainArguments
 from swift.utils import get_dist_setting
 
-from .prompts import USER_PROMPT_JSON, USER_PROMPT_SUMMARY, build_dense_system_prompt
+from .prompts import (
+    USER_PROMPT_SUMMARY,
+    build_dense_system_prompt,
+    build_dense_user_prompt,
+)
 from .schema import PromptOverrides, SaveDelayConfig, TrainingConfig
 from src.utils import require_mutable_mapping
 from src.utils.unstructured import UnstructuredMutableMapping
@@ -96,7 +100,9 @@ class ConfigLoader:
         extends_value = None
         if isinstance(config, dict):
             if "inherit" in config:
-                raise ValueError("Config inheritance uses 'extends'; 'inherit' is not supported.")
+                raise ValueError(
+                    "Config inheritance uses 'extends'; 'inherit' is not supported."
+                )
             extends_value = config.pop("extends", None)
 
         base_paths = ConfigLoader._normalize_to_list(extends_value)
@@ -152,6 +158,7 @@ class ConfigLoader:
         use_summary = False
         custom_section = config.get("custom")
         json_format_hint: str | None = None
+        object_ordering_policy: str | None = None
         if custom_section is not None:
             if not isinstance(custom_section, Mapping):
                 raise TypeError(
@@ -169,6 +176,9 @@ class ConfigLoader:
             json_format_hint_raw = custom_section.get("json_format")
             if json_format_hint_raw is not None:
                 json_format_hint = str(json_format_hint_raw)
+            ordering_raw = custom_section.get("object_ordering_policy")
+            if ordering_raw is not None:
+                object_ordering_policy = str(ordering_raw)
 
         if use_summary:
             output_variant = "summary"
@@ -188,8 +198,11 @@ class ConfigLoader:
                 )
         else:
             output_variant = "dense"
-            default_system = build_dense_system_prompt(json_format_hint)
-            default_user = USER_PROMPT_JSON
+            default_system = build_dense_system_prompt(
+                json_format_hint,
+                object_ordering_policy=object_ordering_policy,
+            )
+            default_user = build_dense_user_prompt(object_ordering_policy)
 
         system_prompt = prompts_config.get("system", default_system)
         user_prompt = prompts_config.get("user", default_user)
