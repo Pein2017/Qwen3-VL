@@ -1,0 +1,83 @@
+# Continuation SFT training preset (dense + summary mix) with center-based object ordering.
+#
+# Base: `configs/train/sft/dense_1024.yaml`
+#
+# Key changes vs base:
+# - Initialize from the *current* ongoing-training checkpoint (weights only; optimizer is NOT resumed):
+#     model.model = output/1-13/new_schema-4B-dense/v0-20260112-160632/.../checkpoint-2680
+# - Switch training JSONL pointers to the regenerated, center-ordered corpus:
+#     data_new_schema_center/{bbu_full_1024,rru_full_1024}
+# - Separate output_dir/logging_dir/run_name to avoid overwriting the previous run.
+#
+# Notes:
+# - Object ordering policy is `center_tlbr` (see OpenSpec change:
+#   `openspec/changes/2026-01-13-unify-object-ordering-policy`).
+# - This config expects the checkpoint directory to contain the LoRA adapter files
+#   (e.g., `adapter_model.safetensors`) and will start a fresh optimizer state.
+
+extends:
+  - dense_1024.yaml
+
+model:
+  # Latest kept checkpoint from the referenced run (save_total_limit=2).
+  model: output/1-13/dense-non-center_schema/checkpoint-2680
+
+training:
+  output_dir: ./output/1-13/new_schema-4B-dense-v2
+  logging_dir: ./tb/1-13/new_schema-4B-dense-v2
+  run_name: continued-epoch_20-eff_bs_32-llm_lr-2e-5-vit_lr-1e-5-alinger_lr-5e-5-fastaug
+  num_train_epochs: 20
+  per_device_train_batch_size: 2
+  per_device_eval_batch_size: 4
+  # Balanced continuation LRs (fresh optimizer; no resume of optimizer state)
+  learning_rate: 2.0e-5
+  vit_lr: 1.0e-5
+  aligner_lr: 5.0e-5
+  warmup_ratio: 0.05
+
+custom:
+  # Must match the conversion/builder policy for stable `object_n` supervision.
+  object_ordering_policy: center_tlbr
+  # Used for ROOT_IMAGE_DIR auto-detection (and for non-fusion fallback paths).
+  train_jsonl: data_new_schema_center/bbu_full_1024/train.jsonl
+  val_jsonl: data_new_schema_center/bbu_full_1024/val.jsonl
+  # Dataset mix: BBU/RRU dense targets + summary regularization + LVIS/lang_chat/irrelevant sources.
+  fusion_config: configs/fusion/variants/bbu_rru_dense_plus_summary_1024.yaml
+  # Faster augmentation warmup: the checkpoint already learned the "clean" image distribution well.
+  augmentation:
+    bypass_prob: 0.60
+  augmentation_curriculum:
+    phases:
+      # Reach moderate augmentation quickly, then converge to the prior "final" strength early.
+      - until_percent: 1.5
+        bypass_prob: 0.55
+        ops:
+          hflip: { prob: 0.12 }
+          resize_by_scale: { prob: 0.15, lo: 0.96, hi: 1.04 }
+          color_jitter: { prob: 0.06, brightness: [0.95, 1.05], contrast: [0.95, 1.05], saturation: [0.95, 1.05] }
+      - until_percent: 6
+        bypass_prob: 0.22
+        ops:
+          hflip: { prob: 0.23 }
+          vflip: { prob: 0.05 }
+          rotate: { prob: 0.20, max_deg: 13.0 }
+          roi_crop: { prob: 0.20, scale_range: [1.3, 2.4] }
+          resize_by_scale: { prob: 0.36, lo: 0.93, hi: 1.09 }
+          color_jitter: { prob: 0.18, brightness: [0.91, 1.09], contrast: [0.91, 1.09], saturation: [0.91, 1.09] }
+          hsv: { prob: 0.08, hue_delta_deg: [-4, 4], sat: [0.96, 1.04], val: [0.96, 1.04] }
+          auto_contrast: { prob: 0.05 }
+          clahe: { prob: 0.05 }
+      - until_percent: 12
+        bypass_prob: 0.12
+        ops:
+          hflip: { prob: 0.25 }
+          vflip: { prob: 0.06 }
+          rotate: { prob: 0.28, max_deg: 17.0 }
+          roi_crop: { prob: 0.50, scale_range: [1.25, 2.3] }
+          resize_by_scale: { prob: 0.45, lo: 0.92, hi: 1.10 }
+          color_jitter: { prob: 0.24, brightness: [0.90, 1.10], contrast: [0.90, 1.10], saturation: [0.90, 1.10] }
+          hsv: { prob: 0.13, hue_delta_deg: [-6, 6], sat: [0.94, 1.06], val: [0.94, 1.06] }
+          gamma: { prob: 0.16, gamma: [0.90, 1.10] }
+          sharpness: { prob: 0.15, factor: [0.90, 1.12] }
+          auto_contrast: { prob: 0.06 }
+          clahe: { prob: 0.07 }
