@@ -1,17 +1,18 @@
 extends:
   - ../../base.yaml
 
-global_max_length: 16000
+global_max_length: 12000
 
 model:
-  model: model_cache/models/Qwen/Qwen3-VL-4B-Instruct
+  model: output/1-13/new_schema-4B-dense-v2/ckpt-9900
 
 tuner:
   train_type: lora
   use_swift_lora: false
   use_dora: true
   freeze_llm: false
-  freeze_vit: false
+  # Recall-first summary GRPO: keep ViT frozen for stability.
+  freeze_vit: true
   freeze_aligner: false
   target_modules: [all-linear]
   target_regex: null
@@ -22,15 +23,17 @@ tuner:
   lora_bias: none
 
 training:
-  output_dir: ./output/1-1/new_schema-4B-summary-grpo
-  run_name: continue_training-lrs_1e-5-more_rewards-epochs_2-chord_sft
-  num_train_epochs: 2
-  learning_rate: 1.0e-5
-  vit_lr: 1.0e-7
-  aligner_lr: 1.0e-7
+  output_dir: ./output/1-16/grpo_summary_1024_ckpt9900_recall
+  logging_dir: ./tb/1-16/grpo_summary_1024_ckpt9900_recall
+  run_name: epoch_4-vit_freezed-alinger_1e-6-llm_5e-6
+  num_train_epochs: 4
+  # Small learning rates for GRPO stability.
+  learning_rate: 5.0e-6
+  vit_lr: 1.0e-8
+  aligner_lr: 1.0e-6
   per_device_train_batch_size: 1
   per_device_eval_batch_size: 2
-  effective_batch_size: 24
+  effective_batch_size: 32
   metric_for_best_model: eval_reward
   logging_steps: 10
   logging_first_step: true
@@ -40,7 +43,7 @@ training:
   optimizer: multimodal
   lr_scheduler_type: cosine_warmup_with_min_lr
   lr_scheduler_kwargs:
-    min_lr: 1.0e-6
+    min_lr: 1.0e-8
   gradient_checkpointing: true
   bf16: true
   report_to: [tensorboard]
@@ -53,11 +56,10 @@ training:
   eval_strategy: steps
   save_strategy: best
   save_steps: 40
-  save_total_limit: 2
+  save_total_limit: 3
   save_last_epoch: true
   save_only_model: true
   greater_is_better: true
-  logging_dir: ./tb/1-1/new_schema-4B-summary-grpo
 
 data:
   dataset: ["dummy"]
@@ -77,8 +79,9 @@ custom:
   json_format: standard
   emit_norm: norm1000
   object_ordering_policy: center_tlbr
-  train_jsonl: data/bbu_full_768_poly/train.jsonl
-  val_jsonl: data/bbu_full_768_poly/val.jsonl
+  # Required by config schema (even when using fusion). Keep it aligned with 1024 targets.
+  train_jsonl: data_new_schema_center/bbu_full_1024/train.jsonl
+  val_jsonl: data_new_schema_center/bbu_full_1024/val.jsonl
   dump_conversation_path: output/conversation_text.txt
   fusion_config: configs/fusion/variants/bbu_rru_summary_grpo_1024.yaml
   token_type_metrics:
@@ -90,7 +93,7 @@ custom:
   val_sample_limit: 240
   grpo:
     chord:
-      enabled: true
+      enabled: false
       sft_per_device_train_batch_size: 1
       mu_warmup_steps: 100
       mu_decay_steps: 0
@@ -100,41 +103,136 @@ custom:
 
   augmentation:
     enabled: true
-    bypass_prob: 0.1
+    # Curriculum note: scheduler starts from this base config at step=0 and ramps
+    # toward phase targets. Keep base as the *weakest* settings.
+    #
+    # For summary recall + RRU "站点距离" robustness, use semantic-invariant perturbations.
+    # Allow global flips/rotation (affine) but avoid PatchOps/crops to keep object counts stable.
+    bypass_prob: 1.0
     ops:
-      - name: rotate
-        params: { max_deg: 2.0, prob: 0.12 }
+      - name: hflip
+        params: { prob: 0.0 }
+      - name: vflip
+        params: { prob: 0.0 }
       - name: resize_by_scale
-        params: { lo: 0.98, hi: 1.02, align_multiple: 32, prob: 0.20 }
-      - name: auto_contrast
-        params: { cutoff: 1, prob: 0.08 }
+        params: { lo: 0.99, hi: 1.01, align_multiple: 32, prob: 0.0 }
+      # Rotate late so its affine flush is handled by expand_to_fit_affine (no cropping).
+      - name: rotate
+        params: { max_deg: 0.0, prob: 0.0 }
       - name: color_jitter
-        params: { brightness: [0.95, 1.05], contrast: [0.95, 1.05], saturation: [0.95, 1.05], prob: 0.15 }
+        params: { brightness: [0.98, 1.02], contrast: [0.98, 1.02], saturation: [0.98, 1.02], prob: 0.0 }
       - name: sharpness
-        params: { factor: [0.9, 1.1], prob: 0.10 }
+        params: { factor: [0.97, 1.03], prob: 0.0 }
       - name: gamma
-        params: { gamma: [0.97, 1.03], prob: 0.08 }
-  augmentation_curriculum: null
+        params: { gamma: [0.98, 1.02], prob: 0.0 }
+      - name: hsv
+        params: { hue_delta_deg: [-2, 2], sat: [0.98, 1.02], val: [0.98, 1.02], prob: 0.0 }
+      - name: clahe
+        params: { clip_limit: 1.5, tile_grid_size: [8, 8], prob: 0.0 }
+      - name: auto_contrast
+        params: { cutoff: 0, prob: 0.0 }
+      - name: expand_to_fit_affine
+        params:
+          multiple: 32
+          # Default is 921600 (~960x960). For 1024 training + rotation, keep a higher cap
+          # to avoid unconditional downscale during expansion.
+          max_pixels: 2097152
+  augmentation_curriculum:
+    phases:
+      # Warmup: keep samples clean while GRPO stabilizes format/header/JSON parsing.
+      - until_percent: 2
+        bypass_prob: 1.0
+        ops: {}
+      # Start adding light global perturbations (no semantic change).
+      - until_percent: 10
+        bypass_prob: 0.75
+        ops:
+          hflip: { prob: 0.10 }
+          vflip: { prob: 0.02 }
+          rotate: { prob: 0.06, max_deg: 6.0 }
+          resize_by_scale: { prob: 0.10, lo: 0.99, hi: 1.01 }
+          color_jitter: { prob: 0.06, brightness: [0.98, 1.02], contrast: [0.98, 1.02], saturation: [0.98, 1.02] }
+      - until_percent: 25
+        bypass_prob: 0.55
+        ops:
+          hflip: { prob: 0.15 }
+          vflip: { prob: 0.03 }
+          rotate: { prob: 0.10, max_deg: 10.0 }
+          resize_by_scale: { prob: 0.18, lo: 0.98, hi: 1.02 }
+          color_jitter: { prob: 0.12, brightness: [0.96, 1.04], contrast: [0.96, 1.04], saturation: [0.96, 1.04] }
+          gamma: { prob: 0.06, gamma: [0.97, 1.03] }
+      - until_percent: 50
+        bypass_prob: 0.35
+        ops:
+          hflip: { prob: 0.20 }
+          vflip: { prob: 0.04 }
+          rotate: { prob: 0.16, max_deg: 12.0 }
+          resize_by_scale: { prob: 0.24, lo: 0.98, hi: 1.03 }
+          color_jitter: { prob: 0.16, brightness: [0.94, 1.06], contrast: [0.94, 1.06], saturation: [0.94, 1.06] }
+          gamma: { prob: 0.10, gamma: [0.95, 1.05] }
+          sharpness: { prob: 0.08, factor: [0.95, 1.08] }
+          auto_contrast: { prob: 0.03, cutoff: 0 }
+      - until_percent: 75
+        bypass_prob: 0.25
+        ops:
+          hflip: { prob: 0.23 }
+          vflip: { prob: 0.05 }
+          rotate: { prob: 0.22, max_deg: 15.0 }
+          resize_by_scale: { prob: 0.28, lo: 0.97, hi: 1.03 }
+          color_jitter: { prob: 0.20, brightness: [0.92, 1.08], contrast: [0.92, 1.08], saturation: [0.92, 1.08] }
+          gamma: { prob: 0.14, gamma: [0.94, 1.06] }
+          hsv: { prob: 0.05, hue_delta_deg: [-3, 3], sat: [0.97, 1.03], val: [0.97, 1.03] }
+          sharpness: { prob: 0.10, factor: [0.93, 1.10] }
+          clahe: { prob: 0.03, clip_limit: 1.5 }
+          auto_contrast: { prob: 0.04, cutoff: 0 }
+      # Final: moderate-strength global perturbations to improve robustness without breaking OCR.
+      - until_percent: 100
+        bypass_prob: 0.20
+        ops:
+          hflip: { prob: 0.25 }
+          vflip: { prob: 0.06 }
+          rotate: { prob: 0.28, max_deg: 17.0 }
+          resize_by_scale: { prob: 0.30, lo: 0.97, hi: 1.03 }
+          color_jitter: { prob: 0.22, brightness: [0.92, 1.08], contrast: [0.92, 1.08], saturation: [0.92, 1.08] }
+          gamma: { prob: 0.16, gamma: [0.92, 1.08] }
+          hsv: { prob: 0.08, hue_delta_deg: [-4, 4], sat: [0.96, 1.04], val: [0.96, 1.04] }
+          sharpness: { prob: 0.12, factor: [0.92, 1.12] }
+          clahe: { prob: 0.05, clip_limit: 1.5 }
+          auto_contrast: { prob: 0.05, cutoff: 0 }
 
 rlhf:
   rlhf_type: grpo
-  reward_funcs: [summary.format, summary.header, summary.strict, summary.parse, summary.no_dup_keys, summary.dataset, summary.category_recall, summary.content_structured_tversky, summary.text_bbu, summary.notes_bbu, summary.group_stats_presence]
-  reward_weights: [1.0, 2.0, 2.0, 1.5, 2.0, 0.5, 0.5, 1.8, 0.8, 0.3, 0.2]
+  # Recall-first: keep strict format + domain/task header rewards; emphasize structured recall.
+  # Drop BBU-only OCR/notes rewards since we prefer not to penalize extra items and don't
+  # prioritize BBU notes; rely on structured recall + category recall instead.
+  reward_funcs:
+    [
+      summary.format,
+      summary.header,
+      summary.strict,
+      summary.parse,
+      summary.no_dup_keys,
+      summary.dataset,
+      summary.category_recall,
+      summary.content_structured_tversky,
+      summary.group_stats_presence,
+    ]
+  reward_weights: [1.0, 2.0, 2.0, 1.5, 2.0, 0.5, 2.0, 3.0, 0.2]
   beta: 0.04
   advantage_estimator: reinforce_plus_plus
   scale_rewards: batch
-  kl_in_reward: true
+  kl_in_reward: false
   num_generations: 4
   temperature: 0.7
   repetition_penalty: 1.05
   max_completion_length: 2048
   truncation_strategy: delete
-  generation_batch_size: 24
+  generation_batch_size: 32
   dynamic_sample: true
   max_resample_times: 1
   use_vllm: true
   vllm_mode: colocate
-  vllm_gpu_memory_utilization: 0.50
+  vllm_gpu_memory_utilization: 0.6
   vllm_enable_prefix_caching: true
   vllm_enable_lora: false
 

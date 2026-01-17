@@ -9,9 +9,9 @@ set -euo pipefail
 
 # Fixed configuration
 # CHECKPOINT="output/11-30/summary_merged/epoch_10-lr_2e-4-bs_32-res_1024"
-CHECKPOINT="output/1-8/grpo_summary_merged/checkpoint-800"
+CHECKPOINT="output/1-16/grpo_summary_1024/ckpt_1880"
 BASE_INPUT_DIR="group_data/scene_2.0_order"
-BASE_OUTPUT_DIR="output_post/stage_a_grpo-1-8"
+BASE_OUTPUT_DIR="output_post/stage_a_grpo-1-17"
 
 # Environment variable overrides (lowercase)
 # BBU接地线检查
@@ -22,8 +22,8 @@ BASE_OUTPUT_DIR="output_post/stage_a_grpo-1-8"
 # output_dir=... (override output directory)
 # checkpoint=... (override checkpoint path)
 
-DATASET="${dataset:-bbu}"
-MISSION="${mission:-}"
+DATASET="${DATASET:-bbu}"
+MISSION="${MISSION:-}"
 if [[ -n "${checkpoint:-}" ]]; then
   CHECKPOINT="${checkpoint}"
 fi
@@ -96,7 +96,7 @@ EXCEL_PATH="${excel_path:-output_post/BBU_scene_latest.xlsx}"  # Excel file path
 # and reduce batch size to keep GPU memory roughly stable.
 if [[ "${DATASET}" == "rru" ]]; then
   if [[ -z "${max_pixels:-}" ]]; then
-    MAX_PIXELS="4194304"  # ~2048x2048
+    MAX_PIXELS="1048576"  # ~2048x2048
   fi
 fi
 
