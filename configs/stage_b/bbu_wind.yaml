@@ -1,12 +1,12 @@
 stage_a_paths:
-  - output_post/stage_a_grpo-1-4/挡风板安装检查_stage_a.jsonl
+  - output_post/stage_a_grpo-1-17/挡风板安装检查_stage_a.jsonl
 seed: 17
 max_token_length: 120000000
 default_domain: bbu
 jump_reflection: true
 
 model:
-  model_name_or_path: output/1-1/grpo-merged/checkpoint-500
+  model_name_or_path: model_cache/models/Qwen/Qwen3-VL-8B-Instruct
   torch_dtype: bfloat16
   device_map: auto
   attn_implementation: flash_attention_2
@@ -18,7 +18,7 @@ guidance:
 
 output:
   root: output_post/stage_b
-  run_name: 1-4-grpo-ckpt500
+  run_name: 1-17-grpo-8B
 
 rule_search:
   proposer_prompt_path: configs/prompts/stage_b_rule_search_proposer_prompt.txt
