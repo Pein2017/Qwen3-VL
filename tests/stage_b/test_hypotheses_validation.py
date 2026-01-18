@@ -76,7 +76,9 @@ def _mk_bundle(*, mission: str, ticket_key: str) -> ExperienceBundle:
         winning_candidate=0,
         guidance_step=1,
     )
-    return ExperienceBundle(mission=mission, records=(record,), reflection_cycle=0, guidance_step=1)
+    return ExperienceBundle(
+        mission=mission, records=(record,), reflection_cycle=0, guidance_step=1
+    )
 
 
 def _engine(tmp_path: Path) -> ReflectionEngine:
@@ -105,17 +107,37 @@ def _engine(tmp_path: Path) -> ReflectionEngine:
     "payload, error_match",
     [
         (
-            {"hypotheses": [{"text": "若无法确认则通过。", "falsifier": "x", "evidence": ["g1::pass"]}]},
+            {
+                "hypotheses": [
+                    {
+                        "text": "若无法确认则通过。",
+                        "falsifier": "x",
+                        "evidence": ["g1::pass"],
+                    }
+                ]
+            },
             "conflicts with scaffold",
         ),
         (
-            {"hypotheses": [{"text": "出现第三态时通过。", "falsifier": "x", "evidence": ["g1::pass"]}]},
+            {
+                "hypotheses": [
+                    {
+                        "text": "出现第三态时通过。",
+                        "falsifier": "x",
+                        "evidence": ["g1::pass"],
+                    }
+                ]
+            },
             "forbidden",
         ),
         (
             {
                 "hypotheses": [
-                    {"text": "出现第三态时通过。", "falsifier": "x", "evidence": ["g1::pass"]}
+                    {
+                        "text": "出现第三态时通过。",
+                        "falsifier": "x",
+                        "evidence": ["g1::pass"],
+                    }
                 ]
             },
             "forbidden",
@@ -133,11 +155,23 @@ def _engine(tmp_path: Path) -> ReflectionEngine:
             "affirmative",
         ),
         (
-            {"hypotheses": [{"text": "若能确认则通过。", "falsifier": "x", "evidence": []}]},
+            {
+                "hypotheses": [
+                    {"text": "若能确认则通过。", "falsifier": "x", "evidence": []}
+                ]
+            },
             "evidence",
         ),
         (
-            {"hypotheses": [{"text": "若能确认则通过。", "falsifier": "x", "evidence": ["UNKNOWN"]}]},
+            {
+                "hypotheses": [
+                    {
+                        "text": "若能确认则通过。",
+                        "falsifier": "x",
+                        "evidence": ["UNKNOWN"],
+                    }
+                ]
+            },
             "learnable",
         ),
         (

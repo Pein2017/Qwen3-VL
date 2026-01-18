@@ -8,10 +8,7 @@ def test_reject_stage_a_object_chain_without_multiplier():
 
 
 def test_reject_stage_a_two_line_json_summary_leak():
-    leaked = (
-        "<DOMAIN=BBU>, <TASK=SUMMARY>\n"
-        "{\"统计\":[]}"
-    )
+    leaked = '<DOMAIN=BBU>, <TASK=SUMMARY>\n{"统计":[]}'
     assert ReflectionEngine._reject_experience_text(leaked) is True
 
 

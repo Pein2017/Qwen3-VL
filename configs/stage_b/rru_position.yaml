@@ -24,7 +24,7 @@ guidance:
 
 output:
   root: output_post/stage_b
-  run_name: 1-17-grpo-ckpt500
+  run_name: v2
 
 rule_search:
   proposer_prompt_path: configs/prompts/stage_b_rule_search_proposer_prompt.txt

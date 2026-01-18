@@ -237,7 +237,10 @@ def _load_generation_engine(config: StageBConfig) -> GenerationEngine:
                 device_map,
             )
     attn_impl = config.model.attn_implementation
-    if attn_impl is not None and attn_impl.lower() in ("flash_attn", "flash_attention_2"):
+    if attn_impl is not None and attn_impl.lower() in (
+        "flash_attn",
+        "flash_attention_2",
+    ):
         attn_impl = "flash_attention_2"
     model_config = ModelLoadConfig(
         model_name_or_path=config.model.model_name_or_path,
@@ -515,7 +518,12 @@ def _distributed_rollout_payloads(
         if error_flag:
             raise RuntimeError("rollout aborted due to upstream error")
 
-        if should_log_progress and updated_keys and gt_by_key is not None and stats_by_key is not None:
+        if (
+            should_log_progress
+            and updated_keys
+            and gt_by_key is not None
+            and stats_by_key is not None
+        ):
             for ticket_key in updated_keys:
                 gt_label = gt_by_key.get(ticket_key)
                 if not gt_label:
@@ -787,7 +795,9 @@ def _propose_rules(
 
     model_max_length = _safe_model_max_length(tokenizer)
     if prompt_tokens is not None and model_max_length is not None:
-        total_requested = prompt_tokens + int(config.rule_search.proposer_max_new_tokens)
+        total_requested = prompt_tokens + int(
+            config.rule_search.proposer_max_new_tokens
+        )
         if prompt_tokens > model_max_length:
             logger.error(
                 "rule_search proposer prompt exceeds model_max_length: prompt=%d model_max_length=%d",
@@ -853,7 +863,9 @@ def _propose_rules(
     operations_raw = payload.get("operations")
     rules_raw = payload.get("rules")
     if operations_raw is not None and rules_raw is not None:
-        raise ValueError("rule_search proposer must not return both operations and rules")
+        raise ValueError(
+            "rule_search proposer must not return both operations and rules"
+        )
     if operations_raw is None:
         if not isinstance(rules_raw, Sequence) or isinstance(rules_raw, (str, bytes)):
             raise ValueError("rules must be a list")
@@ -981,7 +993,9 @@ def _load_rejected_candidate_ids(rule_candidates_path: Path) -> set[str]:
     rejected: set[str] = set()
     for row in _load_jsonl(rule_candidates_path):
         decision = str(row.get("decision") or "").strip().lower()
-        candidate_id = str(row.get("candidate_id") or row.get("signature") or "").strip()
+        candidate_id = str(
+            row.get("candidate_id") or row.get("signature") or ""
+        ).strip()
         if candidate_id and decision in {"rejected", "rejected_eval_veto"}:
             rejected.add(candidate_id)
             if ":" not in candidate_id:
@@ -1104,7 +1118,9 @@ def _run_rule_search_mission(
     )
     rejected_candidate_ids_raw = cast(
         object,
-        broadcast_object(rejected_candidate_ids_raw if is_main_process() else None, src=0),
+        broadcast_object(
+            rejected_candidate_ids_raw if is_main_process() else None, src=0
+        ),
     )
     if isinstance(rejected_candidate_ids_raw, set):
         rejected_candidate_ids = [str(item) for item in rejected_candidate_ids_raw]
@@ -1126,14 +1142,18 @@ def _run_rule_search_mission(
     # ------------------------------------------------------------------
     if jump_reflection:
         if config.rule_search.train_sampler is None:
-            raise ValueError("rule_search.train_sampler is required in rule_search mode")
+            raise ValueError(
+                "rule_search.train_sampler is required in rule_search mode"
+            )
 
         train_sampler = RolloutSampler(
             engine=engine, config=config.rule_search.train_sampler
         )
 
         distill_cfg = config.stage_b_distillation
-        distill_requested = bool(distill_cfg and distill_cfg.enabled and distill_cfg.distill_size)
+        distill_requested = bool(
+            distill_cfg and distill_cfg.enabled and distill_cfg.distill_size
+        )
 
         current_guidance = None
         if is_main_process():
@@ -1169,7 +1189,9 @@ def _run_rule_search_mission(
             per_rank_batch_size=config.runner.per_rank_rollout_batch_size,
             progress_logging_steps=config.runner.logging_steps,
             progress_label="jump_reflection baseline",
-            progress_gt_by_ticket_key={ticket.key: ticket.label for ticket in tickets_filtered}
+            progress_gt_by_ticket_key={
+                ticket.key: ticket.label for ticket in tickets_filtered
+            }
             if is_main_process()
             else None,
             progress_jsonl_path=baseline_metrics_steps_path,
@@ -1253,7 +1275,10 @@ def _run_rule_search_mission(
                 for key, entry in sorted(
                     stats_by_ticket.items(), key=lambda item: item[0]
                 ):
-                    if entry.majority_pred is None or entry.majority_pred == entry.gt_label:
+                    if (
+                        entry.majority_pred is None
+                        or entry.majority_pred == entry.gt_label
+                    ):
                         continue
                     ticket = ticket_by_key.get(key)
                     fh.write(
@@ -1267,7 +1292,9 @@ def _run_rule_search_mission(
                                 "agreement": entry.agreement,
                                 "hard_wrong": entry.hard_wrong,
                                 "verdict_samples": list(entry.verdict_samples),
-                                "reason_samples": reason_samples_by_ticket.get(key, [])[:3],
+                                "reason_samples": reason_samples_by_ticket.get(key, [])[
+                                    :3
+                                ],
                                 "per_image": (
                                     ticket.summaries.as_dict() if ticket else None
                                 ),
@@ -1280,13 +1307,17 @@ def _run_rule_search_mission(
             # Write split error buckets for quick analysis:
             # - NP: GT pass but predicted fail (false block)
             # - NG: GT fail but predicted pass (false release)
-            with baseline_np_cases_path.open("w", encoding="utf-8") as fh_np, baseline_ng_cases_path.open(
-                "w", encoding="utf-8"
-            ) as fh_ng:
+            with (
+                baseline_np_cases_path.open("w", encoding="utf-8") as fh_np,
+                baseline_ng_cases_path.open("w", encoding="utf-8") as fh_ng,
+            ):
                 for key, entry in sorted(
                     stats_by_ticket.items(), key=lambda item: item[0]
                 ):
-                    if entry.majority_pred is None or entry.majority_pred == entry.gt_label:
+                    if (
+                        entry.majority_pred is None
+                        or entry.majority_pred == entry.gt_label
+                    ):
                         continue
                     ticket = ticket_by_key.get(key)
                     row = {
@@ -1382,14 +1413,12 @@ def _run_rule_search_mission(
     train_sampler = RolloutSampler(
         engine=engine, config=config.rule_search.train_sampler
     )
-    eval_sampler = RolloutSampler(
-        engine=engine, config=config.rule_search.eval_sampler
-    )
+    eval_sampler = RolloutSampler(engine=engine, config=config.rule_search.eval_sampler)
     # mining_sampler is optional; if not provided, use train_sampler
-    mining_sampler_cfg = config.rule_search.mining_sampler or config.rule_search.train_sampler
-    mining_sampler = RolloutSampler(
-        engine=engine, config=mining_sampler_cfg
+    mining_sampler_cfg = (
+        config.rule_search.mining_sampler or config.rule_search.train_sampler
     )
+    mining_sampler = RolloutSampler(engine=engine, config=mining_sampler_cfg)
 
     patience = int(config.rule_search.early_stop.patience)
     no_gain_rounds = 0
@@ -1486,7 +1515,9 @@ def _run_rule_search_mission(
         base_reasons_eval: dict[str, list[str | None]] = {}
         if is_main_process():
             available_keys = set(base_payloads_train.keys())
-            missing_keys = {ticket.key for ticket in train_pool_tickets} - available_keys
+            missing_keys = {
+                ticket.key for ticket in train_pool_tickets
+            } - available_keys
             if dropped_train or missing_keys:
                 dropped_all = set(dropped_train) | missing_keys
                 logger.info(
@@ -1520,7 +1551,9 @@ def _run_rule_search_mission(
                     gt_label=ticket.label,
                     verdicts=verdicts,
                 )
-            base_metrics = compute_rule_search_metrics(list(base_stats_by_ticket.values()))
+            base_metrics = compute_rule_search_metrics(
+                list(base_stats_by_ticket.values())
+            )
             stats_for_proposer = dict(base_stats_by_ticket)
             for row in _hard_case_rows(
                 base_stats_by_ticket,
@@ -1620,12 +1653,12 @@ def _run_rule_search_mission(
 
         if not candidates:
             if is_main_process():
-                    logger.info(
-                        "rule_search iteration %d: no candidates proposed (reflect=%d, train_pool=%d); treating as no-gain",
-                        iteration,
-                        len(reflect_keys),
-                        len(train_pool_tickets),
-                    )
+                logger.info(
+                    "rule_search iteration %d: no candidates proposed (reflect=%d, train_pool=%d); treating as no-gain",
+                    iteration,
+                    len(reflect_keys),
+                    len(train_pool_tickets),
+                )
             no_gain_rounds = broadcast_int(
                 no_gain_rounds + 1 if is_main_process() else 0, src=0
             )
@@ -1652,7 +1685,9 @@ def _run_rule_search_mission(
             )
         eval_tickets_filtered = cast(
             list[GroupTicket] | None,
-            broadcast_object(eval_tickets_filtered if is_main_process() else None, src=0),
+            broadcast_object(
+                eval_tickets_filtered if is_main_process() else None, src=0
+            ),
         )
         if eval_tickets_filtered is None:
             eval_tickets_filtered = []
@@ -1683,7 +1718,9 @@ def _run_rule_search_mission(
                     gt_label=ticket.label,
                     verdicts=verdicts,
                 )
-            base_eval_metrics = compute_rule_search_metrics(list(base_eval_stats.values()))
+            base_eval_metrics = compute_rule_search_metrics(
+                list(base_eval_stats.values())
+            )
 
         base_eval_metrics = cast(
             EvalMetrics | None,
@@ -1900,7 +1937,8 @@ def _run_rule_search_mission(
                         rer_threshold=config.rule_search.gate.min_relative_error_reduction,
                         bootstrap_iterations=config.rule_search.gate.bootstrap.iterations,
                         bootstrap_min_prob=config.rule_search.gate.bootstrap.min_prob,
-                        bootstrap_seed=config.rule_search.gate.bootstrap.seed + iteration,
+                        bootstrap_seed=config.rule_search.gate.bootstrap.seed
+                        + iteration,
                         max_changed_fraction=config.rule_search.gate.max_changed_fraction,
                     )
                     cand_metrics = compute_rule_search_metrics(
@@ -1930,7 +1968,9 @@ def _run_rule_search_mission(
                         acc_improved = None
                         fp_increase_ok = None
 
-            passed = bool(broadcast_int(1 if passed and is_main_process() else 0, src=0))
+            passed = bool(
+                broadcast_int(1 if passed and is_main_process() else 0, src=0)
+            )
 
             eval_metrics = None
             eval_acc_drop = None
@@ -1962,7 +2002,9 @@ def _run_rule_search_mission(
                             gt_label=ticket.label,
                             verdicts=verdicts,
                         )
-                    eval_metrics = compute_rule_search_metrics(list(cand_eval_stats.values()))
+                    eval_metrics = compute_rule_search_metrics(
+                        list(cand_eval_stats.values())
+                    )
                     eval_acc_drop = float(base_eval_metrics.acc) - float(
                         eval_metrics.acc
                     )
@@ -1982,18 +2024,18 @@ def _run_rule_search_mission(
                     {
                         "timestamp": time.time(),
                         "iteration": iteration,
-                    "candidate_index": cand_idx,
-                    "mission": mission,
-                    "signature": cand_sig,
-                    "candidate_id": candidate_id,
-                    "op": op,
-                    "target_signature": target_signature or None,
-                    "target_signatures": target_signatures or None,
-                    "decision": decision,
-                    "regression_count": len(regressions),
-                    "regressions": regressions,
-                },
-            )
+                        "candidate_index": cand_idx,
+                        "mission": mission,
+                        "signature": cand_sig,
+                        "candidate_id": candidate_id,
+                        "op": op,
+                        "target_signature": target_signature or None,
+                        "target_signatures": target_signatures or None,
+                        "decision": decision,
+                        "regression_count": len(regressions),
+                        "regressions": regressions,
+                    },
+                )
             _append_jsonl(
                 rule_candidates_path,
                 {
@@ -2020,7 +2062,9 @@ def _run_rule_search_mission(
                     "eval_base_acc": (
                         base_eval_metrics.acc if base_eval_metrics else None
                     ),
-                    "eval_base_false_release_rate": _false_release_rate(base_eval_metrics),
+                    "eval_base_false_release_rate": _false_release_rate(
+                        base_eval_metrics
+                    ),
                     "eval_base_false_block_rate": _false_block_rate(base_eval_metrics),
                     "eval_cand_acc": eval_metrics.acc if eval_metrics else None,
                     "eval_cand_false_release_rate": _false_release_rate(eval_metrics),
@@ -2033,7 +2077,9 @@ def _run_rule_search_mission(
                 if (
                     best_candidate is None
                     or gate_stats.relative_error_reduction
-                    > _safe_float(best_candidate.get("relative_error_reduction", -1.0), -1.0)
+                    > _safe_float(
+                        best_candidate.get("relative_error_reduction", -1.0), -1.0
+                    )
                 ):
                     best_candidate = cast(
                         RuleCandidatePayload,
@@ -2041,7 +2087,8 @@ def _run_rule_search_mission(
                             "candidate_index": cand_idx,
                             "signature": cand_sig,
                             "text": cand_text or None,
-                            "rationale": str(cand.get("rationale") or "").strip() or None,
+                            "rationale": str(cand.get("rationale") or "").strip()
+                            or None,
                             "gate": gate_stats,
                             "cand_metrics": cand_metrics,
                             "eval_metrics": eval_metrics,
@@ -2097,9 +2144,9 @@ def _run_rule_search_mission(
                 accepted_key = new_keys[0] if new_keys else None
                 gate: object = best_candidate.get("gate")
                 cand_metrics = best_candidate.get("cand_metrics")
-                assert isinstance(
-                    cand_metrics, EvalMetrics
-                ), "cand_metrics must be EvalMetrics"
+                assert isinstance(cand_metrics, EvalMetrics), (
+                    "cand_metrics must be EvalMetrics"
+                )
                 _append_jsonl(
                     benchmarks_path,
                     {
@@ -2118,8 +2165,12 @@ def _run_rule_search_mission(
                         "base_acc": base_metrics.acc if base_metrics else None,
                         "base_fn_rate": base_metrics.fn_rate if base_metrics else None,
                         "base_fp_rate": base_metrics.fp_rate if base_metrics else None,
-                        "base_fn_over_tp": base_metrics.fn_over_tp if base_metrics else None,
-                        "base_fp_over_tp": base_metrics.fp_over_tp if base_metrics else None,
+                        "base_fn_over_tp": base_metrics.fn_over_tp
+                        if base_metrics
+                        else None,
+                        "base_fp_over_tp": base_metrics.fp_over_tp
+                        if base_metrics
+                        else None,
                         "after_acc": cand_metrics.acc,
                         "after_fn_rate": cand_metrics.fn_rate,
                         "after_fp_rate": cand_metrics.fp_rate,
@@ -2131,7 +2182,13 @@ def _run_rule_search_mission(
                         ),
                         "eval_after_acc": (
                             (best_eval_metrics.acc if best_eval_metrics else None)
-                            if (best_eval_metrics := cast(EvalMetrics | None, best_candidate.get("eval_metrics"))) is not None
+                            if (
+                                best_eval_metrics := cast(
+                                    EvalMetrics | None,
+                                    best_candidate.get("eval_metrics"),
+                                )
+                            )
+                            is not None
                             else None
                         ),
                         "eval_acc_drop": best_candidate.get("eval_acc_drop"),
@@ -2167,7 +2224,9 @@ def _run_rule_search_mission(
             break
 
         distill_cfg = config.stage_b_distillation
-        distill_requested = bool(distill_cfg and distill_cfg.enabled and distill_cfg.distill_size)
+        distill_requested = bool(
+            distill_cfg and distill_cfg.enabled and distill_cfg.distill_size
+        )
         if distill_requested:
             distill_guidance = None
             if is_main_process():
@@ -2256,9 +2315,7 @@ def _run_rule_search_distill(
         samples_per_decode=1,
         max_prompt_tokens=train_sampler_cfg.max_prompt_tokens,
     )
-    distill_sampler = RolloutSampler(
-        engine=engine, config=distill_sampler_cfg
-    )
+    distill_sampler = RolloutSampler(engine=engine, config=distill_sampler_cfg)
 
     distill_seed = (
         int(distill_cfg.distill_seed)
@@ -2309,9 +2366,10 @@ def _run_rule_search_distill(
             trajectories = distill_payloads.get(ticket.key, [])
             parsed = None
             for candidate in trajectories:
-                if bool(getattr(candidate, "format_ok", False)) and getattr(
-                    candidate, "verdict", None
-                ) is not None:
+                if (
+                    bool(getattr(candidate, "format_ok", False))
+                    and getattr(candidate, "verdict", None) is not None
+                ):
                     parsed = candidate
                     break
             if parsed is None:
@@ -2664,7 +2722,9 @@ def run_all(
     excluded_ticket_keys = _load_excluded_ticket_keys(config)
     if excluded_ticket_keys:
         before = len(tickets)
-        tickets = [ticket for ticket in tickets if ticket.key not in excluded_ticket_keys]
+        tickets = [
+            ticket for ticket in tickets if ticket.key not in excluded_ticket_keys
+        ]
         dropped = before - len(tickets)
         if is_main_process():
             logger.info(

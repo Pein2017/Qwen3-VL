@@ -114,7 +114,9 @@ class ReflectionConfig:
     max_reflection_length: int = 4096
     token_budget: int = 4096  # Token budget for reflection prompt packing
     retry_budget_per_group_per_epoch: int = 2
-    max_calls_per_epoch: int | None = None  # decision+ops calls per epoch; None = unlimited
+    max_calls_per_epoch: int | None = (
+        None  # decision+ops calls per epoch; None = unlimited
+    )
 
 
 @dataclass(frozen=True)
@@ -134,7 +136,9 @@ class RuleSearchGateConfig:
     max_changed_fraction: float = 0.05
     # Allowable fp_rate increase for lifecycle operations.
     max_fp_rate_increase: float = 0.01
-    bootstrap: RuleSearchBootstrapConfig = field(default_factory=RuleSearchBootstrapConfig)
+    bootstrap: RuleSearchBootstrapConfig = field(
+        default_factory=RuleSearchBootstrapConfig
+    )
 
 
 @dataclass(frozen=True)
@@ -160,7 +164,9 @@ class RuleSearchConfig:
     train_with_replacement: bool = False
     eval_pool_size: int = 128
     gate: RuleSearchGateConfig = field(default_factory=RuleSearchGateConfig)
-    early_stop: RuleSearchEarlyStopConfig = field(default_factory=RuleSearchEarlyStopConfig)
+    early_stop: RuleSearchEarlyStopConfig = field(
+        default_factory=RuleSearchEarlyStopConfig
+    )
     train_sampler: SamplerConfig | None = None
     eval_sampler: SamplerConfig | None = None
     mining_sampler: SamplerConfig | None = None
@@ -458,13 +464,17 @@ def _load_reflection(section: Mapping[str, object]) -> ReflectionConfig:
     )
     if hypothesis_min_unique_ticket_keys <= 0:
         raise ValueError("reflection.hypothesis_min_unique_ticket_keys must be > 0")
-    temperature = _coerce_float(section.get("temperature", 1.0), field="reflection.temperature")
+    temperature = _coerce_float(
+        section.get("temperature", 1.0), field="reflection.temperature"
+    )
     top_p = _coerce_float(section.get("top_p", 0.95), field="reflection.top_p")
     repetition_penalty = _coerce_float(
         section.get("repetition_penalty", 1.0),
         field="reflection.repetition_penalty",
     )
-    max_new_tokens = _coerce_int(section.get("max_new_tokens", 1024), field="reflection.max_new_tokens")
+    max_new_tokens = _coerce_int(
+        section.get("max_new_tokens", 1024), field="reflection.max_new_tokens"
+    )
     max_reflection_length = _coerce_int(
         section.get("max_reflection_length", 4096),
         field="reflection.max_reflection_length",
@@ -524,7 +534,9 @@ def _load_seed(raw_config: Mapping[str, object]) -> int:
 
 
 def _load_runner(section: Mapping[str, object]) -> RunnerConfig:
-    epochs = _coerce_int(_require(section, "epochs", "runner section"), field="runner.epochs")
+    epochs = _coerce_int(
+        _require(section, "epochs", "runner section"), field="runner.epochs"
+    )
     if epochs <= 0:
         raise ValueError("runner.epochs must be > 0")
     per_rank_rollout_batch_size = _coerce_int(
@@ -533,7 +545,9 @@ def _load_runner(section: Mapping[str, object]) -> RunnerConfig:
     )
     if per_rank_rollout_batch_size <= 0:
         raise ValueError("runner.per_rank_rollout_batch_size must be > 0")
-    logging_steps = _coerce_int(section.get("logging_steps", 256), field="runner.logging_steps")
+    logging_steps = _coerce_int(
+        section.get("logging_steps", 256), field="runner.logging_steps"
+    )
     if logging_steps <= 0:
         raise ValueError("runner.logging_steps must be > 0")
     return RunnerConfig(
@@ -553,12 +567,16 @@ def _load_distillation(
     log_chatml_path = Path(str(raw_path)) if raw_path else None
     distill_size = section.get("distill_size")
     if distill_size is not None:
-        distill_size = _coerce_int(distill_size, field="stage_b_distillation.distill_size")
+        distill_size = _coerce_int(
+            distill_size, field="stage_b_distillation.distill_size"
+        )
         if distill_size <= 0:
             raise ValueError("stage_b_distillation.distill_size must be > 0")
     distill_seed = section.get("distill_seed")
     if distill_seed is not None:
-        distill_seed = _coerce_int(distill_seed, field="stage_b_distillation.distill_seed")
+        distill_seed = _coerce_int(
+            distill_seed, field="stage_b_distillation.distill_seed"
+        )
     distill_temperature = section.get("distill_temperature")
     if distill_temperature is not None:
         distill_temperature = _coerce_float(
@@ -573,7 +591,9 @@ def _load_distillation(
     )
 
 
-def _load_ticket_filter(section: Mapping[str, object] | None) -> TicketFilterConfig | None:
+def _load_ticket_filter(
+    section: Mapping[str, object] | None,
+) -> TicketFilterConfig | None:
     if section is None:
         return None
     if not isinstance(section, Mapping):
@@ -587,9 +607,13 @@ def _load_ticket_filter(section: Mapping[str, object] | None) -> TicketFilterCon
     if raw_keys is None:
         exclude_ticket_keys = ()
     elif isinstance(raw_keys, (list, tuple)):
-        exclude_ticket_keys = tuple(str(item).strip() for item in raw_keys if str(item).strip())
+        exclude_ticket_keys = tuple(
+            str(item).strip() for item in raw_keys if str(item).strip()
+        )
     else:
-        raise TypeError("ticket_filter.exclude_ticket_keys must be a sequence when provided")
+        raise TypeError(
+            "ticket_filter.exclude_ticket_keys must be a sequence when provided"
+        )
 
     if exclude_ticket_keys_path is None and not exclude_ticket_keys:
         return None
@@ -649,7 +673,11 @@ def load_stage_b_config(path: str | Path) -> StageBConfig:
             raise TypeError("rule_search must be a mapping")
 
         proposer_prompt_path = Path(
-            str(_require(rule_search_section, "proposer_prompt_path", "rule_search section"))
+            str(
+                _require(
+                    rule_search_section, "proposer_prompt_path", "rule_search section"
+                )
+            )
         )
         proposer_temperature = _coerce_float(
             rule_search_section.get("proposer_temperature", 0.4),
@@ -704,7 +732,7 @@ def load_stage_b_config(path: str | Path) -> StageBConfig:
             raise ValueError(
                 "rule_search legacy keys are no longer supported: "
                 f"{', '.join(sorted(legacy_present))}. "
-            "Use train_pool_* and eval_pool_size instead."
+                "Use train_pool_* and eval_pool_size instead."
             )
 
         train_pool_size = _coerce_int(
@@ -715,7 +743,9 @@ def load_stage_b_config(path: str | Path) -> StageBConfig:
             raise ValueError("rule_search.train_pool_size must be > 0")
         train_pool_fraction_raw = rule_search_section.get("train_pool_fraction")
         train_pool_fraction = (
-            _coerce_float(train_pool_fraction_raw, field="rule_search.train_pool_fraction")
+            _coerce_float(
+                train_pool_fraction_raw, field="rule_search.train_pool_fraction"
+            )
             if train_pool_fraction_raw is not None
             else None
         )
@@ -741,7 +771,9 @@ def load_stage_b_config(path: str | Path) -> StageBConfig:
             field="rule_search.gate.min_relative_error_reduction",
         )
         if min_rer < 0.0:
-            raise ValueError("rule_search.gate.min_relative_error_reduction must be >= 0")
+            raise ValueError(
+                "rule_search.gate.min_relative_error_reduction must be >= 0"
+            )
         max_changed_fraction = gate_section.get("max_changed_fraction")
         if max_changed_fraction is None and "min_changed_fraction" in gate_section:
             max_changed_fraction = gate_section.get("min_changed_fraction")
@@ -760,7 +792,9 @@ def load_stage_b_config(path: str | Path) -> StageBConfig:
 
         bootstrap_section = gate_section.get("bootstrap") or {}
         if not isinstance(bootstrap_section, Mapping):
-            raise TypeError("rule_search.gate.bootstrap must be a mapping when provided")
+            raise TypeError(
+                "rule_search.gate.bootstrap must be a mapping when provided"
+            )
         bootstrap_iterations = _coerce_int(
             bootstrap_section.get("iterations", 200),
             field="rule_search.gate.bootstrap.iterations",
@@ -807,7 +841,10 @@ def load_stage_b_config(path: str | Path) -> StageBConfig:
             _require(rule_search_section, "eval_sampler", "rule_search section")
         )
         mining_sampler = None
-        if "mining_sampler" in rule_search_section and rule_search_section["mining_sampler"] is not None:
+        if (
+            "mining_sampler" in rule_search_section
+            and rule_search_section["mining_sampler"] is not None
+        ):
             mining_sampler = _load_sampler(
                 _require(rule_search_section, "mining_sampler", "rule_search section")
             )

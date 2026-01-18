@@ -96,11 +96,32 @@ def _summary_entries(obj: UnstructuredMapping) -> list[UnstructuredMapping]:
     return []
 
 
+def _entry_category(entry: UnstructuredMapping) -> str | None:
+    """Extract a hashable category name from a Stage-A `统计` entry.
+
+    Stage-A is expected to emit `{"类别": "<name>", ...}` but we have seen rare
+    corrupted rows where `类别` becomes a mapping like `{"地线夹": 1}`.
+    For Stage-B prompting we only need a stable category identifier; for such
+    mapping-shaped values we conservatively take the first string key when the
+    mapping has exactly one key, otherwise we drop it.
+    """
+
+    raw = entry.get("类别")
+    if isinstance(raw, str):
+        cat = raw.strip()
+        return cat or None
+    if isinstance(raw, dict):
+        keys = [k for k in raw.keys() if isinstance(k, str) and k.strip()]
+        if len(keys) == 1:
+            return keys[0].strip()
+    return None
+
+
 def _entry_by_category(
     entries: list[UnstructuredMapping], category: str
 ) -> UnstructuredMapping | None:
     for entry in entries:
-        if entry.get("类别") == category:
+        if _entry_category(entry) == category:
             return entry
     return None
 
@@ -267,7 +288,8 @@ def _aggregate_rru_install_points(stage_a_summaries: dict[str, str]) -> str:
             if not distances:
                 continue
             entries = _summary_entries(summary_obj)
-            categories = {entry.get("类别") for entry in entries}
+            categories = {_entry_category(entry) for entry in entries}
+            categories.discard(None)
             has_rru = "RRU设备" in categories
             has_fix = "紧固件" in categories or "固定件" in categories
             for dist in distances:
@@ -317,7 +339,8 @@ def _aggregate_rru_position_points(stage_a_summaries: dict[str, str]) -> str:
             if not distances:
                 continue
             entries = _summary_entries(summary_obj)
-            categories = {entry.get("类别") for entry in entries}
+            categories = {_entry_category(entry) for entry in entries}
+            categories.discard(None)
             has_ground_terminal = "RRU接地端" in categories
             has_ground = "接地线" in categories
             has_label = _summary_has_label_text(summary_obj)
@@ -351,9 +374,7 @@ def _aggregate_rru_position_points(stage_a_summaries: dict[str, str]) -> str:
             entry = stats.setdefault(
                 dist, {"ground_terminal": False, "ground_label": False}
             )
-            entry["ground_terminal"] = (
-                entry["ground_terminal"] or has_ground_terminal
-            )
+            entry["ground_terminal"] = entry["ground_terminal"] or has_ground_terminal
             entry["ground_label"] = entry["ground_label"] or has_ground_label
 
     if not stats:
