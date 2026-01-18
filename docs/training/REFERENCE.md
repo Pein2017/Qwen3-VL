@@ -259,9 +259,10 @@ Keep configs under `configs/` in sync with the playbook when making behavioral c
 ### Summary GRPO Post-Training (Format Stabilization)
 - **Config example**: `configs/train/grpo/summary_2048.yaml` (uses `configs/fusion/variants/bbu_rru_summary_grpo_2048.yaml`; edit checkpoint + epochs/LRs).
 - **Base template**: `configs/train/grpo/summary_1024.yaml` (self-contained preset defaults; clone and edit per-run knobs). `configs/train/grpo/summary_2048.yaml` applies the semantic-invariant augmentation policy.
+  - **Field/schema stabilization preset** (recommended when Stage-A emits a category but misses keys like `电线/捆扎`, `光纤/套管保护`, `光纤/弯曲半径`): `configs/train/grpo/summary_1024_attr_key_recall.yaml` (adds `summary.attr_key_recall` to reward emitting the same `(类别, 属性名)` keys as the reference, and `summary.attr_path_recall` to reward stable nested paths like `捆扎/整齐` for emitted categories).
   - **Required knobs**:
     - `rlhf.rlhf_type=grpo`
-    - `rlhf.reward_funcs=[summary.format, summary.header, summary.strict, summary.parse, summary.no_dup_keys, summary.dataset, summary.category_recall, summary.content_structured_tversky, summary.text_bbu, summary.notes_bbu, summary.group_stats_presence]`
+    - `rlhf.reward_funcs=[summary.format, summary.header, summary.strict, summary.parse, summary.no_dup_keys, summary.dataset, summary.category_recall, summary.attr_path_recall (optional), summary.attr_key_recall (optional), summary.content_structured_tversky, summary.group_stats_presence]`
     - `rlhf.num_generations` (must divide `rlhf.generation_batch_size`)
     - `rlhf.max_completion_length=2048`
     - `training.effective_batch_size` (backward global batch), `rlhf.generation_batch_size` (rollout global trajectories)

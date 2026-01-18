@@ -17,6 +17,8 @@ from .dense.rewards import (
     DenseParseSchemaStrictReward,
 )
 from .summary.rewards import (
+    SummaryAttrKeyRecallReward,
+    SummaryAttrPathRecallReward,
     SummaryCategoryF1Reward,
     SummaryCategoryRecallReward,
     SummaryContentEqReward,
@@ -45,6 +47,8 @@ SUMMARY_REWARD_REGISTRY: dict[str, type[ORM]] = {
     "summary.no_dup_keys": SummaryNoDupKeysPenalty,
     "summary.dataset": SummaryDatasetReward,
     "summary.category_recall": SummaryCategoryRecallReward,
+    "summary.attr_key_recall": SummaryAttrKeyRecallReward,
+    "summary.attr_path_recall": SummaryAttrPathRecallReward,
     "summary.category_f1": SummaryCategoryF1Reward,
     "summary.content_eq": SummaryContentEqReward,
     "summary.content_f1": SummaryContentF1Reward,

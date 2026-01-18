@@ -67,7 +67,9 @@ class SummaryReward(ORM):
 
         if completions is None:
             completions_iterable: Iterable[Any] = []
-        elif isinstance(completions, Iterable) and not isinstance(completions, (str, bytes)):
+        elif isinstance(completions, Iterable) and not isinstance(
+            completions, (str, bytes)
+        ):
             completions_iterable = cast(Iterable[Any], completions)
         else:
             completions_iterable = [completions]
@@ -78,12 +80,15 @@ class SummaryReward(ORM):
         rewards: list[float] = [0.0] * len(completions_list)
         for idx, (completion, meta) in enumerate(zip(completions_list, metas)):
             # Mixed-mode safety: summary rewards MUST no-op on dense samples.
-            if isinstance(meta, Mapping) and cast(Mapping[str, object], meta).get(
-                "_fusion_mode"
-            ) == "dense":
+            if (
+                isinstance(meta, Mapping)
+                and cast(Mapping[str, object], meta).get("_fusion_mode") == "dense"
+            ):
                 rewards[idx] = 0.0
                 continue
-            rewards[idx] = float(self.score(SummarySample.from_inputs(completion, meta)))
+            rewards[idx] = float(
+                self.score(SummarySample.from_inputs(completion, meta))
+            )
 
         return rewards
 
@@ -231,6 +236,176 @@ def _extract_categories(obj: UnstructuredMapping) -> set[str]:
     return cats
 
 
+def _extract_category_attr_pairs(
+    obj: UnstructuredMapping,
+    *,
+    exclude_text: bool,
+) -> set[tuple[str, str]]:
+    """Extract (category, attr) pairs from `统计`.
+
+    This intentionally ignores values/counts and focuses on whether a summary
+    consistently emits expected attribute *keys* for each category.
+
+    Motivation: Stage-B relies on the presence of certain fields (e.g. 电线/捆扎,
+    光纤/套管保护, 光纤/弯曲半径). In practice, models may correctly identify the
+    category but omit the attribute key. Key-level recall rewards stabilize the
+    JSON schema without requiring perfect count calibration.
+    """
+
+    obj = require_mapping(obj, context="summary.category_attr_pairs")
+    stats = obj.get("统计")
+    if not isinstance(stats, list):
+        return set()
+
+    pairs: set[tuple[str, str]] = set()
+    for entry in cast(list[object], stats):
+        if not isinstance(entry, dict):
+            continue
+        entry_map = cast(dict[str, object], entry)
+        cat_raw = entry_map.get("类别")
+        if not isinstance(cat_raw, str):
+            continue
+        cat = cat_raw.strip()
+        if not cat:
+            continue
+
+        for attr_raw in entry_map.keys():
+            if attr_raw == "类别":
+                continue
+            attr = str(attr_raw).strip()
+            if not attr:
+                continue
+            if exclude_text and attr == "文本":
+                continue
+            pairs.add((cat, attr))
+
+    return pairs
+
+
+def _extract_category_attr_map(
+    obj: UnstructuredMapping,
+    *,
+    exclude_text: bool,
+) -> dict[str, set[str]]:
+    """Extract per-category attribute key sets from `统计`.
+
+    Returns a mapping: {类别: {属性名, ...}}.
+
+    This is similar to `_extract_category_attr_pairs`, but preserves per-category
+    grouping so missing a key on a small category (e.g. 电线/捆扎) isn't drowned
+    out by categories with many attributes.
+    """
+
+    obj = require_mapping(obj, context="summary.category_attr_map")
+    stats = obj.get("统计")
+    if not isinstance(stats, list):
+        return {}
+
+    by_cat: dict[str, set[str]] = {}
+    for entry in cast(list[object], stats):
+        if not isinstance(entry, dict):
+            continue
+        entry_map = cast(dict[str, object], entry)
+        cat_raw = entry_map.get("类别")
+        if not isinstance(cat_raw, str):
+            continue
+        cat = cat_raw.strip()
+        if not cat:
+            continue
+
+        attrs = by_cat.setdefault(cat, set())
+        for attr_raw in entry_map.keys():
+            if attr_raw == "类别":
+                continue
+            attr = str(attr_raw).strip()
+            if not attr:
+                continue
+            if exclude_text and attr == "文本":
+                continue
+            attrs.add(attr)
+
+    return by_cat
+
+
+_STABLE_ATTR_PATH_PARENTS: frozenset[str] = frozenset(
+    {
+        # Minimum stable parent keys required by OpenSpec change
+        # `2026-01-18-add-summary-attr-path-reward`.
+        "捆扎",
+        "可见性",
+        "符合性",
+        "弯曲半径",
+        # Expanded based on Stage-A rollout observations:
+        # - Cable-related: encourage the model to not emit a category without
+        #   also stating key protection/installation attributes used downstream.
+        "套管保护",
+        "保护",
+        "保护措施",
+        # - Installation/location semantics are stable and frequently used.
+        "位置",
+        "安装状态",
+        "方向",
+        "安装方向",
+        # Additional stable keys can be added here as we observe schema drift.
+    }
+)
+
+_MAX_DYNAMIC_CHILD_KEY_LENGTH = 32
+
+
+def _is_excluded_attr_path_child_key(key: str) -> bool:
+    """Return True if the nested child key is considered dynamic/OCR-like noise."""
+
+    stripped = (key or "").strip()
+    if not stripped:
+        return True
+    # Required by spec: digit-only keys (e.g. "263") are never required.
+    if stripped.isdigit():
+        return True
+    # Spec says SHOULD exclude: key=value-style child keys.
+    if "=" in stripped:
+        return True
+    # Spec says SHOULD exclude: very long keys (OCR-like or concatenated tokens).
+    if len(stripped) > _MAX_DYNAMIC_CHILD_KEY_LENGTH:
+        return True
+    return False
+
+
+def _extract_category_attr_path_map(
+    counts: Mapping[Tuple[str, ...], int],
+) -> dict[str, set[str]]:
+    """Extract {类别: {父key/子key, ...}} from fact-count keys.
+
+    We intentionally build this on top of `extract_summary_fact_counts` so we
+    reuse the existing summary parsing/normalization logic and avoid duplicating
+    JSON walking code.
+    """
+
+    by_cat: dict[str, set[str]] = {}
+    for key in counts.keys():
+        # Fact keys for nested attrs look like: ("统计", category, attr, value_str)
+        if len(key) != 4 or key[0] != "统计":
+            continue
+        _, category, parent, child = key
+
+        cat = str(category).strip()
+        if not cat:
+            continue
+        parent_key = str(parent).strip()
+        if not parent_key or parent_key == "文本":
+            # Required by spec: ignore 文本 entirely (free text / OCR-like).
+            continue
+        if parent_key not in _STABLE_ATTR_PATH_PARENTS:
+            continue
+        child_key = str(child).strip()
+        if _is_excluded_attr_path_child_key(child_key):
+            continue
+
+        by_cat.setdefault(cat, set()).add(f"{parent_key}/{child_key}")
+
+    return by_cat
+
+
 class SummaryCategoryRecallReward(SummaryReward):
     """Recall-only category coverage: |pred∩ref| / |ref| over `统计[*].类别`."""
 
@@ -259,6 +434,121 @@ class SummaryCategoryRecallReward(SummaryReward):
         if not ref_cats:
             return 1.0 if not pred_cats else 0.0
         return float(len(pred_cats & ref_cats) / len(ref_cats))
+
+
+class SummaryAttrKeyRecallReward(SummaryReward):
+    """Recall-only attribute key coverage over (类别, 属性名) pairs.
+
+    This ignores counts/values (handled by structured content rewards) and
+    focuses on schema stability: does the model output the expected attribute
+    keys for each category that appears in the reference summary?
+    """
+
+    def score(self, sample: SummarySample) -> float:
+        if sample.is_irrelevant:
+            return 0.0
+
+        pred_json = sample.pred_json()
+        if not isinstance(pred_json, dict):
+            return 0.0
+        pred_json = cast(UnstructuredMapping, pred_json)
+
+        summary_ref = sample.summary_ref
+        if not summary_ref or summary_ref == _IRRELEVANT_TEXT:
+            return 0.0
+        ref_json = sample.ref_json()
+        if not isinstance(ref_json, dict):
+            return 0.0
+        ref_json = cast(UnstructuredMapping, ref_json)
+
+        _, pred_ok = normalize_summary(pred_json, sample.domain_token)
+        _, ref_ok = normalize_summary(ref_json, sample.domain_token)
+        if not (pred_ok and ref_ok):
+            return 0.0
+
+        # Per-category averaging makes this reward sensitive to dropping a key on
+        # a small-but-important category (e.g. 电线/捆扎) instead of being diluted
+        # by categories that carry many attributes.
+        pred_map = _extract_category_attr_map(pred_json, exclude_text=True)
+        ref_map = _extract_category_attr_map(ref_json, exclude_text=True)
+        if not ref_map:
+            return 1.0 if not pred_map else 0.0
+
+        scores: list[float] = []
+        for cat, ref_attrs in ref_map.items():
+            if not ref_attrs:
+                continue
+            pred_attrs = pred_map.get(cat, set())
+            scores.append(len(pred_attrs & ref_attrs) / len(ref_attrs))
+        if not scores:
+            # Edge case: reference only had excluded attrs (e.g. 文本-only categories).
+            return 1.0 if not pred_map else 0.0
+        return float(sum(scores) / len(scores))
+
+
+class SummaryAttrPathRecallReward(SummaryReward):
+    """Recall-only nested attribute path coverage (depth=2) for stable parent keys.
+
+    This is a schema-completeness signal: for categories the model *chooses* to
+    emit (and that exist in the reference), does it also emit the expected
+    nested attribute paths like `捆扎/整齐`, `可见性/完整`, `符合性/符合`?
+
+    Scoring categories are `pred_categories ∩ ref_categories` (omitting a
+    category is not directly penalized by this reward).
+    """
+
+    def score(self, sample: SummarySample) -> float:
+        if sample.is_irrelevant:
+            return 0.0
+
+        pred_json = sample.pred_json()
+        if not isinstance(pred_json, dict):
+            return 0.0
+        pred_json = cast(UnstructuredMapping, pred_json)
+
+        summary_ref = sample.summary_ref
+        if not summary_ref or summary_ref == _IRRELEVANT_TEXT:
+            return 0.0
+
+        ref_json = sample.ref_json()
+        if not isinstance(ref_json, dict):
+            return 0.0
+        ref_json = cast(UnstructuredMapping, ref_json)
+
+        _, pred_ok = normalize_summary(pred_json, sample.domain_token)
+        _, ref_ok = normalize_summary(ref_json, sample.domain_token)
+        if not (pred_ok and ref_ok):
+            return 0.0
+
+        pred_cats = _extract_categories(pred_json)
+        ref_cats = _extract_categories(ref_json)
+        scoring_cats = pred_cats & ref_cats
+        if not scoring_cats:
+            # Neutral: this reward is only about completeness for emitted
+            # categories that also exist in the reference.
+            return 0.0
+
+        pred_counts = extract_summary_fact_counts(pred_json, sample.domain_token)
+        ref_counts = extract_summary_fact_counts(ref_json, sample.domain_token)
+        if pred_counts is None or ref_counts is None:
+            return 0.0
+
+        pred_paths = _extract_category_attr_path_map(pred_counts)
+        ref_paths = _extract_category_attr_path_map(ref_counts)
+
+        scores: list[float] = []
+        for cat in scoring_cats:
+            required = ref_paths.get(cat, set())
+            if not required:
+                # If the reference doesn't contain any stable nested paths for this
+                # category, this reward should be neutral for it.
+                continue
+            predicted = pred_paths.get(cat, set())
+            scores.append(len(predicted & required) / len(required))
+
+        if not scores:
+            return 0.0
+        return float(sum(scores) / len(scores))
 
 
 class SummaryStructuredContentTverskyReward(SummaryReward):
@@ -540,6 +830,7 @@ class SummaryGroupStatsPresenceReward(SummaryReward):
 
 
 __all__ = [
+    "SummaryAttrKeyRecallReward",
     "SummaryCategoryF1Reward",
     "SummaryCategoryRecallReward",
     "SummaryContentEqReward",
