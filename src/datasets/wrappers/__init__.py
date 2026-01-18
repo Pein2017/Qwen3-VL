@@ -83,9 +83,7 @@ def _parse_prompt(value: Any, *, field_name: str) -> str | None:
     raise TypeError(f"{field_name} must be a string if provided")
 
 
-def _parse_mode(
-    value: Any, *, field_name: str
-) -> Literal["dense", "summary"] | None:
+def _parse_mode(value: Any, *, field_name: str) -> Literal["dense", "summary"] | None:
     if value is None:
         return None
     if isinstance(value, bool):

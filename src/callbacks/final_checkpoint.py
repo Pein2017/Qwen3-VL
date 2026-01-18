@@ -38,7 +38,9 @@ class _FinalCheckpointCallback(TrainerCallback):
     """Callback bound to a specific trainer instance to enforce the final save."""
 
     def __init__(self, owner: "FinalCheckpointMixin") -> None:
-        self._owner_ref: weakref.ReferenceType[FinalCheckpointMixin] = weakref.ref(owner)
+        self._owner_ref: weakref.ReferenceType[FinalCheckpointMixin] = weakref.ref(
+            owner
+        )
 
     @override
     def on_train_end(
@@ -59,7 +61,9 @@ class FinalCheckpointMixin:
     """Adds a post-training checkpoint check without modifying upstream trainers."""
 
     _final_checkpoint_callback_attr: str = "_final_checkpoint_callback"
-    _final_checkpoint_wrapper_cache: dict[type["_TrainerBase"], type["_TrainerBase"]] = {}
+    _final_checkpoint_wrapper_cache: dict[
+        type["_TrainerBase"], type["_TrainerBase"]
+    ] = {}
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         super().__init__(*args, **kwargs)  # type: ignore[misc]
@@ -125,20 +129,22 @@ class FinalCheckpointMixin:
 
         if self._final_checkpoint_exists(output_dir, global_step):
             if should_save_rank:
-                logger.debug("Final checkpoint already present for step %s", global_step)
+                logger.debug(
+                    "Final checkpoint already present for step %s", global_step
+                )
             return
 
         checkpoint_dir = self._format_checkpoint_dir(output_dir, global_step)
         if should_save_rank:
-            logger.info("No checkpoint found at %s; forcing a final save.", checkpoint_dir)
+            logger.info(
+                "No checkpoint found at %s; forcing a final save.", checkpoint_dir
+            )
 
         # Keep the forced checkpoint independent from Trainer-managed rotation so
         # save_total_limit continues to govern only the regular save cadence.
         original_limit = getattr(args, "save_total_limit", None)
         limit_suspended = (
-            should_save_rank
-            and isinstance(original_limit, int)
-            and original_limit > 0
+            should_save_rank and isinstance(original_limit, int) and original_limit > 0
         )
         if limit_suspended:
             try:

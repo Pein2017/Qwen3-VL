@@ -177,7 +177,9 @@ def configure_logging(
 
 
 def set_global_debug(debug: bool = True) -> None:
-    configure_logging(level=_global_log_level, debug=debug, verbose=is_verbose_enabled())
+    configure_logging(
+        level=_global_log_level, debug=debug, verbose=is_verbose_enabled()
+    )
 
 
 def is_global_debug_enabled() -> bool:

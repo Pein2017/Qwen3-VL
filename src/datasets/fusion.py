@@ -70,9 +70,7 @@ def _dataset_entry_key(entry: FusionEntry, *, field_name: str) -> str:
     return str(name)
 
 
-def _ensure_entry_list(
-    value: object, *, field_name: str
-) -> list[FusionEntry]:
+def _ensure_entry_list(value: object, *, field_name: str) -> list[FusionEntry]:
     if value is None:
         return []
     if not isinstance(value, Iterable) or isinstance(value, (str, bytes)):
@@ -134,9 +132,7 @@ def _merge_fusion_payload(base: FusionEntry, override: FusionEntry) -> FusionPay
     merged = dict(base)
     for key, value in override.items():
         if key in {"targets", "sources"}:
-            merged[key] = _merge_dataset_entries(
-                merged.get(key), value, field_name=key
-            )
+            merged[key] = _merge_dataset_entries(merged.get(key), value, field_name=key)
             continue
         existing = merged.get(key)
         if isinstance(value, Mapping) and isinstance(existing, Mapping):
@@ -157,7 +153,9 @@ def _load_fusion_with_extends(
 
     payload = _load_fusion_payload(abs_path)
     if "inherit" in payload:
-        raise ValueError("Fusion config inheritance uses 'extends'; 'inherit' is not supported.")
+        raise ValueError(
+            "Fusion config inheritance uses 'extends'; 'inherit' is not supported."
+        )
     extends_value = payload.pop("extends", None)
 
     merged_base: FusionPayload = {}
@@ -241,7 +239,9 @@ class FusionConfig:
                 raise ValueError("dataset entry must include 'dataset' or 'name'")
         dataset_key = str(dataset_key_raw)
         name_override_raw = entry.get("name")
-        name_override = str(name_override_raw) if name_override_raw is not None else None
+        name_override = (
+            str(name_override_raw) if name_override_raw is not None else None
+        )
         params = entry.get("params")
         if "summary_label_grouping" in entry:
             raise ValueError(
@@ -354,7 +354,9 @@ class FusionConfig:
         names: set[str] = set()
         for spec in list(targets) + list(sources):
             if spec.name in names:
-                raise ValueError(f"Duplicate dataset name in fusion config: {spec.name}")
+                raise ValueError(
+                    f"Duplicate dataset name in fusion config: {spec.name}"
+                )
             names.add(spec.name)
 
 
@@ -381,7 +383,9 @@ def _compute_target_quotas(
     return quotas, None
 
 
-def _annotate_record(record: ConversationRecord, spec: DatasetSpec) -> ConversationRecord:
+def _annotate_record(
+    record: ConversationRecord, spec: DatasetSpec
+) -> ConversationRecord:
     annotated = cast(ConversationRecord, dict(copy.deepcopy(record)))
     metadata = annotated.get("metadata") or {}
     if not isinstance(metadata, dict):
@@ -468,11 +472,19 @@ def build_fused_jsonl(
         else:
             sampled_indices = indices[:]
             extra_needed = quota - len(pool)
-            sampled_indices.extend(rng_local.randrange(len(pool)) for _ in range(extra_needed))
+            sampled_indices.extend(
+                rng_local.randrange(len(pool)) for _ in range(extra_needed)
+            )
         for idx in sampled_indices:
             fused.append(_annotate_record(pool[idx], target))
 
-    total_target = len([rec for rec in fused if rec.get("metadata", {}).get("_fusion_domain") == "target"])
+    total_target = len(
+        [
+            rec
+            for rec in fused
+            if rec.get("metadata", {}).get("_fusion_domain") == "target"
+        ]
+    )
 
     for source in config.sources:
         quota = round(source.ratio * total_target)
@@ -491,7 +503,9 @@ def build_fused_jsonl(
         )
         sampled_records: list[ConversationRecord]
         if source.sample_without_replacement and not fell_back:
-            sampled_records = [copy.deepcopy(source_records[i]) for i in sampled_indices]
+            sampled_records = [
+                copy.deepcopy(source_records[i]) for i in sampled_indices
+            ]
         else:
             sampled_records = _sample_with_replacement(
                 source_records, quota, rng_source

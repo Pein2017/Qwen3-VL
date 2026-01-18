@@ -57,7 +57,13 @@ def _dumps_with_types(payload: object) -> tuple[str, list[tuple[int, int, int]]]
                 key_text = json.dumps(k, ensure_ascii=False)
                 write(key_text, TokenType.FORMAT)
                 write(": ", TokenType.FORMAT)
-                next_ctx = "desc" if k == "desc" else "coord" if k in {"bbox_2d", "poly", "line", "line_points"} else "format"
+                next_ctx = (
+                    "desc"
+                    if k == "desc"
+                    else "coord"
+                    if k in {"bbox_2d", "poly", "line", "line_points"}
+                    else "format"
+                )
                 emit_value(v, next_ctx)
             write("}", TokenType.FORMAT)
         else:
