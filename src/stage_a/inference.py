@@ -66,9 +66,7 @@ def _build_generation_options(gen_config: UnstructuredMapping) -> GenerationOpti
             )
         raw["stop"] = stop_tokens
     else:
-        raise TypeError(
-            "stage_a.gen_config.stop must be a sequence of strings or null"
-        )
+        raise TypeError("stage_a.gen_config.stop must be a sequence of strings or null")
     raw.setdefault(
         "decode",
         {
@@ -84,6 +82,7 @@ def _safe_pbar_update(pbar: object, delta: int) -> None:
     update = getattr(pbar, "update", None)
     if callable(update):
         update(delta)
+
 
 # Supported image extensions
 SUPPORTED_EXT = {".jpg", ".jpeg", ".png"}
@@ -267,8 +266,6 @@ def sanitize_summary_by_dataset(text: str, dataset: str) -> str:
     return sanitize_single_image_summary(text)
 
 
-
-
 def _trim_trailing_eos_pad(
     gen_ids: torch.Tensor, eos_id: int | None, pad_id: int | None
 ) -> torch.Tensor:
@@ -447,7 +444,9 @@ def load_generation_engine(
         model_name_or_path=checkpoint,
         torch_dtype="bfloat16" if torch.cuda.is_available() else "float32",
         device=device,
-        attn_implementation="flash_attention_2" if torch.cuda.is_available() else "eager",
+        attn_implementation="flash_attention_2"
+        if torch.cuda.is_available()
+        else "eager",
         trust_remote_code=True,
         variant="vlm",
     )
@@ -804,9 +803,7 @@ def run_stage_a_inference(
             sampled_groups, sampling_stats = _sample_groups(
                 groups, pass_group_number, fail_group_number, sample_seed
             )
-        sampled_groups = cast(
-            list[GroupInfo] | None, broadcast_object(sampled_groups)
-        )
+        sampled_groups = cast(list[GroupInfo] | None, broadcast_object(sampled_groups))
         groups = sampled_groups if sampled_groups is not None else []
     else:
         groups, sampling_stats = _sample_groups(

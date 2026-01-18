@@ -172,9 +172,10 @@ def postprocess_jsonl(input_path: Path, output_path: Path, dataset: str) -> None
         output_target = output_path
 
     try:
-        with input_path.open("r", encoding="utf-8") as f_in, output_target.open(
-            "w", encoding="utf-8"
-        ) as f_out:
+        with (
+            input_path.open("r", encoding="utf-8") as f_in,
+            output_target.open("w", encoding="utf-8") as f_out,
+        ):
             for line in f_in:
                 line = line.strip()
                 if not line:

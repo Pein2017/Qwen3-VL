@@ -37,7 +37,11 @@ from ..preprocess import (
     configure_vlm_processor,
     normalize_tokenizer,
 )
-from ..stop_policy import merge_eos_token_ids, normalize_stop_options, truncate_text_at_stops
+from ..stop_policy import (
+    merge_eos_token_ids,
+    normalize_stop_options,
+    truncate_text_at_stops,
+)
 
 logger = get_logger(__name__)
 
@@ -53,7 +57,9 @@ def _detect_variant(model_path: str) -> str:
     try:
         cfg = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
     except Exception as exc:  # noqa: BLE001
-        raise RuntimeError(f"Failed to read model config at {model_path}: {exc}") from exc
+        raise RuntimeError(
+            f"Failed to read model config at {model_path}: {exc}"
+        ) from exc
     model_type = getattr(cfg, "model_type", "") or ""
     has_vision = getattr(cfg, "vision_config", None) is not None
     if "vl" in str(model_type).lower() or has_vision:
@@ -178,7 +184,9 @@ class HfBackend:
         if not requests:
             return []
         prompts = [
-            render_chat_template(self.tokenizer, req.messages, options=self.chat_template)
+            render_chat_template(
+                self.tokenizer, req.messages, options=self.chat_template
+            )
             for req in requests
         ]
         encoded = self.tokenizer(
@@ -273,9 +281,7 @@ class HfBackend:
             prompt_tokens = prompt_lengths[idx] if idx < len(prompt_lengths) else None
             completion_tokens = int(generated_ids_full.numel())
             total_tokens = (
-                prompt_tokens + completion_tokens
-                if prompt_tokens is not None
-                else None
+                prompt_tokens + completion_tokens if prompt_tokens is not None else None
             )
             results.append(
                 GenerationResult(
@@ -421,9 +427,7 @@ class HfBackend:
             prompt_tokens = prompt_lengths[idx] if idx < len(prompt_lengths) else None
             completion_tokens = int(generated_ids_full.numel())
             total_tokens = (
-                prompt_tokens + completion_tokens
-                if prompt_tokens is not None
-                else None
+                prompt_tokens + completion_tokens if prompt_tokens is not None else None
             )
             results.append(
                 GenerationResult(
@@ -540,7 +544,9 @@ def load_hf_backend(
         processor = AutoProcessor.from_pretrained(
             config.model_name_or_path, trust_remote_code=config.trust_remote_code
         )
-        tokenizer = getattr(processor, "tokenizer", None) or AutoTokenizer.from_pretrained(
+        tokenizer = getattr(
+            processor, "tokenizer", None
+        ) or AutoTokenizer.from_pretrained(
             config.model_name_or_path,
             trust_remote_code=config.trust_remote_code,
         )
