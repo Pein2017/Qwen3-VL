@@ -1,6 +1,6 @@
 stage_a_paths:
   # - output_post/stage_a/挡风板安装检查_stage_a.jsonl
-  - output_post/stage_a_grpo-1-17/BBU线缆布放要求_stage_a.jsonl
+  - output_post/1-18/grpo_summary_1024_attr_key_recall/BBU线缆布放要求_stage_a.jsonl
   # - output_post/stage_a/BBU安装方式检查（正装）_stage_a.jsonl
 
 ticket_filter:
@@ -14,7 +14,7 @@ default_domain: bbu
 jump_reflection: true
 
 model:
-  model_name_or_path: output/1-16/grpo_summary_1024/ckpt_1880
+  model_name_or_path: output/1-18/grpo_summary_1024_attr_key_recall/ckpt_1300
   torch_dtype: bfloat16
   device_map: auto
   attn_implementation: flash_attention_2  # Enable Flash Attention 2 for faster inference (requires flash-attn package)
@@ -27,7 +27,7 @@ guidance:
 
 output:
   root: output_post/stage_b
-  run_name: v2
+  run_name: grpo_summary_1024_attr_key_recall
 
 rule_search:
   proposer_prompt_path: configs/prompts/stage_b_rule_search_proposer_prompt.txt
