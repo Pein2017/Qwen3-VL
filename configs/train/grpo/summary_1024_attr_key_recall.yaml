@@ -5,11 +5,15 @@ extends:
 # Motivation: Stage-B relies on stable per-category attribute keys (e.g. 电线/捆扎),
 # but Stage-A sometimes emits the category while omitting the attribute key.
 
+model:
+  model: output/1-18/grpo_summary_1024_attr_key_recall/ckpt_1300
+
 training:
   # Avoid clobbering prior runs; edit per-run as needed.
-  output_dir: ./output/exp/grpo_summary_1024_attr_key_recall
-  logging_dir: ./tb/exp/grpo_summary_1024_attr_key_recall
+  output_dir: ./output/1-18/grpo_summary_1024_attr_key_recall
+  logging_dir: ./tb/1-18/grpo_summary_1024_attr_key_recall
   run_name: attr_key_recall
+  num_train_epochs: 4
 
 rlhf:
   # Adds `summary.attr_key_recall` to explicitly reward emitting the same (类别, 属性名)

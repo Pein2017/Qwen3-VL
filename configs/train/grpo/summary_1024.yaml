@@ -4,7 +4,7 @@ extends:
 global_max_length: 12000
 
 model:
-  model: output/1-13/new_schema-4B-dense-v2/ckpt-9900
+  model: output/1-13/new_schema-4B-dense-grpo_summary_1024_attr_key_recall/ckpt-9900
 
 tuner:
   train_type: lora
@@ -31,8 +31,8 @@ training:
   learning_rate: 5.0e-6
   vit_lr: 1.0e-8
   aligner_lr: 1.0e-6
-  per_device_train_batch_size: 1
-  per_device_eval_batch_size: 2
+  per_device_train_batch_size: 2
+  per_device_eval_batch_size: 4
   effective_batch_size: 32
   metric_for_best_model: eval_reward
   logging_steps: 10

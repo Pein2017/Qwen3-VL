@@ -23,8 +23,8 @@ model:
   model: output/1-13/dense-non-center_schema/checkpoint-2680
 
 training:
-  output_dir: ./output/1-13/new_schema-4B-dense-v2
-  logging_dir: ./tb/1-13/new_schema-4B-dense-v2
+  output_dir: ./output/1-13/new_schema-4B-dense-grpo_summary_1024_attr_key_recall
+  logging_dir: ./tb/1-13/new_schema-4B-dense-grpo_summary_1024_attr_key_recall
   run_name: continued-epoch_20-eff_bs_32-llm_lr-2e-5-vit_lr-1e-5-alinger_lr-5e-5-fastaug
   num_train_epochs: 20
   per_device_train_batch_size: 2
