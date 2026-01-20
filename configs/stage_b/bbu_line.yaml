@@ -93,7 +93,7 @@ reflection:
 runner:
   # rule_search iterations; early_stop will end earlier if no-gain.
   epochs: 20
-  per_rank_rollout_batch_size: 32
+  per_rank_rollout_batch_size: 16
   logging_steps: 64
 
 stage_b_distillation:

@@ -11,7 +11,7 @@ from __future__ import annotations
 import os
 from collections.abc import Sequence
 from datetime import timedelta
-from typing import TypeVar
+from typing import Any, TypeVar, cast
 
 import torch
 import torch.distributed as dist
@@ -26,18 +26,18 @@ T = TypeVar("T")
 #
 # To keep object collectives off-GPU, we create a dedicated GLOO process group and
 # use it for object ops while leaving the default group (often NCCL) untouched.
-_OBJECT_COLLECTIVE_GROUP: object | None = None
-_OBJECT_COLLECTIVE_GROUP_READY: bool = False
-_OBJECT_COLLECTIVE_TIMEOUT_SECONDS: int = 1800
+_object_collective_group: dist.ProcessGroup | None = None
+_object_collective_group_ready: bool = False
+_object_collective_timeout_seconds: int = 1800
 
 
 def _ensure_object_collective_group() -> None:
     """Ensure we have a CPU (gloo) group for object collectives when using NCCL."""
 
-    global _OBJECT_COLLECTIVE_GROUP
-    global _OBJECT_COLLECTIVE_GROUP_READY
+    global _object_collective_group
+    global _object_collective_group_ready
 
-    if _OBJECT_COLLECTIVE_GROUP_READY:
+    if _object_collective_group_ready:
         return
 
     # Don't mark as ready until the default group exists. This keeps the helper
@@ -45,7 +45,7 @@ def _ensure_object_collective_group() -> None:
     if not is_distributed_initialized() or get_world_size() <= 1:
         return
 
-    _OBJECT_COLLECTIVE_GROUP_READY = True
+    _object_collective_group_ready = True
 
     # Only needed when default backend is NCCL.
     try:
@@ -53,17 +53,20 @@ def _ensure_object_collective_group() -> None:
     except Exception:  # noqa: BLE001
         backend = None
     if backend != "nccl":
-        _OBJECT_COLLECTIVE_GROUP = None
+        _object_collective_group = None
         return
 
     try:
-        _OBJECT_COLLECTIVE_GROUP = dist.new_group(
-            backend="gloo",
-            timeout=timedelta(seconds=int(_OBJECT_COLLECTIVE_TIMEOUT_SECONDS)),
+        _object_collective_group = cast(
+            dist.ProcessGroup,
+            cast(Any, dist).new_group(
+                backend="gloo",
+                timeout=timedelta(seconds=int(_object_collective_timeout_seconds)),
+            ),
         )
     except Exception:  # noqa: BLE001
         # Fall back to default group if gloo group creation fails.
-        _OBJECT_COLLECTIVE_GROUP = None
+        _object_collective_group = None
 
 
 def is_distributed_available() -> bool:
@@ -120,14 +123,14 @@ def init_distributed(*, timeout_seconds: int = 1800) -> None:
         torch.cuda.set_device(get_local_rank())
 
     # Keep object collectives off-GPU when the default backend is NCCL.
-    global _OBJECT_COLLECTIVE_TIMEOUT_SECONDS
-    _OBJECT_COLLECTIVE_TIMEOUT_SECONDS = int(timeout_seconds)
+    global _object_collective_timeout_seconds
+    _object_collective_timeout_seconds = int(timeout_seconds)
     _ensure_object_collective_group()
 
 
 def barrier() -> None:
     if is_distributed_initialized() and get_world_size() > 1:
-        dist.barrier()
+        cast(Any, dist).barrier()
 
 
 def broadcast_object(obj: T | None, *, src: int = 0) -> T:
@@ -137,7 +140,7 @@ def broadcast_object(obj: T | None, *, src: int = 0) -> T:
         return obj
 
     _ensure_object_collective_group()
-    group = _OBJECT_COLLECTIVE_GROUP
+    group = _object_collective_group
 
     payload: list[T | None]
     if get_rank() == src:
@@ -156,7 +159,7 @@ def gather_object(obj: T, *, dst: int = 0) -> list[T] | None:
         return [obj]
 
     _ensure_object_collective_group()
-    group = _OBJECT_COLLECTIVE_GROUP
+    group = _object_collective_group
     world_size = (
         dist.get_world_size(group=group) if group is not None else get_world_size()
     )
@@ -176,13 +179,13 @@ def all_gather_object(obj: T) -> list[T]:
         return [obj]
 
     _ensure_object_collective_group()
-    group = _OBJECT_COLLECTIVE_GROUP
+    group = _object_collective_group
     world_size = (
         dist.get_world_size(group=group) if group is not None else get_world_size()
     )
 
     gathered: list[T | None] = [None for _ in range(world_size)]
-    dist.all_gather_object(gathered, obj, group=group)
+    cast(Any, dist).all_gather_object(gathered, obj, group=group)
     return [item for item in gathered if item is not None]
 
 
