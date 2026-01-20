@@ -19,8 +19,6 @@ import torch.distributed as dist
 T = TypeVar("T")
 
 
-
-
 # PyTorch "object" collectives (broadcast_object_list/gather_object/all_gather_object)
 # serialize Python objects into byte tensors. When the default process group backend
 # is NCCL, those tensors are moved to the current CUDA device, which can OOM when
@@ -66,6 +64,7 @@ def _ensure_object_collective_group() -> None:
     except Exception:  # noqa: BLE001
         # Fall back to default group if gloo group creation fails.
         _OBJECT_COLLECTIVE_GROUP = None
+
 
 def is_distributed_available() -> bool:
     return dist.is_available()
@@ -157,14 +156,17 @@ def gather_object(obj: T, *, dst: int = 0) -> list[T] | None:
         return [obj]
 
     _ensure_object_collective_group()
+    group = _OBJECT_COLLECTIVE_GROUP
+    world_size = (
+        dist.get_world_size(group=group) if group is not None else get_world_size()
+    )
 
-    world_size = get_world_size()
     if get_rank() == dst:
         gathered: list[T | None] = [None for _ in range(world_size)]
-        dist.gather_object(obj, gathered, dst=dst, group=_OBJECT_COLLECTIVE_GROUP)
+        dist.gather_object(obj, gathered, dst=dst, group=group)
         # dist.gather_object fills the list in rank order.
         return [item for item in gathered if item is not None]
-    dist.gather_object(obj, None, dst=dst, group=_OBJECT_COLLECTIVE_GROUP)
+    dist.gather_object(obj, None, dst=dst, group=group)
     return None
 
 
@@ -174,10 +176,13 @@ def all_gather_object(obj: T) -> list[T]:
         return [obj]
 
     _ensure_object_collective_group()
+    group = _OBJECT_COLLECTIVE_GROUP
+    world_size = (
+        dist.get_world_size(group=group) if group is not None else get_world_size()
+    )
 
-    world_size = get_world_size()
     gathered: list[T | None] = [None for _ in range(world_size)]
-    dist.all_gather_object(gathered, obj, group=_OBJECT_COLLECTIVE_GROUP)
+    dist.all_gather_object(gathered, obj, group=group)
     return [item for item in gathered if item is not None]
 
 
