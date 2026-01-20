@@ -141,7 +141,7 @@ class UnifiedProcessor:
         # Use built-in hierarchy for consistent processing
         self.label_hierarchy = DEFAULT_LABEL_HIERARCHY
 
-        # Initialize hierarchical processor for v2 data support (Chinese only)
+        # Initialize hierarchical processor for grpo_summary_1024_attr_key_recall data support (Chinese only)
         self.hierarchical_processor = HierarchicalProcessor(
             object_types=list(OBJECT_TYPES),
             label_hierarchy=self.label_hierarchy,
@@ -432,10 +432,10 @@ class UnifiedProcessor:
         """Extract objects from markResult features with native geometry types.
 
         Args:
-            features: List of V2 feature dictionaries
+            features: List of grpo_summary_1024_attr_key_recall feature dictionaries
             image_id: Optional image identifier for logging
         """
-        # Use hierarchical processor for V2 data support (pass image_id for detailed logging)
+        # Use hierarchical processor for grpo_summary_1024_attr_key_recall data support (pass image_id for detailed logging)
         objects = self.hierarchical_processor.extract_objects_from_markresult(
             features, image_id=image_id
         )

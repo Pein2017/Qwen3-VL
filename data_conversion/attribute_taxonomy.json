@@ -1,14 +1,14 @@
 {
   "metadata": {
     "version": "3.0",
-    "description": "Comprehensive hierarchical attribute taxonomy for V2 data",
+    "description": "Comprehensive hierarchical attribute taxonomy for grpo_summary_1024_attr_key_recall data",
     "supported_geometries": [
       "bbox_2d",
       "poly",
       "line"
     ],
     "language": "chinese",
-    "extraction_source": "V2 contentZh and content field analysis"
+    "extraction_source": "grpo_summary_1024_attr_key_recall contentZh and content field analysis"
   },
   "object_types": {
     "connect_point": {

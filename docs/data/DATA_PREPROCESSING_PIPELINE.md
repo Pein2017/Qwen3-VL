@@ -29,7 +29,7 @@ Human annotations → data_conversion/convert_dataset.sh
 ```
 
 ## Inputs & Assumptions
-- Raw annotation JSON + images from the labeling platform (V2 schema variants supported).
+- Raw annotation JSON + images from the labeling platform (grpo_summary_1024_attr_key_recall schema variants supported).
 - Taxonomy definitions in `data_conversion/attribute_taxonomy.json` + `hierarchical_attribute_mapping.json` (update both when adding classes/attributes).
 - Geometry expected as bbox/poly/line; EXIF may be present and is handled during preprocessing.
 
