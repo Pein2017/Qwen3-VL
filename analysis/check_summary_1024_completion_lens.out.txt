@@ -1,6 +1,6 @@
 Tokenizer discovery
 - config: configs/train/grpo/summary_1024.yaml
-- tokenizer_path: output/1-13/new_schema-4B-dense-v2/ckpt-9900
+- tokenizer_path: output/1-13/new_schema-4B-dense-grpo_summary_1024_attr_key_recall/ckpt-9900
 - debug: {'picked': 'model.*'}
 - tokenizer_class: Qwen2TokenizerFast
 - vocab_size: 151643
