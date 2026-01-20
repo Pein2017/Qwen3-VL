@@ -127,7 +127,7 @@
 - Initial version SHALL enable only:
   - **Label reward**: Matches "通过"/"不通过" in line 1 against `group_label`
   - **Format reward**: Validates strict two-line structure
-- Consistency rewards (e.g., summary alignment) are deferred to v2.
+- Consistency rewards (e.g., summary alignment) are deferred to grpo_summary_1024_attr_key_recall.
 - Reward weights SHALL be configurable (default: label=1.0, format=0.2).
 
 #### Scenario: Label reward computation

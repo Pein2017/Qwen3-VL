@@ -23,7 +23,7 @@
 ### GRPO Training (PENDING)
 - **Launcher**: `scripts/run_grpo.py` (Python, not CLI)
 - **Model config**: LLM-only LoRA on last-K transformer blocks (default K=4); freeze ViT + Aligner
-- **Rewards v1**: Binary label reward + two-line format reward (consistency reward deferred to v2)
+- **Rewards v1**: Binary label reward + two-line format reward (consistency reward deferred to grpo_summary_1024_attr_key_recall)
 - **Integration**: Uses ms-swift `GRPOTrainer` with custom reward functions
 
 ## Data Flow (Refined)
@@ -47,7 +47,7 @@ Merged or adapter checkpoint for deployment
 - **Mission-based organization**: One output JSONL per mission; simplifies Stage-B filtering and debugging
 - **Chinese-only outputs**: All prompts and summaries in Chinese; allow English tokens (BBU, ODF, etc.)
 - **Strict validation**: Fail-fast on 图片_{i} misalignment to protect data quality; no silent corrections
-- **Minimal rewards v1**: Start with label + format only; defer consistency to v2 when heuristics mature
+- **Minimal rewards v1**: Start with label + format only; defer consistency to grpo_summary_1024_attr_key_recall when heuristics mature
 - **Text-only Stage-B**: No image inputs during GRPO; purely reasoning over Stage-A text summaries
 
 ## Risks & Mitigations (Updated)
@@ -58,7 +58,7 @@ Merged or adapter checkpoint for deployment
 - **Inconsistent verdicts** → Stage-B will use greedy decoding initially; consider temperature scheduling in later iterations
 
 ## Extensibility (Roadmap)
-- **v2 rewards**: Consistency reward (evidence vs Stage-A summaries); soft length penalty; diversity bonus
+- **grpo_summary_1024_attr_key_recall rewards**: Consistency reward (evidence vs Stage-A summaries); soft length penalty; diversity bonus
 - **Multimodal Stage-B**: Optional variant that feeds images again during GRPO (toggle via config flag)
 - **Alternative group-id extractors**: Strategy pattern in `src/stage_a/inference.py` allows custom extraction logic
 - **Multi-mission training**: Combine all 4 missions in one GRPO dataset for better generalization
