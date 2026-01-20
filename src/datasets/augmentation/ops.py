@@ -4,39 +4,39 @@ import math
 from collections.abc import Sequence
 from typing import Protocol, cast, final, override
 
-from PIL import Image, ImageEnhance, ImageOps
 import numpy as np
+from PIL import Image, ImageEnhance, ImageOps
 
 from ...utils.logger import get_logger
 from ..contracts import DatasetObject
 from ..geometry import (
+    aabb_area,
     apply_affine,
-    compose_affine,
-    hflip_matrix,
-    rotate_center,
-    vflip_matrix,
-    clamp_points,
-    dedupe_consecutive_points,
-    scale_center,
-    scale_matrix,
-    sutherland_hodgman_clip,
-    simplify_polygon,
     canonicalize_polygon,
+    clamp_points,
     clip_polyline_to_rect,
-    points_to_xyxy,
-    translate,
+    compose_affine,
+    compute_polygon_coverage,
+    dedupe_consecutive_points,
     # Coverage and cropping utilities
     get_aabb,
-    aabb_area,
-    compute_polygon_coverage,
+    hflip_matrix,
+    points_to_xyxy,
+    rotate_center,
+    scale_center,
+    scale_matrix,
+    simplify_polygon,
+    sutherland_hodgman_clip,
+    translate,
     translate_geometry,
+    vflip_matrix,
 )
 from .base import (
     AffineOp,
     ColorOp,
-    PatchOp,
     CurriculumMixin,
     ImageAugmenter,
+    PatchOp,
     RngLike,
 )
 from .registry import register
@@ -720,7 +720,7 @@ class CLAHE(ColorOp):
         if rng.random() >= self.prob:
             return images, geoms
         try:
-            import cv2  # type: ignore
+            import cgrpo_summary_1024_attr_key_recall  # type: ignore
         except Exception as e:
             raise RuntimeError(
                 "CLAHE requires opencv-python-headless installed in the 'ms' environment"
@@ -728,16 +728,22 @@ class CLAHE(ColorOp):
         out_imgs: list[Image.Image] = []
         # Ensure tile_grid_size is a tuple of integers for OpenCV (explicit conversion)
         tile_size = tuple(int(x) for x in self.tile_grid_size)
-        clahe = cv2.createCLAHE(clipLimit=self.clip_limit, tileGridSize=tile_size)
+        clahe = cgrpo_summary_1024_attr_key_recall.createCLAHE(
+            clipLimit=self.clip_limit, tileGridSize=tile_size
+        )
         for img in images:
             im = _pil(img).convert("RGB")
             arr = np.asarray(im)
             bgr = arr[:, :, ::-1]
-            lab = cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB)
-            l_channel, a, b = cv2.split(lab)
+            lab = cgrpo_summary_1024_attr_key_recall.cvtColor(
+                bgr, cgrpo_summary_1024_attr_key_recall.COLOR_BGR2LAB
+            )
+            l_channel, a, b = cgrpo_summary_1024_attr_key_recall.split(lab)
             l_channel = clahe.apply(l_channel)
-            lab = cv2.merge((l_channel, a, b))
-            bgr2 = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+            lab = cgrpo_summary_1024_attr_key_recall.merge((l_channel, a, b))
+            bgr2 = cgrpo_summary_1024_attr_key_recall.cvtColor(
+                lab, cgrpo_summary_1024_attr_key_recall.COLOR_LAB2BGR
+            )
             rgb = bgr2[:, :, ::-1]
             out_imgs.append(Image.fromarray(rgb))
         return out_imgs, geoms
