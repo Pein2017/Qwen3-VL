@@ -26,7 +26,7 @@ guidance:
 
 output:
   root: output_post/stage_b
-  run_name: grpo_summary_1024_attr_key_recall
+  run_name: grpo_summary_1024_attr_key_recall-v2
 
 rule_search:
   proposer_prompt_path: configs/prompts/stage_b_rule_search_proposer_prompt.txt
