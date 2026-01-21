@@ -23,6 +23,7 @@ SUMMARY_REWARD_NAMES: tuple[str, ...] = tuple(LEGACY_SUMMARY_REWARD_NAMES.values
     # snake-case mapping but are supported by the local registry.
     "summary.attr_key_recall",
     "summary.attr_path_recall",
+    "summary.schema_tree",
 )
 
 DENSE_REWARD_NAMES: tuple[str, ...] = (

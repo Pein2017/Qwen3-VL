@@ -26,6 +26,7 @@ from .parsing import (
     normalize_free_text,
     normalize_summary,
 )
+from .schema_tree import get_domain_schema
 from src.utils import require_mapping
 from src.utils.unstructured import UnstructuredMapping
 
@@ -549,6 +550,160 @@ class SummaryAttrPathRecallReward(SummaryReward):
         if not scores:
             return 0.0
         return float(sum(scores) / len(scores))
+
+
+class SummarySchemaTreeReward(SummaryReward):
+    """Schema-tree reward: enforce per-category required keys and penalize extras.
+
+    This reward encodes a minimal, stable "attribute tree" per domain (BBU/RRU):
+    - If a category is emitted, required attribute keys must be present.
+    - Attribute keys not in the allowed set are penalized as schema drift.
+    - Categories not present in the reference summary are lightly penalized
+      (discourages hallucinated categories / unnecessary objects).
+
+    This is intentionally *key-level*: it does not try to validate counts or
+    values (those are handled by structured content rewards).
+    """
+
+    # Penalty weights tuned for FN-first training: completeness is primary, but
+    # extra keys/categories should still be discouraged.
+    _EXTRA_KEY_WEIGHT = 0.35
+    _EXTRA_CAT_WEIGHT = 0.25
+    _EXTRA_TOP_KEY_WEIGHT = 0.30
+    _RRU_SITE_DISTANCE_NON_DIGIT_WEIGHT = 0.60
+
+    def score(self, sample: SummarySample) -> float:
+        if sample.is_irrelevant:
+            return 0.0
+
+        domain_schema = get_domain_schema(sample.domain_token)
+        if domain_schema is None:
+            return 0.0
+        schema = domain_schema.categories
+
+        pred_json = sample.pred_json()
+        if not isinstance(pred_json, dict):
+            return 0.0
+        pred_json = cast(UnstructuredMapping, pred_json)
+
+        summary_ref = sample.summary_ref
+        if not summary_ref or summary_ref == _IRRELEVANT_TEXT:
+            return 0.0
+        ref_json = sample.ref_json()
+        if not isinstance(ref_json, dict):
+            return 0.0
+        ref_json = cast(UnstructuredMapping, ref_json)
+
+        _, pred_ok = normalize_summary(pred_json, sample.domain_token)
+        _, ref_ok = normalize_summary(ref_json, sample.domain_token)
+        if not (pred_ok and ref_ok):
+            return 0.0
+
+        # Top-level key constraint:
+        # - BBU: only 统计 + 备注 are allowed (备注 is free-text, not constrained).
+        # - RRU: only 统计 + 分组统计 are allowed.
+        extra_top_keys = set(pred_json.keys()) - domain_schema.allowed_top_level_keys
+
+        # Include 文本 in key extraction: 标签 completeness depends on it.
+        pred_map = _extract_category_attr_map(pred_json, exclude_text=False)
+        ref_map = _extract_category_attr_map(ref_json, exclude_text=False)
+        if not ref_map:
+            return 0.0
+
+        completeness_scores: list[float] = []
+        extra_key_fracs: list[float] = []
+        extra_cats = 0
+        rru_site_distance_non_digit = 0
+
+        ref_cats = set(ref_map.keys())
+        for cat, pred_attrs in pred_map.items():
+            if cat not in ref_cats:
+                # Penalize hallucinated categories, but don't overdo it (category
+                # recall is handled elsewhere and ref may be imperfect).
+                extra_cats += 1
+                continue
+
+            spec = schema.get(cat)
+            if spec is None:
+                # Category exists in reference but isn't part of the domain schema.
+                # Neutral: don't force a contract we didn't define.
+                continue
+
+            # Required-all keys
+            required_hits = len(pred_attrs & spec.required_all)
+            required_total = len(spec.required_all)
+
+            # Required-any groups (each group contributes 0/1)
+            any_hits = 0
+            for group in spec.required_any:
+                if pred_attrs & group:
+                    any_hits += 1
+            required_total += len(spec.required_any)
+
+            if required_total <= 0:
+                completeness = 1.0
+            else:
+                completeness = float((required_hits + any_hits) / required_total)
+            completeness_scores.append(completeness)
+
+            extras = pred_attrs - spec.allowed
+            if not spec.allowed:
+                extra_frac = 0.0 if not extras else 1.0
+            else:
+                # Normalize by allowed size (caps impact for tiny schemas).
+                extra_frac = min(1.0, float(len(extras) / max(1, len(spec.allowed))))
+            extra_key_fracs.append(extra_frac)
+
+            # RRU special-case: 站点距离 MUST be digits only (avoid "13m"/"十三米"/"one three").
+            # This is a value-level constraint, not a key-level constraint.
+            if sample.domain_token == "RRU" and cat == "站点距离":
+                stats = pred_json.get("统计")
+                if isinstance(stats, list):
+                    for entry in cast(list[object], stats):
+                        if not isinstance(entry, dict):
+                            continue
+                        entry_map = cast(dict[str, object], entry)
+                        if entry_map.get("类别") != "站点距离":
+                            continue
+                        dist_obj = entry_map.get("站点距离")
+                        if not isinstance(dist_obj, dict):
+                            # Missing/invalid structure is handled by completeness,
+                            # but mark as non-digit too to strengthen the constraint.
+                            rru_site_distance_non_digit += 1
+                            continue
+                        for k_obj in cast(dict[object, object], dist_obj).keys():
+                            key = str(k_obj).strip()
+                            if not key.isdigit():
+                                rru_site_distance_non_digit += 1
+
+        if not completeness_scores:
+            return 0.0
+
+        mean_completeness = float(sum(completeness_scores) / len(completeness_scores))
+        mean_extra_keys = (
+            float(sum(extra_key_fracs) / len(extra_key_fracs))
+            if extra_key_fracs
+            else 0.0
+        )
+        extra_cat_frac = float(extra_cats / max(1, len(ref_cats)))
+        extra_top_key_frac = float(
+            len(extra_top_keys) / max(1, len(domain_schema.allowed_top_level_keys))
+        )
+
+        score = mean_completeness
+        score -= self._EXTRA_KEY_WEIGHT * mean_extra_keys
+        score -= self._EXTRA_CAT_WEIGHT * extra_cat_frac
+        score -= self._EXTRA_TOP_KEY_WEIGHT * extra_top_key_frac
+        if rru_site_distance_non_digit:
+            # Saturate the penalty: any non-digit distances are unacceptable.
+            score -= self._RRU_SITE_DISTANCE_NON_DIGIT_WEIGHT
+
+        # Bound for safety; reward weights can amplify.
+        if score > 1.0:
+            return 1.0
+        if score < -1.0:
+            return -1.0
+        return score
 
 
 class SummaryStructuredContentTverskyReward(SummaryReward):
