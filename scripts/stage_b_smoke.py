@@ -219,9 +219,24 @@ def _audit_output_parser() -> Tuple[str, str]:
     if not ok or verdict != "pass" or not reason:
         raise AssertionError("Two-line parser failed on a valid response")
 
-    bad_ok, _, _ = _parse_two_line_response("Verdict: 通过\nReason: 通过但待定")
+    # Reason is treated as free text; the parser only enforces:
+    # - strict two-line protocol (Verdict + Reason), and
+    # - binary verdict normalization (pass/fail).
+    ok2, verdict2, reason2 = _parse_two_line_response("Verdict: 通过\nReason: 通过但待定（示例：仍然给出二分类 verdict）")
+    if not ok2 or verdict2 != "pass" or not reason2:
+        raise AssertionError("Two-line parser should accept free-text reason content")
+
+    bad_ok, _, _ = _parse_two_line_response("Verdict: 通过但待定\nReason: 示例：第三态只能出现在 reason（如果出现）")
     if bad_ok:
-        raise AssertionError("Two-line parser should reject forbidden third-state terms")
+        raise AssertionError("Two-line parser should reject non-binary verdict values")
+
+    bad_ok, _, _ = _parse_two_line_response("Verdict: 通过\nReason:   ")
+    if bad_ok:
+        raise AssertionError("Two-line parser should reject empty reason content")
+
+    bad_ok, _, _ = _parse_two_line_response("Verdict: 通过\nReason: ok\nExtra: unexpected")
+    if bad_ok:
+        raise AssertionError("Two-line parser should reject non two-line responses")
 
     return verdict, reason
 
