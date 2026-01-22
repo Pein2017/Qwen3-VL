@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from random import Random
+from typing import Any
 
+import pytest
 from PIL import Image
 
 from src.datasets.augment import apply_augmentations
 from src.datasets.augmentation.base import Compose
 from src.datasets.augmentation.ops import (
+    CLAHE,
     ColorJitter,
     HFlip,
     ResizeByScale,
@@ -111,3 +115,47 @@ def test_resize_by_scale_preserves_poly_vertex_count() -> None:
     _, new_geoms = apply_augmentations([img], geoms, pipe, rng=Random(0))
     assert "poly" in new_geoms[0]
     assert len(new_geoms[0]["poly"]) == len(poly)
+
+
+def test_clahe_runs_and_keeps_geometry() -> None:
+    img = _mk_img(w=64, h=48)
+    geoms: list[DatasetObject] = []
+    pipe = Compose([CLAHE(clip_limit=1.5, tile_grid_size=(8, 8), prob=1.0)])
+
+    imgs_bytes, new_geoms = apply_augmentations([img], geoms, pipe, rng=Random(0))
+    assert len(imgs_bytes) == 1
+    assert new_geoms == []
+
+
+def test_clahe_missing_cv2_raises_actionable_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If OpenCV is not installed, we want a clear RuntimeError (not a cryptic import error)."""
+
+    import builtins
+
+    real_import: Callable[..., Any] = builtins.__import__
+
+    def _fake_import(
+        name: str,
+        globals: Any = None,
+        locals: Any = None,
+        fromlist: Any = (),
+        level: int = 0,
+    ) -> Any:
+        if name == "cv2":
+            raise ModuleNotFoundError("No module named 'cv2'")
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", _fake_import)
+
+    img = _mk_img(w=64, h=48)
+    geoms: list[DatasetObject] = []
+    pipe = Compose([CLAHE(clip_limit=1.5, tile_grid_size=(8, 8), prob=1.0)])
+
+    try:
+        apply_augmentations([img], geoms, pipe, rng=Random(0))
+        raise AssertionError("Expected CLAHE to fail when cv2 import is missing")
+    except RuntimeError as exc:
+        msg = str(exc)
+        assert "opencv-python-headless" in msg

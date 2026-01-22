@@ -720,30 +720,24 @@ class CLAHE(ColorOp):
         if rng.random() >= self.prob:
             return images, geoms
         try:
-            import cgrpo_summary_1024_attr_key_recall  # type: ignore
-        except Exception as e:
+            import cv2  # type: ignore
+        except ModuleNotFoundError as e:
             raise RuntimeError(
                 "CLAHE requires opencv-python-headless installed in the 'ms' environment"
             ) from e
         out_imgs: list[Image.Image] = []
         # Ensure tile_grid_size is a tuple of integers for OpenCV (explicit conversion)
         tile_size = tuple(int(x) for x in self.tile_grid_size)
-        clahe = cgrpo_summary_1024_attr_key_recall.createCLAHE(
-            clipLimit=self.clip_limit, tileGridSize=tile_size
-        )
+        clahe = cv2.createCLAHE(clipLimit=self.clip_limit, tileGridSize=tile_size)
         for img in images:
             im = _pil(img).convert("RGB")
             arr = np.asarray(im)
             bgr = arr[:, :, ::-1]
-            lab = cgrpo_summary_1024_attr_key_recall.cvtColor(
-                bgr, cgrpo_summary_1024_attr_key_recall.COLOR_BGR2LAB
-            )
-            l_channel, a, b = cgrpo_summary_1024_attr_key_recall.split(lab)
+            lab = cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB)
+            l_channel, a, b = cv2.split(lab)
             l_channel = clahe.apply(l_channel)
-            lab = cgrpo_summary_1024_attr_key_recall.merge((l_channel, a, b))
-            bgr2 = cgrpo_summary_1024_attr_key_recall.cvtColor(
-                lab, cgrpo_summary_1024_attr_key_recall.COLOR_LAB2BGR
-            )
+            lab = cv2.merge((l_channel, a, b))
+            bgr2 = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
             rgb = bgr2[:, :, ::-1]
             out_imgs.append(Image.fromarray(rgb))
         return out_imgs, geoms
