@@ -13,11 +13,13 @@ training:
   output_dir: ./output/1-21/grpo_summary_1024_attr_key_recall
   logging_dir: ./tb/1-21/grpo_summary_1024_attr_key_recall
   run_name: attr_key_recall-retry_v2
-  num_train_epochs: 6
+  num_train_epochs: 2
   logging_steps: 10
   eval_steps: 100
   warmup_ratio: 0.05
   save_delay_steps: 400
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 2
 
 rlhf:
   # Adds `summary.attr_key_recall` to explicitly reward emitting the same (类别, 属性名)

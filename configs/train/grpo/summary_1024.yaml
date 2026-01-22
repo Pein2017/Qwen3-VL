@@ -26,7 +26,7 @@ training:
   output_dir: ./output/1-16/grpo_summary_1024_ckpt9900_recall
   logging_dir: ./tb/1-16/grpo_summary_1024_ckpt9900_recall
   run_name: epoch_4-vit_freezed-alinger_1e-6-llm_5e-6
-  num_train_epochs: 4
+  num_train_epochs: 2
   # Small learning rates for GRPO stability.
   learning_rate: 5.0e-6
   vit_lr: 1.0e-8

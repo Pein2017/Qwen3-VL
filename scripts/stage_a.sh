@@ -9,9 +9,9 @@ set -euo pipefail
 
 # Fixed configuration
 # CHECKPOINT="output/11-30/summary_merged/epoch_10-lr_2e-4-bs_32-res_1024"
-CHECKPOINT="output/1-18/grpo_summary_1024_attr_key_recall/ckpt_1300"
+CHECKPOINT="output/1-21/grpo_summary_1024_attr_key_recall-v2-merged/ckpt_1600"
 BASE_INPUT_DIR="group_data/scene_2.0_order"
-BASE_OUTPUT_DIR="output_post/1-18/grpo_summary_1024_attr_key_recall"
+BASE_OUTPUT_DIR="output_post/1-21/grpo_summary_1024_attr_key_recall-v2"
 
 # Environment variable overrides (lowercase)
 # BBU接地线检查
