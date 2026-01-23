@@ -37,6 +37,12 @@ The rollout-server launcher SHALL:
 - Validate server-only vLLM knobs:
   - `vllm_tensor_parallel_size` and `vllm_data_parallel_size` are positive integers
   - `vllm_tensor_parallel_size * vllm_data_parallel_size` equals the number of visible rollout GPUs
+- Validate server-side token budget:
+  - `custom.extra.rollout_server.vllm_max_model_len` SHALL be a positive integer
+  - When `global_max_length` is provided in the training YAML, launcher SHALL validate:
+    - `custom.extra.rollout_server.vllm_max_model_len >= global_max_length`
+  - For this workflow, configs SHOULD set `custom.extra.rollout_server.vllm_max_model_len == global_max_length`
+    since both represent total (input prompt + image tokens + output) budget.
 - For multimodal DoRA training stability, server-mode rollout SHALL forbid vLLM LoRA:
   - `custom.extra.rollout_server.vllm_enable_lora` SHALL be false when provided
   - If `custom.extra.rollout_server.vllm_enable_lora` is true, the launcher SHALL fail fast with a clear error message
@@ -71,6 +77,40 @@ When `rlhf.vllm_mode == "colocate"`, `custom.extra.rollout_server` SHALL be trea
 - **AND** `custom.extra.rollout_server.vllm_enable_lora = true`
 - **WHEN** launching the rollout server
 - **THEN** the launcher fails fast with a clear configuration error message
+
+#### Scenario: vLLM max model length below global_max_length fails fast
+- **GIVEN** a config with `rlhf.vllm_mode = "server"`
+- **AND** `global_max_length = 12000`
+- **AND** `custom.extra.rollout_server.vllm_max_model_len = 8192`
+- **WHEN** launching the rollout server
+- **THEN** the launcher fails fast with a clear configuration error message
+- **AND** the error message indicates that `vllm_max_model_len` must be at least `global_max_length`
+
+### Requirement: Learner launcher waits for rollout server health by default
+The learner launcher (training-only) SHALL:
+- Use the `rlhf.vllm_server_host` / `rlhf.vllm_server_port` settings to construct the rollout server base URL.
+- Poll `/health/` until `wait_timeout` (default: 120s) before starting training.
+- Fail fast with a clear error if the rollout server is not healthy by `wait_timeout`.
+
+#### Scenario: Learner health-check timeout fails fast
+- **GIVEN** a config with `rlhf.vllm_mode = "server"`
+- **AND** the rollout server is not running
+- **WHEN** launching the learner-only training launcher
+- **THEN** it fails fast after `wait_timeout` with a clear error message
+
+### Requirement: Server-mode rollout uses separate launchers
+Server-mode rollout separation SHALL be operated via:
+- a server-only rollout launcher that starts `swift rollout` on dedicated GPUs
+- a learner-only launcher that runs `scripts/train.sh` on dedicated GPUs
+
+This change deprecates the combined launcher `scripts/grpo_server_train.sh` in favor of the separate launchers.
+
+#### Scenario: Operator uses separate server and learner launchers
+- **GIVEN** a summary GRPO config with `rlhf.vllm_mode = "server"`
+- **WHEN** the operator starts the rollout server using the server-only launcher
+- **AND** the operator starts training using the learner-only launcher
+- **THEN** the rollout server and learner run on their respective GPU sets
+- **AND** server-mode operation does not require the combined launcher
 
 ## MODIFIED Requirements
 

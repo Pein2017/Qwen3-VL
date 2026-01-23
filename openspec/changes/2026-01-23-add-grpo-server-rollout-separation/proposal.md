@@ -22,9 +22,11 @@ This is a single-node (8-GPU) deployment and prioritizes **efficiency + stabilit
      - `configs/train/grpo/summary_1024_attr_key_recall.yaml`
    - Rollout server topology:
      - `TP=1`, `DP=6` (6 GPUs)
-     - `vllm_max_model_len=8192`
+     - `vllm_max_model_len=12000` (matches `global_max_length`; total input+output token budget)
      - start with `vllm_gpu_memory_utilization=0.6` and allow increasing once stable.
      - forbid vLLM LoRA (`vllm_enable_lora=false`) for multimodal DoRA stability.
+   - NOTE: Other summary GRPO presets (e.g., 2048 presets or existing server-mode presets) are **out of scope** for this
+     change and are not migrated to the new `custom.extra.rollout_server` contract yet.
 
 2) **Clean separation of trainer vs rollout-server settings**
    - Trainer connectivity stays in `rlhf.*` (ms-swift `RLHFArguments`):
@@ -47,6 +49,91 @@ This is a single-node (8-GPU) deployment and prioritizes **efficiency + stabilit
    - This change replaces it with separate server-only + learner-only launchers, and removes the combined launcher
      to avoid ambiguous operator paths.
 
+## Lifecycle Contract (Server-Mode Rollout)
+This change intentionally removes the combined launcher and defines a clear operator contract for server-mode runs:
+
+- **Start server first** (server-only):
+  - Operator runs `bash scripts/grpo_rollout_server.sh config=<path> gpus=<rollout_gpus>` in a dedicated terminal (or tmux).
+  - The server launcher resolves YAML `extends` and prints the resolved `host`, `port`, `TP`, `DP`, `vllm_max_model_len`,
+    and `model.model` before starting.
+  - The server launcher MUST fail fast if `rlhf.vllm_server_port[0]` is already in use to prevent accidentally connecting
+    to a stale server.
+  - The server binds to loopback only (`127.0.0.1` / `localhost`), not `0.0.0.0`.
+
+- **Start learner second** (training-only):
+  - Operator runs `bash scripts/grpo_train_server_mode.sh config=<path> gpus=<train_gpus>`.
+  - By default, the learner launcher polls `http://<host>:<port>/health/` until a timeout, and fails fast if the server
+    is not ready.
+
+- **Stop behavior**:
+  - The rollout server is an explicitly managed process. The learner launcher does not automatically stop the server
+    when training exits.
+
+- **Concurrency constraint (single node)**:
+  - This workflow supports **one server-mode GRPO job per node at a time**. The ms-swift server-mode weight-sync uses an
+    NCCL communicator with a default group port and is not explicitly isolated by this change; running multiple concurrent
+    jobs on one node may lead to port collisions or hangs.
+
+## Acceptance Criteria
+- [ ] Migrated configs (`summary_1024*.yaml`) use server mode:
+  - [ ] `rlhf.use_vllm=true` and `rlhf.vllm_mode=server`
+  - [ ] `rlhf.vllm_server_host=["127.0.0.1"]` and `rlhf.vllm_server_port=[8080]` (single-node)
+  - [ ] `global_max_length=12000`
+  - [ ] `custom.extra.rollout_server.vllm_max_model_len=12000` (same input+output token budget)
+- [ ] Separate launch scripts exist and are documented:
+  - [ ] `scripts/grpo_rollout_server.sh` (server-only)
+  - [ ] `scripts/grpo_train_server_mode.sh` (training-only)
+  - [ ] `scripts/grpo_server_train.sh` is removed (expected) to avoid ambiguous operator paths.
+- [ ] Server launcher validation is implemented:
+  - [ ] host/port list validation + local-only enforcement
+  - [ ] port availability check (fail fast)
+  - [ ] `TP*DP == len(visible_server_gpus)` check
+  - [ ] `vllm_max_model_len` is a positive int and `vllm_max_model_len >= global_max_length` when `global_max_length` is set
+  - [ ] `vllm_enable_lora=true` is rejected in server mode for this workflow
+- [ ] Minimal smoke run is possible:
+  - [ ] server starts and `/health/` returns 200
+  - [ ] learner run starts after health-check and connects successfully (no immediate timeouts)
+- [ ] Docs updated per tasks (`scripts/README.md`, training GRPO runbook docs, and references in `technical_report.md`).
+- [ ] `openspec validate 2026-01-23-add-grpo-server-rollout-separation --strict` passes.
+
+## Rollout Plan (Single Node, 8 GPUs)
+1. Choose a single 8-GPU node and select a **6+2 split**:
+   - rollout server GPUs: `0,1,2,3,4,5`
+   - learner GPUs: `6,7`
+2. Start the rollout server:
+   - `bash scripts/grpo_rollout_server.sh config=configs/train/grpo/summary_1024.yaml gpus=0,1,2,3,4,5`
+   - Confirm `/health/` is ready and TP/DP/max_len match the config.
+3. Start training:
+   - `bash scripts/grpo_train_server_mode.sh config=configs/train/grpo/summary_1024.yaml gpus=6,7`
+4. Observe early training stability (first N steps) and verify no repeated vLLM disconnects/timeouts.
+
+## Rollback Plan
+1. Stop the learner process.
+2. Stop the rollout server process (Ctrl-C / kill from its terminal).
+3. Revert the migrated configs back to colocate mode:
+   - set `rlhf.vllm_mode=colocate`
+   - remove (or ignore) `custom.extra.rollout_server`
+4. Launch training via `scripts/train.sh` (colocate rollout).
+
+## Test Plan
+- **Validation tests** (fast, no GPUs):
+  - Config merge/extends resolution works for the new launcher.
+  - Missing required fields fail fast with clear, field-path errors.
+  - `vllm_max_model_len < global_max_length` fails fast with a clear error.
+  - Occupied-port detection fails fast and does not start the server.
+- **Integration smoke** (single node):
+  - Start server, confirm `/health/`.
+  - Start learner and confirm it connects and runs initial steps without vLLM timeout spam.
+
+## Monitoring / Operator Signals
+- vLLM server:
+  - `/health/` availability and response time
+  - server log errors (OOM, engine init failures, weight-sync failures)
+  - GPU memory and utilization on rollout GPUs
+- Learner:
+  - step time and any `vllm_server_timeout` failures
+  - training loss/reward signals vs baseline colocate runs
+
 ## Impact
 - Higher rollout throughput and better GPU utilization (6 rollout GPUs run continuously).
 - Reduced VRAM contention on training GPUs, enabling more stable DoRA + multimodal training (ViT/aligner/LLM).
@@ -57,3 +144,4 @@ This is a single-node (8-GPU) deployment and prioritizes **efficiency + stabilit
 - Extending this migration to other GRPO configs (dense or 2048 summary presets).
 - Guaranteeing bitwise-deterministic rollout sampling in server mode.
 - Modifying upstream ms-swift behavior (unless explicitly required later).
+- Running multiple concurrent server-mode GRPO jobs on the same node without explicit port isolation.

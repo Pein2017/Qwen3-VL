@@ -50,7 +50,9 @@ custom:
 
       # Start conservative; user can increase.
       vllm_gpu_memory_utilization: 0.6
-      vllm_max_model_len: 8192
+      # In this repo, `global_max_length` represents total (input prompt + image tokens + output).
+      # Keep rollout max length aligned to avoid truncation or server-side errors.
+      vllm_max_model_len: 12000
 
       # Robust default for multimodal + DoRA (no vLLM LoRA).
       vllm_enable_lora: false
@@ -64,7 +66,10 @@ custom:
 Validation:
 - Launcher MUST validate `rlhf.vllm_server_port` is a non-empty list (single-node v1 uses `len == 1`).
 - Launcher MUST validate TP/DP are positive integers and TP*DP == number of visible server GPUs.
-- Launcher MUST validate `vllm_max_model_len` is an int.
+- Launcher MUST validate `vllm_max_model_len` is a positive int.
+- When `global_max_length` is present in the training YAML, launcher MUST validate:
+  - `custom.extra.rollout_server.vllm_max_model_len >= global_max_length`
+  - (recommended) migrated configs set them equal since both represent total input+output budget.
 - Launcher MUST forbid `vllm_enable_lora: true` in server mode for this workflow (stability).
 
 ## New Scripts / Entrypoints
@@ -85,7 +90,8 @@ CLI interface (proposed):
 
 ### Learner launcher (training-only)
 Responsibilities:
-- Optionally health-check the server (`/health/`) before starting training.
+- By default, health-check the server (`/health/`) before starting training, and fail fast on timeout.
+- (Optional but recommended) Validate server `world_size` (`/get_world_size/`) matches `TP*DP` for the rollout server GPUs.
 - Run:
   - `config=<path> gpus=<train_gpus> bash scripts/train.sh`
 
@@ -107,4 +113,5 @@ This change replaces it with separate scripts and removes the combined launcher 
 - ms-swift rollout deployment may auto-select a free port if the requested port is occupied; we mitigate this by
   checking port availability before launch and failing fast.
 - The NCCL group port used for weight sync is not explicitly configured in this change; running multiple
-  concurrent jobs on the same node may still cause collisions.
+  concurrent jobs on the same node may still cause collisions. For now, treat this workflow as
+  **one server-mode GRPO job per node** unless explicit port isolation is added later.
