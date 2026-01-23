@@ -62,13 +62,13 @@ All code changes in `src/` must comply with the Schema Constitution (`docs/refer
 ## Environment (minimal)
 - Use conda env `ms`; launch Python scripts with `conda run -n ms python ...`.
 
-## Serena MCP Usage (Efficiency + Reliability)
-- Default to Serena MCP for symbol-aware navigation and edits: `get_symbols_overview`, `find_symbol`, `find_referencing_symbols`, `replace_symbol_body`, `rename_symbol`.
-- Default to standard shell tools for bulk operations: repo-wide text search/counting (`rg`/`grep`, `find`, `wc`), running scripts/tests, and quick file previews (`sed`/`head`).
-- Use Serena MCP `search_for_pattern` only when you need structured matches/context (it returns match payloads, not count-only results, and can be slower/token-heavier for broad searches).
-- Keep Serena MCP outputs bounded to stay efficient: prefer narrow `relative_path`, small `start_line/end_line`, minimal `context_lines_*`, and set `max_answer_chars` to avoid giant responses.
+## Tools & Navigation
+- Serena MCP: best for code symbol discovery/edits; avoid for plain docs (use `rg`/`cat`).
+- For detailed Serena MCP workflows and common patterns, use the `serena-mcp-navigation` skill.
 - Prefer repo-relative paths in Serena MCP arguments; use absolute paths only for outside sources (e.g., `/data/ms-swift`, `/data/home/...`).
 
-
-## Codex Skill: python-lint-loop
-- Trigger this skill for any Python code editing tasks; run the lint loop (ruff auto-fix + pyright under conda env `ms`) until clean.
+## Codex Sub-Agents (Async Reviews)
+- Use sub-agents for narrow parallel audits (spec deltas, task lists, doc coverage) while the main agent runs Serena/shell verification.
+- Best-effort + text-only: results may be delayed/missing.
+- Prompt template: goal + explicit inputs (paths/snippets + assumptions) + requested output format (e.g., "findings by severity + concrete edits").
+- Always verify sub-agent suggestions against repo sources before acting.

@@ -1,0 +1,22 @@
+# Tasks
+
+- [ ] Define the new rollout-server config namespace under `custom.extra.rollout_server` (documented + validated by launcher).
+- [ ] Update `configs/train/grpo/summary_1024.yaml` to use server-mode rollout (trainer connectivity in `rlhf.*`, server args in `custom.extra.rollout_server`).
+- [ ] Update `configs/train/grpo/summary_1024_attr_key_recall.yaml` to inherit server-mode rollout cleanly (remove colocate-only overrides; keep reward overrides).
+- [ ] Implement a rollout-server launcher (server only) that:
+  - [ ] Loads YAML with extends (same resolution rules as `src/config/loader.py` / `ConfigLoader.load_yaml_with_extends`)
+  - [ ] Validates required rollout-server fields (TP/DP/max_model_len) and trainer connectivity fields (`rlhf.vllm_server_host`, `rlhf.vllm_server_port`)
+  - [ ] Fails fast if the configured rollout port (`rlhf.vllm_server_port[0]`, 8080 in migrated configs) is unavailable
+  - [ ] Fails fast if `custom.extra.rollout_server.vllm_enable_lora=true` is requested (forbidden in this workflow)
+  - [ ] Launches `conda run -n ms swift rollout ...` on `CUDA_VISIBLE_DEVICES=<6 gpus>`
+- [ ] Implement a learner launcher (training only) that:
+  - [ ] Optionally health-checks the configured server endpoint before starting (default: `http://127.0.0.1:8080/health/`)
+  - [ ] Launches `scripts/train.sh` on `CUDA_VISIBLE_DEVICES=<2 gpus>`
+- [ ] Remove the deprecated combined launcher `scripts/grpo_server_train.sh`.
+- [ ] Update docs and script inventory to reference the new launch scripts and config fields:
+  - [ ] `scripts/README.md` (canonical script inventory; add new scripts + removal note)
+  - [ ] `technical_report.md` (GRPO server-rollout entrypoint references)
+  - [ ] `docs/training/GRPO_MS_SWIFT_PIPELINE.md` (server-mode config surface + operator notes)
+  - [ ] `docs/training/TRAINING_PLAYBOOK.md` and/or `docs/training/REFERENCE.md` (runbook)
+- [ ] Add lightweight validation coverage (unit test or script-level check) for rollout-server config extraction and required-field errors.
+- [ ] Run `ruff` + `basedpyright` (conda env `ms`) and any relevant smoke checks.

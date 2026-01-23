@@ -6,18 +6,18 @@ extends:
 # but Stage-A sometimes emits the category while omitting the attribute key.
 
 model:
-  model: output/1-18/grpo_summary_1024_attr_key_recall/ckpt_1300
+  model: output/1-21/grpo_summary_1024_attr_key_recall-v2-merged/ckpt_1600
 
 training:
   # Avoid clobbering prior runs; edit per-run as needed.
   output_dir: ./output/1-21/grpo_summary_1024_attr_key_recall
   logging_dir: ./tb/1-21/grpo_summary_1024_attr_key_recall
-  run_name: attr_key_recall-retry_v2
+  run_name: attr_key_recall-retry_v3
   num_train_epochs: 2
   logging_steps: 10
   eval_steps: 100
   warmup_ratio: 0.05
-  save_delay_steps: 400
+  save_delay_steps: 200
   per_device_train_batch_size: 1
   per_device_eval_batch_size: 2
 
@@ -29,6 +29,7 @@ rlhf:
   # pred ∩ ref, so omitting a category is not directly penalized by this reward).
   # Adds `summary.schema_tree` to enforce per-category required keys (completeness)
   # and penalize emitting extra/unexpected attribute keys (schema drift).
+  vllm_gpu_memory_utilization: 0.5
   reward_funcs:
     [
       summary.format,
@@ -60,4 +61,12 @@ rlhf:
   #   categories entirely.
   # - `summary.content_structured_tversky` preserves value-level correctness, but is
   #   kept below schema_tree to prioritize schema stability first.
-  reward_weights: [1.5, 2.0, 3.0, 2.5, 3.0, 0.5, 1.5, 1.5, 1.0, 5.0, 3.0, 0.2]
+  # Weights tuned based on rollout audit:
+  # - Keep schema enforcement strong, but avoid over-penalizing benign key variants
+  #   (especially for 光纤 protection keys after schema update).
+  # - Slightly increase category_recall + attr_path_recall to improve per-category
+  #   completeness without incentivizing key explosion.
+  # - Increase header/strict modestly to reduce occasional <TASK=DETECTION> drift.
+  #
+  # Order MUST match rlhf.reward_funcs above.
+  reward_weights: [1.5, 2.5, 3.5, 2.5, 3.0, 0.5, 2.0, 1.5, 1.5, 4.0, 3.0, 0.2]

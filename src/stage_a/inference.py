@@ -165,6 +165,64 @@ def _extract_summary_json_line(text: str) -> str | None:
     if not stripped:
         return None
 
+    def _extract_balanced_json_list(text: str, start: int) -> str | None:
+        """Extract a balanced JSON list substring starting at `[` or return None.
+
+        Minimal syntactic guardrail for non-JSON-but-unambiguous patterns like:
+          统计=[{...}]
+        Repairs to:
+          {"统计": [...]}
+        """
+
+        if start < 0 or start >= len(text) or text[start] != "[":
+            return None
+        depth = 0
+        in_str = False
+        escape = False
+        for idx in range(start, len(text)):
+            ch = text[idx]
+            if in_str:
+                if escape:
+                    escape = False
+                elif ch == "\\":
+                    escape = True
+                elif ch == '"':
+                    in_str = False
+                continue
+
+            if ch == '"':
+                in_str = True
+                continue
+            if ch == "[":
+                depth += 1
+                continue
+            if ch == "]":
+                depth -= 1
+                if depth == 0:
+                    return text[start : idx + 1]
+                continue
+        return None
+
+    def _maybe_parse_list_assignment(key: str) -> list[object] | None:
+        for sep in ("=", ":"):
+            marker = f"{key}{sep}"
+            pos = stripped.find(marker)
+            if pos == -1:
+                continue
+            bracket = stripped.find("[", pos + len(marker))
+            if bracket == -1:
+                continue
+            list_text = _extract_balanced_json_list(stripped, bracket)
+            if list_text is None:
+                continue
+            try:
+                parsed = json.loads(list_text)
+            except Exception:
+                continue
+            if isinstance(parsed, list):
+                return cast(list[object], parsed)
+        return None
+
     obj = _maybe_parse_json_object(stripped)
     if obj is not None and _is_summary_json(obj):
         return _format_summary_json(obj)
@@ -184,6 +242,20 @@ def _extract_summary_json_line(text: str) -> str | None:
         candidate = _maybe_parse_json_object(candidate_text)
         if candidate is not None and _is_summary_json(candidate):
             return _format_summary_json(candidate)
+
+    # Minimal syntactic recovery for list-assignment style outputs:
+    #   统计=[{...}]
+    #   分组统计=[{...}]
+    stats_list = _maybe_parse_list_assignment("统计")
+    group_stats_list = _maybe_parse_list_assignment("分组统计")
+    if stats_list is not None or group_stats_list is not None:
+        repaired: dict[str, object] = {}
+        if stats_list is not None:
+            repaired["统计"] = stats_list
+        if group_stats_list is not None:
+            repaired["分组统计"] = group_stats_list
+        if "统计" in repaired:
+            return _format_summary_json(cast(UnstructuredMapping, repaired))
 
     return None
 

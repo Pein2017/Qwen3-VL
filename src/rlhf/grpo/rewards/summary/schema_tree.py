@@ -107,9 +107,15 @@ def _bbu_schema() -> DomainSchema:
             allowed=frozenset({"可见性", "符合性"}),
         ),
         "光纤": CategorySchema(
-            required_all=frozenset({"保护措施", "弯曲半径"}),
-            required_any=(),
-            allowed=frozenset({"保护措施", "弯曲半径"}),
+            # NOTE:
+            # Real Stage-A rollouts frequently use `套管保护` or `保护` for the fiber
+            # protection concept, while older corpora/configs sometimes used the
+            # more generic `保护措施`. Treat these as equivalent protection keys
+            # for schema completeness, but still keep the allowed set tight to
+            # penalize long-tail drift keys (e.g. 套数/类型/有标签/...).
+            required_all=frozenset({"弯曲半径"}),
+            required_any=(frozenset({"保护措施", "套管保护", "保护"}),),
+            allowed=frozenset({"弯曲半径", "保护措施", "套管保护", "保护"}),
         ),
         "电线": CategorySchema(
             required_all=frozenset({"捆扎"}),

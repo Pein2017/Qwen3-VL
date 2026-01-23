@@ -233,7 +233,7 @@ rlhf:
   max_resample_times: 1
   use_vllm: true
   vllm_mode: colocate
-  vllm_gpu_memory_utilization: 0.6
+  vllm_gpu_memory_utilization: 0.5
   vllm_enable_prefix_caching: true
   vllm_enable_lora: false
 
