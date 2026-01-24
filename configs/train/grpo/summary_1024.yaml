@@ -90,6 +90,18 @@ custom:
     exclude: [lang_chat]
   assistant_prefix_format: "<DOMAIN={domain}>, <TASK={task}>"
 
+  extra:
+    rollout_server:
+      # 6 rollout GPUs = TP * DP (single node v1).
+      vllm_tensor_parallel_size: 1
+      vllm_data_parallel_size: 6
+      vllm_gpu_memory_utilization: 0.6
+      # Keep aligned with global_max_length (total input+output budget).
+      vllm_max_model_len: 12000
+      # For multimodal DoRA stability, vLLM LoRA is forbidden in this workflow.
+      vllm_enable_lora: false
+      vllm_enable_prefix_caching: true
+
   val_sample_limit: 240
   grpo:
     chord:
@@ -226,16 +238,16 @@ rlhf:
   num_generations: 4
   temperature: 0.7
   repetition_penalty: 1.05
-  max_completion_length: 2048
+  max_completion_length: 4096
   truncation_strategy: delete
   generation_batch_size: 32
   dynamic_sample: true
   max_resample_times: 1
   use_vllm: true
-  vllm_mode: colocate
-  vllm_gpu_memory_utilization: 0.5
-  vllm_enable_prefix_caching: true
-  vllm_enable_lora: false
+  vllm_mode: server
+  vllm_server_host: ["127.0.0.1"]
+  vllm_server_port: [8080]
+  vllm_server_timeout: 300
 
 deepspeed:
   enabled: true
