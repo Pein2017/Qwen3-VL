@@ -5,6 +5,7 @@ Canonical entrypoints for training, inference, and inspection runs. Prefer these
 | Script | Purpose | Read more |
 |--------|---------|-----------|
 | `train.sh` | Launches `python -m src.sft` / `torchrun` with config auto-resolution and ms env setup. | `docs/training/TRAINING_PLAYBOOK.md`, `docs/training/REFERENCE.md` |
+| `grpo_server_mode.sh` | GRPO server-mode (unified): starts rollout server in background, waits for `/health/`, runs learner in foreground; server logs redirect to file; cleanup kills server on exit. | `docs/training/GRPO_MS_SWIFT_PIPELINE.md` |
 | `fuse_datasets.py` | Builds fused JSONL from fusion YAML (deterministic mixing of target+aux sources). | `docs/data/UNIFIED_FUSION_DATASET.md` |
 | `download.py` | Downloads raw/public corpora per instructions. | `docs/data/DATA_AND_DATASETS.md`, `docs/data/PUBLIC_DATA.md` |
 | `stage_a.sh` | Stage‑1 basic object recognition; emits per-image summaries JSONL. | `docs/runtime/STAGE_A_RUNTIME.md`, `docs/runtime/STAGE_A_STAGE_B.md` |
@@ -26,3 +27,4 @@ Usage tips
 - Prefer setting seeds in configs; scripts propagate env when present.
 - Keep inputs/output paths mission-specific to avoid cross-run collisions.
 - Stage‑B no-model audit: `bash scripts/stage_b.sh smoke`
+- GRPO server-mode convention: run `bash scripts/grpo_server_mode.sh ...` and monitor learner logs in the console (server logs go to `output/grpo_rollout_server/`).
