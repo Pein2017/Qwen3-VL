@@ -52,22 +52,20 @@ This is a single-node (8-GPU) deployment and prioritizes **efficiency + stabilit
 ## Lifecycle Contract (Server-Mode Rollout)
 This change intentionally removes the combined launcher and defines a clear operator contract for server-mode runs:
 
-- **Start server first** (server-only):
-  - Operator runs `bash scripts/grpo_rollout_server.sh config=<path> gpus=<rollout_gpus>` in a dedicated terminal (or tmux).
-  - The server launcher resolves YAML `extends` and prints the resolved `host`, `port`, `TP`, `DP`, `vllm_max_model_len`,
+- **Single entrypoint** (unified launcher):
+  - Operator runs `bash scripts/grpo_server_mode.sh config=<path> server_gpus=<rollout_gpus> train_gpus=<train_gpus>`.
+  - The launcher resolves YAML `extends` and prints the resolved `host`, `port`, `TP`, `DP`, `vllm_max_model_len`,
     and `model.model` before starting.
-  - The server launcher MUST fail fast if `rlhf.vllm_server_port[0]` is already in use to prevent accidentally connecting
+  - The launcher MUST fail fast if `rlhf.vllm_server_port[0]` is already in use to prevent accidentally connecting
     to a stale server.
-  - The server binds to loopback only (`127.0.0.1` / `localhost`), not `0.0.0.0`.
-
-- **Start learner second** (training-only):
-  - Operator runs `bash scripts/grpo_train_server_mode.sh config=<path> gpus=<train_gpus>`.
-  - By default, the learner launcher polls `http://<host>:<port>/health/` until a timeout, and fails fast if the server
+  - The rollout server binds to loopback only (`127.0.0.1` / `localhost`), not `0.0.0.0`.
+  - The rollout server runs in the background and its logs are redirected to a file; the console shows learner logs.
+  - By default, the launcher polls `http://<host>:<port>/health/` until a timeout, and fails fast if the server
     is not ready.
 
 - **Stop behavior**:
-  - The rollout server is an explicitly managed process. The learner launcher does not automatically stop the server
-    when training exits.
+  - The launcher records the rollout server PID/PGID and stops the rollout server automatically when the launcher exits
+    (normal exit, error, or SIGINT).
 
 - **Concurrency constraint (single node)**:
   - This workflow supports **one server-mode GRPO job per node at a time**. The ms-swift server-mode weight-sync uses an
@@ -81,8 +79,7 @@ This change intentionally removes the combined launcher and defines a clear oper
   - [ ] `global_max_length=12000`
   - [ ] `custom.extra.rollout_server.vllm_max_model_len=12000` (same input+output token budget)
 - [ ] Separate launch scripts exist and are documented:
-  - [ ] `scripts/grpo_rollout_server.sh` (server-only)
-  - [ ] `scripts/grpo_train_server_mode.sh` (training-only)
+  - [ ] `scripts/grpo_server_mode.sh` (unified launcher)
   - [ ] `scripts/grpo_server_train.sh` is removed (expected) to avoid ambiguous operator paths.
 - [ ] Server launcher validation is implemented:
   - [ ] host/port list validation + local-only enforcement
@@ -100,12 +97,9 @@ This change intentionally removes the combined launcher and defines a clear oper
 1. Choose a single 8-GPU node and select a **6+2 split**:
    - rollout server GPUs: `0,1,2,3,4,5`
    - learner GPUs: `6,7`
-2. Start the rollout server:
-   - `bash scripts/grpo_rollout_server.sh config=configs/train/grpo/summary_1024.yaml gpus=0,1,2,3,4,5`
-   - Confirm `/health/` is ready and TP/DP/max_len match the config.
-3. Start training:
-   - `bash scripts/grpo_train_server_mode.sh config=configs/train/grpo/summary_1024.yaml gpus=6,7`
-4. Observe early training stability (first N steps) and verify no repeated vLLM disconnects/timeouts.
+2. Start the unified launcher:
+   - `bash scripts/grpo_server_mode.sh config=configs/train/grpo/summary_1024.yaml server_gpus=0,1,2,3,4,5 train_gpus=6,7`
+3. Observe early training stability (first N steps) and verify no repeated vLLM disconnects/timeouts.
 
 ## Rollback Plan
 1. Stop the learner process.

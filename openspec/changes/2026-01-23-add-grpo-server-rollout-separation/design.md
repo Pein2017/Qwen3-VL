@@ -74,35 +74,24 @@ Validation:
 
 ## New Scripts / Entrypoints
 
-### Rollout server launcher (server-only)
+### Unified launcher (server + learner, single entrypoint)
 Responsibilities:
 - Resolve YAML with `extends` (using the same config merge logic as `ConfigLoader.load_yaml_with_extends`).
-- Extract `model.model` path and `custom.extra.rollout_server`.
-- Fail fast if the configured rollout port (`rlhf.vllm_server_port[0]`; 8080 by default for this workflow) is already in use
-  (single-YAML requirement).
-- Bind the rollout server to `127.0.0.1` (local-only) and the configured port; the learner connects via `rlhf.vllm_server_host`.
-- Run:
-  - `CUDA_VISIBLE_DEVICES=<rollout_gpus> conda run -n ms swift rollout ...`
+- Extract `model.model` path, `rlhf` server connectivity, and `custom.extra.rollout_server`.
+- Fail fast if the configured rollout port (`rlhf.vllm_server_port[0]`; 8080 by default for this workflow) is already in use.
+- Launch `swift rollout` on dedicated rollout GPUs in the background and redirect server logs to a file.
+- Poll `/health/` until `wait_timeout` before starting training (fail fast on timeout).
+- Launch learner training via `scripts/train.sh` on dedicated training GPUs.
+- Record the rollout server PID/PGID and terminate the server automatically when the launcher exits (normal exit, error, or SIGINT).
 
-CLI interface (proposed):
-- `bash scripts/grpo_rollout_server.sh config=<path> gpus=0,1,2,3,4,5 [CONDA_ENV=ms]`
-- Optional: `log_level=info|debug`
-
-### Learner launcher (training-only)
-Responsibilities:
-- By default, health-check the server (`/health/`) before starting training, and fail fast on timeout.
-- (Optional but recommended) Validate server `world_size` (`/get_world_size/`) matches `TP*DP` for the rollout server GPUs.
-- Run:
-  - `config=<path> gpus=<train_gpus> bash scripts/train.sh`
-
-CLI interface (proposed):
-- `bash scripts/grpo_train_server_mode.sh config=<path> gpus=6,7 [wait_timeout=...]`
+CLI interface:
+- `bash scripts/grpo_server_mode.sh config=<path> server_gpus=0,1,2,3,4,5 train_gpus=6,7 [wait_timeout=...] [CONDA_ENV=ms]`
 
 ### Deprecation strategy for `scripts/grpo_server_train.sh`
 The current repo has a combined launcher (`scripts/grpo_server_train.sh`) that:
 - parses `rlhf.*` and starts `swift rollout` + training in one process wrapper.
 
-This change replaces it with separate scripts and removes the combined launcher to avoid ambiguous operator paths.
+This change replaces it with a single unified launcher and removes the combined launcher to avoid ambiguous operator paths.
 
 ## Stability Notes (DoRA + ViT/aligner/LLM training)
 - Server mode isolates rollout VRAM from training VRAM, helping when training ViT and aligner.

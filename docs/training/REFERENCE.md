@@ -258,7 +258,7 @@ Keep configs under `configs/` in sync with the playbook when making behavioral c
 
 ### Summary GRPO Post-Training (Format Stabilization)
 - **Config example**: `configs/train/grpo/summary_2048.yaml` (uses `configs/fusion/variants/bbu_rru_summary_grpo_2048.yaml`; edit checkpoint + epochs/LRs).
-- **Base template**: `configs/train/grpo/summary_1024.yaml` (self-contained preset defaults; clone and edit per-run knobs). `configs/train/grpo/summary_2048.yaml` applies the semantic-invariant augmentation policy.
+- **Base template**: `configs/train/grpo/summary_1024.yaml` (server-mode rollout separation; uses `custom.extra.rollout_server` and requires a separately launched `swift rollout` server). `configs/train/grpo/summary_2048.yaml` applies the semantic-invariant augmentation policy (colocate rollouts).
   - **Field/schema stabilization preset** (recommended when Stage-A emits a category but misses keys like `电线/捆扎`, `光纤/套管保护`, `光纤/弯曲半径`): `configs/train/grpo/summary_1024_attr_key_recall.yaml` (adds `summary.attr_key_recall` to reward emitting the same `(类别, 属性名)` keys as the reference, and `summary.attr_path_recall` to reward stable nested paths like `捆扎/整齐` for emitted categories).
   - **Required knobs**:
     - `rlhf.rlhf_type=grpo`
@@ -267,9 +267,14 @@ Keep configs under `configs/` in sync with the playbook when making behavioral c
     - `rlhf.max_completion_length=2048`
     - `training.effective_batch_size` (backward global batch), `rlhf.generation_batch_size` (rollout global trajectories)
     - `prompts.profile=summary_runtime`, `custom.assistant_prefix_format`, `custom.fusion_config`
+    - Server-mode rollout separation (when `rlhf.vllm_mode=server`):
+      - trainer connectivity: `rlhf.vllm_server_host`, `rlhf.vllm_server_port`, `rlhf.vllm_server_timeout`
+      - server-only knobs: `custom.extra.rollout_server` (TP/DP/max_model_len; `vllm_enable_lora` must be false)
     - Tune `rlhf.temperature` based on contract stability vs exploration.
 - **Metadata contract**: summary-mode rows attach `metadata.summary_ref` (ground-truth JSON) and `_fusion_template` for header-domain rewards; any `irrelevant*` fused stream (e.g., `irrelevant_summary`, `irrelevant_dense`) suppresses assistant prefixes and emits assistant text exactly `无关图片` (single line, no prefix), regardless of declared mode.
-- **Dry-run recipe**: clone the example config, set `training.max_steps: 2`, `training.eval_strategy: "no"`, `training.save_strategy: "no"`, `custom.train_sample_limit: 2`, `custom.val_sample_limit: 2`, then launch via `scripts/train.sh config=<new-config.yaml> gpus=0 debug=true`.
+- **Dry-run recipe**:
+  - Colocate rollouts (no external server): clone the example config, set `training.max_steps: 2`, `training.eval_strategy: "no"`, `training.save_strategy: "no"`, `custom.train_sample_limit: 2`, `custom.val_sample_limit: 2`, then launch via `scripts/train.sh config=<new-config.yaml> gpus=0 debug=true`.
+  - Server-mode rollouts: use the unified launcher (`bash scripts/grpo_server_mode.sh config=<new-config.yaml> server_gpus=0,1,2,3,4,5 train_gpus=6,7 debug=true`).
   - **Success criteria**: job starts, reward metrics appear (format/header/strict/parse + dup-key penalty + structured content rewards), and 1–2 steps complete without dataset or format exceptions.
 
 ### Dense GRPO Post-Training (Localization-first)

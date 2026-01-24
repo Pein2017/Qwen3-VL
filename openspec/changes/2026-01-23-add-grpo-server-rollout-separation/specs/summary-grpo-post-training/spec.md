@@ -10,7 +10,7 @@ Summary GRPO post-training SHALL support **server-mode vLLM rollout separation**
 When server mode is used:
 - The trainer connectivity configuration SHALL remain under the `rlhf` block (ms-swift `RLHFArguments`).
 - Rollout-server launch parameters (server-only vLLM knobs) SHALL be specified under `custom.extra.rollout_server`
-  and consumed by a rollout-server launcher script.
+  and consumed by a server-mode launcher script.
 
 #### Scenario: Server-mode launch splits rollout and learner GPUs
 - **GIVEN** a summary GRPO config with `rlhf.vllm_mode = "server"` and `custom.extra.rollout_server` populated
@@ -24,8 +24,8 @@ When server mode is used:
 - **THEN** `vllm_max_model_len` is taken from `custom.extra.rollout_server.vllm_max_model_len`
 - **AND** the system does not rely on trainer-side `rlhf.vllm_max_model_len` for external vLLM configuration
 
-### Requirement: Rollout-server launcher validates config and fails fast
-The rollout-server launcher SHALL:
+### Requirement: Server-mode launcher validates config and fails fast
+The server-mode launcher SHALL:
 - Resolve training YAML configs with `extends` using the same merge rules as the training config loader.
 - Require `custom.extra.rollout_server` to be present when `rlhf.vllm_mode == "server"`.
 - Validate `rlhf.vllm_server_host` is a non-empty list and `rlhf.vllm_server_port` is a non-empty list.
@@ -86,8 +86,8 @@ When `rlhf.vllm_mode == "colocate"`, `custom.extra.rollout_server` SHALL be trea
 - **THEN** the launcher fails fast with a clear configuration error message
 - **AND** the error message indicates that `vllm_max_model_len` must be at least `global_max_length`
 
-### Requirement: Learner launcher waits for rollout server health by default
-The learner launcher (training-only) SHALL:
+### Requirement: Server-mode launcher waits for rollout server health by default
+The server-mode launcher SHALL:
 - Use the `rlhf.vllm_server_host` / `rlhf.vllm_server_port` settings to construct the rollout server base URL.
 - Poll `/health/` until `wait_timeout` (default: 120s) before starting training.
 - Fail fast with a clear error if the rollout server is not healthy by `wait_timeout`.
@@ -95,22 +95,22 @@ The learner launcher (training-only) SHALL:
 #### Scenario: Learner health-check timeout fails fast
 - **GIVEN** a config with `rlhf.vllm_mode = "server"`
 - **AND** the rollout server is not running
-- **WHEN** launching the learner-only training launcher
+- **WHEN** launching the server-mode launcher
 - **THEN** it fails fast after `wait_timeout` with a clear error message
 
-### Requirement: Server-mode rollout uses separate launchers
-Server-mode rollout separation SHALL be operated via:
-- a server-only rollout launcher that starts `swift rollout` on dedicated GPUs
-- a learner-only launcher that runs `scripts/train.sh` on dedicated GPUs
+### Requirement: Server-mode rollout uses a unified launcher
+Server-mode rollout separation SHALL be operated via a unified launcher script that:
+- starts `swift rollout` on dedicated GPUs in the background
+- runs `scripts/train.sh` on dedicated GPUs in the foreground (so the console shows learner logs)
+- terminates the rollout server automatically when the launcher exits (normal exit, error, or SIGINT)
 
-This change deprecates the combined launcher `scripts/grpo_server_train.sh` in favor of the separate launchers.
+This change deprecates the combined launcher `scripts/grpo_server_train.sh` in favor of the unified launcher.
 
-#### Scenario: Operator uses separate server and learner launchers
+#### Scenario: Operator uses a single launcher and sees only learner logs
 - **GIVEN** a summary GRPO config with `rlhf.vllm_mode = "server"`
-- **WHEN** the operator starts the rollout server using the server-only launcher
-- **AND** the operator starts training using the learner-only launcher
+- **WHEN** the operator starts the unified launcher
 - **THEN** the rollout server and learner run on their respective GPU sets
-- **AND** server-mode operation does not require the combined launcher
+- **AND** the console output is primarily learner logs (server logs are redirected to a file)
 
 ## MODIFIED Requirements
 
