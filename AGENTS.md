@@ -72,3 +72,4 @@ All code changes in `src/` must comply with the Schema Constitution (`docs/refer
 - Best-effort + text-only: results may be delayed/missing.
 - Prompt template: goal + explicit inputs (paths/snippets + assumptions) + requested output format (e.g., "findings by severity + concrete edits").
 - Always verify sub-agent suggestions against repo sources before acting.
+- Keep the main agent productive while awaiting sub-agent results by proceeding with implementation, testing, documentation, or related tasks that don't depend on the async audit outcomes.
