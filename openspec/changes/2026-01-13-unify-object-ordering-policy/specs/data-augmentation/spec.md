@@ -33,6 +33,12 @@ The same TL→BR center-based sort rules MUST be used in:
 - training-time builders that enumerate `object_{n}`
 so that object indices remain aligned across stages.
 
+#### Scenario: Center-based TL→BR ordering after rotation
+- **WHEN** a record is augmented with rotation, changing object positions and bbox extents
+- **AND** the dense-caption builder prepares `object_{n}` entries
+- **THEN** under `center_tlbr` the builder re-sorts objects using `(center_y, center_x)` before assigning indices
+- **AND** the resulting `object_{n}` enumeration matches the conversion pipeline’s ordering under the same policy
+
 ### Requirement: Geometry canonicalization is applied after augmentation outputs
 After augmentation has produced geometry outputs (including crop/clipping), the system MUST canonicalize:
 - **Polygon vertex lists**:
@@ -46,12 +52,6 @@ After augmentation has produced geometry outputs (including crop/clipping), the 
 Canonicalization MUST be applied:
 - in the augmentation wrapper output path (so downstream preprocessing/builders always see canonical geometry), and
 - at builder serialization boundaries (defense-in-depth for legacy JSONLs and mixed provenance sources).
-
-#### Scenario: Center-based TL→BR ordering after rotation
-- **WHEN** a record is augmented with rotation, changing object positions and bbox extents
-- **AND** the dense-caption builder prepares `object_{n}` entries
-- **THEN** under `center_tlbr` the builder re-sorts objects using `(center_y, center_x)` before assigning indices
-- **AND** the resulting `object_{n}` enumeration matches the conversion pipeline’s ordering under the same policy
 
 #### Scenario: Line direction is canonicalized after hflip
 - **WHEN** a record containing a multi-point `line` object is augmented with horizontal flip

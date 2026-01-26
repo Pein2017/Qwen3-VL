@@ -3,7 +3,7 @@
 """AST-based import boundary checks for the repo.
 
 This script enforces lightweight dependency direction constraints introduced by
-OpenSpec change 2026-01-21-refactor-src-architecture.
+the `src/` import-surface refactor (see `tests/test_import_smoke.py`).
 
 Checks:
 1) Foundation packages MUST NOT depend on pipeline modules:

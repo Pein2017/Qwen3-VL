@@ -208,7 +208,8 @@ def build_summary_system_prompt(
     return prompt
 
 
-USER_PROMPT_JSON = build_dense_user_prompt("reference_tlbr")
+# Default ordering policy is center-based (see `normalize_object_ordering_policy`).
+USER_PROMPT_JSON = build_dense_user_prompt(None)
 
 SYSTEM_PROMPT_AUX = (
     "You are a general-purpose detection annotator for source-domain datasets (e.g., LVIS). "

@@ -9,7 +9,7 @@ Stage-A "summary mode" models often emit a single JSON object containing the key
 These helpers are intentionally lightweight and MUST NOT import Stage-A/Stage-B
 pipeline modules.
 
-See OpenSpec change: 2026-01-21-refactor-src-architecture.
+See `tests/test_summary_json_utils.py`.
 """
 
 from __future__ import annotations

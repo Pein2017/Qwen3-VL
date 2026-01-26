@@ -4,7 +4,7 @@ This package intentionally keeps `import src` lightweight:
 - avoid importing heavyweight training/runtime dependencies at import time
 - avoid importing heavyweight internal entrypoints as an indirect side effect
 
-See OpenSpec change: 2026-01-21-refactor-src-architecture.
+See `scripts/ci/check_import_boundaries.py` and `tests/test_import_smoke.py`.
 """
 
 from __future__ import annotations

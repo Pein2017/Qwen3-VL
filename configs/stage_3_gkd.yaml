@@ -1,0 +1,26 @@
+extends:
+  # Keep Stage-3 as a thin overlay on an existing SFT base config.
+  # This file is referenced by tests and by the OpenSpec SFT training contract.
+  - train/sft/dense_1024.yaml
+
+# Stage-3 GKD typically resumes from a prior LoRA checkpoint.
+# (The path does not need to exist for config validation/unit tests.)
+model:
+  model: output/stage_2_llm_lora/checkpoint-last
+
+rlhf:
+  rlhf_type: gkd
+  teacher_model: model_cache/models/Qwen/Qwen3-VL-4B-Instruct
+  beta: 0.5
+  sft_alpha: 0.3
+  seq_kd: true
+  lmbda: 0.5
+  max_completion_length: 256
+  temperature: 0.9
+
+custom:
+  # Enable the metrics/telemetry wrapper for KD monitoring.
+  trainer_variant: gkd_monitor
+  # Stage-3 runs on the full bbu dataset family (non-poly variant).
+  train_jsonl: data/bbu_full_768/train.jsonl
+

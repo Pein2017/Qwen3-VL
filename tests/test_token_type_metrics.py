@@ -1,11 +1,17 @@
+from pathlib import Path
+
+import pytest
 from transformers import AutoTokenizer
 
 from src.data_collators.token_types import compute_token_types, TokenType
 
 
 def _get_tokenizer():
+    model_dir = Path("model_cache/models/Qwen/Qwen3-VL-8B-Instruct")
+    if not model_dir.exists():
+        pytest.skip(f"Tokenizer model dir not found: {model_dir}")
     return AutoTokenizer.from_pretrained(
-        "model_cache/models/Qwen/Qwen3-VL-8B-Instruct", trust_remote_code=True
+        str(model_dir), trust_remote_code=True
     )
 
 

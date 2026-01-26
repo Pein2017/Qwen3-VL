@@ -26,6 +26,31 @@ def test_load_training_config_returns_dataclasses(monkeypatch):
         "swift.llm.argument.train_args.TrainArguments._init_deepspeed",
         lambda self: None,
     )
+    # Avoid requiring a real local model dir (or hub access) during unit tests.
+    # ms-swift ModelArguments calls `get_model_info_meta()` during __post_init__.
+    def _fake_get_model_info_meta(*_args, **_kwargs):
+        model_info = SimpleNamespace(
+            model_type="dummy",
+            model_dir=".",
+            torch_dtype=torch.bfloat16,
+            max_model_len=2048,
+            rope_scaling={},
+            task_type="causal_lm",
+            num_labels=None,
+        )
+        # Minimal model_meta for ms-swift init paths that consult multimodal flags.
+        # We intentionally keep `model_arch=None` so no parameter lists are inferred.
+        model_meta = SimpleNamespace(
+            template="qwen3_vl",
+            is_multimodal=False,
+            model_arch=None,
+        )
+        return model_info, model_meta
+
+    monkeypatch.setattr(
+        "swift.llm.argument.base_args.model_args.get_model_info_meta",
+        _fake_get_model_info_meta,
+    )
 
     def _noop_ds_init(self, cfg):
         self.config = {"zero_optimization": {}}
@@ -107,11 +132,21 @@ def _build_minimal_training_config(
             "json_format": "standard",
             "visual_kd": visual_kd_section,
         },
-        "model": {},
+        # Minimal model section: the schema requires a non-empty model id/path,
+        # but for these unit tests we don't need it to exist on disk.
+        "model": {"model": "dummy-model"},
         "quantization": {},
         "data": {},
         "tuner": {},
-        "training": {"output_dir": "./out"},
+        "training": {
+            "output_dir": "./out",
+            "logging_dir": "./logs",
+            "run_name": "test",
+            "num_train_epochs": 1,
+            "learning_rate": 1.0e-4,
+            "vit_lr": 1.0e-5,
+            "aligner_lr": 1.0e-4,
+        },
         "rlhf": rlhf_section,
     }
     return TrainingConfig.from_mapping(payload, prompts)

@@ -7,7 +7,7 @@ They intentionally:
 - reject bool for int/float (bool is a subclass of int)
 - raise TypeError for type mismatches and ValueError for invalid values
 
-See OpenSpec change: 2026-01-21-refactor-src-architecture.
+See `tests/test_parsing_utils.py`.
 """
 
 from __future__ import annotations
