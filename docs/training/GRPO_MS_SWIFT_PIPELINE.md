@@ -79,6 +79,56 @@ Key code anchors (non-exhaustive):
 - Location: `swift/trainers/rlhf_arguments.py:94`
 - Implication: when both are provided, `generation_batch_size` takes precedence and overwrites `steps_per_generation`.
 
+### Batch Plan Shorthand (Qwen3-VL)
+Qwen3-VL provides an **optional** high-level shorthand to keep learner batching and rollout buffering aligned
+without manual arithmetic.
+
+Operator-facing config (opt-in):
+```yaml
+custom:
+  grpo:
+    batch_plan:
+      enabled: true
+
+      # Learner micro-batching (VRAM control).
+      per_device_train_batch_size: 8
+      per_device_eval_batch_size: 8  # optional; defaults to train
+
+      # Single global batch size used for BOTH:
+      # - training.effective_batch_size
+      # - rlhf.generation_batch_size
+      unified_batch_size: 48
+
+      # Optional: force rollout server topology + per-GPU concurrency cap.
+      rollout_server:
+        force_vllm_tensor_parallel_size: 1
+        force_vllm_data_parallel_size: 2
+        max_num_seqs_per_gpu: 4
+```
+
+Expansion behavior (performed by `ConfigLoader.load_yaml_with_extends()`):
+- Populates the legacy knobs:
+  - `training.per_device_train_batch_size`
+  - `training.per_device_eval_batch_size`
+  - `training.effective_batch_size`
+  - `rlhf.generation_batch_size`
+- When `rollout_server` is provided, also enforces:
+  - `custom.extra.rollout_server.vllm_tensor_parallel_size`
+  - `custom.extra.rollout_server.vllm_data_parallel_size`
+  - `custom.extra.rollout_server.vllm_max_num_seqs`
+
+Validation:
+- If `WORLD_SIZE` is available at config-load time, the loader requires:
+  - `unified_batch_size % (per_device_train_batch_size * WORLD_SIZE) == 0`
+  - Rationale: ensures the implied values match exactly and avoids ms-swift fallback paths caused by
+    `gradient_accumulation_steps != steps_per_generation`.
+- If shorthand is enabled and any legacy knob is also set with a different value, config loading fails fast with
+  a path-qualified error.
+
+Traceability:
+- Inspect the resolved config (after shorthand expansion) via:
+  - `conda run -n ms python scripts/config_tools/inspect_config.py inspect --config <path> --format yaml`
+
 ### `num_generations`
 - Must satisfy divisibility constraints:
   - `generation_batch_size % num_generations == 0`
