@@ -26,6 +26,7 @@ def test_load_training_config_returns_dataclasses(monkeypatch):
         "swift.llm.argument.train_args.TrainArguments._init_deepspeed",
         lambda self: None,
     )
+
     # Avoid requiring a real local model dir (or hub access) during unit tests.
     # ms-swift ModelArguments calls `get_model_info_meta()` during __post_init__.
     def _fake_get_model_info_meta(*_args, **_kwargs):

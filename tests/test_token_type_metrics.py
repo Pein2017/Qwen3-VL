@@ -10,9 +10,7 @@ def _get_tokenizer():
     model_dir = Path("model_cache/models/Qwen/Qwen3-VL-8B-Instruct")
     if not model_dir.exists():
         pytest.skip(f"Tokenizer model dir not found: {model_dir}")
-    return AutoTokenizer.from_pretrained(
-        str(model_dir), trust_remote_code=True
-    )
+    return AutoTokenizer.from_pretrained(str(model_dir), trust_remote_code=True)
 
 
 def _build_labels(tokenizer, text):
