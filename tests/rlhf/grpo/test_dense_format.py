@@ -1,5 +1,8 @@
 from src.rlhf.grpo.rewards.dense.parsing import check_dense_completion_format
-from src.rlhf.grpo.rewards.dense.rewards import DenseFormatReward, DenseParseSchemaStrictReward
+from src.rlhf.grpo.rewards.dense.rewards import (
+    DenseFormatReward,
+    DenseParseSchemaStrictReward,
+)
 
 
 def _dense_meta_bbu() -> dict[str, object]:
@@ -46,4 +49,3 @@ def test_dense_parse_schema_strict_is_penalty_only():
 
     assert reward([ok], metadata=[meta]) == [0.0]
     assert reward([bad], metadata=[meta]) == [-1.0]
-

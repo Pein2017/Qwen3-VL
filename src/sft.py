@@ -78,9 +78,6 @@ def resolve_trainer_cls(train_args: Any) -> type:
 
 logger = get_logger(__name__)
 
-# Ensure custom GRPO rewards are registered before trainer initialization.
-register_grpo_rewards()
-
 
 def parse_args():
     """Parse minimal runtime arguments.
@@ -147,6 +144,10 @@ def main():
         verbose=bool(args.verbose or args.debug),
         level=logging.INFO,
     )
+
+    # Register custom GRPO rewards only at runtime (not at import time).
+    # This avoids implicit side effects from `import src.sft`.
+    register_grpo_rewards()
 
     # Suppress extremely verbose torch autograd debug logs even when global debug is on.
     # Those logs (torch.autograd.graph) dump every backward node and overwhelm output.

@@ -42,6 +42,5 @@ def test_ingest_stage_a_preserves_json_summary_strings(tmp_path: Path) -> None:
     prompt = build_user_prompt(tickets[0], guidance)
 
     # JSON summary should remain intact and be parsed for object-count estimation.
-    assert "\"统计\"" in prompt
+    assert '"统计"' in prompt
     assert "Image1(obj=1)" in prompt
-

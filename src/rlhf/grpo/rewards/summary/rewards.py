@@ -67,7 +67,9 @@ class SummaryReward(ORM):
 
         if completions is None:
             completions_iterable: Iterable[Any] = []
-        elif isinstance(completions, Iterable) and not isinstance(completions, (str, bytes)):
+        elif isinstance(completions, Iterable) and not isinstance(
+            completions, (str, bytes)
+        ):
             completions_iterable = cast(Iterable[Any], completions)
         else:
             completions_iterable = [completions]
@@ -78,12 +80,15 @@ class SummaryReward(ORM):
         rewards: list[float] = [0.0] * len(completions_list)
         for idx, (completion, meta) in enumerate(zip(completions_list, metas)):
             # Mixed-mode safety: summary rewards MUST no-op on dense samples.
-            if isinstance(meta, Mapping) and cast(Mapping[str, object], meta).get(
-                "_fusion_mode"
-            ) == "dense":
+            if (
+                isinstance(meta, Mapping)
+                and cast(Mapping[str, object], meta).get("_fusion_mode") == "dense"
+            ):
                 rewards[idx] = 0.0
                 continue
-            rewards[idx] = float(self.score(SummarySample.from_inputs(completion, meta)))
+            rewards[idx] = float(
+                self.score(SummarySample.from_inputs(completion, meta))
+            )
 
         return rewards
 

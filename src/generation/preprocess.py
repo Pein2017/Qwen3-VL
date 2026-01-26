@@ -31,7 +31,9 @@ def normalize_tokenizer(tokenizer: object, *, options: VlmPreprocessOptions) -> 
             getattr(tokenizer, "truncation_side", None),
         )
     except Exception:
-        logger.warning("Failed to set tokenizer padding/truncation side", exc_info=False)
+        logger.warning(
+            "Failed to set tokenizer padding/truncation side", exc_info=False
+        )
 
     if options.pad_token_fallback:
         try:
@@ -43,7 +45,9 @@ def normalize_tokenizer(tokenizer: object, *, options: VlmPreprocessOptions) -> 
             logger.warning("Failed to set pad_token fallback", exc_info=False)
 
 
-def configure_vlm_processor(processor: object, *, options: VlmPreprocessOptions) -> None:
+def configure_vlm_processor(
+    processor: object, *, options: VlmPreprocessOptions
+) -> None:
     """Normalize VLM processor pixel budgets and resizing options."""
 
     if processor is None:

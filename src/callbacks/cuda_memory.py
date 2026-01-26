@@ -15,7 +15,12 @@ from typing import Any, TypedDict
 from typing_extensions import override
 
 import torch
-from transformers import TrainerCallback, TrainerControl, TrainerState, TrainingArguments
+from transformers import (
+    TrainerCallback,
+    TrainerControl,
+    TrainerState,
+    TrainingArguments,
+)
 
 from ..config.schema import CudaMemoryConfig
 from ..utils import get_logger
@@ -115,8 +120,12 @@ class CudaMemoryCallback(TrainerCallback):
             "total_gib": round(self._bytes_to_gib(stats["total_bytes"]), 4),
             "allocated_gib": round(self._bytes_to_gib(stats["allocated_bytes"]), 4),
             "reserved_gib": round(self._bytes_to_gib(stats["reserved_bytes"]), 4),
-            "max_allocated_gib": round(self._bytes_to_gib(stats["max_allocated_bytes"]), 4),
-            "max_reserved_gib": round(self._bytes_to_gib(stats["max_reserved_bytes"]), 4),
+            "max_allocated_gib": round(
+                self._bytes_to_gib(stats["max_allocated_bytes"]), 4
+            ),
+            "max_reserved_gib": round(
+                self._bytes_to_gib(stats["max_reserved_bytes"]), 4
+            ),
         }
         logger.debug("cuda_mem %s", payload)
 
@@ -139,7 +148,9 @@ class CudaMemoryCallback(TrainerCallback):
         if not output_dir:
             return None
         rank = self._global_rank()
-        self._trace_path = os.path.join(str(output_dir), f"cuda_memory_trace.rank{rank}.jsonl")
+        self._trace_path = os.path.join(
+            str(output_dir), f"cuda_memory_trace.rank{rank}.jsonl"
+        )
         return self._trace_path
 
     def _try_reset_vllm_prefix_cache(self) -> None:
@@ -191,7 +202,9 @@ class CudaMemoryCallback(TrainerCallback):
                     pass
 
             before = self._collect_cuda_stats()
-            unused_reserved = int(before["reserved_bytes"]) - int(before["allocated_bytes"])
+            unused_reserved = int(before["reserved_bytes"]) - int(
+                before["allocated_bytes"]
+            )
             if unused_reserved < 1024 * 1024 * 1024:  # < 1 GiB
                 break
 
@@ -213,8 +226,12 @@ class CudaMemoryCallback(TrainerCallback):
                     pass
 
             after = self._collect_cuda_stats()
-            freed_reserved = int(before["reserved_bytes"]) - int(after["reserved_bytes"])
-            freed_allocated = int(before["allocated_bytes"]) - int(after["allocated_bytes"])
+            freed_reserved = int(before["reserved_bytes"]) - int(
+                after["reserved_bytes"]
+            )
+            freed_allocated = int(before["allocated_bytes"]) - int(
+                after["allocated_bytes"]
+            )
 
             if self._should_log(state):
                 logger.debug(

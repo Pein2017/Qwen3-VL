@@ -189,10 +189,7 @@ def test_build_user_prompt_headline_and_list_start_at_g1():
 
 
 def test_build_user_prompt_json_summary_derives_obj_count_from_stats():
-    summary = (
-        '{'
-        '"统计":[{"类别":"BBU设备","品牌":{"华为":1}}]}'
-    )
+    summary = '{"统计":[{"类别":"BBU设备","品牌":{"华为":1}}]}'
     ticket = GroupTicket(
         group_id="QC-JSON-001",
         mission="挡风板安装检查",
@@ -209,13 +206,13 @@ def test_build_user_prompt_json_summary_derives_obj_count_from_stats():
 
     prompt = build_user_prompt(ticket, guidance)
     assert "Image1(obj=1)" in prompt
-    assert "\"统计\"" in prompt
+    assert '"统计"' in prompt
 
 
 def test_build_user_prompt_strips_stage_a_header_and_keeps_json():
     summary = (
         "<DOMAIN=BBU>, <TASK=SUMMARY>\n"
-        "{\"统计\":[{\"类别\":\"标签\",\"文本\":{\"NR900-BBU\":1}}]}\n"
+        '{"统计":[{"类别":"标签","文本":{"NR900-BBU":1}}]}\n'
     )
     ticket = GroupTicket(
         group_id="QC-JSON-HEADER-001",
@@ -235,7 +232,7 @@ def test_build_user_prompt_strips_stage_a_header_and_keeps_json():
     assert "<DOMAIN=" not in prompt
     assert "<TASK=" not in prompt
     assert "Image1(obj=1)" in prompt
-    assert "\"统计\"" in prompt
+    assert '"统计"' in prompt
 
 
 def test_build_user_prompt_strips_header_and_keeps_non_json_payload():

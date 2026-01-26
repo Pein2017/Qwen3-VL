@@ -39,7 +39,7 @@ from src.generation import (
 from src.generation.chat_template import render_chat_template
 
 from src.config.missions import STAGE_B_MISSION_FOCUS
-from src.utils import require_mapping
+from src.utils.summary_json import extract_summary_json_obj, strip_summary_headers
 from src.utils.unstructured import UnstructuredMapping
 
 from ..config import ReflectionConfig
@@ -283,13 +283,20 @@ class ReflectionEngine:
         model_max_length_raw = getattr(self.tokenizer, "model_max_length", None)
         model_max_length: int | None
         try:
-            model_max_length = int(model_max_length_raw) if model_max_length_raw else None
+            model_max_length = (
+                int(model_max_length_raw) if model_max_length_raw else None
+            )
         except Exception:  # noqa: BLE001
             model_max_length = None
-        if model_max_length is not None and (model_max_length <= 0 or model_max_length > 1_000_000):
+        if model_max_length is not None and (
+            model_max_length <= 0 or model_max_length > 1_000_000
+        ):
             model_max_length = None
         if model_max_length is not None:
-            total_requested = min(full_token_length, self.config.max_reflection_length) + self.config.max_new_tokens
+            total_requested = (
+                min(full_token_length, self.config.max_reflection_length)
+                + self.config.max_new_tokens
+            )
             if self.config.max_reflection_length > model_max_length:
                 logger.warning(
                     "reflection max_reflection_length exceeds model_max_length: max_reflection_length=%d model_max_length=%d",
@@ -412,9 +419,9 @@ class ReflectionEngine:
             if ratio > best_ratio:
                 best_ratio = ratio
                 best_key = key
-            if (
-                target in candidate or candidate in target
-            ) and min(len(target), len(candidate)) / max(len(target), len(candidate)) >= 0.85:
+            if (target in candidate or candidate in target) and min(
+                len(target), len(candidate)
+            ) / max(len(target), len(candidate)) >= 0.85:
                 return key
         if best_ratio >= _GUIDANCE_SIMILARITY_THRESHOLD:
             return best_key
@@ -489,7 +496,9 @@ class ReflectionEngine:
         normalized = cls._normalize_forbidden_check(text)
         return ("通过" in normalized) or ("不通过" in normalized)
 
-    def run_decision_pass(self, bundle: ExperienceBundle) -> tuple[tuple[str, ...], str]:
+    def run_decision_pass(
+        self, bundle: ExperienceBundle
+    ) -> tuple[tuple[str, ...], str]:
         """Run decision pass and return (no_evidence_ticket_keys, decision_analysis)."""
 
         user_prompt = self._build_reflection_prompt(
@@ -737,34 +746,38 @@ class ReflectionEngine:
             if not text:
                 raise ValueError("hypotheses.text must be non-empty")
             if "\u7b2c\u4e09\u6001" in text or "\u590d\u6838" in text:
-                raise ValueError("hypotheses.text contains forbidden third-state wording")
+                raise ValueError(
+                    "hypotheses.text contains forbidden third-state wording"
+                )
             if self._reject_experience_text(text):
                 raise ValueError("hypotheses.text appears to copy summary chains")
             if self._contains_forbidden_phrase(text):
-                raise ValueError("hypotheses.text contains forbidden third-state wording")
+                raise ValueError(
+                    "hypotheses.text contains forbidden third-state wording"
+                )
             if self._contains_ambiguous_negation(text):
-                raise ValueError("hypotheses.text must use affirmative verdict phrasing")
+                raise ValueError(
+                    "hypotheses.text must use affirmative verdict phrasing"
+                )
             if not self._is_binary_hypothesis(text):
                 raise ValueError("hypotheses.text must contain a binary verdict")
             if self._hypothesis_conflicts_scaffold(text, scaffold_texts):
                 raise ValueError("hypotheses.text conflicts with scaffold rules")
 
             falsifier_raw = entry.get("falsifier")
-            falsifier = (
-                str(falsifier_raw).strip() if falsifier_raw is not None else ""
-            )
+            falsifier = str(falsifier_raw).strip() if falsifier_raw is not None else ""
             if not falsifier:
                 raise ValueError("hypotheses.falsifier must be non-empty")
             if self._contains_forbidden_phrase(falsifier):
                 raise ValueError("hypotheses.falsifier contains forbidden wording")
             if self._contains_ambiguous_negation(falsifier):
-                raise ValueError("hypotheses.falsifier must use affirmative verdict phrasing")
+                raise ValueError(
+                    "hypotheses.falsifier must use affirmative verdict phrasing"
+                )
 
             dimension_raw = entry.get("dimension")
             dimension = (
-                str(dimension_raw).strip()
-                if dimension_raw is not None
-                else None
+                str(dimension_raw).strip() if dimension_raw is not None else None
             )
             if dimension is not None and not dimension:
                 dimension = None
@@ -799,7 +812,12 @@ class ReflectionEngine:
             evidence_union.extend(list(evidence))
 
         evidence_ticket_keys = tuple(dict.fromkeys(evidence_union))
-        return tuple(operations), tuple(hypotheses), evidence_ticket_keys, evidence_analysis
+        return (
+            tuple(operations),
+            tuple(hypotheses),
+            evidence_ticket_keys,
+            evidence_analysis,
+        )
 
     def build_record(
         self,
@@ -852,64 +870,11 @@ class ReflectionEngine:
 
     @staticmethod
     def _parse_stage_a_summary_json(text: str) -> UnstructuredMapping | None:
-        stripped = (text or "").strip()
-        if not stripped or stripped.startswith("无关图片"):
-            return None
-
-        required = {"统计"}
-
-        def _maybe_parse_obj(candidate: str) -> UnstructuredMapping | None:
-            c = candidate.strip()
-            if not (c.startswith("{") and c.endswith("}")):
-                return None
-            try:
-                parsed = json.loads(c)
-            except Exception:
-                return None
-            try:
-                return require_mapping(parsed, context="stage_b.summary_json")
-            except TypeError:
-                return None
-
-        obj = _maybe_parse_obj(stripped)
-        if obj is not None and required.issubset(obj.keys()):
-            return obj
-
-        # Legacy Stage-A may contain a header line "<DOMAIN=...>, <TASK=...>".
-        lines = [line.strip() for line in stripped.splitlines() if line.strip()]
-        for line in reversed(lines):
-            obj = _maybe_parse_obj(line)
-            if obj is not None and required.issubset(obj.keys()):
-                return obj
-
-        start = stripped.find("{")
-        end = stripped.rfind("}")
-        if start != -1 and end != -1 and end > start:
-            obj = _maybe_parse_obj(stripped[start : end + 1])
-            if obj is not None and required.issubset(obj.keys()):
-                return obj
-
-        return None
+        return extract_summary_json_obj(text, context="stage_b.summary_json")
 
     @staticmethod
     def _sanitize_stage_a_summary_for_prompt(text: str) -> str:
-        stripped = (text or "").strip()
-        if not stripped:
-            return stripped
-        if stripped.startswith("无关图片"):
-            return "无关图片"
-
-        lines = [line for line in stripped.splitlines() if line.strip()]
-        kept = [
-            line
-            for line in lines
-            if not (
-                line.strip().startswith("<DOMAIN=")
-                and "<TASK=" in line
-                and line.strip().endswith(">")
-            )
-        ]
-        return "\n".join(kept).strip()
+        return strip_summary_headers(text)
 
     @staticmethod
     def _estimate_obj_count(text: str) -> int:
@@ -1255,7 +1220,10 @@ class ReflectionEngine:
         bundle_summary = "\n".join(bundle_lines)
 
         full_prompt = f"{system_template}\n\n{bundle_summary}"
-        while len(kept_blocks) > 1 and _count_tokens_local(full_prompt) > self.config.token_budget:
+        while (
+            len(kept_blocks) > 1
+            and _count_tokens_local(full_prompt) > self.config.token_budget
+        ):
             kept_blocks.pop()
             bundle_lines = (
                 preamble_lines
@@ -1329,7 +1297,9 @@ class ReflectionEngine:
                     "hypotheses": hypotheses_payload,
                     "evidence_group_ids": list(outcome.proposal.evidence_group_ids),
                     "uncertainty_note": outcome.proposal.uncertainty_note,
-                    "no_evidence_group_ids": list(outcome.proposal.no_evidence_group_ids),
+                    "no_evidence_group_ids": list(
+                        outcome.proposal.no_evidence_group_ids
+                    ),
                 },
                 "eligible": outcome.eligible,
                 "applied": outcome.applied,

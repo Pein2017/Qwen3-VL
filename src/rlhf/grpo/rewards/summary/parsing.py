@@ -105,7 +105,9 @@ def normalize_bbu_ocr_text(value: str) -> str:
 
 
 def is_irrelevant(meta: Any) -> bool:
-    return isinstance(meta, Mapping) and meta.get("_fusion_source") == _IRRELEVANT_SOURCE
+    return (
+        isinstance(meta, Mapping) and meta.get("_fusion_source") == _IRRELEVANT_SOURCE
+    )
 
 
 def get_domain_token(meta: Any) -> str | None:
@@ -172,7 +174,9 @@ def canonicalize(obj: Any, *, key: str | None = None) -> Any:
         if key in {"统计", "备注"}:
             canonical_items = [canonicalize(item) for item in obj]
             serialized = [
-                json.dumps(item, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+                json.dumps(
+                    item, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+                )
                 for item in canonical_items
             ]
             return sorted(serialized)

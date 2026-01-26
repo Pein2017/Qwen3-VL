@@ -12,24 +12,31 @@ from src.stage_b.rule_search import (
 
 
 def test_normalize_rule_signature_is_stable() -> None:
-    assert (
-        normalize_rule_signature("如果 全局图 需要 安装，则 判定 不通过。")
-        == normalize_rule_signature("若全局图需要安装则判定不通过")
-    )
+    assert normalize_rule_signature(
+        "如果 全局图 需要 安装，则 判定 不通过。"
+    ) == normalize_rule_signature("若全局图需要安装则判定不通过")
 
 
 def test_relative_error_reduction_matches_definition() -> None:
     base = compute_metrics(
         [
-            build_ticket_stats(ticket_key="a::pass", gt_label="pass", verdicts=("fail",)),
-            build_ticket_stats(ticket_key="b::pass", gt_label="pass", verdicts=("pass",)),
+            build_ticket_stats(
+                ticket_key="a::pass", gt_label="pass", verdicts=("fail",)
+            ),
+            build_ticket_stats(
+                ticket_key="b::pass", gt_label="pass", verdicts=("pass",)
+            ),
         ]
     )
     # base acc = 0.5 => err=0.5
     new = compute_metrics(
         [
-            build_ticket_stats(ticket_key="a::pass", gt_label="pass", verdicts=("pass",)),
-            build_ticket_stats(ticket_key="b::pass", gt_label="pass", verdicts=("pass",)),
+            build_ticket_stats(
+                ticket_key="a::pass", gt_label="pass", verdicts=("pass",)
+            ),
+            build_ticket_stats(
+                ticket_key="b::pass", gt_label="pass", verdicts=("pass",)
+            ),
         ]
     )
     # new acc = 1.0 => err=0.0 => RER=(0.5-0)/0.5=1.0
@@ -39,10 +46,18 @@ def test_relative_error_reduction_matches_definition() -> None:
 def test_compute_metrics_rates() -> None:
     metrics = compute_metrics(
         [
-            build_ticket_stats(ticket_key="a::pass", gt_label="pass", verdicts=("fail",)),
-            build_ticket_stats(ticket_key="b::fail", gt_label="fail", verdicts=("pass",)),
-            build_ticket_stats(ticket_key="c::pass", gt_label="pass", verdicts=("pass",)),
-            build_ticket_stats(ticket_key="d::fail", gt_label="fail", verdicts=("fail",)),
+            build_ticket_stats(
+                ticket_key="a::pass", gt_label="pass", verdicts=("fail",)
+            ),
+            build_ticket_stats(
+                ticket_key="b::fail", gt_label="fail", verdicts=("pass",)
+            ),
+            build_ticket_stats(
+                ticket_key="c::pass", gt_label="pass", verdicts=("pass",)
+            ),
+            build_ticket_stats(
+                ticket_key="d::fail", gt_label="fail", verdicts=("fail",)
+            ),
         ]
     )
     assert metrics.fn == 1
@@ -81,8 +96,12 @@ def test_build_gate_stats_passes_for_clear_improvement() -> None:
     new = {}
     for i in range(30):
         key = f"t{i}::pass"
-        base[key] = build_ticket_stats(ticket_key=key, gt_label="pass", verdicts=("fail",))
-        new[key] = build_ticket_stats(ticket_key=key, gt_label="pass", verdicts=("pass",))
+        base[key] = build_ticket_stats(
+            ticket_key=key, gt_label="pass", verdicts=("fail",)
+        )
+        new[key] = build_ticket_stats(
+            ticket_key=key, gt_label="pass", verdicts=("pass",)
+        )
 
     stats, passed = build_gate_stats(
         base_stats=base,

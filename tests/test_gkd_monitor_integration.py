@@ -284,14 +284,8 @@ def test_gkd_monitor_logs_losses(monkeypatch):
     trainer.log({"eval/loss": 1.23})
 
     train_loss_avg = (0.5 + 0.7) / 2
-    assert (
-        pytest.approx(captured_logs["llm_kd_loss"], rel=1e-6)
-        == (0.1 + 0.2) / 2
-    )
-    assert (
-        pytest.approx(captured_logs["sft_loss"], rel=1e-6)
-        == (0.4 + 0.5) / 2
-    )
+    assert pytest.approx(captured_logs["llm_kd_loss"], rel=1e-6) == (0.1 + 0.2) / 2
+    assert pytest.approx(captured_logs["sft_loss"], rel=1e-6) == (0.4 + 0.5) / 2
     assert pytest.approx(captured_logs["loss"], rel=1e-6) == train_loss_avg
     assert pytest.approx(captured_logs["token_acc"], rel=1e-6) == 17.0 / 20.0
     assert pytest.approx(captured_logs["eval/loss"], rel=1e-6) == 1.23
@@ -400,7 +394,9 @@ def test_gkd_compute_loss_aligns_tokens():
     torch.testing.assert_close(captured["teacher"], expected_teacher)
     assert captured["beta"] == pytest.approx(0.25)
     assert trainer._metrics["train"]["llm_kd_loss"][0].item() == pytest.approx(0.5)
-    assert trainer._metrics["train"]["token_acc_correct"][0].item() == pytest.approx(1.0)
+    assert trainer._metrics["train"]["token_acc_correct"][0].item() == pytest.approx(
+        1.0
+    )
     assert trainer._metrics["train"]["token_acc_total"][0].item() == pytest.approx(1.0)
 
 

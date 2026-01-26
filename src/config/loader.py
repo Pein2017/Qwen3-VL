@@ -17,6 +17,7 @@ from .prompts import (
 )
 from .schema import PromptOverrides, SaveDelayConfig, TrainingConfig
 from src.utils import require_mutable_mapping
+from src.utils.parsing import coerce_bool
 from src.utils.unstructured import UnstructuredMutableMapping
 
 logger = logging.getLogger(__name__)
@@ -54,25 +55,6 @@ class ConfigLoader:
         if isinstance(value, (list, tuple)):
             return [str(v) for v in value]
         return [str(value)]
-
-    @staticmethod
-    def _coerce_bool(value: object, field_name: str) -> bool:
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, (int, float)):
-            if value in (0, 1, 0.0, 1.0):
-                return bool(value)
-            raise ValueError(f"{field_name} must be boolean (0 or 1), got {value!r}.")
-        if isinstance(value, str):
-            normalized = value.strip().lower()
-            if normalized in {"true", "1", "yes", "y", "on"}:
-                return True
-            if normalized in {"false", "0", "no", "n", "off"}:
-                return False
-            raise ValueError(
-                f"{field_name} string value '{value}' is not a recognized boolean representation."
-            )
-        raise TypeError(f"{field_name} must be a boolean value, got {type(value)!r}.")
 
     @staticmethod
     def load_yaml_with_extends(
@@ -170,8 +152,8 @@ class ConfigLoader:
                     "custom.summary_ratio has been removed; use custom.use_summary instead."
                 )
             if "use_summary" in custom_section:
-                use_summary = ConfigLoader._coerce_bool(
-                    custom_section["use_summary"], "custom.use_summary"
+                use_summary = coerce_bool(
+                    custom_section["use_summary"], field="custom.use_summary"
                 )
             json_format_hint_raw = custom_section.get("json_format")
             if json_format_hint_raw is not None:
@@ -267,8 +249,8 @@ class ConfigLoader:
         if save_last_epoch_raw is None:
             save_last_epoch = True
         else:
-            save_last_epoch = ConfigLoader._coerce_bool(
-                save_last_epoch_raw, "training.save_last_epoch"
+            save_last_epoch = coerce_bool(
+                save_last_epoch_raw, field="training.save_last_epoch"
             )
 
         # Auto-calculate gradient_accumulation_steps from effective_batch_size

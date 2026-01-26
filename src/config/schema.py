@@ -8,6 +8,8 @@ from collections.abc import Mapping, MutableMapping
 import math
 from typing import Any, Literal, cast
 
+from src.utils.parsing import coerce_bool
+
 AllowedNorm = Literal["none", "norm100", "norm1000"]
 AllowedVisualDistance = Literal["mse", "cosine"]
 AllowedJsonFormat = Literal["standard"]
@@ -558,22 +560,7 @@ class CudaMemoryConfig:
 
     @staticmethod
     def _parse_bool(value: object, field_name: str) -> bool:
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, (int, float)):
-            if value in (0, 1, 0.0, 1.0):
-                return bool(value)
-            raise ValueError(f"{field_name} must be boolean (0 or 1), got {value!r}.")
-        if isinstance(value, str):
-            normalized = value.strip().lower()
-            if normalized in {"true", "1", "yes", "y", "on"}:
-                return True
-            if normalized in {"false", "0", "no", "n", "off"}:
-                return False
-            raise ValueError(
-                f"{field_name} string value '{value}' is not a recognized boolean representation."
-            )
-        raise TypeError(f"{field_name} must be a boolean value, got {type(value)!r}.")
+        return coerce_bool(value, field=field_name)
 
     @classmethod
     def from_mapping(cls, payload: Mapping[str, Any] | None) -> "CudaMemoryConfig":
@@ -736,33 +723,11 @@ class CustomConfig:
                 "custom.summary_ratio has been removed; use custom.use_summary instead."
             )
 
-        def _parse_bool(value: object, field_name: str) -> bool:
-            if isinstance(value, bool):
-                return value
-            if isinstance(value, (int, float)):
-                if value in (0, 1, 0.0, 1.0):
-                    return bool(value)
-                raise ValueError(
-                    f"{field_name} must be boolean (0 or 1), got {value!r}."
-                )
-            if isinstance(value, str):
-                normalized = value.strip().lower()
-                if normalized in {"true", "1", "yes", "y", "on"}:
-                    return True
-                if normalized in {"false", "0", "no", "n", "off"}:
-                    return False
-                raise ValueError(
-                    f"{field_name} string value '{value}' is not a recognized boolean representation."
-                )
-            raise TypeError(
-                f"{field_name} must be a boolean value, got {type(value)!r}."
-            )
-
         use_summary_raw = data.pop("use_summary", None)
         use_summary = (
             False
             if use_summary_raw is None
-            else _parse_bool(use_summary_raw, "custom.use_summary")
+            else coerce_bool(use_summary_raw, field="custom.use_summary")
         )
         if "summary_label_grouping" in data:
             raise ValueError(

@@ -25,9 +25,7 @@ class SummaryPromptProfile:
         domain: Optional[str] = None,
         mission: Optional[str] = None,
     ) -> str:
-        parts = [
-            build_summary_system_prompt_minimal().strip()
-        ]
+        parts = [build_summary_system_prompt_minimal().strip()]
 
         if self.include_domain_pack:
             pack = get_domain_pack(domain)

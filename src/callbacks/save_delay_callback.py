@@ -77,7 +77,9 @@ class SaveDelayCallback(TrainerCallback):
         self._metric_key_cache = key
         return key
 
-    def _guard_metric(self, metric_value: float, greater_is_better: bool | None) -> float:
+    def _guard_metric(
+        self, metric_value: float, greater_is_better: bool | None
+    ) -> float:
         if greater_is_better is False:
             return metric_value - self._metric_epsilon
         # Default to treating higher as better when unset; transformers also defaults this way for non-loss metrics.

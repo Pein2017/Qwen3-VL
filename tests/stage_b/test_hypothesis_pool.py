@@ -32,9 +32,7 @@ def test_hypothesis_promotion_threshold(tmp_path):
     )
     assert len(eligible) == 1
 
-    promoted = pool.mark_promoted(
-        [eligible[0].signature], reflection_cycle=1, epoch=1
-    )
+    promoted = pool.mark_promoted([eligible[0].signature], reflection_cycle=1, epoch=1)
     assert promoted and promoted[0].status == "promoted"
 
     reloaded = pool.load()

@@ -60,7 +60,9 @@ _SIGNATURE_PUNCT_RE = re.compile(
 def normalize_rule_signature(text: str) -> str:
     simplified = to_simplified(text or "")
     simplified = normalize_spaces(simplified).lower()
-    simplified = simplified.replace("如果", "若").replace("当", "若").replace("就", "则")
+    simplified = (
+        simplified.replace("如果", "若").replace("当", "若").replace("就", "则")
+    )
     simplified = _SIGNATURE_PUNCT_RE.sub(" ", simplified)
     simplified = normalize_spaces(simplified)
     return simplified.strip()

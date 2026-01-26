@@ -69,9 +69,7 @@ def main():
 
     # Load generation engine
     logger.info("Loading generation engine...")
-    engine = load_generation_engine(
-        str(checkpoint_path), DEVICE, max_pixels=MAX_PIXELS
-    )
+    engine = load_generation_engine(str(checkpoint_path), DEVICE, max_pixels=MAX_PIXELS)
     logger.info("Engine loaded successfully")
 
     # Build prompts (matching stage_a.sh behavior with mission focus)

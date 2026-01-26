@@ -143,7 +143,10 @@ def region_iou_mask(
 def _to_line_xy(points: Sequence[float]) -> list[tuple[float, float]]:
     if len(points) < 4 or len(points) % 2 != 0:
         return []
-    return [(_clamp_norm1000(points[i]), _clamp_norm1000(points[i + 1])) for i in range(0, len(points), 2)]
+    return [
+        (_clamp_norm1000(points[i]), _clamp_norm1000(points[i + 1]))
+        for i in range(0, len(points), 2)
+    ]
 
 
 def tube_iou_line(
@@ -291,4 +294,3 @@ __all__ = [
     "region_iou_mask",
     "tube_iou_line",
 ]
-

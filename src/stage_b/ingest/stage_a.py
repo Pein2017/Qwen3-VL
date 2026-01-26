@@ -93,9 +93,7 @@ def ingest_stage_a(
                 try:
                     payload: MutableMapping[str, object] = json.loads(stripped)
                 except json.JSONDecodeError as exc:
-                    logger.error(
-                        f"Invalid JSON at {path.name}:{line_number}: {exc}"
-                    )
+                    logger.error(f"Invalid JSON at {path.name}:{line_number}: {exc}")
                     continue
 
                 try:

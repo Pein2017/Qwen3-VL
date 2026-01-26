@@ -8,10 +8,14 @@ from .base import BasePreprocessor
 class SequentialPreprocessor(BasePreprocessor):
     """Apply multiple preprocessors in order."""
 
-    def __init__(self, preprocessors: Sequence[BasePreprocessor], **kwargs: Any) -> None:
+    def __init__(
+        self, preprocessors: Sequence[BasePreprocessor], **kwargs: Any
+    ) -> None:
         super().__init__(**kwargs)
         if not preprocessors:
-            raise ValueError("SequentialPreprocessor requires at least one preprocessor")
+            raise ValueError(
+                "SequentialPreprocessor requires at least one preprocessor"
+            )
         self.preprocessors = list(preprocessors)
         self._curriculum_state: Any = None
         self._rng: Any = None
