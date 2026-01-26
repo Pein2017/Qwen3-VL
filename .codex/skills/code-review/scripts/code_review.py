@@ -412,7 +412,14 @@ def _pyright_include_paths(repo_root: Path, raw_paths: Sequence[str]) -> list[st
     for p in raw_paths:
         path = Path(p)
         resolved = path if path.is_absolute() else (repo_root / path)
-        include.append(_relpath(repo_root, resolved))
+        # NOTE: Pyright/basedpyright resolve "include" entries relative to the
+        # *config file location*, not the current working directory. Since we
+        # write a scoped config file into a temp/artifacts directory, using
+        # repo-relative paths like "src" would incorrectly resolve to
+        # "tmp/code-review/src" and result in 0 files analyzed.
+        #
+        # Use absolute paths to make the scoped config location-independent.
+        include.append(str(resolved.resolve()))
     # Preserve ordering but remove duplicates.
     deduped: list[str] = []
     seen: set[str] = set()
