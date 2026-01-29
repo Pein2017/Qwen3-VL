@@ -1,5 +1,5 @@
 extends:
-  - summary_1024.yaml
+  - summary_1024_server_mode.yaml
 
 # Experimental preset: emphasize schema/field stability in summary outputs.
 # Motivation: Stage-B relies on stable per-category attribute keys (e.g. 电线/捆扎),
