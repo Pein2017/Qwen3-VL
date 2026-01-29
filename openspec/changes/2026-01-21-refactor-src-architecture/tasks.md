@@ -1,0 +1,25 @@
+# Tasks
+
+- [x] Add OpenSpec deltas for the new `src-architecture` capability and validate scenarios
+- [ ] Implement lazy import patterns for `src/__init__.py`, `src/config/__init__.py` (avoid eager `ConfigLoader` import), `src/datasets/__init__.py`, and `src/generation/__init__.py` to minimize import-time cost and side effects (keep lightweight imports cheap)
+- [ ] (Optional but recommended) Implement lazy import patterns for `src/stage_a/__init__.py` to reduce accidental heavyweight imports from `import src.stage_a`
+- [ ] Move import-time side effects (e.g., reward registration) behind explicit runtime entrypoints
+- [ ] Introduce `src/utils/parsing.py` and migrate duplicated bool/int/float coercion helpers to the shared implementation
+- [ ] Introduce `src/utils/summary_json.py` and migrate Stage-A/Stage-B summary JSON parsing/formatting/header-stripping to the shared implementation
+- [ ] Add a TypedDict validator for Stage-A JSONL records adjacent to `StageAGroupRecord` and enforce validation at write boundaries
+- [ ] Replace private cross-module helper imports (underscore-prefixed functions) with explicit public utility modules
+- [ ] Introduce semantic grouping `XOptions` dataclasses for configuration-heavy construction surfaces (datasets and pipelines)
+- [ ] Split monolithic orchestrators into internal modules while preserving public entrypoints:
+  - [ ] `src/sft.py` delegates to `src/training/*`
+  - [ ] `src/stage_a/inference.py` delegates to `src/stage_a/*` submodules
+  - [ ] `src/stage_b/runner.py` delegates to `src/stage_b/*` pipeline modules while preserving `run_all`
+- [ ] Add verification tests:
+  - [ ] import-smoke (ensure `import src` does not import heavy deps by default)
+  - [ ] import-boundaries (ensure `src/utils/**` and `src/generation/**` do not import pipeline modules; add `scripts/ci/check_import_boundaries.py`)
+  - [ ] pytest wrapper for import-boundaries (`tests/test_import_boundaries.py`)
+  - [ ] Stage-A record validator tests (`tests/test_stage_a_record_validation.py`)
+  - [ ] shared parsing unit tests
+  - [ ] shared summary-json unit tests
+  - [ ] Training config no-model validation (`conda run -n ms python scripts/validate_sft_config.py --config configs/smoke/sft_dense_tiny.yaml`)
+  - [ ] Stage-B no-model smoke (`scripts/stage_b_smoke.py` exits 0; smoke script assertions match rollout parser contract and do not assume third-state phrase rejection)
+- [ ] Run lint/typecheck and targeted pytest suites under conda env `ms`

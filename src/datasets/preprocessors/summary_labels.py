@@ -12,4 +12,3 @@ class SummaryLabelNormalizer(BasePreprocessor):
 
 
 __all__ = ["SummaryLabelNormalizer"]
-

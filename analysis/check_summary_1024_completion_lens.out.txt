@@ -1,0 +1,109 @@
+Tokenizer discovery
+- config: configs/train/grpo/summary_1024.yaml
+- tokenizer_path: output/1-13/new_schema-4B-dense-grpo_summary_1024_attr_key_recall/ckpt-9900
+- debug: {'picked': 'model.*'}
+- tokenizer_class: Qwen2TokenizerFast
+- vocab_size: 151643
+
+=== data_new_schema_center/bbu_full_1024/all_samples.jsonl
+total_samples: 2745
+empty_completions: 0
+max_len_no_special: 421
+max_len_no_special_sample: len_no_special=421 len_with_special=421 line_idx=1793 id=images/QC-20230314-0000778_85740.jpeg
+max_len_with_special: 421
+max_len_with_special_sample: len_no_special=421 len_with_special=421 line_idx=1793 id=images/QC-20230314-0000778_85740.jpeg
+count_exceed_2048_no_special: 0
+worst_overage_no_special: 0
+count_exceed_2048_with_special: 0
+worst_overage_with_special: 0
+top_20_longest_by_no_special:
+ 1. len_no_special=421 len_with_special=421 line_idx=1793 id=images/QC-20230314-0000778_85740.jpeg
+ 2. len_no_special=419 len_with_special=419 line_idx=1904 id=images/QC-20230323-0001262_237114.jpeg
+ 3. len_no_special=403 len_with_special=403 line_idx=2108 id=images/QC-20230222-0000306_49445.jpeg
+ 4. len_no_special=399 len_with_special=399 line_idx=2454 id=images/QC-20230302-0000487_28969.jpeg
+ 5. len_no_special=396 len_with_special=396 line_idx=1614 id=images/QC-20230322-0001225_233023.jpeg
+ 6. len_no_special=386 len_with_special=386 line_idx=2470 id=images/QC-TEMP-20241018-0015018_4195171.jpeg
+ 7. len_no_special=385 len_with_special=385 line_idx=1132 id=images/QC-20230319-0001003_98997.jpeg
+ 8. len_no_special=385 len_with_special=385 line_idx=1276 id=images/QC-TEMP-20250108-0015837_4452703.jpeg
+ 9. len_no_special=381 len_with_special=381 line_idx=1282 id=images/QC-20230225-0000412_22570.jpeg
+10. len_no_special=376 len_with_special=376 line_idx=2502 id=images/QC-20230315-0000862_84055.jpeg
+11. len_no_special=372 len_with_special=372 line_idx=2207 id=images/QC-20230304-0000520_37349.jpeg
+12. len_no_special=369 len_with_special=369 line_idx=1163 id=images/QC-20230223-0000329_354366.jpeg
+13. len_no_special=366 len_with_special=366 line_idx=2213 id=images/QC-20230308-0000611_60690.jpeg
+14. len_no_special=363 len_with_special=363 line_idx=1195 id=images/QC-20230304-0000524_55585.jpeg
+15. len_no_special=353 len_with_special=353 line_idx=1073 id=images/QC-20230225-0000412_22547.jpeg
+16. len_no_special=350 len_with_special=350 line_idx=327 id=images/QC-TEMP-20241119-0015291_4275617.jpeg
+17. len_no_special=346 len_with_special=346 line_idx=1823 id=images/QC-20230318-0000970_170405.jpeg
+18. len_no_special=345 len_with_special=345 line_idx=2227 id=images/QC-20230224-0000397_21963.jpeg
+19. len_no_special=344 len_with_special=344 line_idx=923 id=images/QC-20230310-0000739_31430.jpeg
+20. len_no_special=344 len_with_special=344 line_idx=1498 id=images/QC-TEMP-20241212-0015541_4369990.jpeg
+
+=== data_new_schema_center/rru_full_1024/all_samples.jsonl
+total_samples: 1502
+empty_completions: 0
+max_len_no_special: 200
+max_len_no_special_sample: len_no_special=200 len_with_special=200 line_idx=3 id=images/审核通过/QC-20231027-0022530/QC-20231027-0022530_3135083.jpeg
+max_len_with_special: 200
+max_len_with_special_sample: len_no_special=200 len_with_special=200 line_idx=3 id=images/审核通过/QC-20231027-0022530/QC-20231027-0022530_3135083.jpeg
+count_exceed_2048_no_special: 0
+worst_overage_no_special: 0
+count_exceed_2048_with_special: 0
+worst_overage_with_special: 0
+top_20_longest_by_no_special:
+ 1. len_no_special=200 len_with_special=200 line_idx=3 id=images/审核通过/QC-20231027-0022530/QC-20231027-0022530_3135083.jpeg
+ 2. len_no_special=191 len_with_special=191 line_idx=1161 id=images/审核通过/QC-20231104-0023260/QC-20231104-0023260_3237379.jpeg
+ 3. len_no_special=185 len_with_special=185 line_idx=1184 id=images/审核通过/QC-20240322-0028071/QC-20240322-0028071_3657219.jpeg
+ 4. len_no_special=183 len_with_special=183 line_idx=420 id=images/审核通过/QC-20231013-0021431/QC-20231013-0021431_3017157.jpeg
+ 5. len_no_special=183 len_with_special=183 line_idx=526 id=images/审核通过/QC-20231019-0021738/QC-20231019-0021738_3030507.jpeg
+ 6. len_no_special=182 len_with_special=182 line_idx=768 id=images/审核通过/QC-20231019-0021738/QC-20231019-0021738_3031328.jpeg
+ 7. len_no_special=182 len_with_special=182 line_idx=227 id=images/审核通过/QC-20240606-0030104/QC-20240606-0030104_3770873.jpeg
+ 8. len_no_special=182 len_with_special=182 line_idx=784 id=images/审核通过/QC-20231019-0021738/QC-20231019-0021738_3030521.jpeg
+ 9. len_no_special=182 len_with_special=182 line_idx=567 id=images/审核通过/QC-20231019-0021738/QC-20231019-0021738_3031083.jpeg
+10. len_no_special=182 len_with_special=182 line_idx=367 id=images/审核通过/QC-20240606-0030104/QC-20240606-0030104_3770874.jpeg
+11. len_no_special=181 len_with_special=181 line_idx=245 id=images/审核通过/QC-20240716-0031218/QC-20240716-0031218_3869111.jpeg
+12. len_no_special=181 len_with_special=181 line_idx=1067 id=images/审核通过/QC-20240321-0028007/QC-20240321-0028007_637066.jpeg
+13. len_no_special=181 len_with_special=181 line_idx=1231 id=images/审核通过/QC-20240716-0031218/QC-20240716-0031218_3870909.jpeg
+14. len_no_special=181 len_with_special=181 line_idx=1476 id=images/审核通过/QC-20231013-0021431/QC-20231013-0021431_3017797.jpeg
+15. len_no_special=180 len_with_special=180 line_idx=690 id=images/审核通过/QC-20231031-0022762/QC-20231031-0022762_3086768.jpeg
+16. len_no_special=180 len_with_special=180 line_idx=1410 id=images/审核通过/QC-20240606-0030104/QC-20240606-0030104_3772149.jpeg
+17. len_no_special=179 len_with_special=179 line_idx=908 id=images/审核通过/QC-20231015-0021487/QC-20231015-0021487_3059687.jpeg
+18. len_no_special=179 len_with_special=179 line_idx=1149 id=images/审核通过/QC-20231129-0024414/QC-20231129-0024414_3056212.jpeg
+19. len_no_special=178 len_with_special=178 line_idx=333 id=images/审核通过/QC-20240624-0030452/QC-20240624-0030452_3815616.jpeg
+20. len_no_special=177 len_with_special=177 line_idx=1359 id=images/审核通过/QC-20240606-0030104/QC-20240606-0030104_3770673.jpeg
+
+=== COMBINED
+total_samples: 4247
+empty_completions: 0
+max_len_no_special: 421
+max_len_no_special_sample: len_no_special=421 len_with_special=421 line_idx=1793 id=images/QC-20230314-0000778_85740.jpeg
+max_len_with_special: 421
+max_len_with_special_sample: len_no_special=421 len_with_special=421 line_idx=1793 id=images/QC-20230314-0000778_85740.jpeg
+count_exceed_2048_no_special: 0
+worst_overage_no_special: 0
+count_exceed_2048_with_special: 0
+worst_overage_with_special: 0
+top_20_longest_by_no_special:
+ 1. len_no_special=421 len_with_special=421 line_idx=1793 id=images/QC-20230314-0000778_85740.jpeg
+ 2. len_no_special=419 len_with_special=419 line_idx=1904 id=images/QC-20230323-0001262_237114.jpeg
+ 3. len_no_special=403 len_with_special=403 line_idx=2108 id=images/QC-20230222-0000306_49445.jpeg
+ 4. len_no_special=399 len_with_special=399 line_idx=2454 id=images/QC-20230302-0000487_28969.jpeg
+ 5. len_no_special=396 len_with_special=396 line_idx=1614 id=images/QC-20230322-0001225_233023.jpeg
+ 6. len_no_special=386 len_with_special=386 line_idx=2470 id=images/QC-TEMP-20241018-0015018_4195171.jpeg
+ 7. len_no_special=385 len_with_special=385 line_idx=1132 id=images/QC-20230319-0001003_98997.jpeg
+ 8. len_no_special=385 len_with_special=385 line_idx=1276 id=images/QC-TEMP-20250108-0015837_4452703.jpeg
+ 9. len_no_special=381 len_with_special=381 line_idx=1282 id=images/QC-20230225-0000412_22570.jpeg
+10. len_no_special=376 len_with_special=376 line_idx=2502 id=images/QC-20230315-0000862_84055.jpeg
+11. len_no_special=372 len_with_special=372 line_idx=2207 id=images/QC-20230304-0000520_37349.jpeg
+12. len_no_special=369 len_with_special=369 line_idx=1163 id=images/QC-20230223-0000329_354366.jpeg
+13. len_no_special=366 len_with_special=366 line_idx=2213 id=images/QC-20230308-0000611_60690.jpeg
+14. len_no_special=363 len_with_special=363 line_idx=1195 id=images/QC-20230304-0000524_55585.jpeg
+15. len_no_special=353 len_with_special=353 line_idx=1073 id=images/QC-20230225-0000412_22547.jpeg
+16. len_no_special=350 len_with_special=350 line_idx=327 id=images/QC-TEMP-20241119-0015291_4275617.jpeg
+17. len_no_special=346 len_with_special=346 line_idx=1823 id=images/QC-20230318-0000970_170405.jpeg
+18. len_no_special=345 len_with_special=345 line_idx=2227 id=images/QC-20230224-0000397_21963.jpeg
+19. len_no_special=344 len_with_special=344 line_idx=923 id=images/QC-20230310-0000739_31430.jpeg
+20. len_no_special=344 len_with_special=344 line_idx=1498 id=images/QC-TEMP-20241212-0015541_4369990.jpeg
+
+Conclusion
+SAFE for max_completion_length=2048 (max=421, margin=1627)
+

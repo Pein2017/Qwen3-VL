@@ -73,9 +73,7 @@ def build_stage_a_system_prompt(
     """Compose Stage-A system prompt = summary task base + scenario block."""
 
     profile = get_summary_profile(profile_name)
-    parts = [
-        build_summary_system_prompt_minimal().strip()
-    ]
+    parts = [build_summary_system_prompt_minimal().strip()]
 
     parts.append(_SUMMARY_GLOBAL_NON_SITE_RULES)
 

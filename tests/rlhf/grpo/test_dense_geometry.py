@@ -39,10 +39,16 @@ def test_tube_iou_line_no_overlap_is_zero():
 
 def test_offline_eval_region_iou_matches_reward_region_iou_mask():
     bbox = DenseGeometry(type="bbox_2d", points=(0.0, 0.0, 10.0, 10.0))
-    poly = DenseGeometry(type="poly", points=(0.0, 0.0, 10.0, 0.0, 10.0, 10.0, 0.0, 10.0))
+    poly = DenseGeometry(
+        type="poly", points=(0.0, 0.0, 10.0, 0.0, 10.0, 10.0, 0.0, 10.0)
+    )
     expected = region_iou_mask(bbox, poly)
 
-    obj_bbox: EvalObject = {"type": "bbox_2d", "points": [0.0, 0.0, 10.0, 10.0], "desc": ""}
+    obj_bbox: EvalObject = {
+        "type": "bbox_2d",
+        "points": [0.0, 0.0, 10.0, 10.0],
+        "desc": "",
+    }
     obj_poly: EvalObject = {
         "type": "poly",
         "points": [0.0, 0.0, 10.0, 0.0, 10.0, 10.0, 0.0, 10.0],

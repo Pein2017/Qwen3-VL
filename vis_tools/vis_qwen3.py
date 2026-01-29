@@ -93,8 +93,8 @@ def _parse_args():
 # ==============================
 
 # Required paths
-CKPT_PATH = "output/1-4/2048_res_dense_merged/epoch_4-ckpt-5960"  # HF dir or merged checkpoint  # HF dir or merged checkpoint
-JSONL_PATH = "data_new_schema/bbu_full_2048_poly/val.jsonl"
+CKPT_PATH = "output/1-13/new_schema-4B-dense-grpo_summary_1024_attr_key_recall/ckpt-9900"  # HF dir or merged checkpoint  # HF dir or merged checkpoint
+JSONL_PATH = "data_new_schema_center/bbu_full_1024/val.jsonl"
 
 # Target-domain prompt placeholders (align with training assistant_prefix_format)
 # - DOMAIN_KEY: "bbu" / "rru" (None => inferred from JSONL_PATH)
@@ -103,7 +103,7 @@ DOMAIN_KEY: str | None = None
 # Runtime settings
 LIMIT = 20
 DEVICE: str = "cuda:0"  # Default device; can be overridden by CLI arg in main()
-SAVE_DIR = "vis_out/1-4/2048_res_dense_merged/epoch_4-ckpt-5960/temp_0.3"
+SAVE_DIR = "vis_out/1-13/new_schema-4B-dense-grpo_summary_1024_attr_key_recall/ckpt-9900_temp0.3-v4"
 MAX_NEW_TOKENS = 4096
 TEMPERATURE = 0.3  # Moderate temperature for diversity without excessive randomness
 TOP_P = 0.95  # Nucleus sampling - cuts off low-probability tail for better diversity

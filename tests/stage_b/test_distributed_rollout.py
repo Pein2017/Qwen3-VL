@@ -76,7 +76,9 @@ def test_shard_bounds_invalid_rank_raises() -> None:
         _shard_bounds(10, world_size=2, rank=2)
 
 
-def test_distributed_helpers_single_process_noop(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_distributed_helpers_single_process_noop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # Ensure env-based distributed detection does not trigger.
     monkeypatch.delenv("WORLD_SIZE", raising=False)
     monkeypatch.delenv("RANK", raising=False)
@@ -99,7 +101,9 @@ def test_broadcast_int_mocked_dist(monkeypatch: pytest.MonkeyPatch) -> None:
         # Simulate rank0 broadcasting 123
         payload[0] = 123
 
-    monkeypatch.setattr(stage_dist.dist, "broadcast_object_list", _fake_broadcast_object_list)
+    monkeypatch.setattr(
+        stage_dist.dist, "broadcast_object_list", _fake_broadcast_object_list
+    )
     assert stage_dist.broadcast_int(0, src=0) == 123
 
 

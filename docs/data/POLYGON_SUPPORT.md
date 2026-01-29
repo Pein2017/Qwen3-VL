@@ -3,7 +3,7 @@
 Status: Active
 Scope: Polygon geometry conventions, canonicalization, and conversion guidance.
 Owners: Data Pipeline
-Last updated: 2026-01-02
+Last updated: 2026-01-13
 Related: [DATA_JSONL_CONTRACT.md](DATA_JSONL_CONTRACT.md), [DATA_PREPROCESSING_PIPELINE.md](DATA_PREPROCESSING_PIPELINE.md), [DATA_AUGMENTATION.md](DATA_AUGMENTATION.md)
 
 Qwen3-VL standardizes on three geometry primitives: `bbox_2d`, `poly`, and `line`. The training pipeline and data converters no longer emit the legacy `quad` field. This document explains the expected behavior and how polygons are handled offline.
@@ -30,7 +30,13 @@ Propagation happens during conversion (see `./DATA_PREPROCESSING_PIPELINE.md` fo
 2. To cap polygon complexity, use the conversion scripts (e.g., `public_data/scripts/convert_lvis.py --use-polygon --poly-max-points 12 ...`) so oversized polygons are downgraded before training.
 3. If you need all polygons flattened to boxes, add that logic to the converter—runtime fallback has been removed to keep dataloader work minimal.
 
-With runtime fallback removed, polygons survive through augmentation and are normalized by the prompts (`norm1000`), giving the model rich geometric cues (especially useful for rotated BBU data).
+Augmentation may still *transform* geometry (affines, ROI crops, canvas expansion). In particular:
+
+- **Affine transforms** (flip/rotate/scale) preserve vertex count: an N-vertex polygon remains N vertices (only coordinates change).
+- **Crop-style transforms** (e.g., `roi_crop`) compute `poly ∩ crop_rect`, so the vertex count may change due to intersection points.
+- The runtime contract for `poly` is **≥4 points**. If crop clipping yields a triangle (3 vertices), the augmentation pipeline inserts a midpoint on an edge to form 4 vertices without changing the visible shape. This keeps the data compatible with current validators and prompt builders.
+
+With runtime fallback removed from loaders, polygons survive through augmentation and are normalized by the prompts (`norm1000`), giving the model rich geometric cues (especially useful for rotated BBU data).
 
 ## Workflow Notes
 

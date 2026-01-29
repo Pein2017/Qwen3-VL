@@ -30,7 +30,9 @@ def _make_group(
             _write_png(p, color=(i % 255, 0, 0))
         paths.append(p)
     paths.sort(key=lambda x: x.name)
-    return GroupInfo(paths=paths, label=label, mission="挡风板安装检查", group_id=group_base)
+    return GroupInfo(
+        paths=paths, label=label, mission="挡风板安装检查", group_id=group_base
+    )
 
 
 def _read_jsonl(path: Path) -> list[dict]:
@@ -88,7 +90,9 @@ def test_cross_group_reaggregation_and_structure(tmp_path: Path) -> None:
     for gi, it in zip([g1, g2], items):
         assert set(it.keys()) == {"group_id", "mission", "label", "images", "per_image"}
         assert it["images"] == [p.name for p in gi.paths]
-        assert list(it["per_image"].keys()) == [f"image_{i}" for i in range(1, len(gi.paths) + 1)]
+        assert list(it["per_image"].keys()) == [
+            f"image_{i}" for i in range(1, len(gi.paths) + 1)
+        ]
         assert list(it["per_image"].values()) == [f"clean:{p.name}" for p in gi.paths]
 
 

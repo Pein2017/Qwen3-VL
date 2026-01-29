@@ -23,7 +23,9 @@ class _FakeTokenizer:
         def size(self, dim: int) -> int:  # mimic torch.Tensor.size(1)
             return self._n
 
-    def __call__(self, text: str, return_tensors: str = "pt", truncation: bool = False, **_: Dict) -> Dict:
+    def __call__(
+        self, text: str, return_tensors: str = "pt", truncation: bool = False, **_: Dict
+    ) -> Dict:
         # crude token estimate: 1 token per 6 chars, min 1
         n_tokens = max(1, len(text) // 6)
         return {"input_ids": self._FakeIds(n_tokens)}
@@ -56,8 +58,16 @@ class _FakeGuidanceRepo:
     # apply_reflection not needed for these tests
 
 
-def _make_record(group_id: str, mission: str, label: str, reason: str, *,
-                 win_idx: int = 0, match_true: bool = False, match_false: bool = True) -> ExperienceRecord:
+def _make_record(
+    group_id: str,
+    mission: str,
+    label: str,
+    reason: str,
+    *,
+    win_idx: int = 0,
+    match_true: bool = False,
+    match_false: bool = True,
+) -> ExperienceRecord:
     # Two candidates per record; toggle label_match to craft priorities
     cand0 = ExperienceCandidate(
         candidate_index=0,
@@ -133,11 +143,37 @@ def test_token_budget_trims_records():
     engine = _engine_with_budget(budget=200)  # very small
     # Build 3 records with sizeable text
     recs = [
-        _make_record("g1", "MISSION_X", "pass", "R1", win_idx=0, match_true=False, match_false=True),
-        _make_record("g2", "MISSION_X", "fail", "R2", win_idx=0, match_true=False, match_false=True),
-        _make_record("g3", "MISSION_X", "pass", "R3", win_idx=0, match_true=False, match_false=True),
+        _make_record(
+            "g1",
+            "MISSION_X",
+            "pass",
+            "R1",
+            win_idx=0,
+            match_true=False,
+            match_false=True,
+        ),
+        _make_record(
+            "g2",
+            "MISSION_X",
+            "fail",
+            "R2",
+            win_idx=0,
+            match_true=False,
+            match_false=True,
+        ),
+        _make_record(
+            "g3",
+            "MISSION_X",
+            "pass",
+            "R3",
+            win_idx=0,
+            match_true=False,
+            match_false=True,
+        ),
     ]
-    bundle = ExperienceBundle(mission="MISSION_X", records=tuple(recs), reflection_cycle=0, guidance_step=1)
+    bundle = ExperienceBundle(
+        mission="MISSION_X", records=tuple(recs), reflection_cycle=0, guidance_step=1
+    )
 
     prompt = engine._build_reflection_prompt(
         bundle, system_template=engine.ops_prompt_template
@@ -152,11 +188,29 @@ def test_token_budget_trims_records():
 def test_prioritization_keeps_contradictions_first():
     engine = _engine_with_budget(budget=200)
     # rec_a: no contradiction (both label_match False)
-    rec_a = _make_record("ga", "MISSION_Y", "pass", "NO_CONTRA", win_idx=0, match_true=False, match_false=False)
+    rec_a = _make_record(
+        "ga",
+        "MISSION_Y",
+        "pass",
+        "NO_CONTRA",
+        win_idx=0,
+        match_true=False,
+        match_false=False,
+    )
     # rec_b: contradiction across candidates (True + False)
-    rec_b = _make_record("gb", "MISSION_Y", "fail", "HAS_CONTRA", win_idx=0, match_true=True, match_false=False)
+    rec_b = _make_record(
+        "gb",
+        "MISSION_Y",
+        "fail",
+        "HAS_CONTRA",
+        win_idx=0,
+        match_true=True,
+        match_false=False,
+    )
     # budget should allow only one block; we expect HAS_CONTRA present
-    bundle = ExperienceBundle(mission="MISSION_Y", records=(rec_a, rec_b), reflection_cycle=0, guidance_step=1)
+    bundle = ExperienceBundle(
+        mission="MISSION_Y", records=(rec_a, rec_b), reflection_cycle=0, guidance_step=1
+    )
 
     prompt = engine._build_reflection_prompt(
         bundle, system_template=engine.ops_prompt_template
@@ -164,4 +218,6 @@ def test_prioritization_keeps_contradictions_first():
     m = re.search(r"批次: (\d+) 组", prompt)
     kept = int(m.group(1)) if m else 0
     assert kept == 1, "expected only one record due to budget"
-    assert "HAS_CONTRA" in prompt, "highest-priority contradictory record should be kept"
+    assert "HAS_CONTRA" in prompt, (
+        "highest-priority contradictory record should be kept"
+    )

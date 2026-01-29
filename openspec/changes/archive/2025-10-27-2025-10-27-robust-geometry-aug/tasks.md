@@ -17,7 +17,7 @@
 
 ## 3. Code quality & logging
 - [x] 3.1 Remove dead code from `ops.py`: `_bbox_from_points`, `_to_bytes` functions
-- [x] 3.2 Fix broken test imports (`apply_augmentations_v2` → `apply_augmentations`)
+- [x] 3.2 Fix broken test imports (`apply_augmentations_grpo_summary_1024_attr_key_recall` → `apply_augmentations`)
 - [x] 3.3 Integrate `src/utils/logger.py` with rank-aware logging
 - [x] 3.4 Add comprehensive protocol documentation to `ImageAugmenter` class
 - [x] 3.5 Remove redundant `pad_to_multiple` from stage_3 configs

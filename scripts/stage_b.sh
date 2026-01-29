@@ -6,7 +6,7 @@ set -euo pipefail
 #   gpus=0 bash scripts/stage_b.sh
 #   gpus=1 log_level=debug bash scripts/stage_b.sh
 #   gpus=0,1,2,3,4,5,6,7 bash scripts/stage_b.sh   # multi-GPU (single node)
-#   config=bbu_line gpus=0 bash scripts/stage_b.sh  # config name (resolves to configs/stage_b/bbu_line.yaml)
+#   config=bbu_line gpus=0 bash scripts/stage_b.sh  # config name (resolves to configs/stage_b/bbu_line.yaml)[[[]]
 #   config=configs/stage_b/bbu_line.yaml gpus=0 bash scripts/stage_b.sh  # relative path
 #   config=/absolute/path/to/config.yaml gpus=0 bash scripts/stage_b.sh  # absolute path
 #   gpus=0 bash scripts/stage_b.sh --step all --log-level warning

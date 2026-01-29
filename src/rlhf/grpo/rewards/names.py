@@ -18,7 +18,13 @@ LEGACY_SUMMARY_REWARD_NAMES: dict[str, str] = {
     "summary_notes_bbu": "summary.notes_bbu",
 }
 
-SUMMARY_REWARD_NAMES: tuple[str, ...] = tuple(LEGACY_SUMMARY_REWARD_NAMES.values())
+SUMMARY_REWARD_NAMES: tuple[str, ...] = tuple(LEGACY_SUMMARY_REWARD_NAMES.values()) + (
+    # New summary reward identifiers (dot form) that are not part of the legacy
+    # snake-case mapping but are supported by the local registry.
+    "summary.attr_key_recall",
+    "summary.attr_path_recall",
+    "summary.schema_tree",
+)
 
 DENSE_REWARD_NAMES: tuple[str, ...] = (
     "dense.format",

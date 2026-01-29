@@ -61,7 +61,9 @@ class DenseSample:
         cached = self._gt_payload
         if isinstance(cached, DenseParsedPayload):
             return cached
-        parsed = parse_dense_payload_mapping(raw=self.assistant_payload, path="assistant_payload")
+        parsed = parse_dense_payload_mapping(
+            raw=self.assistant_payload, path="assistant_payload"
+        )
         object.__setattr__(self, "_gt_payload", parsed)
         return parsed
 

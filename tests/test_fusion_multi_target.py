@@ -47,9 +47,7 @@ def test_compute_target_quotas_with_ratios():
             1.5,
         ),
     ]
-    quotas, base = _compute_target_quotas(
-        targets, {"bbu": 100, "rru": 200, "t3": 300}
-    )
+    quotas, base = _compute_target_quotas(targets, {"bbu": 100, "rru": 200, "t3": 300})
     assert base is None
     assert quotas["bbu"] == 50  # downsample
     assert quotas["rru"] == 200  # defaults to full coverage when ratio is None

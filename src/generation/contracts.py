@@ -336,9 +336,7 @@ class GenerationResult:
             raise TypeError("result.text must be a string")
         if not isinstance(self.raw_text, str):
             raise TypeError("result.raw_text must be a string")
-        if self.prompt_tokens is not None and not isinstance(
-            self.prompt_tokens, int
-        ):
+        if self.prompt_tokens is not None and not isinstance(self.prompt_tokens, int):
             raise TypeError("result.prompt_tokens must be an int")
         if self.completion_tokens is not None and not isinstance(
             self.completion_tokens, int

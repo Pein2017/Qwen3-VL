@@ -79,6 +79,56 @@ Key code anchors (non-exhaustive):
 - Location: `swift/trainers/rlhf_arguments.py:94`
 - Implication: when both are provided, `generation_batch_size` takes precedence and overwrites `steps_per_generation`.
 
+### Batch Plan Shorthand (Qwen3-VL)
+Qwen3-VL provides an **optional** high-level shorthand to keep learner batching and rollout buffering aligned
+without manual arithmetic.
+
+Operator-facing config (opt-in):
+```yaml
+custom:
+  grpo:
+    batch_plan:
+      enabled: true
+
+      # Learner micro-batching (VRAM control).
+      per_device_train_batch_size: 8
+      per_device_eval_batch_size: 8  # optional; defaults to train
+
+      # Single global batch size used for BOTH:
+      # - training.effective_batch_size
+      # - rlhf.generation_batch_size
+      unified_batch_size: 48
+
+      # Optional: force rollout server topology + per-GPU concurrency cap.
+      rollout_server:
+        force_vllm_tensor_parallel_size: 1
+        force_vllm_data_parallel_size: 2
+        max_num_seqs_per_gpu: 4
+```
+
+Expansion behavior (performed by `ConfigLoader.load_yaml_with_extends()`):
+- Populates the legacy knobs:
+  - `training.per_device_train_batch_size`
+  - `training.per_device_eval_batch_size`
+  - `training.effective_batch_size`
+  - `rlhf.generation_batch_size`
+- When `rollout_server` is provided, also enforces:
+  - `custom.extra.rollout_server.vllm_tensor_parallel_size`
+  - `custom.extra.rollout_server.vllm_data_parallel_size`
+  - `custom.extra.rollout_server.vllm_max_num_seqs`
+
+Validation:
+- If `WORLD_SIZE` is available at config-load time, the loader requires:
+  - `unified_batch_size % (per_device_train_batch_size * WORLD_SIZE) == 0`
+  - Rationale: ensures the implied values match exactly and avoids ms-swift fallback paths caused by
+    `gradient_accumulation_steps != steps_per_generation`.
+- If shorthand is enabled and any legacy knob is also set with a different value, config loading fails fast with
+  a path-qualified error.
+
+Traceability:
+- Inspect the resolved config (after shorthand expansion) via:
+  - `conda run -n ms python scripts/config_tools/inspect_config.py inspect --config <path> --format yaml`
+
 ### `num_generations`
 - Must satisfy divisibility constraints:
   - `generation_batch_size % num_generations == 0`
@@ -210,18 +260,49 @@ Controls (all under `custom.cuda_memory`):
   - Location: `swift/llm/argument/rlhf_args.py:243-256`
 - `async_generate` requires `vllm_mode=server`.
   - Location: `swift/llm/argument/rlhf_args.py:262-264`
-- External rollout uses `swift rollout` and vLLM backend only. Recommended launch (single node):
-  ```bash
-  CUDA_VISIBLE_DEVICES=0,1 \
-  swift rollout \
-    --model <MODEL_PATH> \
-    --vllm_tensor_parallel_size 2 \
-    --vllm_data_parallel_size 1
-  ```
-  - Source: ms-swift GRPO guide (see [docs/ops/UPSTREAM_DEPENDENCIES.md](../ops/UPSTREAM_DEPENDENCIES.md))
+- External rollout uses `swift rollout` and vLLM backend only.
+
+#### Qwen3-VL server-mode convention (single node, unified launcher)
+Qwen3-VL operates server-mode GRPO via a **single launcher**:
+- It starts the rollout server in the background (dedicated GPUs).
+- It waits for `http://<host>:<port>/health/`.
+- It runs the learner in the foreground (so the console shows learner logs).
+- It records the rollout server PID/PGID and kills it automatically when the bash process exits.
+
+Recommended launch:
+```bash
+bash scripts/grpo_server_mode.sh \
+  config=configs/train/grpo/summary_1024.yaml \
+  server_gpus=0,1,2,3,4,5 \
+  train_gpus=6,7
+```
+
+Server logs are redirected to a timestamped file under `output/grpo_rollout_server/` (printed by the launcher).
+
+GPU split notes:
+- The launcher accepts any `server_gpus` / `train_gpus` split, but `server_gpus` count MUST match
+  `custom.extra.rollout_server.vllm_tensor_parallel_size * vllm_data_parallel_size` in the YAML.
+- To try a different split (e.g., 4–4), update the config TP/DP accordingly and pass matching `server_gpus` / `train_gpus`.
+
+This workflow relies on:
+- Trainer-side connectivity in `rlhf.*`:
+  - `rlhf.use_vllm: true`
+  - `rlhf.vllm_mode: server`
+  - `rlhf.vllm_server_host: ["127.0.0.1"]`
+  - `rlhf.vllm_server_port: [8080]`
+  - `rlhf.vllm_server_timeout: 240`
+- Server-only vLLM knobs in `custom.extra.rollout_server` (consumed by `grpo_server_mode.sh`):
+  - `vllm_tensor_parallel_size`, `vllm_data_parallel_size`
+  - `vllm_max_model_len` (must be >= `global_max_length`)
+  - `vllm_gpu_memory_utilization` (optional)
+  - `vllm_enable_lora` MUST be false for this workflow (multimodal DoRA stability)
+
+Operational constraints:
+- Single-node v1: **one server-mode GRPO job per node** (vLLM NCCL group port collisions are possible when running multiple jobs concurrently).
+- The launcher fails fast if the configured `rlhf.vllm_server_port[0]` is already bound.
 - Training side connects via `vllm_server_host` / `vllm_server_port` / `vllm_server_timeout`.
   - Location: `swift/llm/argument/rlhf_args.py:303-313`
-- `vllm_max_model_len` set in training config is ignored in server mode; set it on `swift rollout`.
+- `vllm_max_model_len` set in training config is ignored in server mode; set it on `swift rollout` (in Qwen3-VL: `custom.extra.rollout_server.vllm_max_model_len`).
   - Location: `swift/llm/argument/rlhf_args.py:384-392`
 - Weight sync uses an NCCL communicator created by `VLLMClient` after `/init_communicator/`:
   - Location: `swift/trainers/rlhf_trainer/vllm_client.py:178-235`
@@ -356,6 +437,10 @@ Implication:
 - `rlhf.rlhf_type: grpo` routes to `GRPOTrainer` / `GRPOConfig`.
 - `rlhf.reward_funcs` must be non-empty (or set `reward_model`).
 - `rlhf.reward_weights` length must match `reward_funcs`.
+- Server-mode rollout separation:
+  - Trainer connects via `rlhf.vllm_server_host` / `rlhf.vllm_server_port` (single-node v1 expects list length 1).
+  - Rollout-server vLLM knobs live under `custom.extra.rollout_server` and are consumed by `scripts/grpo_server_mode.sh`.
+  - Launch via `scripts/grpo_server_mode.sh` (unified launcher: server background + learner foreground).
 - Summary-mode reward funcs used by the default preset are implemented in `src/rlhf/grpo/rewards/summary/rewards.py` and include:
   - Contract + guardrails: `summary.format`, `summary.header`, `summary.strict`, `summary.parse`
   - Hard JSON correctness: `summary.no_dup_keys` (hard-penalize duplicate JSON keys, including nested dicts)
@@ -381,6 +466,7 @@ Locations:
 ### `configs/train/grpo/summary_server.yaml`
 - Extends `summary_2048.yaml` (self-contained base preset) and switches vLLM to server mode.
 - Sets `rlhf.vllm_mode: server` plus server host/port/timeouts and tensor parallel sizing.
+  - Note: this is a legacy rlhf-only server-mode config; it is not migrated to the `custom.extra.rollout_server` contract.
 
 ## External Dependencies (Not in ms-swift Tree)
 - Non-sequence-parallel training sampler behavior depends on the TRL/Transformers GRPO trainer base class.

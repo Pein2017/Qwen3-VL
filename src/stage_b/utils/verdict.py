@@ -38,7 +38,13 @@ def normalize_verdict(verdict: str | GroupLabel | None) -> GroupLabel | None:
     # Third-state / pending phrases are forbidden in Stage-B inference outputs; treat as unrecognized.
     if any(
         term in cleaned
-        for term in ["\u590d\u6838", "不确定", "无法判断", "无法判定", "\u5f85\u590d\u6838"]
+        for term in [
+            "\u590d\u6838",
+            "不确定",
+            "无法判断",
+            "无法判定",
+            "\u5f85\u590d\u6838",
+        ]
     ):
         return None
 

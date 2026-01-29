@@ -42,9 +42,7 @@ def clean_annotation_content(
     """
     normalized_lang = lang.lower()
     if normalized_lang not in {"zh", "en", "both"}:
-        raise ValueError(
-            f"Unsupported lang '{lang}'. Expected one of: zh, en, both"
-        )
+        raise ValueError(f"Unsupported lang '{lang}'. Expected one of: zh, en, both")
 
     cleaned: Dict[str, Any] = {}
     for key in ESSENTIAL_KEYS:

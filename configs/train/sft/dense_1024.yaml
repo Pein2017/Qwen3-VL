@@ -22,11 +22,11 @@ tuner:
   lora_bias: none
 
 training:
-  output_dir: ./output/1-13/new_schema-4B-dense
+  output_dir: ./output/1-13/new_schema-4B-dense-grpo_summary_1024_attr_key_recall
   run_name: epoch_50-eff_bs_32-llm_lr-8e-5-vit_lr-5e-5-alinger_lr-2e-4
   num_train_epochs: 50
-  per_device_train_batch_size: 1
-  per_device_eval_batch_size: 2
+  per_device_train_batch_size: 2
+  per_device_eval_batch_size: 4
   effective_batch_size: 32
   optimizer: multimodal
   learning_rate: 8.0e-5
@@ -55,7 +55,7 @@ training:
   metric_for_best_model: eval_token_acc
   greater_is_better: true
   save_delay_steps: 2400
-  logging_dir: ./tb/1-13/new_schema-4B
+  logging_dir: ./tb/1-13/new_schema-4B-dense-grpo_summary_1024_attr_key_recall
   logging_steps: 10
   logging_first_step: true
 
@@ -76,6 +76,7 @@ custom:
   use_summary: false
   json_format: standard
   emit_norm: norm1000
+  object_ordering_policy: center_tlbr
   train_jsonl: data/bbu_full_768_poly/train.jsonl
   val_jsonl: data/bbu_full_768_poly/val.jsonl
   dump_conversation_path: output/conversation_text.txt
@@ -84,7 +85,7 @@ custom:
     enabled: true
     include: [bbu, rru, lvis]
     exclude: [lang_chat]
-  assistant_prefix_format: "<TASK={task}>, <DATASET={dataset}>"
+  assistant_prefix_format: "<DOMAIN={domain}>, <TASK={task}>"
   augmentation:
     enabled: true
     # NOTE (Curriculum Plan A): the curriculum scheduler starts from this base config

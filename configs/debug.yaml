@@ -51,6 +51,7 @@ data:
 custom:
   json_format: standard
   emit_norm: norm1000
+  object_ordering_policy: center_tlbr
   train_jsonl: demo/data/train_tiny.jsonl
   val_jsonl: demo/data/val_tiny.jsonl
   use_summary: false

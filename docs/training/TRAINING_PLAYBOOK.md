@@ -69,7 +69,9 @@ sft.prepare_model(...)
 - `configs/train/sft/summary_1024.yaml` — Summary fusion SFT preset; sets `custom.fusion_config` to `configs/fusion/variants/bbu_rru_summary_1024.yaml` and summary-specific augmentation.
 - `configs/train/grpo/summary_2048.yaml` — Summary GRPO preset (uses `configs/fusion/variants/bbu_rru_summary_grpo_2048.yaml`).
 - `configs/train/grpo/dense_2048.yaml` — Dense-only GRPO preset (dense detection rewards; uses `configs/fusion/variants/bbu_rru_dense_grpo_2048.yaml`).
-- `configs/train/grpo/summary_server.yaml` — vLLM server-mode override for GRPO.
+- `configs/train/grpo/summary_1024.yaml` — Summary GRPO base template (server-mode rollout separation; `custom.extra.rollout_server`).
+- `configs/train/grpo/summary_1024_attr_key_recall.yaml` — Summary GRPO schema/key stabilization preset (extends `summary_1024.yaml`).
+- `configs/train/grpo/summary_server.yaml` — Legacy vLLM server-mode override for GRPO (rlhf-only; not migrated to the `custom.extra.rollout_server` contract).
 - `configs/train/stage_b/distill.yaml` — Stage-B verdict distillation SFT (text-only ChatML), uses `configs/fusion/stage_b_distill.yaml`.
 - `configs/fusion/base/*.yaml` + `configs/fusion/variants/*.yaml` — Fusion dataset mixes with inheritance (dense/summary/GRPO, 1024/2048 overlays).
 - `configs/smoke/*.yaml` — smoke presets that extend `configs/debug.yaml` or `configs/train/*`.
@@ -174,7 +176,9 @@ Use Generalized Knowledge Distillation (GKD) when dense-caption SFT starts hallu
 
 Use GRPO to stabilize summary outputs (two-line: `<DOMAIN=BBU|RRU>, <TASK=SUMMARY>` then JSON for non-irrelevant; single-line `无关图片` for `irrelevant*` streams).
 
-- **Activation**: start from `configs/train/grpo/summary_2048.yaml` (uses `configs/fusion/variants/bbu_rru_summary_grpo_2048.yaml`), or use `configs/train/grpo/summary_server.yaml` for vLLM server mode.
+- **Activation**:
+  - Colocate rollouts (single process): start from `configs/train/grpo/summary_2048.yaml` (uses `configs/fusion/variants/bbu_rru_summary_grpo_2048.yaml`).
+  - Server-mode rollout (recommended for tight VRAM / multimodal stability): start from `configs/train/grpo/summary_1024.yaml` (or the key-stabilization preset `configs/train/grpo/summary_1024_attr_key_recall.yaml`) and launch via `scripts/grpo_server_mode.sh` (unified launcher; server background + learner foreground).
 - **Reward funcs** (summary mode):
   - Core contract + safety: `summary.format` (`irrelevant*` must be single-line `无关图片`, no prefix), `summary.header`, `summary.strict` (penalize extra lines / wrong header), `summary.parse` (JSON parse penalty).
   - Hard JSON correctness: `summary.no_dup_keys` (hard-penalize duplicate JSON keys, including nested dicts).

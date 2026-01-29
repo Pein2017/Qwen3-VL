@@ -78,9 +78,6 @@ def resolve_trainer_cls(train_args: Any) -> type:
 
 logger = get_logger(__name__)
 
-# Ensure custom GRPO rewards are registered before trainer initialization.
-register_grpo_rewards()
-
 
 def parse_args():
     """Parse minimal runtime arguments.
@@ -148,6 +145,10 @@ def main():
         level=logging.INFO,
     )
 
+    # Register custom GRPO rewards only at runtime (not at import time).
+    # This avoids implicit side effects from `import src.sft`.
+    register_grpo_rewards()
+
     # Suppress extremely verbose torch autograd debug logs even when global debug is on.
     # Those logs (torch.autograd.graph) dump every backward node and overwhelm output.
     try:
@@ -172,6 +173,65 @@ def main():
     )
     custom_config = training_config.custom
     validate_grpo_config(training_config)
+
+    batch_plan = training_config.custom.grpo.batch_plan
+    if batch_plan.enabled:
+        _, _, world_size, _ = get_dist_setting()
+        if world_size <= 0:
+            world_size = 1
+        per_device_train_bs = batch_plan.per_device_train_batch_size
+        per_device_eval_bs = batch_plan.per_device_eval_batch_size
+        unified_bs = batch_plan.unified_batch_size
+        if (
+            per_device_train_bs is None
+            or per_device_eval_bs is None
+            or unified_bs is None
+            or per_device_train_bs <= 0
+        ):
+            raise ValueError(
+                "custom.grpo.batch_plan.enabled=true must provide positive "
+                "per_device_train_batch_size, per_device_eval_batch_size, and unified_batch_size"
+            )
+
+        denom = per_device_train_bs * world_size
+        if denom <= 0:  # pragma: no cover - defensive
+            raise ValueError(
+                "custom.grpo.batch_plan.per_device_train_batch_size and world_size must be > 0"
+            )
+        if unified_bs % denom != 0:
+            raise ValueError(
+                "custom.grpo.batch_plan.unified_batch_size must be divisible by "
+                f"(custom.grpo.batch_plan.per_device_train_batch_size * world_size) to ensure "
+                "gradient_accumulation_steps == steps_per_generation; got "
+                f"{unified_bs} % ({per_device_train_bs} * {world_size}) != 0."
+            )
+
+        derived_steps = unified_bs // denom
+        derived_gradient_accumulation_steps = derived_steps
+        derived_steps_per_generation = derived_steps
+
+        rollout_plan = batch_plan.rollout_server
+        rollout_summary = ""
+        if rollout_plan is not None:
+            rollout_summary = (
+                ", rollout_server(tp="
+                f"{rollout_plan.force_vllm_tensor_parallel_size}, dp="
+                f"{rollout_plan.force_vllm_data_parallel_size}, max_num_seqs_per_gpu="
+                f"{rollout_plan.max_num_seqs_per_gpu})"
+            )
+
+        logger.info(
+            "GRPO batch plan: world_size=%s, per_device_train_batch_size=%s, "
+            "per_device_eval_batch_size=%s, unified_batch_size=%s, "
+            "derived gradient_accumulation_steps=%s, derived steps_per_generation=%s%s",
+            world_size,
+            per_device_train_bs,
+            per_device_eval_bs,
+            unified_bs,
+            derived_gradient_accumulation_steps,
+            derived_steps_per_generation,
+            rollout_summary,
+        )
 
     # Packing is removed; fail fast if configs still request it.
     if getattr(train_args, "packing", False):

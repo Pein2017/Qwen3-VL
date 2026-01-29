@@ -6,7 +6,12 @@ from src.stage_a.inference import GroupInfo, _sample_groups
 
 
 def _mk(group_id: str, label: str) -> GroupInfo:
-    return GroupInfo(paths=[Path(f"/tmp/{group_id}.jpg")], label=label, mission="M", group_id=group_id)
+    return GroupInfo(
+        paths=[Path(f"/tmp/{group_id}.jpg")],
+        label=label,
+        mission="M",
+        group_id=group_id,
+    )
 
 
 def test_sample_groups_disabled_returns_all() -> None:
@@ -38,5 +43,6 @@ def test_sample_groups_preserves_original_order() -> None:
     assert stats["fail_selected"] == 1
     # Whatever was selected, it must appear in the same relative order as `groups`.
     sampled_ids = [g.group_id for g in sampled]
-    assert sampled_ids == sorted(sampled_ids, key=lambda gid: [g.group_id for g in groups].index(gid))
-
+    assert sampled_ids == sorted(
+        sampled_ids, key=lambda gid: [g.group_id for g in groups].index(gid)
+    )

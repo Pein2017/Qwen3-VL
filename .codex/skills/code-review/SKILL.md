@@ -1,67 +1,66 @@
 ---
 name: code-review
-description: "Automated Python code review skill: run ruff (format + lint) and pyright-compatible type checking (pyright or basedpyright), normalize machine-readable findings, audit compliance with docs/reference/SCHEMA_CONSTITUTION.md, and produce a structured report (Summary, Static Analysis, Constitution Violations, Design & Architecture Review, Actionable Fix Plan). Use when asked to review Python code/PRs, lint/type-check, enforce Schema Constitution rules, or assess architecture quality."
+description: "Fail-fast Python code review: strict ruff (format + lint) + pyright-compatible type checking, Schema Constitution audit, and architecture review. Never silently ignores critical issues - fails fast on violations with explicit error codes. Use for pre-commit hooks, CI/CD gates, or ensuring code quality standards."
 ---
 
-# Python Code Review (static + schema + architecture)
+# Python Code Review (fail-fast static + schema + architecture)
 
-This skill produces a structured, technically grounded review report for a target Python scope:
-- **Static analysis**: `ruff` (format + lint) + `pyright`-compatible type checker (`pyright` if installed, otherwise `basedpyright`).
-- **Schema Constitution compliance**: audit against `docs/reference/SCHEMA_CONSTITUTION.md` with clause-mapped findings.
-- **Architecture & design**: coupling/cycles/leaky abstractions with concrete evidence.
+**Fail-fast principle**: This skill stops immediately on critical issues and never silently continues. Every scenario is explicitly handled with clear error codes and remediation paths.
 
-## 0) Clarify review scope (avoid accidental full-repo scans)
+- **Static analysis**: `ruff` (format + lint) + `pyright`-compatible type checker with zero tolerance for errors
+- **Schema Constitution compliance**: strict audit against `docs/reference/SCHEMA_CONSTITUTION.md`
+- **Architecture & design**: validates coupling/cycles/leaky abstractions with concrete evidence
 
-Before running tools, resolve *what is under review*:
-- **Explicit paths** (preferred): specific files/dirs (example: `src/stage_b`, `scripts/stage_b.sh` does not apply; this skill targets Python).
-- **Git change set**: staged vs unstaged vs a commit range.
+## 0) Define review scope (mandatory for control)
 
-If scope is not provided, default to reviewing `src/` only.
+**Fail-fast requirement**: Scope must be explicitly defined to prevent uncontrolled execution.
 
-## 1) Run the automated collector (machine-readable outputs; auto-fix simple lint)
+- **Explicit paths required**: Target specific Python files/dirs only (e.g., `src/core`, `tests/`)
+- **Git changeset**: Use `--git-diff HEAD~1` for targeted reviews
+- **No default scope**: Fails if no `--paths` or `--git-diff` specified
 
-The helper script prints a **machine-readable JSON report to stdout** (fast introspection).
+## 1) Execute automated collector (fail-fast on critical issues)
 
-Defaults are optimized for “auto code reviewer” behavior:
-- Apply `ruff` formatting (`ruff format`)
-- Apply safe `ruff` auto-fixes (`ruff check --fix`)
-- Run schema/architecture heuristics (`--mode full`)
+**Exit codes**: 0 (clean), 1 (lint/format violations), 2 (type errors), 3 (constitution violations), 4 (architecture violations)
 
-Optionally (when `--write-artifacts` is enabled), it also writes:
-- raw tool outputs (`ruff_check.json`, `ruff_format.json`, `pyright.json`)
-- unified normalized issues (`issues.json`)
-- the JSON report (`summary.json`)
+Script behavior:
+- **Format enforcement**: Applies `ruff format` (fails on unformattable code)
+- **Safe auto-fixes**: Applies `ruff check --fix` (fails on unfixable violations)
+- **Strict mode**: `--mode strict` enables zero-tolerance for all issue types
 
-Command (recommended; uses the project’s `ms` conda env):
+Artifacts (when `--write-artifacts` enabled):
+- Raw outputs: `ruff_check.json`, `ruff_format.json`, `pyright.json`
+- Normalized issues: `issues.json`
+- Summary report: `summary.json`
+
+**Primary command (strict mode)**:
 ```bash
-conda run -n ms python .codex/skills/code-review/scripts/code_review.py --paths src
+conda run -n ms python .codex_config/else/skills/code-review/scripts/code_review.py --mode strict --paths src
 ```
 
-To review multiple roots:
+**Multi-target review**:
 ```bash
-conda run -n ms python .codex/skills/code-review/scripts/code_review.py --paths src scripts tests
+conda run -n ms python .codex_config/else/skills/code-review/scripts/code_review.py --mode strict --paths src tests
 ```
 
-If `pyright` is not installed, the script automatically falls back to `basedpyright` (pyright-compatible engine) when available.
+**Tool requirements**: `pyright` or `basedpyright` must be installed in `ms` env. Fails immediately if neither available.
 
-Tool availability notes:
-- Prefer running via `conda run -n ms ...` (project default).
-- If neither `pyright` nor `basedpyright` is available on `PATH`, install one of them (example: `conda run -n ms pip install basedpyright`).
-
-To keep runs lighter/faster (skip schema/architecture heuristics):
+**CI/CD usage** (fail-fast):
 ```bash
-conda run -n ms python .codex/skills/code-review/scripts/code_review.py --mode fast --paths src
+conda run -n ms python .codex_config/else/skills/code-review/scripts/code_review.py --mode strict --paths src --exit-on-any-issue
 ```
 
-To avoid writing code changes (disable auto-fix/format) while still collecting results:
+**Validation-only** (no fixes, fail on issues):
 ```bash
-conda run -n ms python .codex/skills/code-review/scripts/code_review.py --no-fix --no-format --format-check --paths src
+conda run -n ms python .codex_config/else/skills/code-review/scripts/code_review.py --mode strict --no-fix --no-format --format-check --paths src
 ```
 
-To write JSON artifacts:
+**With artifacts** (for debugging):
 ```bash
-conda run -n ms python .codex/skills/code-review/scripts/code_review.py --write-artifacts --output-dir tmp/code-review --paths src
+conda run -n ms python .codex_config/else/skills/code-review/scripts/code_review.py --mode strict --write-artifacts --output-dir tmp/review --paths src
 ```
+
+**Issue limits**: `--max-issues 0` shows all issues (default: 200). Artifacts always contain full issue list.
 
 ## 2) Normalize findings into a unified issue format
 
@@ -84,46 +83,44 @@ When `--write-artifacts` is enabled, the script writes `issues.json` with record
 }
 ```
 
-## 3) Constitution compliance audit (clause-mapped)
+## 3) Constitution compliance audit (strict clause enforcement)
 
-Open and apply: `docs/reference/SCHEMA_CONSTITUTION.md`.
+**Fail-fast**: Constitution violations are critical errors that must be fixed immediately.
 
-Workflow:
-1) Treat the script’s `constitution` findings as **suspects**, not final verdicts.
-2) For each confirmed violation, include:
-   - **Clause reference**: cite the relevant section title (example: “Function signatures and returns”).
-   - **What**: the concrete code construct (signature/return/attribute) and where it lives.
-   - **Why**: the rule being violated (non-trivial mapping, missing validation at boundary, etc.).
-   - **Impact**: how this affects correctness, maintainability, or downstream coupling.
-   - **Remediation**: smallest structured-type refactor that satisfies the rule.
+Required actions:
+1) **Verify findings**: Cross-reference `docs/reference/SCHEMA_CONSTITUTION.md` for each violation
+2) **Document violations** with:
+   - **Clause reference**: Exact section title (e.g., "Function signatures and returns")
+   - **Location**: File path and line number
+   - **Violation**: Specific rule broken (non-trivial mapping, missing validation, etc.)
+   - **Impact**: How it affects correctness/maintainability
+   - **Fix**: Minimal structured-type refactor required
 
-## 4) Architecture & design review (evidence-based)
+## 4) Architecture & design validation (evidence-based enforcement)
 
-Use the script’s `architecture` findings and extend with manual checks:
-- **Tight coupling**: many direct imports / fan-out / cross-layer dependency direction.
-- **Leaky abstractions**: public interfaces exposing transport-shaped dicts/lists or internal file layout.
-- **Anti-patterns**: global mutable state, hidden I/O, mixed responsibilities, “god” modules.
-- **Testability**: ability to construct components without filesystem/network/GPU side effects.
+**Fail-fast**: Architecture violations block progression and require immediate remediation.
 
-Every finding must be grounded in at least one concrete artifact:
-- module/file path(s)
-- import-cycle chain(s)
-- API signature(s)
-- configuration/boundary location(s)
+Validates against:
+- **Tight coupling**: Excessive direct imports, wrong dependency direction
+- **Leaky abstractions**: Public APIs exposing internal dicts/lists or file layouts
+- **Anti-patterns**: Global mutable state, hidden I/O, mixed responsibilities, monolithic modules
+- **Testability**: Components must be constructable without external dependencies
 
-## 5) Emit the structured report (required sections)
+**Evidence requirement**: Every violation must include concrete artifacts:
+- Import cycle chains
+- API signatures with problematic parameters
+- Boundary locations missing validation
+- File paths showing architectural violations
 
-Do not expose tool commands, raw logs, or raw JSON in the user-facing response.
-Only show results and the minimal next actions.
+## 5) Generate fail-fast report (structured enforcement)
 
-If `constitution` / `architecture` findings are present, do **not** refactor automatically.
-Ask whether to:
-- **Skip** (record as known debt), or
-- **Refactor/update immediately** (proceed with minimal-diff changes).
+**Exit behavior**: Non-zero exit code on any critical findings. Never silently continues.
 
-User-facing response sections (keep brief; expand only on request):
-1) **Summary**: Pass / Conditional Pass / Fail + risk
-2) **Auto-Fixes Applied**: what was auto-fixed (format/lint), and whether lint is now clean
-3) **Static Analysis Findings**: remaining Ruff + Pyright issues (top items only)
-4) **Non-Trivial Findings**: schema/architecture concerns + decision gate (skip vs refactor)
-5) **Next Steps**: ordered, minimal-diff
+Report structure (concise, actionable):
+1) **Status**: Clean / Requires Fixes / Blocked (constitution/architecture violations)
+2) **Auto-Fixes**: Applied formatting/linting changes with success confirmation
+3) **Critical Issues**: Schema/architecture violations requiring immediate action
+4) **Static Issues**: Remaining ruff/pyright problems with remediation steps
+5) **Next Actions**: Ordered, minimal-diff fixes (no optional steps)
+
+**Enforcement**: Constitution and architecture violations always require immediate fixes. No "skip" options for critical issues.

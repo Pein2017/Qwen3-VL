@@ -8,7 +8,12 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from transformers import AutoConfig, AutoProcessor, AutoTokenizer, PreTrainedTokenizerBase
+from transformers import (
+    AutoConfig,
+    AutoProcessor,
+    AutoTokenizer,
+    PreTrainedTokenizerBase,
+)
 
 from src.utils import get_logger
 
@@ -33,7 +38,9 @@ def _detect_variant(model_path: str) -> str:
     try:
         cfg = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
     except Exception as exc:  # noqa: BLE001
-        raise RuntimeError(f"Failed to read model config at {model_path}: {exc}") from exc
+        raise RuntimeError(
+            f"Failed to read model config at {model_path}: {exc}"
+        ) from exc
     model_type = getattr(cfg, "model_type", "") or ""
     has_vision = getattr(cfg, "vision_config", None) is not None
     if "vl" in str(model_type).lower() or has_vision:
@@ -106,14 +113,20 @@ class VllmBackend:
         if plugins:
             for plugin in plugins:
                 name = getattr(plugin, "name", plugin.__class__.__name__)
-                uses_hf_stopping = bool(getattr(plugin, "uses_hf_stopping_criteria", False))
-                uses_hf_logits = bool(getattr(plugin, "uses_hf_logits_processor", False))
+                uses_hf_stopping = bool(
+                    getattr(plugin, "uses_hf_stopping_criteria", False)
+                )
+                uses_hf_logits = bool(
+                    getattr(plugin, "uses_hf_logits_processor", False)
+                )
                 if uses_hf_stopping or uses_hf_logits:
                     raise RuntimeError(
                         f"Plugin '{name}' requires HF-only hooks; vLLM backend unsupported"
                     )
         prompts = [
-            render_chat_template(self.tokenizer, req.messages, options=self.chat_template)
+            render_chat_template(
+                self.tokenizer, req.messages, options=self.chat_template
+            )
             for req in requests
         ]
 
@@ -152,9 +165,7 @@ class VllmBackend:
             )
             completion_tokens = len(token_ids)
             total_tokens = (
-                prompt_tokens + completion_tokens
-                if prompt_tokens is not None
-                else None
+                prompt_tokens + completion_tokens if prompt_tokens is not None else None
             )
             results.append(
                 GenerationResult(
@@ -181,8 +192,12 @@ class VllmBackend:
         if plugins:
             for plugin in plugins:
                 name = getattr(plugin, "name", plugin.__class__.__name__)
-                uses_hf_stopping = bool(getattr(plugin, "uses_hf_stopping_criteria", False))
-                uses_hf_logits = bool(getattr(plugin, "uses_hf_logits_processor", False))
+                uses_hf_stopping = bool(
+                    getattr(plugin, "uses_hf_stopping_criteria", False)
+                )
+                uses_hf_logits = bool(
+                    getattr(plugin, "uses_hf_logits_processor", False)
+                )
                 if uses_hf_stopping or uses_hf_logits:
                     raise RuntimeError(
                         f"Plugin '{name}' requires HF-only hooks; vLLM backend unsupported"
@@ -242,9 +257,7 @@ class VllmBackend:
             )
             completion_tokens = len(token_ids)
             total_tokens = (
-                prompt_tokens + completion_tokens
-                if prompt_tokens is not None
-                else None
+                prompt_tokens + completion_tokens if prompt_tokens is not None else None
             )
             results.append(
                 GenerationResult(

@@ -55,8 +55,7 @@ def _first_xy(obj: Dict[str, Any]) -> Tuple[float, float]:
             return 0.0, 0.0
         # Extract all points as (x, y) pairs
         points = [
-            (float(coords[i]), float(coords[i + 1]))
-            for i in range(0, len(coords), 2)
+            (float(coords[i]), float(coords[i + 1])) for i in range(0, len(coords), 2)
         ]
         # Find leftmost point (min X, then min Y if tie)
         leftmost = min(points, key=lambda p: (p[0], p[1]))

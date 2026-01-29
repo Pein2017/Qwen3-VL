@@ -8,28 +8,42 @@ from src.stage_b.types import ReflectionProposal, ExperienceOperation
 
 def seed_repo(tmp_path):
     guidance_path = tmp_path / "guidance.json"
-    guidance_path.write_text(json.dumps({
-        "M1": {
-            "focus": "M1任务要点",
-            "step": 1,
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-            "experiences": {"G0": "初始经验"}
-        }
-    }, ensure_ascii=False, indent=2), encoding="utf-8")
+    guidance_path.write_text(
+        json.dumps(
+            {
+                "M1": {
+                    "focus": "M1任务要点",
+                    "step": 1,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                    "experiences": {"G0": "初始经验"},
+                }
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
     repo = GuidanceRepository(guidance_path, retention=2)
     return repo
 
 
 def test_scaffold_keys_are_immutable(tmp_path):
     guidance_path = tmp_path / "guidance.json"
-    guidance_path.write_text(json.dumps({
-        "M1": {
-            "focus": "M1任务要点",
-            "step": 1,
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-            "experiences": {"G0": "初始经验", "S1": "结构性不变量"}
-        }
-    }, ensure_ascii=False, indent=2), encoding="utf-8")
+    guidance_path.write_text(
+        json.dumps(
+            {
+                "M1": {
+                    "focus": "M1任务要点",
+                    "step": 1,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                    "experiences": {"G0": "初始经验", "S1": "结构性不变量"},
+                }
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
     repo = GuidanceRepository(guidance_path, retention=2)
     ops = (
         ExperienceOperation(op="remove", key="S1", text=None, rationale=None),
@@ -56,10 +70,14 @@ def test_scaffold_keys_are_immutable(tmp_path):
 def test_remove_warns_missing_key_and_merge_validates(tmp_path):
     repo = seed_repo(tmp_path)
     # upsert G1 so we can merge it into G0
-    ops = (
-        ExperienceOperation(op="upsert", key="G1", text="text1", rationale=None),
+    ops = (ExperienceOperation(op="upsert", key="G1", text="text1", rationale=None),)
+    proposal = ReflectionProposal(
+        action="refine",
+        summary=None,
+        critique=None,
+        operations=ops,
+        evidence_group_ids=("g0",),
     )
-    proposal = ReflectionProposal(action="refine", summary=None, critique=None, operations=ops, evidence_group_ids=("g0",))
     _updated = repo.preview_reflection(  # noqa: F841
         mission="M1",
         proposal=proposal,
@@ -69,10 +87,22 @@ def test_remove_warns_missing_key_and_merge_validates(tmp_path):
 
     # Now merge G1 into G0 and also reference a missing G2
     ops2 = (
-        ExperienceOperation(op="merge", key="G0", text="merged", rationale=None, merged_from=("G1", "G2")),
+        ExperienceOperation(
+            op="merge",
+            key="G0",
+            text="merged",
+            rationale=None,
+            merged_from=("G1", "G2"),
+        ),
         ExperienceOperation(op="remove", key="G9", text=None, rationale=None),
     )
-    proposal2 = ReflectionProposal(action="refine", summary=None, critique=None, operations=ops2, evidence_group_ids=("g1",))
+    proposal2 = ReflectionProposal(
+        action="refine",
+        summary=None,
+        critique=None,
+        operations=ops2,
+        evidence_group_ids=("g1",),
+    )
     updated2 = repo.preview_reflection(
         mission="M1",
         proposal=proposal2,
@@ -91,10 +121,14 @@ def test_reject_ops_that_empty_experiences(tmp_path):
     repo = seed_repo(tmp_path)
 
     # Attempt to remove G0 only experience; should raise
-    ops = (
-        ExperienceOperation(op="remove", key="G0", text=None, rationale=None),
+    ops = (ExperienceOperation(op="remove", key="G0", text=None, rationale=None),)
+    proposal = ReflectionProposal(
+        action="refine",
+        summary=None,
+        critique=None,
+        operations=ops,
+        evidence_group_ids=("g2",),
     )
-    proposal = ReflectionProposal(action="refine", summary=None, critique=None, operations=ops, evidence_group_ids=("g2",))
     try:
         repo.preview_reflection(
             mission="M1",
@@ -116,8 +150,12 @@ def test_reject_ops_that_empty_experiences(tmp_path):
 def test_duplicate_adds_merge_same_text(tmp_path):
     repo = seed_repo(tmp_path)
     ops = (
-        ExperienceOperation(op="upsert", key=None, text="规则一", rationale=None, evidence=("g1",)),
-        ExperienceOperation(op="upsert", key=None, text="规则一", rationale=None, evidence=("g2",)),
+        ExperienceOperation(
+            op="upsert", key=None, text="规则一", rationale=None, evidence=("g1",)
+        ),
+        ExperienceOperation(
+            op="upsert", key=None, text="规则一", rationale=None, evidence=("g2",)
+        ),
     )
     proposal = ReflectionProposal(
         action="refine",

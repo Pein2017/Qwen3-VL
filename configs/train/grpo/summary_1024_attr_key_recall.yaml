@@ -1,0 +1,129 @@
+extends:
+  - summary_1024_server_mode.yaml
+
+# Experimental preset: emphasize schema/field stability in summary outputs.
+# Motivation: Stage-B relies on stable per-category attribute keys (e.g. 电线/捆扎),
+# but Stage-A sometimes emits the category while omitting the attribute key.
+
+model:
+  model: output/1-21/grpo_summary_1024_attr_key_recall-v3-merged/ckpt_500
+
+training:
+  # Avoid clobbering prior runs; edit per-run as needed.
+  output_dir: ./output/1-21/grpo_summary_1024_attr_key_recall
+  logging_dir: ./tb/1-21/grpo_summary_1024_attr_key_recall
+  run_name: epoch_4-attr_key_recall-retry_v3-server-continued
+  num_train_epochs: 4
+  logging_steps: 10
+  eval_steps: 100
+  warmup_ratio: 0.05
+  save_delay_steps: 200
+  per_device_train_batch_size: 8
+  # Keep train/eval micro-batch consistent unless you're VRAM-limited during eval.
+  per_device_eval_batch_size: 8
+  # With 6 training GPUs and per_device_train_batch_size=8, global micro-batch size is 48.
+  # Set effective batch size to 48 so auto-calculated gradient_accumulation_steps becomes 1 exactly:
+  # 8 * 6 * 1 = 48.
+  effective_batch_size: 48
+
+rlhf:
+  # Keep global token budget unchanged (global_max_length=12000 comes from summary_1024_server_mode.yaml),
+  # but allow longer per-rollout completions for this run.
+  max_completion_length: 4096
+  # How many completions we ask the rollout server to generate per rollout-generation cycle.
+  #
+  # Constraints (ms-swift/trl):
+  # - Must be divisible by global batch size (per_device_train_batch_size * world_size).
+  # - Must be divisible by rlhf.num_generations (inherited: 4).
+  #
+  # With 6 training GPUs and per_device_train_batch_size=8:
+  # - global micro-batch size = 48
+  # - generation_batch_size=48 => steps_per_generation=48/48=1 (smallest rollout refresh)
+  # This aligns with effective_batch_size=48 (gradient_accumulation_steps=1).
+  generation_batch_size: 48
+
+  # Adds `summary.attr_key_recall` to explicitly reward emitting the same (类别, 属性名)
+  # keys as the ground-truth summary_ref, independent of count calibration.
+  # Also adds `summary.attr_path_recall` to reward emitting stable nested attribute paths
+  # (e.g. 捆扎/整齐) for categories the model chooses to emit (scoring categories are
+  # pred ∩ ref, so omitting a category is not directly penalized by this reward).
+  # Adds `summary.schema_tree` to enforce per-category required keys (completeness)
+  # and penalize emitting extra/unexpected attribute keys (schema drift).
+  reward_funcs:
+    [
+      summary.format,
+      summary.header,
+      summary.strict,
+      summary.parse,
+      summary.no_dup_keys,
+      summary.dataset,
+      summary.category_recall,
+      summary.attr_key_recall,
+      summary.attr_path_recall,
+      summary.schema_tree,
+      summary.content_structured_tversky,
+      summary.group_stats_presence,
+    ]
+  # Suggested weights (recall-first):
+  # - Keep format/header/strict strong to prevent schema drift.
+  # - Add a dedicated key-recall reward to stabilize field emission.
+  # - Add a nested attr-path recall reward to improve schema completeness for stable keys.
+  # - Add a schema-tree reward to force "complete answers" per category and reduce
+  #   long-tail/unstable attribute keys that confuse Stage-B.
+  # - Slightly upweight structured tversky vs baseline preset.
+  #
+  # Notes on this preset:
+  # - `summary.schema_tree` is intentionally strong: it enforces the attribute-key
+  #   contract derived from the full corpus (bbu_full_1024 / rru_full_1024):
+  #   required keys MUST appear; extra keys/categories/top-level keys are penalized.
+  # - `summary.category_recall` prevents schema_tree from being gamed by omitting
+  #   categories entirely.
+  # - `summary.content_structured_tversky` preserves value-level correctness, but is
+  #   kept below schema_tree to prioritize schema stability first.
+  # Weights tuned based on rollout audit:
+  # - Keep schema enforcement strong, but avoid over-penalizing benign key variants
+  #   (especially for 光纤 protection keys after schema update).
+  # - Slightly increase category_recall + attr_path_recall to improve per-category
+  #   completeness without incentivizing key explosion.
+  # - Increase header/strict modestly to reduce occasional <TASK=DETECTION> drift.
+  #
+  # Order MUST match rlhf.reward_funcs above.
+  reward_weights: [1.5, 2.5, 3.5, 2.5, 3.0, 0.5, 2.0, 1.5, 1.5, 4.0, 3.0, 0.2]
+
+deepspeed:
+  enabled: true
+  # Workaround for DeepSpeed ZeRO-3 gather assertions observed during vLLM server weight sync
+  # (rollout_mixin._move_full_model_to_vllm). ZeRO-2 keeps parameters replicated and avoids
+  # the gather/partition path that triggers the assertion.
+  config: zero2
+
+custom:
+  extra:
+    rollout_server:
+      # Use a 2/6 split (2 rollout GPUs + 6 train GPUs). This must match the GPU list
+      # passed to the rollout launcher: TP*DP == number of visible rollout GPUs.
+      vllm_tensor_parallel_size: 1
+      vllm_data_parallel_size: 2
+      # Server-side concurrency cap *per rollout worker* (per DP replica).
+      # We intentionally keep this low (<< rlhf.generation_batch_size) to reduce KV-cache pressure
+      # and avoid rollout-server OOM/disconnects; vLLM will decode requests in multiple waves.
+      vllm_max_num_seqs: 2
+      vllm_gpu_memory_utilization: 0.80
+      # Keep aligned with global_max_length (total input+output budget).
+      vllm_max_model_len: 12000
+      # For multimodal DoRA stability, vLLM LoRA is forbidden in this workflow.
+      vllm_enable_lora: false
+      vllm_enable_prefix_caching: true
+
+  grpo:
+    # Batch plan shorthand (keeps training.effective_batch_size and rlhf.generation_batch_size aligned).
+    # This preset keeps the legacy knobs above for readability; the loader validates they match.
+    batch_plan:
+      enabled: true
+      per_device_train_batch_size: 8
+      per_device_eval_batch_size: 8
+      unified_batch_size: 48
+      rollout_server:
+        force_vllm_tensor_parallel_size: 1
+        force_vllm_data_parallel_size: 2
+        max_num_seqs_per_gpu: 2

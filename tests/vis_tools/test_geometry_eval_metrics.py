@@ -33,13 +33,19 @@ def test_parse_desc_labels_legacy_umbrella_phase() -> None:
 
 def test_region_iou_bbox_poly_cross_type_identity() -> None:
     bbox: EvalObject = {"type": "bbox_2d", "points": [0, 0, 10, 10], "desc": ""}
-    poly: EvalObject = {"type": "poly", "points": [0, 0, 10, 0, 10, 10, 0, 10], "desc": ""}
+    poly: EvalObject = {
+        "type": "poly",
+        "points": [0, 0, 10, 0, 10, 10, 0, 10],
+        "desc": "",
+    }
     assert math.isclose(region_iou(bbox, poly), 1.0, rel_tol=0.0, abs_tol=1e-9)
 
 
 def test_tube_iou_line_identity() -> None:
     line: EvalObject = {"type": "line", "points": [100, 100, 900, 100], "desc": ""}
-    assert math.isclose(tube_iou_line(line, line, tol=8.0), 1.0, rel_tol=0.0, abs_tol=1e-9)
+    assert math.isclose(
+        tube_iou_line(line, line, tol=8.0), 1.0, rel_tol=0.0, abs_tol=1e-9
+    )
 
 
 def test_tube_iou_line_separated_is_zero() -> None:
@@ -50,7 +56,11 @@ def test_tube_iou_line_separated_is_zero() -> None:
 
 def test_tube_iou_line_increases_with_tolerance() -> None:
     line_a: EvalObject = {"type": "line", "points": [100, 100, 900, 100], "desc": ""}
-    line_b: EvalObject = {"type": "line", "points": [100, 110, 900, 110], "desc": ""}  # 10px apart
+    line_b: EvalObject = {
+        "type": "line",
+        "points": [100, 110, 900, 110],
+        "desc": "",
+    }  # 10px apart
     iou_tol1 = tube_iou_line(line_a, line_b, tol=1.0)
     iou_tol8 = tube_iou_line(line_a, line_b, tol=8.0)
     assert iou_tol1 == 0.0
@@ -62,8 +72,14 @@ def test_matching_determinism_tie_break() -> None:
         [1.0, 1.0],
         [1.0, 1.0],
     ]
-    gt_labels = [DescLabels(phase="x", category="x"), DescLabels(phase="x", category="x")]
-    pred_labels = [DescLabels(phase="x", category="x"), DescLabels(phase="x", category="x")]
+    gt_labels = [
+        DescLabels(phase="x", category="x"),
+        DescLabels(phase="x", category="x"),
+    ]
+    pred_labels = [
+        DescLabels(phase="x", category="x"),
+        DescLabels(phase="x", category="x"),
+    ]
 
     matches = _greedy_match(
         overlap,

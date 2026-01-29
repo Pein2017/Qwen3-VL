@@ -29,7 +29,9 @@ def _make_group(root: Path, *, group_base: str, label: str, n: int) -> GroupInfo
         _write_png(p, color=(i % 255, 0, 0))
         paths.append(p)
     paths.sort(key=lambda x: x.name)
-    return GroupInfo(paths=paths, label=label, mission="挡风板安装检查", group_id=group_base)
+    return GroupInfo(
+        paths=paths, label=label, mission="挡风板安装检查", group_id=group_base
+    )
 
 
 def _read_jsonl(path: Path) -> list[dict]:
@@ -111,7 +113,9 @@ def test_per_image_single_rank_end_to_end_merge_and_cleanup(tmp_path: Path) -> N
         assert list(it["per_image"].values()) == [f"clean:{p.name}" for p in gi.paths]
 
 
-def test_per_image_merge_marks_incomplete_group_failed_and_continues(tmp_path: Path) -> None:
+def test_per_image_merge_marks_incomplete_group_failed_and_continues(
+    tmp_path: Path,
+) -> None:
     g1 = _make_group(tmp_path, group_base="QC-MISS-20250101-100", label="pass", n=2)
     g2 = _make_group(tmp_path, group_base="QC-MISS-20250101-200", label="fail", n=1)
     groups = [g1, g2]

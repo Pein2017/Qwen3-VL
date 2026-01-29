@@ -25,14 +25,14 @@
 
 ## Overview
 
-The unified pipeline converts V2 annotations + images into training-ready JSONL with native geometry and
+The unified pipeline converts grpo_summary_1024_attr_key_recall annotations + images into training-ready JSONL with native geometry and
 hierarchical descriptions. The processing emphasizes exact coordinate transformations and canonical geometry
 ordering for stable learning signals.
 
 - Core modules (under `data_conversion/pipeline/`):
   - `unified_processor.py`: Orchestrates the end-to-end pipeline
   - `coordinate_manager.py`: EXIF orientation → dimension rescaling → smart resize (in that order)
-  - `flexible_taxonomy_processor.py`: V2 annotation parsing and hierarchical description generation
+  - `flexible_taxonomy_processor.py`: grpo_summary_1024_attr_key_recall annotation parsing and hierarchical description generation
   - `validation_manager.py`: Object/sample validation and reporting
   - `vision_process.py`: Smart resize with factor alignment and pixel budget
 
@@ -117,7 +117,7 @@ NUM_WORKERS="8"  # Number of parallel workers (1=sequential, >1=parallel)
 
 ## Inputs
 
-- Dataset directory with paired raw annotation JSON and images (V2 format)
+- Dataset directory with paired raw annotation JSON and images (grpo_summary_1024_attr_key_recall format)
 - The pipeline accepts two raw schema variants:
   - `dataList`: rectangle selection stored as 2 points `[x1, y1], [x2, y2]`
   - `markResult.features`: native geometry per feature (e.g., `LineString`, `Quad`, `Polygon`)
@@ -133,7 +133,7 @@ NUM_WORKERS="8"  # Number of parallel workers (1=sequential, >1=parallel)
 
 ## What the Pipeline Does
 
-- Object extraction (V2):
+- Object extraction (grpo_summary_1024_attr_key_recall):
   - Reads `dataList` and/or `markResult.features`
   - Determines `object_type` using Chinese keys and taxonomy mapping
   - Filters to the supported set (unknown types are dropped)
@@ -144,7 +144,7 @@ NUM_WORKERS="8"  # Number of parallel workers (1=sequential, >1=parallel)
   - BBU keeps `备注` when present; RRU omits `备注` and may include `组`
 
 - Geometry normalization and canonicalization:
-  - Converts V2 geometries to native formats: `bbox_2d`, `poly`, `line`
+  - Converts grpo_summary_1024_attr_key_recall geometries to native formats: `bbox_2d`, `poly`, `line`
   - Applies canonical vertex/point ordering (see next section)
   - Clamps coordinates to image bounds and fixes degeneracies
 

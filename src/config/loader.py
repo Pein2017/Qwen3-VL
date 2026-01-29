@@ -2,6 +2,7 @@
 
 import logging
 import math
+import os
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
@@ -15,8 +16,14 @@ from .prompts import (
     build_dense_system_prompt,
     build_dense_user_prompt,
 )
-from .schema import PromptOverrides, SaveDelayConfig, TrainingConfig
+from .schema import (
+    GrpoBatchPlanConfig,
+    PromptOverrides,
+    SaveDelayConfig,
+    TrainingConfig,
+)
 from src.utils import require_mutable_mapping
+from src.utils.parsing import coerce_bool
 from src.utils.unstructured import UnstructuredMutableMapping
 
 logger = logging.getLogger(__name__)
@@ -75,8 +82,234 @@ class ConfigLoader:
         raise TypeError(f"{field_name} must be a boolean value, got {type(value)!r}.")
 
     @staticmethod
+    def _coerce_int(value: object, field_name: str) -> int:
+        if value is None:
+            raise ValueError(f"{field_name} must be an integer")
+        if isinstance(value, bool):
+            raise TypeError(f"{field_name} must be an integer, got boolean")
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float):
+            if not value.is_integer():
+                raise ValueError(f"{field_name} must be an integer, got {value!r}")
+            return int(value)
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                raise ValueError(f"{field_name} must be an integer")
+            try:
+                return int(stripped)
+            except ValueError as exc:
+                raise ValueError(
+                    f"{field_name} must be an integer, got {value!r}"
+                ) from exc
+        raise TypeError(f"{field_name} must be an integer, got {type(value)!r}")
+
+    @staticmethod
+    def _ensure_mutable_submap(
+        root: ConfigMapping, key: str, *, field_path: str
+    ) -> ConfigMapping:
+        existing = root.get(key)
+        if existing is None:
+            created: dict[str, Any] = {}
+            root[key] = created
+            return created
+        return cast(
+            ConfigMapping, require_mutable_mapping(existing, context=field_path)
+        )
+
+    @staticmethod
+    def _set_int_with_conflict_check(
+        section: ConfigMapping,
+        key: str,
+        value: int,
+        *,
+        field_path: str,
+        source_field_path: str,
+    ) -> None:
+        existing = section.get(key)
+        if existing is not None:
+            parsed = ConfigLoader._coerce_int(existing, field_path)
+            if parsed != value:
+                raise ValueError(
+                    f"{field_path}={parsed} conflicts with {source_field_path}={value} "
+                    "derived from custom.grpo.batch_plan."
+                )
+        section[key] = value
+
+    @staticmethod
+    def _validate_optional_int_matches(
+        section: ConfigMapping,
+        key: str,
+        expected: int,
+        *,
+        field_path: str,
+        expected_description: str,
+    ) -> None:
+        if key not in section:
+            return
+        existing = section.get(key)
+        if existing is None:
+            return
+        parsed = ConfigLoader._coerce_int(existing, field_path)
+        if parsed != expected:
+            raise ValueError(
+                f"{field_path}={parsed} conflicts with {expected_description}={expected}."
+            )
+
+    @staticmethod
+    def _expand_grpo_batch_plan_in_place(config: ConfigMapping) -> None:
+        custom_raw = config.get("custom")
+        if custom_raw is None:
+            return
+        custom = cast(
+            ConfigMapping, require_mutable_mapping(custom_raw, context="custom")
+        )
+
+        grpo_raw = custom.get("grpo")
+        if grpo_raw is None:
+            return
+        grpo = cast(
+            ConfigMapping, require_mutable_mapping(grpo_raw, context="custom.grpo")
+        )
+
+        batch_plan_raw = grpo.get("batch_plan")
+        if batch_plan_raw is None:
+            return
+
+        batch_plan = GrpoBatchPlanConfig.from_mapping(
+            cast("Mapping[str, Any] | None", batch_plan_raw)
+        )
+        if not batch_plan.enabled:
+            return
+
+        per_device_train_bs = batch_plan.per_device_train_batch_size
+        per_device_eval_bs = batch_plan.per_device_eval_batch_size
+        unified_batch_size = batch_plan.unified_batch_size
+        if (
+            per_device_train_bs is None
+            or per_device_eval_bs is None
+            or unified_batch_size is None
+        ):
+            raise RuntimeError(
+                "custom.grpo.batch_plan.enabled=true must provide per_device_train_batch_size, "
+                "per_device_eval_batch_size, and unified_batch_size"
+            )
+
+        training = ConfigLoader._ensure_mutable_submap(
+            config, "training", field_path="training"
+        )
+        ConfigLoader._set_int_with_conflict_check(
+            training,
+            "per_device_train_batch_size",
+            per_device_train_bs,
+            field_path="training.per_device_train_batch_size",
+            source_field_path="custom.grpo.batch_plan.per_device_train_batch_size",
+        )
+        ConfigLoader._set_int_with_conflict_check(
+            training,
+            "per_device_eval_batch_size",
+            per_device_eval_bs,
+            field_path="training.per_device_eval_batch_size",
+            source_field_path="custom.grpo.batch_plan.per_device_eval_batch_size",
+        )
+        ConfigLoader._set_int_with_conflict_check(
+            training,
+            "effective_batch_size",
+            unified_batch_size,
+            field_path="training.effective_batch_size",
+            source_field_path="custom.grpo.batch_plan.unified_batch_size",
+        )
+
+        rlhf = ConfigLoader._ensure_mutable_submap(config, "rlhf", field_path="rlhf")
+        ConfigLoader._set_int_with_conflict_check(
+            rlhf,
+            "generation_batch_size",
+            unified_batch_size,
+            field_path="rlhf.generation_batch_size",
+            source_field_path="custom.grpo.batch_plan.unified_batch_size",
+        )
+
+        rollout_plan = batch_plan.rollout_server
+        if rollout_plan is not None:
+            extra = ConfigLoader._ensure_mutable_submap(
+                custom, "extra", field_path="custom.extra"
+            )
+            rollout_server = ConfigLoader._ensure_mutable_submap(
+                extra, "rollout_server", field_path="custom.extra.rollout_server"
+            )
+            ConfigLoader._set_int_with_conflict_check(
+                rollout_server,
+                "vllm_tensor_parallel_size",
+                rollout_plan.force_vllm_tensor_parallel_size,
+                field_path="custom.extra.rollout_server.vllm_tensor_parallel_size",
+                source_field_path="custom.grpo.batch_plan.rollout_server.force_vllm_tensor_parallel_size",
+            )
+            ConfigLoader._set_int_with_conflict_check(
+                rollout_server,
+                "vllm_data_parallel_size",
+                rollout_plan.force_vllm_data_parallel_size,
+                field_path="custom.extra.rollout_server.vllm_data_parallel_size",
+                source_field_path="custom.grpo.batch_plan.rollout_server.force_vllm_data_parallel_size",
+            )
+            ConfigLoader._set_int_with_conflict_check(
+                rollout_server,
+                "vllm_max_num_seqs",
+                rollout_plan.max_num_seqs_per_gpu,
+                field_path="custom.extra.rollout_server.vllm_max_num_seqs",
+                source_field_path="custom.grpo.batch_plan.rollout_server.max_num_seqs_per_gpu",
+            )
+
+        world_size: int | None = None
+        world_size_raw = os.environ.get("WORLD_SIZE")
+        if world_size_raw is not None and world_size_raw.strip():
+            try:
+                world_size = int(world_size_raw.strip())
+            except ValueError as exc:
+                raise ValueError(
+                    "WORLD_SIZE must be an integer when custom.grpo.batch_plan is enabled, "
+                    f"got {world_size_raw!r}"
+                ) from exc
+            if world_size <= 0:
+                raise ValueError(
+                    "WORLD_SIZE must be > 0 when custom.grpo.batch_plan is enabled, "
+                    f"got {world_size}"
+                )
+
+        if world_size is not None:
+            denom = per_device_train_bs * world_size
+            if denom <= 0:  # pragma: no cover - defensive
+                raise ValueError(
+                    "custom.grpo.batch_plan.per_device_train_batch_size and WORLD_SIZE must be > 0"
+                )
+            if unified_batch_size % denom != 0:
+                raise ValueError(
+                    "custom.grpo.batch_plan.unified_batch_size must be divisible by "
+                    f"(custom.grpo.batch_plan.per_device_train_batch_size * WORLD_SIZE) to ensure "
+                    "gradient_accumulation_steps == steps_per_generation; got "
+                    f"{unified_batch_size} % ({per_device_train_bs} * {world_size}) != 0."
+                )
+            derived_steps = unified_batch_size // denom
+            ConfigLoader._validate_optional_int_matches(
+                training,
+                "gradient_accumulation_steps",
+                derived_steps,
+                field_path="training.gradient_accumulation_steps",
+                expected_description="custom.grpo.batch_plan derived steps",
+            )
+            ConfigLoader._validate_optional_int_matches(
+                rlhf,
+                "steps_per_generation",
+                derived_steps,
+                field_path="rlhf.steps_per_generation",
+                expected_description="custom.grpo.batch_plan derived steps",
+            )
+
     def load_yaml_with_extends(
-        config_path: str, _visited: set[str] | None = None
+        config_path: str,
+        _visited: set[str] | None = None,
+        *,
+        _expand_grpo_batch_plan: bool = True,
     ) -> ConfigMapping:
         """Load YAML and resolve inheritance via 'extends'.
 
@@ -113,11 +346,16 @@ class ConfigLoader:
             base_path = Path(base_ref)
             if not base_path.is_absolute():
                 base_path = (current_dir / base_path).resolve()
-            base_cfg = ConfigLoader.load_yaml_with_extends(str(base_path), visited)
+            base_cfg = ConfigLoader.load_yaml_with_extends(
+                str(base_path), visited, _expand_grpo_batch_plan=False
+            )
             merged_base = ConfigLoader.merge_configs(merged_base, base_cfg)
 
         # Finally merge current file on top
-        return ConfigLoader.merge_configs(merged_base, config)
+        merged = ConfigLoader.merge_configs(merged_base, config)
+        if _expand_grpo_batch_plan:
+            ConfigLoader._expand_grpo_batch_plan_in_place(merged)
+        return merged
 
     @staticmethod
     def merge_configs(base: ConfigMapping, override: ConfigMapping) -> ConfigMapping:
@@ -170,8 +408,8 @@ class ConfigLoader:
                     "custom.summary_ratio has been removed; use custom.use_summary instead."
                 )
             if "use_summary" in custom_section:
-                use_summary = ConfigLoader._coerce_bool(
-                    custom_section["use_summary"], "custom.use_summary"
+                use_summary = coerce_bool(
+                    custom_section["use_summary"], field="custom.use_summary"
                 )
             json_format_hint_raw = custom_section.get("json_format")
             if json_format_hint_raw is not None:
@@ -267,8 +505,8 @@ class ConfigLoader:
         if save_last_epoch_raw is None:
             save_last_epoch = True
         else:
-            save_last_epoch = ConfigLoader._coerce_bool(
-                save_last_epoch_raw, "training.save_last_epoch"
+            save_last_epoch = coerce_bool(
+                save_last_epoch_raw, field="training.save_last_epoch"
             )
 
         # Auto-calculate gradient_accumulation_steps from effective_batch_size
@@ -452,12 +690,19 @@ class ConfigLoader:
     def load_training_config(
         config_path: str, base_config_path: str | None = None
     ) -> tuple[TrainArguments, TrainingConfig]:
-        config = ConfigLoader.load_yaml_with_extends(config_path)
+        # Load raw YAML with inheritance, but defer GRPO batch-plan expansion until
+        # after optional base-config overlay merge.
+        config = ConfigLoader.load_yaml_with_extends(
+            config_path, _expand_grpo_batch_plan=False
+        )
 
         if base_config_path:
-            base_config = ConfigLoader.load_yaml_with_extends(base_config_path)
+            base_config = ConfigLoader.load_yaml_with_extends(
+                base_config_path, _expand_grpo_batch_plan=False
+            )
             config = ConfigLoader.merge_configs(base_config, config)
 
+        ConfigLoader._expand_grpo_batch_plan_in_place(config)
         prompts = ConfigLoader.resolve_prompts(config)
         materialized = ConfigLoader._materialize_training_config(config, prompts)
         train_args = ConfigLoader.build_train_arguments(materialized)

@@ -36,13 +36,13 @@ from data_conversion.utils.exif_utils import apply_exif_orientation
 logger = logging.getLogger(__name__)
 
 IMAGE_FACTOR = 32
-MIN_PIXELS = 4 * 32*32
-MAX_PIXELS = 768 * 32*32
+MIN_PIXELS = 4 * 32 * 32
+MAX_PIXELS = 768 * 32 * 32
 MAX_RATIO = 200
 
 
 VIDEO_MIN_PIXELS = 128 * 28 * 28
-VIDEO_MAX_PIXELS = 768 * 32*32
+VIDEO_MAX_PIXELS = 768 * 32 * 32
 FRAME_FACTOR = 2
 FPS = 2.0
 FPS_MIN_FRAMES = 4
@@ -52,7 +52,7 @@ FPS_MAX_FRAMES = 768
 # Here, 128K represents the maximum number of input tokens for the VLLM model.
 # Remember to adjust it according to your own configuration.
 VIDEO_TOTAL_PIXELS = int(
-    float(os.environ.get("VIDEO_MAX_PIXELS", 128000 * 32*32 * 0.9))
+    float(os.environ.get("VIDEO_MAX_PIXELS", 128000 * 32 * 32 * 0.9))
 )
 logger.info(f"set VIDEO_TOTAL_PIXELS: {VIDEO_TOTAL_PIXELS}")
 
@@ -516,7 +516,7 @@ def fetch_video(
     "torch.Tensor",
     List[Image.Image],
     Tuple["torch.Tensor", float],
-    Tuple[List[Image.Image], float]
+    Tuple[List[Image.Image], float],
 ]:
     if isinstance(ele["video"], str):
         video_reader_backend = get_video_reader_backend()
@@ -603,7 +603,9 @@ def fetch_video(
         return images
 
 
-def extract_vision_info(conversations: Union[List[dict], List[List[dict]]]) -> List[dict]:
+def extract_vision_info(
+    conversations: Union[List[dict], List[List[dict]]],
+) -> List[dict]:
     """Extract vision information from conversations.
 
     Args:
@@ -890,7 +892,6 @@ class ImageProcessor:
                 )
 
         return output_path, target_width, target_height
-
 
     def get_relative_image_path(self, absolute_image_path: Path) -> str:
         """Get relative image path for use in JSONL files."""

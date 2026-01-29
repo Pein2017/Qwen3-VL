@@ -11,6 +11,7 @@ from typing import TypeVar, cast
 
 from src.generation.stop_policy import QWEN_STOP_TOKENS
 from src.prompts.domain_packs import get_domain_pack
+from src.utils.parsing import coerce_bool, coerce_float, coerce_int
 
 import yaml
 
@@ -26,45 +27,6 @@ def _require(mapping: Mapping[str, object], key: str, context: str) -> T:
         raise KeyError(f"Missing required key '{key}' in {context}")
     value = mapping[key]
     return cast(T, value)
-
-
-def _coerce_int(value: object, *, field: str) -> int:
-    if isinstance(value, bool):
-        raise TypeError(f"{field} must be an integer")
-    if isinstance(value, (int, float, str)):
-        try:
-            return int(value)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"{field} must be an integer") from exc
-    raise TypeError(f"{field} must be an integer")
-
-
-def _coerce_float(value: object, *, field: str) -> float:
-    if isinstance(value, bool):
-        raise TypeError(f"{field} must be a number")
-    if isinstance(value, (int, float, str)):
-        try:
-            return float(value)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"{field} must be a number") from exc
-    raise TypeError(f"{field} must be a number")
-
-
-def _coerce_bool(value: object, *, field: str) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        if value in (0, 1, 0.0, 1.0):
-            return bool(value)
-        raise ValueError(f"{field} must be boolean (0 or 1)")
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in {"true", "1", "yes", "y", "on"}:
-            return True
-        if normalized in {"false", "0", "no", "n", "off"}:
-            return False
-        raise ValueError(f"{field} must be a boolean string")
-    raise TypeError(f"{field} must be a boolean")
 
 
 @dataclass(frozen=True)
@@ -114,7 +76,9 @@ class ReflectionConfig:
     max_reflection_length: int = 4096
     token_budget: int = 4096  # Token budget for reflection prompt packing
     retry_budget_per_group_per_epoch: int = 2
-    max_calls_per_epoch: int | None = None  # decision+ops calls per epoch; None = unlimited
+    max_calls_per_epoch: int | None = (
+        None  # decision+ops calls per epoch; None = unlimited
+    )
 
 
 @dataclass(frozen=True)
@@ -134,7 +98,9 @@ class RuleSearchGateConfig:
     max_changed_fraction: float = 0.05
     # Allowable fp_rate increase for lifecycle operations.
     max_fp_rate_increase: float = 0.01
-    bootstrap: RuleSearchBootstrapConfig = field(default_factory=RuleSearchBootstrapConfig)
+    bootstrap: RuleSearchBootstrapConfig = field(
+        default_factory=RuleSearchBootstrapConfig
+    )
 
 
 @dataclass(frozen=True)
@@ -160,7 +126,9 @@ class RuleSearchConfig:
     train_with_replacement: bool = False
     eval_pool_size: int = 128
     gate: RuleSearchGateConfig = field(default_factory=RuleSearchGateConfig)
-    early_stop: RuleSearchEarlyStopConfig = field(default_factory=RuleSearchEarlyStopConfig)
+    early_stop: RuleSearchEarlyStopConfig = field(
+        default_factory=RuleSearchEarlyStopConfig
+    )
     train_sampler: SamplerConfig | None = None
     eval_sampler: SamplerConfig | None = None
     mining_sampler: SamplerConfig | None = None
@@ -245,32 +213,32 @@ def resolve_domain_for_mission(config: StageBConfig, mission: str) -> str:
 
 
 def _decode_config(section: Mapping[str, object]) -> DecodeConfig:
-    temperature = _coerce_float(
+    temperature = coerce_float(
         _require(section, "temperature", "sampler.grid entry"),
         field="sampler.grid.temperature",
     )
-    top_p = _coerce_float(
+    top_p = coerce_float(
         _require(section, "top_p", "sampler.grid entry"),
         field="sampler.grid.top_p",
     )
-    max_new_tokens = _coerce_int(
+    max_new_tokens = coerce_int(
         _require(section, "max_new_tokens", "sampler.grid entry"),
         field="sampler.grid.max_new_tokens",
     )
-    repetition_penalty = _coerce_float(
+    repetition_penalty = coerce_float(
         section.get("repetition_penalty", 1.0),
         field="sampler.grid.repetition_penalty",
     )
     no_repeat_ngram_size_raw = section.get("no_repeat_ngram_size")
     no_repeat_ngram_size = (
-        _coerce_int(no_repeat_ngram_size_raw, field="sampler.grid.no_repeat_ngram_size")
+        coerce_int(no_repeat_ngram_size_raw, field="sampler.grid.no_repeat_ngram_size")
         if no_repeat_ngram_size_raw is not None
         else None
     )
 
     seed_value: int | None = None
     if "seed" in section and section["seed"] is not None:
-        seed_value = _coerce_int(section["seed"], field="sampler.grid.seed")
+        seed_value = coerce_int(section["seed"], field="sampler.grid.seed")
 
     stop_tokens: Sequence[str]
     raw_stop = section.get("stop")
@@ -312,7 +280,7 @@ def _load_sampler(section: Mapping[str, object]) -> SamplerConfig:
         grid_entries.append(_decode_config(entry))
     grid = tuple(grid_entries)
 
-    samples_per_decode = _coerce_int(
+    samples_per_decode = coerce_int(
         _require(section, "samples_per_decode", "sampler section"),
         field="sampler.samples_per_decode",
     )
@@ -322,7 +290,7 @@ def _load_sampler(section: Mapping[str, object]) -> SamplerConfig:
     max_prompt_tokens_raw = section.get("max_prompt_tokens")
     max_prompt_tokens: int | None = None
     if max_prompt_tokens_raw is not None:
-        max_prompt_tokens = _coerce_int(
+        max_prompt_tokens = coerce_int(
             max_prompt_tokens_raw, field="sampler.max_prompt_tokens"
         )
         if max_prompt_tokens <= 0:
@@ -339,7 +307,7 @@ def _load_max_token_length(raw_config: Mapping[str, object]) -> int | None:
     value = raw_config.get("max_token_length")
     if value is None:
         return None
-    max_token_length = _coerce_int(value, field="max_token_length")
+    max_token_length = coerce_int(value, field="max_token_length")
     if max_token_length <= 0:
         raise ValueError("max_token_length must be > 0 when provided")
     return max_token_length
@@ -368,7 +336,7 @@ def _load_stage_a_paths(raw: object) -> tuple[Path, ...]:
 
 def _load_guidance(section: Mapping[str, object]) -> GuidanceConfig:
     path = Path(str(_require(section, "path", "guidance section")))
-    retention = _coerce_int(
+    retention = coerce_int(
         _require(section, "retention", "guidance section"),
         field="guidance.retention",
     )
@@ -415,7 +383,7 @@ def _load_reflection(section: Mapping[str, object]) -> ReflectionConfig:
     ops_prompt_path = Path(
         str(_require(section, "ops_prompt_path", "reflection section"))
     )
-    batch_size = _coerce_int(
+    batch_size = coerce_int(
         _require(section, "batch_size", "reflection section"),
         field="reflection.batch_size",
     )
@@ -427,7 +395,7 @@ def _load_reflection(section: Mapping[str, object]) -> ReflectionConfig:
     if max_operations_raw is None:
         max_operations_val = None
     else:
-        max_operations_val = _coerce_int(
+        max_operations_val = coerce_int(
             max_operations_raw, field="reflection.max_operations"
         )
         if max_operations_val <= 0:
@@ -440,38 +408,42 @@ def _load_reflection(section: Mapping[str, object]) -> ReflectionConfig:
     all_wrong_strategy = str(section.get("all_wrong_strategy", "learn"))
     change_cap_raw = section.get("change_cap_per_epoch")
     change_cap_per_epoch = (
-        _coerce_int(change_cap_raw, field="reflection.change_cap_per_epoch")
+        coerce_int(change_cap_raw, field="reflection.change_cap_per_epoch")
         if change_cap_raw is not None
         else None
     )
     if change_cap_per_epoch is not None and change_cap_per_epoch <= 0:
         raise ValueError("reflection.change_cap_per_epoch must be > 0 if set")
-    hypothesis_min_support_cycles = _coerce_int(
+    hypothesis_min_support_cycles = coerce_int(
         section.get("hypothesis_min_support_cycles", 2),
         field="reflection.hypothesis_min_support_cycles",
     )
     if hypothesis_min_support_cycles <= 0:
         raise ValueError("reflection.hypothesis_min_support_cycles must be > 0")
-    hypothesis_min_unique_ticket_keys = _coerce_int(
+    hypothesis_min_unique_ticket_keys = coerce_int(
         section.get("hypothesis_min_unique_ticket_keys", 12),
         field="reflection.hypothesis_min_unique_ticket_keys",
     )
     if hypothesis_min_unique_ticket_keys <= 0:
         raise ValueError("reflection.hypothesis_min_unique_ticket_keys must be > 0")
-    temperature = _coerce_float(section.get("temperature", 1.0), field="reflection.temperature")
-    top_p = _coerce_float(section.get("top_p", 0.95), field="reflection.top_p")
-    repetition_penalty = _coerce_float(
+    temperature = coerce_float(
+        section.get("temperature", 1.0), field="reflection.temperature"
+    )
+    top_p = coerce_float(section.get("top_p", 0.95), field="reflection.top_p")
+    repetition_penalty = coerce_float(
         section.get("repetition_penalty", 1.0),
         field="reflection.repetition_penalty",
     )
-    max_new_tokens = _coerce_int(section.get("max_new_tokens", 1024), field="reflection.max_new_tokens")
-    max_reflection_length = _coerce_int(
+    max_new_tokens = coerce_int(
+        section.get("max_new_tokens", 1024), field="reflection.max_new_tokens"
+    )
+    max_reflection_length = coerce_int(
         section.get("max_reflection_length", 4096),
         field="reflection.max_reflection_length",
     )
     if max_reflection_length <= 0:
         raise ValueError("reflection.max_reflection_length must be > 0")
-    token_budget = _coerce_int(
+    token_budget = coerce_int(
         section.get("token_budget", max_reflection_length),
         field="reflection.token_budget",
     )
@@ -479,7 +451,7 @@ def _load_reflection(section: Mapping[str, object]) -> ReflectionConfig:
         raise ValueError("reflection.token_budget must be > 0")
 
     retry_budget_raw = section.get("retry_budget_per_group_per_epoch", 2)
-    retry_budget_per_group_per_epoch = _coerce_int(
+    retry_budget_per_group_per_epoch = coerce_int(
         retry_budget_raw, field="reflection.retry_budget_per_group_per_epoch"
     )
     if retry_budget_per_group_per_epoch < 0:
@@ -487,7 +459,7 @@ def _load_reflection(section: Mapping[str, object]) -> ReflectionConfig:
 
     max_calls_raw = section.get("max_calls_per_epoch")
     max_calls_per_epoch = (
-        _coerce_int(max_calls_raw, field="reflection.max_calls_per_epoch")
+        coerce_int(max_calls_raw, field="reflection.max_calls_per_epoch")
         if max_calls_raw is not None
         else None
     )
@@ -520,20 +492,24 @@ def _load_seed(raw_config: Mapping[str, object]) -> int:
     seed_value = raw_config.get("seed")
     if seed_value is None:
         raise KeyError("Stage-B config must include top-level 'seed'")
-    return _coerce_int(seed_value, field="seed")
+    return coerce_int(seed_value, field="seed")
 
 
 def _load_runner(section: Mapping[str, object]) -> RunnerConfig:
-    epochs = _coerce_int(_require(section, "epochs", "runner section"), field="runner.epochs")
+    epochs = coerce_int(
+        _require(section, "epochs", "runner section"), field="runner.epochs"
+    )
     if epochs <= 0:
         raise ValueError("runner.epochs must be > 0")
-    per_rank_rollout_batch_size = _coerce_int(
+    per_rank_rollout_batch_size = coerce_int(
         section.get("per_rank_rollout_batch_size", 1),
         field="runner.per_rank_rollout_batch_size",
     )
     if per_rank_rollout_batch_size <= 0:
         raise ValueError("runner.per_rank_rollout_batch_size must be > 0")
-    logging_steps = _coerce_int(section.get("logging_steps", 256), field="runner.logging_steps")
+    logging_steps = coerce_int(
+        section.get("logging_steps", 256), field="runner.logging_steps"
+    )
     if logging_steps <= 0:
         raise ValueError("runner.logging_steps must be > 0")
     return RunnerConfig(
@@ -553,15 +529,19 @@ def _load_distillation(
     log_chatml_path = Path(str(raw_path)) if raw_path else None
     distill_size = section.get("distill_size")
     if distill_size is not None:
-        distill_size = _coerce_int(distill_size, field="stage_b_distillation.distill_size")
+        distill_size = coerce_int(
+            distill_size, field="stage_b_distillation.distill_size"
+        )
         if distill_size <= 0:
             raise ValueError("stage_b_distillation.distill_size must be > 0")
     distill_seed = section.get("distill_seed")
     if distill_seed is not None:
-        distill_seed = _coerce_int(distill_seed, field="stage_b_distillation.distill_seed")
+        distill_seed = coerce_int(
+            distill_seed, field="stage_b_distillation.distill_seed"
+        )
     distill_temperature = section.get("distill_temperature")
     if distill_temperature is not None:
-        distill_temperature = _coerce_float(
+        distill_temperature = coerce_float(
             distill_temperature, field="stage_b_distillation.distill_temperature"
         )
     return StageBDistillationConfig(
@@ -573,7 +553,9 @@ def _load_distillation(
     )
 
 
-def _load_ticket_filter(section: Mapping[str, object] | None) -> TicketFilterConfig | None:
+def _load_ticket_filter(
+    section: Mapping[str, object] | None,
+) -> TicketFilterConfig | None:
     if section is None:
         return None
     if not isinstance(section, Mapping):
@@ -587,9 +569,13 @@ def _load_ticket_filter(section: Mapping[str, object] | None) -> TicketFilterCon
     if raw_keys is None:
         exclude_ticket_keys = ()
     elif isinstance(raw_keys, (list, tuple)):
-        exclude_ticket_keys = tuple(str(item).strip() for item in raw_keys if str(item).strip())
+        exclude_ticket_keys = tuple(
+            str(item).strip() for item in raw_keys if str(item).strip()
+        )
     else:
-        raise TypeError("ticket_filter.exclude_ticket_keys must be a sequence when provided")
+        raise TypeError(
+            "ticket_filter.exclude_ticket_keys must be a sequence when provided"
+        )
 
     if exclude_ticket_keys_path is None and not exclude_ticket_keys:
         return None
@@ -609,7 +595,7 @@ def load_stage_b_config(path: str | Path) -> StageBConfig:
 
     seed_value = _load_seed(raw_config)
     max_token_length = _load_max_token_length(raw_config)
-    jump_reflection = _coerce_bool(
+    jump_reflection = coerce_bool(
         raw_config.get("jump_reflection", False), field="jump_reflection"
     )
 
@@ -649,33 +635,37 @@ def load_stage_b_config(path: str | Path) -> StageBConfig:
             raise TypeError("rule_search must be a mapping")
 
         proposer_prompt_path = Path(
-            str(_require(rule_search_section, "proposer_prompt_path", "rule_search section"))
+            str(
+                _require(
+                    rule_search_section, "proposer_prompt_path", "rule_search section"
+                )
+            )
         )
-        proposer_temperature = _coerce_float(
+        proposer_temperature = coerce_float(
             rule_search_section.get("proposer_temperature", 0.4),
             field="rule_search.proposer_temperature",
         )
-        proposer_top_p = _coerce_float(
+        proposer_top_p = coerce_float(
             rule_search_section.get("proposer_top_p", 0.9),
             field="rule_search.proposer_top_p",
         )
-        proposer_repetition_penalty = _coerce_float(
+        proposer_repetition_penalty = coerce_float(
             rule_search_section.get("proposer_repetition_penalty", 1.05),
             field="rule_search.proposer_repetition_penalty",
         )
-        proposer_max_new_tokens = _coerce_int(
+        proposer_max_new_tokens = coerce_int(
             rule_search_section.get("proposer_max_new_tokens", 2048),
             field="rule_search.proposer_max_new_tokens",
         )
         if proposer_max_new_tokens <= 0:
             raise ValueError("rule_search.proposer_max_new_tokens must be > 0")
-        proposer_max_prompt_tokens = _coerce_int(
+        proposer_max_prompt_tokens = coerce_int(
             rule_search_section.get("proposer_max_prompt_tokens", 4096),
             field="rule_search.proposer_max_prompt_tokens",
         )
         if proposer_max_prompt_tokens <= 0:
             raise ValueError("rule_search.proposer_max_prompt_tokens must be > 0")
-        reflect_size = _coerce_int(
+        reflect_size = coerce_int(
             rule_search_section.get("reflect_size", 16),
             field="rule_search.reflect_size",
         )
@@ -686,7 +676,7 @@ def load_stage_b_config(path: str | Path) -> StageBConfig:
             raise ValueError(
                 "rule_search.reflect_order must be one of: hard_first, easy_first"
             )
-        num_candidate_rules = _coerce_int(
+        num_candidate_rules = coerce_int(
             rule_search_section.get("num_candidate_rules", 3),
             field="rule_search.num_candidate_rules",
         )
@@ -704,10 +694,10 @@ def load_stage_b_config(path: str | Path) -> StageBConfig:
             raise ValueError(
                 "rule_search legacy keys are no longer supported: "
                 f"{', '.join(sorted(legacy_present))}. "
-            "Use train_pool_* and eval_pool_size instead."
+                "Use train_pool_* and eval_pool_size instead."
             )
 
-        train_pool_size = _coerce_int(
+        train_pool_size = coerce_int(
             rule_search_section.get("train_pool_size", 512),
             field="rule_search.train_pool_size",
         )
@@ -715,7 +705,9 @@ def load_stage_b_config(path: str | Path) -> StageBConfig:
             raise ValueError("rule_search.train_pool_size must be > 0")
         train_pool_fraction_raw = rule_search_section.get("train_pool_fraction")
         train_pool_fraction = (
-            _coerce_float(train_pool_fraction_raw, field="rule_search.train_pool_fraction")
+            coerce_float(
+                train_pool_fraction_raw, field="rule_search.train_pool_fraction"
+            )
             if train_pool_fraction_raw is not None
             else None
         )
@@ -726,7 +718,7 @@ def load_stage_b_config(path: str | Path) -> StageBConfig:
             rule_search_section.get("train_with_replacement", False)
         )
 
-        eval_pool_size = _coerce_int(
+        eval_pool_size = coerce_int(
             rule_search_section.get("eval_pool_size", 128),
             field="rule_search.eval_pool_size",
         )
@@ -736,22 +728,24 @@ def load_stage_b_config(path: str | Path) -> StageBConfig:
         gate_section = rule_search_section.get("gate") or {}
         if not isinstance(gate_section, Mapping):
             raise TypeError("rule_search.gate must be a mapping when provided")
-        min_rer = _coerce_float(
+        min_rer = coerce_float(
             gate_section.get("min_relative_error_reduction", 0.1),
             field="rule_search.gate.min_relative_error_reduction",
         )
         if min_rer < 0.0:
-            raise ValueError("rule_search.gate.min_relative_error_reduction must be >= 0")
+            raise ValueError(
+                "rule_search.gate.min_relative_error_reduction must be >= 0"
+            )
         max_changed_fraction = gate_section.get("max_changed_fraction")
         if max_changed_fraction is None and "min_changed_fraction" in gate_section:
             max_changed_fraction = gate_section.get("min_changed_fraction")
-        max_changed_fraction = _coerce_float(
+        max_changed_fraction = coerce_float(
             max_changed_fraction or 0.05,
             field="rule_search.gate.max_changed_fraction",
         )
         if not (0.0 <= max_changed_fraction <= 1.0):
             raise ValueError("rule_search.gate.max_changed_fraction must be in [0, 1]")
-        max_fp_rate_increase = _coerce_float(
+        max_fp_rate_increase = coerce_float(
             gate_section.get("max_fp_rate_increase", 0.01),
             field="rule_search.gate.max_fp_rate_increase",
         )
@@ -760,20 +754,22 @@ def load_stage_b_config(path: str | Path) -> StageBConfig:
 
         bootstrap_section = gate_section.get("bootstrap") or {}
         if not isinstance(bootstrap_section, Mapping):
-            raise TypeError("rule_search.gate.bootstrap must be a mapping when provided")
-        bootstrap_iterations = _coerce_int(
+            raise TypeError(
+                "rule_search.gate.bootstrap must be a mapping when provided"
+            )
+        bootstrap_iterations = coerce_int(
             bootstrap_section.get("iterations", 200),
             field="rule_search.gate.bootstrap.iterations",
         )
         if bootstrap_iterations <= 0:
             raise ValueError("rule_search.gate.bootstrap.iterations must be > 0")
-        bootstrap_min_prob = _coerce_float(
+        bootstrap_min_prob = coerce_float(
             bootstrap_section.get("min_prob", 0.8),
             field="rule_search.gate.bootstrap.min_prob",
         )
         if not (0.0 <= bootstrap_min_prob <= 1.0):
             raise ValueError("rule_search.gate.bootstrap.min_prob must be in [0, 1]")
-        bootstrap_seed = _coerce_int(
+        bootstrap_seed = coerce_int(
             bootstrap_section.get("seed", seed_value),
             field="rule_search.gate.bootstrap.seed",
         )
@@ -792,7 +788,7 @@ def load_stage_b_config(path: str | Path) -> StageBConfig:
         early_stop_section = rule_search_section.get("early_stop") or {}
         if not isinstance(early_stop_section, Mapping):
             raise TypeError("rule_search.early_stop must be a mapping when provided")
-        patience = _coerce_int(
+        patience = coerce_int(
             early_stop_section.get("patience", 3),
             field="rule_search.early_stop.patience",
         )
@@ -807,7 +803,10 @@ def load_stage_b_config(path: str | Path) -> StageBConfig:
             _require(rule_search_section, "eval_sampler", "rule_search section")
         )
         mining_sampler = None
-        if "mining_sampler" in rule_search_section and rule_search_section["mining_sampler"] is not None:
+        if (
+            "mining_sampler" in rule_search_section
+            and rule_search_section["mining_sampler"] is not None
+        ):
             mining_sampler = _load_sampler(
                 _require(rule_search_section, "mining_sampler", "rule_search section")
             )

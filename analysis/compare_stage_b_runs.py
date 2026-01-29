@@ -46,7 +46,7 @@ def _safe_len(x: Any) -> int:
 def _fmt_pct(x: Optional[float], digits: int = 1) -> str:
     if x is None:
         return "NA"
-    return f"{x*100:.{digits}f}%"
+    return f"{x * 100:.{digits}f}%"
 
 
 def _md_table(headers: List[str], rows: List[List[str]]) -> str:
@@ -95,8 +95,12 @@ def _summarize_run(run_dir: Path, mission: str) -> RunSummary:
     files = {
         "rule_candidates.jsonl": (run_dir / "rule_candidates.jsonl").exists(),
         "benchmarks.jsonl": (run_dir / "benchmarks.jsonl").exists(),
-        "rule_search_hard_cases.jsonl": (run_dir / "rule_search_hard_cases.jsonl").exists(),
-        "rule_search_candidate_regressions.jsonl": (run_dir / "rule_search_candidate_regressions.jsonl").exists(),
+        "rule_search_hard_cases.jsonl": (
+            run_dir / "rule_search_hard_cases.jsonl"
+        ).exists(),
+        "rule_search_candidate_regressions.jsonl": (
+            run_dir / "rule_search_candidate_regressions.jsonl"
+        ).exists(),
         "guidance.json": (run_dir / "guidance.json").exists(),
         "snapshots/": (run_dir / "snapshots").exists(),
         "distill_chatml.jsonl": (run_dir / "distill_chatml.jsonl").exists(),
@@ -163,7 +167,11 @@ def _summarize_run(run_dir: Path, mission: str) -> RunSummary:
 
     guidance_step = _load_guidance_step(run_dir / "guidance.json", mission)
     snapshots_dir = run_dir / "snapshots"
-    snapshots = len(list(snapshots_dir.glob("guidance-*.json"))) if snapshots_dir.exists() else 0
+    snapshots = (
+        len(list(snapshots_dir.glob("guidance-*.json")))
+        if snapshots_dir.exists()
+        else 0
+    )
 
     return RunSummary(
         run_dir=run_dir,
@@ -199,9 +207,23 @@ def _render_summary(a: RunSummary, b: RunSummary) -> str:
     rows = []
     rows.append(["guidance step", str(a.guidance_step), str(b.guidance_step)])
     rows.append(["snapshots", str(a.snapshots), str(b.snapshots)])
-    rows.append(["candidates (total)", str(a.candidates_total), str(b.candidates_total)])
-    rows.append(["candidates (promoted)", str(a.candidates_promoted), str(b.candidates_promoted)])
-    rows.append(["candidates (rejected)", str(a.candidates_rejected), str(b.candidates_rejected)])
+    rows.append(
+        ["candidates (total)", str(a.candidates_total), str(b.candidates_total)]
+    )
+    rows.append(
+        [
+            "candidates (promoted)",
+            str(a.candidates_promoted),
+            str(b.candidates_promoted),
+        ]
+    )
+    rows.append(
+        [
+            "candidates (rejected)",
+            str(a.candidates_rejected),
+            str(b.candidates_rejected),
+        ]
+    )
     rows.append(["best RER", str(a.best_rer), str(b.best_rer)])
     rows.append(["benchmarks rows", str(a.benchmarks_total), str(b.benchmarks_total)])
     rows.append(["hard cases", str(a.hard_cases), str(b.hard_cases)])
@@ -225,10 +247,15 @@ def _render_summary(a: RunSummary, b: RunSummary) -> str:
         ]
 
     lines.append("## Latest benchmark (if any)")
-    lines.append(_md_table(["run", "iteration", "base_acc", "after_acc", "eval_after_acc", "RER"], [
-        ["A"] + _bench_row(a),
-        ["B"] + _bench_row(b),
-    ]))
+    lines.append(
+        _md_table(
+            ["run", "iteration", "base_acc", "after_acc", "eval_after_acc", "RER"],
+            [
+                ["A"] + _bench_row(a),
+                ["B"] + _bench_row(b),
+            ],
+        )
+    )
     lines.append("")
 
     def _ops(run: RunSummary) -> str:
@@ -243,7 +270,14 @@ def _render_summary(a: RunSummary, b: RunSummary) -> str:
 
     lines.append("## Files present")
     keys = sorted(set(a.files_present) | set(b.files_present))
-    rows = [[k, "yes" if a.files_present.get(k) else "no", "yes" if b.files_present.get(k) else "no"] for k in keys]
+    rows = [
+        [
+            k,
+            "yes" if a.files_present.get(k) else "no",
+            "yes" if b.files_present.get(k) else "no",
+        ]
+        for k in keys
+    ]
     lines.append(_md_table(["file", "A", "B"], rows))
     return "\n".join(lines)
 
@@ -257,8 +291,15 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("run_a", type=Path, help="Stage-B run directory A")
     parser.add_argument("run_b", type=Path, help="Stage-B run directory B")
-    parser.add_argument("--mission", type=str, default=None, help="Mission name (defaults to run_dir parent)")
-    parser.add_argument("--out", type=Path, default=None, help="Write report to file instead of stdout")
+    parser.add_argument(
+        "--mission",
+        type=str,
+        default=None,
+        help="Mission name (defaults to run_dir parent)",
+    )
+    parser.add_argument(
+        "--out", type=Path, default=None, help="Write report to file instead of stdout"
+    )
     args = parser.parse_args()
 
     if not args.run_a.exists() or not args.run_b.exists():

@@ -64,9 +64,12 @@ def _normalize_record(record: Mapping[str, Any], *, source_name: str) -> Dict[st
 
 def format_file(input_path: Path, output_path: Path, *, source_name: str) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    with input_path.open("r", encoding="utf-8") as fin, tempfile.NamedTemporaryFile(
-        "w", delete=False, encoding="utf-8", dir=str(output_path.parent)
-    ) as tmp:
+    with (
+        input_path.open("r", encoding="utf-8") as fin,
+        tempfile.NamedTemporaryFile(
+            "w", delete=False, encoding="utf-8", dir=str(output_path.parent)
+        ) as tmp,
+    ):
         tmp_path = Path(tmp.name)
         for line in fin:
             if not line.strip():

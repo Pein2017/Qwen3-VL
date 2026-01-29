@@ -234,7 +234,9 @@ def _aabb_from_points(points: Sequence[float]) -> tuple[float, float, float, flo
     return min(xs), min(ys), max(xs), max(ys)
 
 
-def _aabb_intersection_area(a: tuple[float, float, float, float], b: tuple[float, float, float, float]) -> float:
+def _aabb_intersection_area(
+    a: tuple[float, float, float, float], b: tuple[float, float, float, float]
+) -> float:
     x1 = max(a[0], b[0])
     y1 = max(a[1], b[1])
     x2 = min(a[2], b[2])
@@ -259,7 +261,9 @@ def _convex_clip(subject: Sequence[float], clip: Sequence[float]) -> list[float]
     if orient == 0.0:
         return []
 
-    def _is_inside(p: tuple[float, float], a: tuple[float, float], b: tuple[float, float]) -> bool:
+    def _is_inside(
+        p: tuple[float, float], a: tuple[float, float], b: tuple[float, float]
+    ) -> bool:
         cross = (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0])
         return cross * orient >= 0.0
 
@@ -434,7 +438,9 @@ def _label_ok(
     if mode == EvalMode.LOCALIZATION:
         return True
     if mode == EvalMode.PHASE:
-        return gt_labels[gi].phase != "" and gt_labels[gi].phase == pred_labels[pi].phase
+        return (
+            gt_labels[gi].phase != "" and gt_labels[gi].phase == pred_labels[pi].phase
+        )
     if mode == EvalMode.CATEGORY:
         return (
             gt_labels[gi].category != ""
@@ -496,7 +502,11 @@ def _format_thr(t: float) -> str:
 def evaluate_dump_records(
     records: Iterable[Mapping[str, Any]],
     *,
-    modes: Sequence[EvalMode] = (EvalMode.LOCALIZATION, EvalMode.PHASE, EvalMode.CATEGORY),
+    modes: Sequence[EvalMode] = (
+        EvalMode.LOCALIZATION,
+        EvalMode.PHASE,
+        EvalMode.CATEGORY,
+    ),
     primary_threshold: float = DEFAULT_PRIMARY_THRESHOLD,
     coco_thresholds: Sequence[float] = DEFAULT_COCO_THRESHOLDS,
     line_tol: float = DEFAULT_LINE_TOL,
@@ -511,7 +521,9 @@ def evaluate_dump_records(
     supported_types = ("bbox_2d", "poly", "line")
 
     totals: dict[str, dict[str, dict[str, int]]] = {
-        mode.value: {_format_thr(t): {"gt": 0, "pred": 0, "matched": 0} for t in thresholds}
+        mode.value: {
+            _format_thr(t): {"gt": 0, "pred": 0, "matched": 0} for t in thresholds
+        }
         for mode in modes
     }
     by_type: dict[str, dict[str, dict[str, dict[str, int]]]] = {
@@ -641,7 +653,9 @@ def evaluate_dump_records(
 
                 # Per-type totals: precision is pred-type based; recall is gt-type based.
                 for g in supported_types:
-                    by_type[mode_key][thr_key][g]["gt"] += sum(1 for x in gt_types if x == g)
+                    by_type[mode_key][thr_key][g]["gt"] += sum(
+                        1 for x in gt_types if x == g
+                    )
                     by_type[mode_key][thr_key][g]["pred"] += sum(
                         1 for x in pred_types if x == g
                     )
@@ -680,7 +694,9 @@ def evaluate_dump_records(
         f1s: list[float] = []
         for thr_key in [_format_thr(t) for t in thresholds]:
             stats = totals[mode_key][thr_key]
-            prf = _prf1(matched=stats["matched"], gt_total=stats["gt"], pred_total=stats["pred"])
+            prf = _prf1(
+                matched=stats["matched"], gt_total=stats["gt"], pred_total=stats["pred"]
+            )
             out_by_thr[thr_key] = {
                 "gt": stats["gt"],
                 "pred": stats["pred"],
@@ -701,7 +717,9 @@ def evaluate_dump_records(
                 )
                 # Precision for a type is based on matched predictions of that type.
                 prec = (
-                    (tstats["matched_pred"] / tstats["pred"]) if tstats["pred"] > 0 else 0.0
+                    (tstats["matched_pred"] / tstats["pred"])
+                    if tstats["pred"] > 0
+                    else 0.0
                 )
                 denom = prec + prf_t.recall
                 f1 = (2.0 * prec * prf_t.recall / denom) if denom > 0 else 0.0
@@ -731,7 +749,9 @@ def evaluate_dump_records(
     )[: max(0, int(top_k_categories))]
     cat_out: dict[str, Any] = {}
     for cat, stats in cat_items:
-        prf = _prf1(matched=stats["matched"], gt_total=stats["gt"], pred_total=stats["pred"])
+        prf = _prf1(
+            matched=stats["matched"], gt_total=stats["gt"], pred_total=stats["pred"]
+        )
         cat_out[cat] = {
             "gt": stats["gt"],
             "pred": stats["pred"],
@@ -797,7 +817,11 @@ def evaluate_dump_records(
 def evaluate_jsonl(
     jsonl_path: str,
     *,
-    modes: Sequence[EvalMode] = (EvalMode.LOCALIZATION, EvalMode.PHASE, EvalMode.CATEGORY),
+    modes: Sequence[EvalMode] = (
+        EvalMode.LOCALIZATION,
+        EvalMode.PHASE,
+        EvalMode.CATEGORY,
+    ),
     primary_threshold: float = DEFAULT_PRIMARY_THRESHOLD,
     coco_thresholds: Sequence[float] = DEFAULT_COCO_THRESHOLDS,
     line_tol: float = DEFAULT_LINE_TOL,

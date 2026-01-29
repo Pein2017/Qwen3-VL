@@ -30,9 +30,7 @@ def collect_single_token_stop_ids(
     return stop_token_ids
 
 
-def merge_stop_token_ids(
-    base: Sequence[int] | None, extra: Sequence[int]
-) -> list[int]:
+def merge_stop_token_ids(base: Sequence[int] | None, extra: Sequence[int]) -> list[int]:
     merged: list[int] = []
     if base:
         merged.extend(int(item) for item in base if item is not None)

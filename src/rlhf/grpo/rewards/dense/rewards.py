@@ -50,7 +50,9 @@ def _resolve_payload_from_kwargs(
 
     if completions is None:
         completions_iterable: Iterable[Any] = []
-    elif isinstance(completions, Iterable) and not isinstance(completions, (str, bytes)):
+    elif isinstance(completions, Iterable) and not isinstance(
+        completions, (str, bytes)
+    ):
         completions_iterable = cast(Iterable[Any], completions)
     else:
         completions_iterable = [completions]

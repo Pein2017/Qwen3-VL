@@ -244,7 +244,7 @@ class DataConversionConfig:
             "IMAGE_FACTOR": "image_factor",
         }
 
-        config_dict = {}
+        config_dict: dict[str, Any] = {}
 
         for env_var, config_field in required_env_vars.items():
             value = os.getenv(env_var)

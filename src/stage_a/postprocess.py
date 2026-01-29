@@ -12,8 +12,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import cast
 
-from ..utils import get_logger, require_mapping, require_mutable_mapping
-from ..utils.unstructured import UnstructuredMapping
+from ..utils import get_logger, require_mutable_mapping
+from src.utils.summary_json import extract_summary_json_line, format_summary_json
 from .types import StageAGroupRecord
 
 logger = get_logger(__name__)
@@ -47,60 +47,6 @@ _RRU_CATEGORIES = {
 }
 
 
-def _format_summary_json(obj: UnstructuredMapping) -> str:
-    """Format an intentionally unstructured summary JSON mapping."""
-    obj = require_mapping(obj, context="stage_a.summary")
-    ordered: dict[str, object] = {}
-    for key in ("统计", "备注", "分组统计"):
-        if key in obj:
-            ordered[key] = obj[key]
-    for key, value in obj.items():
-        if key not in ordered:
-            ordered[key] = value
-    return json.dumps(ordered, ensure_ascii=False, separators=(", ", ": "))
-
-
-def _extract_summary_json_line(text: str) -> str | None:
-    stripped = (text or "").strip()
-    if not stripped:
-        return None
-
-    def _maybe_parse_obj(candidate: str) -> UnstructuredMapping | None:
-        c = candidate.strip()
-        if not (c.startswith("{") and c.endswith("}")):
-            return None
-        try:
-            obj = json.loads(c)
-        except Exception:
-            return None
-        try:
-            return require_mapping(obj, context="stage_a.summary_json")
-        except TypeError:
-            return None
-
-    def _is_summary(obj: UnstructuredMapping) -> bool:
-        return "统计" in obj
-
-    obj = _maybe_parse_obj(stripped)
-    if obj is not None and _is_summary(obj):
-        return _format_summary_json(obj)
-
-    lines = [line.strip() for line in stripped.splitlines() if line.strip()]
-    for line in reversed(lines):
-        obj = _maybe_parse_obj(line)
-        if obj is not None and _is_summary(obj):
-            return _format_summary_json(obj)
-
-    start = stripped.find("{")
-    end = stripped.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        obj = _maybe_parse_obj(stripped[start : end + 1])
-        if obj is not None and _is_summary(obj):
-            return _format_summary_json(obj)
-
-    return None
-
-
 def _strip_remark(item: str) -> str:
     return _REMARK_RE.sub("", item).strip(" ，")
 
@@ -113,7 +59,7 @@ def sanitize_summary_by_dataset(text: str, dataset: str) -> str:
         return summary_text
     if summary_text.startswith("无关图片"):
         return "无关图片"
-    extracted = _extract_summary_json_line(summary_text)
+    extracted = extract_summary_json_line(summary_text, context="stage_a.summary_json")
     if extracted is not None:
         return extracted
     if summary_text.startswith("{") and summary_text.endswith("}"):
@@ -122,7 +68,7 @@ def sanitize_summary_by_dataset(text: str, dataset: str) -> str:
         except Exception:
             obj = None
         if isinstance(obj, dict) and "统计" in obj:
-            return _format_summary_json(obj)
+            return format_summary_json(obj, context="stage_a.summary")
     return summary_text
 
 
@@ -144,6 +90,8 @@ def clean_stage_a_record(record: StageAGroupRecord, dataset: str) -> StageAGroup
 
 
 def postprocess_jsonl(input_path: Path, output_path: Path, dataset: str) -> None:
+    from .types import validate_stage_a_group_record
+
     logger.info("Postprocessing Stage-A JSONL: %s", input_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     total = 0
@@ -172,9 +120,10 @@ def postprocess_jsonl(input_path: Path, output_path: Path, dataset: str) -> None
         output_target = output_path
 
     try:
-        with input_path.open("r", encoding="utf-8") as f_in, output_target.open(
-            "w", encoding="utf-8"
-        ) as f_out:
+        with (
+            input_path.open("r", encoding="utf-8") as f_in,
+            output_target.open("w", encoding="utf-8") as f_out,
+        ):
             for line in f_in:
                 line = line.strip()
                 if not line:
@@ -182,6 +131,7 @@ def postprocess_jsonl(input_path: Path, output_path: Path, dataset: str) -> None
                 total += 1
                 record = json.loads(line)
                 cleaned = clean_stage_a_record(record, dataset)
+                cleaned = validate_stage_a_group_record(cleaned, context="stage_a")
                 f_out.write(json.dumps(cleaned, ensure_ascii=False) + "\n")
 
         if inplace and tmp_path is not None:

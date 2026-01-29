@@ -9,7 +9,6 @@ validation to prune invalid entries. Taxonomy JSONs are documentation-only.
 
 from typing import Dict, List, Set
 
-
 # Canonical set of supported object types
 OBJECT_TYPES: Set[str] = {
     "bbu",
@@ -55,7 +54,7 @@ REVERSE_CHINESE_LABELS: Dict[str, str] = {v: k for k, v in CHINESE_LABELS.items(
 LINE_OBJECT_TYPES: Set[str] = {"fiber", "wire"}
 QUAD_BBOX_OBJECT_TYPES: Set[str] = {"bbu", "bbu_shield", "connect_point", "label"}
 
-# Default hierarchy matching the v2 data structure (Chinese-only mode)
+# Default hierarchy matching the grpo_summary_1024_attr_key_recall data structure (Chinese-only mode)
 # Each key is the Chinese object label; values are a permissive set of accepted
 # property tokens derived from mapping templates and enumerations. This is used
 # only when no explicit hierarchy file is provided.

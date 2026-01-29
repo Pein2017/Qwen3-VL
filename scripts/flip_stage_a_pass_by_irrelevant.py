@@ -8,6 +8,7 @@ Rule:
 
 Also optionally move group folders from 审核通过 to 审核不通过.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -34,7 +35,8 @@ class Args(argparse.Namespace):
 
 def parse_args() -> Args:
     parser = argparse.ArgumentParser(
-        description="Flip stage_a pass->fail for orders with too few useful images.")
+        description="Flip stage_a pass->fail for orders with too few useful images."
+    )
     _ = parser.add_argument(
         "--stage-a",
         required=True,
@@ -43,24 +45,29 @@ def parse_args() -> Args:
     _ = parser.add_argument(
         "--group-root",
         default="group_data/bbu_scene_2.0_order",
-        help="Root directory that contains mission folders.")
+        help="Root directory that contains mission folders.",
+    )
     _ = parser.add_argument(
         "--pass-dir",
         default="审核通过",
-        help="Pass directory name under each mission folder.")
+        help="Pass directory name under each mission folder.",
+    )
     _ = parser.add_argument(
         "--fail-dir",
         default="审核不通过",
-        help="Fail directory name under each mission folder.")
+        help="Fail directory name under each mission folder.",
+    )
     _ = parser.add_argument(
         "--irrelevant-token",
         default="无关图片",
-        help="Substring that marks an image as irrelevant.")
+        help="Substring that marks an image as irrelevant.",
+    )
     _ = parser.add_argument(
         "--min-useful",
         type=int,
         default=3,
-        help="Minimum number of useful images required to keep pass.")
+        help="Minimum number of useful images required to keep pass.",
+    )
     _ = parser.add_argument(
         "--allow-no-irrelevant",
         action="store_true",
@@ -72,19 +79,21 @@ def parse_args() -> Args:
     _ = parser.add_argument(
         "--apply",
         action="store_true",
-        help="Apply filesystem moves and write in-place if --in-place is set.")
+        help="Apply filesystem moves and write in-place if --in-place is set.",
+    )
     _ = parser.add_argument(
         "--in-place",
         action="store_true",
-        help="Overwrite the input JSONL (requires --apply).")
+        help="Overwrite the input JSONL (requires --apply).",
+    )
     _ = parser.add_argument(
         "--backup",
         action="store_true",
-        help="When using --in-place, also save a .bak copy of the original.")
+        help="When using --in-place, also save a .bak copy of the original.",
+    )
     _ = parser.add_argument(
-        "--output",
-        default=None,
-        help="Output JSONL path (ignored if --in-place).")
+        "--output", default=None, help="Output JSONL path (ignored if --in-place)."
+    )
     return cast(Args, parser.parse_args())
 
 
@@ -166,7 +175,9 @@ def main() -> None:
     if args.output:
         output_path = Path(args.output)
     else:
-        output_path = stage_a_path.with_name(stage_a_path.stem + ".flipped" + stage_a_path.suffix)
+        output_path = stage_a_path.with_name(
+            stage_a_path.stem + ".flipped" + stage_a_path.suffix
+        )
 
     flipped_records: list[dict[str, object]] = []
     move_logs: list[str] = []
@@ -178,17 +189,21 @@ def main() -> None:
 
     for rec in _load_jsonl(stage_a_path):
         per_image_raw: object = rec.get("per_image")
-        per_image: dict[str, str] = {str(k): str(v) for k, v in per_image_raw.items()} if isinstance(per_image_raw, dict) else {}
-        
+        per_image: dict[str, str] = (
+            {str(k): str(v) for k, v in per_image_raw.items()}
+            if isinstance(per_image_raw, dict)
+            else {}
+        )
+
         images_raw: object = rec.get("images")
         images: list[object] = list(images_raw) if isinstance(images_raw, list) else []
-        
+
         mission_raw: object = rec.get("mission")
         mission: str | None = str(mission_raw) if mission_raw is not None else None
-        
+
         group_id_raw: object = rec.get("group_id")
         group_id: str | None = str(group_id_raw) if group_id_raw is not None else None
-        
+
         label_raw: object = rec.get("label")
         label: str | None = str(label_raw) if label_raw is not None else None
 

@@ -34,6 +34,7 @@ from src.stage_b.types import GroupTicket, MissionGuidance, StageASummaries
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
+
 def _workspace_tmp_root() -> Path:
     repo_dir = Path(__file__).resolve().parent.parent
     tmp_root = repo_dir / "output" / "tmp"
@@ -61,7 +62,7 @@ def _write_jsonl(path: Path, rows: Tuple[Dict[str, Any], ...]) -> None:
 
 
 def _write_guidance_json(path: Path, *, mission: str) -> None:
-    payload = {
+    payload: Dict[str, Dict[str, Any]] = {
         mission: {
             "step": 0,
             "updated_at": _now().isoformat(),
@@ -182,7 +183,7 @@ stage_b_distillation:
     return cfg_path
 
 
-def _ensure_messages(messages: Any) -> None:
+def _ensure_messages(messages: list[Dict[str, Any]]) -> None:
     if not isinstance(messages, list) or len(messages) != 2:
         raise AssertionError("build_messages must return 2 turns: system + user")
     if messages[0].get("role") != "system":
@@ -207,7 +208,10 @@ def _build_minimal_ticket(mission: str) -> GroupTicket:
 def _build_minimal_guidance(mission: str) -> MissionGuidance:
     return MissionGuidance(
         mission=mission,
-        experiences={"G0": "只围绕当前 mission 的关键检查项做结论。", "G1": "发现明确负项 → 判不通过。"},
+        experiences={
+            "G0": "只围绕当前 mission 的关键检查项做结论。",
+            "G1": "发现明确负项 → 判不通过。",
+        },
         step=0,
         updated_at=_now(),
         metadata={},
@@ -215,13 +219,36 @@ def _build_minimal_guidance(mission: str) -> MissionGuidance:
 
 
 def _audit_output_parser() -> Tuple[str, str]:
-    ok, verdict, reason = _parse_two_line_response("Verdict: 通过\nReason: Image1: 正常; 总结: 通过")
+    ok, verdict, reason = _parse_two_line_response(
+        "Verdict: 通过\nReason: Image1: 正常; 总结: 通过"
+    )
     if not ok or verdict != "pass" or not reason:
         raise AssertionError("Two-line parser failed on a valid response")
 
-    bad_ok, _, _ = _parse_two_line_response("Verdict: 通过\nReason: 通过但待定")
+    # NOTE: The rollout parser is *format*-strict (2 lines, binary verdict),
+    # but it does not enforce business-language constraints inside Reason.
+    # Reason is treated as free text.
+    ok2, verdict2, reason2 = _parse_two_line_response(
+        "Verdict: 通过\nReason: 通过但待定（示例：仍然给出二分类 verdict）"
+    )
+    if not ok2 or verdict2 != "pass" or not reason2:
+        raise AssertionError("Two-line parser should accept free-text reason content")
+
+    bad_ok, _, _ = _parse_two_line_response(
+        "Verdict: 通过但待定\nReason: 示例：第三态只能出现在 reason（如果出现）"
+    )
     if bad_ok:
-        raise AssertionError("Two-line parser should reject forbidden third-state terms")
+        raise AssertionError("Two-line parser should reject non-binary verdict values")
+
+    bad_ok, _, _ = _parse_two_line_response("Verdict: 通过\nReason:   ")
+    if bad_ok:
+        raise AssertionError("Two-line parser should reject empty reason content")
+
+    bad_ok, _, _ = _parse_two_line_response(
+        "Verdict: 通过\nReason: ok\nExtra: unexpected"
+    )
+    if bad_ok:
+        raise AssertionError("Two-line parser should reject non two-line responses")
 
     return verdict, reason
 
@@ -235,7 +262,9 @@ def main() -> None:
             raise FileNotFoundError(f"Config not found: {cfg_path}")
         config = load_stage_b_config(cfg_path)
         tickets = ingest_stage_a(config.stage_a_paths)
-        repo = GuidanceRepository(config.guidance.path, retention=config.guidance.retention)
+        repo = GuidanceRepository(
+            config.guidance.path, retention=config.guidance.retention
+        )
         guidance_map = repo.load()
         ticket0 = tickets[0]
         guidance0 = guidance_map.get(ticket0.mission)
@@ -259,7 +288,9 @@ def main() -> None:
         ticket0 = tickets[0]
 
         # Guidance load
-        repo = GuidanceRepository(config.guidance.path, retention=config.guidance.retention)
+        repo = GuidanceRepository(
+            config.guidance.path, retention=config.guidance.retention
+        )
         guidance_map = repo.load()
         guidance0 = guidance_map.get(ticket0.mission)
         if guidance0 is None:
@@ -273,7 +304,12 @@ def main() -> None:
         _audit_output_parser()
 
         # Also verify prompt building works without file IO.
-        _ensure_messages(build_messages(_build_minimal_ticket(ticket0.mission), _build_minimal_guidance(ticket0.mission)))
+        _ensure_messages(
+            build_messages(
+                _build_minimal_ticket(ticket0.mission),
+                _build_minimal_guidance(ticket0.mission),
+            )
+        )
 
         print("[OK] Stage-B smoke passed (no model).")
 

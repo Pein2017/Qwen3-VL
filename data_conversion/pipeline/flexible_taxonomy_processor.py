@@ -2,10 +2,10 @@
 """
 Flexible Taxonomy Processor
 
-A comprehensive system for processing V2 annotations using a flexible attribute taxonomy
+A comprehensive system for processing grpo_summary_1024_attr_key_recall annotations using a flexible attribute taxonomy
 without hardcoded stages. Groups information logically and creates hierarchical descriptions.
 
-Includes HierarchicalProcessor compatibility layer for V2 data processing.
+Includes HierarchicalProcessor compatibility layer for grpo_summary_1024_attr_key_recall data processing.
 """
 
 import json
@@ -14,7 +14,6 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
-
 
 # Configure UTF-8 encoding for stdout/stderr if supported
 try:
@@ -125,7 +124,7 @@ class AnnotationSample:
 
 
 class FlexibleTaxonomyProcessor:
-    """Process V2 annotations using flexible attribute taxonomy."""
+    """Process grpo_summary_1024_attr_key_recall annotations using flexible attribute taxonomy."""
 
     def __init__(
         self,
@@ -161,14 +160,14 @@ class FlexibleTaxonomyProcessor:
         with open(taxonomy_path, "r", encoding="utf-8") as f:
             return json.load(f)
 
-    def process_v2_feature(
+    def process_grpo_summary_1024_attr_key_recall_feature(
         self, feature: Dict[str, Any], image_id: Optional[str] = None
     ) -> Optional[AnnotationSample]:
         """
-        Process a single V2 feature into structured annotation sample.
+        Process a single grpo_summary_1024_attr_key_recall feature into structured annotation sample.
 
         Args:
-            feature: V2 feature with geometry and properties
+            feature: grpo_summary_1024_attr_key_recall feature with geometry and properties
             image_id: Optional image identifier for logging (e.g., file path or image name)
 
         Returns:
@@ -244,7 +243,9 @@ class FlexibleTaxonomyProcessor:
         # Check content.label first
         content_label = content.get("label", "").strip()
         # Prefer RRU-specific variants when context matches
-        if content_label == "fiber" and any(k.startswith("尾纤") for k in content_zh.keys()):
+        if content_label == "fiber" and any(
+            k.startswith("尾纤") for k in content_zh.keys()
+        ):
             return "fiber_rru"
         if content_label == "wire" and any("接地线" in k for k in content_zh.keys()):
             return "wire_rru"
@@ -273,14 +274,14 @@ class FlexibleTaxonomyProcessor:
         object_id: Optional[str] = None,
     ) -> Optional[Tuple[str, List[float]]]:
         """Process geometry based on object type and geometry structure.
-        
+
         Args:
             geometry: GeoJSON geometry object
             object_type: Object type (bbu, label, etc.)
             properties: Feature properties (optional, for area validation)
             image_id: Optional image identifier for logging
             object_id: Optional object identifier for logging
-        
+
         Returns:
             Tuple of (geometry_type, coordinates) or None if object should be rejected
         """
@@ -299,20 +300,27 @@ class FlexibleTaxonomyProcessor:
             for coord in coordinates:
                 if isinstance(coord, list) and len(coord) >= 2:
                     line_coords.extend([int(round(coord[0])), int(round(coord[1]))])
-            
+
             # Validate line: check for duplicate consecutive points (no duplication rule)
             if len(line_coords) >= 4:  # At least 2 points
-                points = [(line_coords[i], line_coords[i+1]) for i in range(0, len(line_coords), 2)]
+                points = [
+                    (line_coords[i], line_coords[i + 1])
+                    for i in range(0, len(line_coords), 2)
+                ]
                 # Check for consecutive duplicates
                 for i in range(len(points) - 1):
-                    if points[i] == points[i+1]:
-                        context = f"image: {image_id}, object: {object_id}" if image_id else f"object: {object_id}"
+                    if points[i] == points[i + 1]:
+                        context = (
+                            f"image: {image_id}, object: {object_id}"
+                            if image_id
+                            else f"object: {object_id}"
+                        )
                         logger.warning(
                             f"Rejecting line with duplicate consecutive points at index {i}: {points[i]} "
                             f"({context}, coordinates: {line_coords[:20]}...)"
                         )
                         return None
-            
+
             return "line", line_coords
 
         elif geometry_type in ["Quad", "Square", "Polygon"]:
@@ -322,10 +330,14 @@ class FlexibleTaxonomyProcessor:
                 self_area = properties.get("selfArea", 0)
                 # Use selfArea if available (actual polygon area), otherwise use area
                 actual_area = self_area if self_area > 0 else area
-                
+
                 # Reject objects with zero or near-zero area (degenerate/problematic annotations)
                 if actual_area <= 0:
-                    context = f"image: {image_id}, object: {object_id}" if image_id else f"object: {object_id}"
+                    context = (
+                        f"image: {image_id}, object: {object_id}"
+                        if image_id
+                        else f"object: {object_id}"
+                    )
                     orig_coords = geometry.get("coordinates", [])
                     logger.warning(
                         f"Rejecting poly object with zero area: geometry_type={geometry_type}, "
@@ -335,7 +347,11 @@ class FlexibleTaxonomyProcessor:
                     return None
                 # Reject objects with extremely small area (< 1 pixel^2)
                 if actual_area < 1.0:
-                    context = f"image: {image_id}, object: {object_id}" if image_id else f"object: {object_id}"
+                    context = (
+                        f"image: {image_id}, object: {object_id}"
+                        if image_id
+                        else f"object: {object_id}"
+                    )
                     orig_coords = geometry.get("coordinates", [])
                     logger.warning(
                         f"Rejecting poly object with tiny area ({actual_area:.2f} < 1.0): "
@@ -343,7 +359,7 @@ class FlexibleTaxonomyProcessor:
                         f"original_coordinates: {orig_coords})"
                     )
                     return None
-            
+
             # Extract poly coordinates using unified helper
             # IMPORTANT: Calculate area from ORIGINAL coordinates (before canonical ordering)
             # Canonical ordering is for consistency, but can sometimes create self-intersecting shapes
@@ -351,11 +367,13 @@ class FlexibleTaxonomyProcessor:
             # NOTE: Raw data may include a closing point; treat polygons as poly and drop the duplicate closing point
             orig_coords = geometry.get("coordinates", [])
             orig_area = None
-            
+
             if orig_coords:
                 # Extract original points (before any transformation/ordering)
                 orig_points = []
-                if isinstance(orig_coords[0], list) and isinstance(orig_coords[0][0], list):
+                if isinstance(orig_coords[0], list) and isinstance(
+                    orig_coords[0][0], list
+                ):
                     # Nested structure: [[[x1,y1], [x2,y2], ...]]
                     ring = orig_coords[0]
                     for coord in ring:
@@ -366,16 +384,19 @@ class FlexibleTaxonomyProcessor:
                     for coord in orig_coords:
                         if isinstance(coord, list) and len(coord) >= 2:
                             orig_points.append((float(coord[0]), float(coord[1])))
-                
+
                 # Remove closing point if present (raw data has 5 points: 4 + closing)
                 # This is critical - we must drop the closing point before area calculation
                 if len(orig_points) > 0:
                     first_point = orig_points[0]
                     last_point = orig_points[-1]
                     # Check if first and last points are the same (closing point)
-                    if abs(first_point[0] - last_point[0]) < 1e-6 and abs(first_point[1] - last_point[1]) < 1e-6:
+                    if (
+                        abs(first_point[0] - last_point[0]) < 1e-6
+                        and abs(first_point[1] - last_point[1]) < 1e-6
+                    ):
                         orig_points = orig_points[:-1]
-                
+
                 # Calculate area from original coordinates (with closing point removed) using shoelace formula
                 if len(orig_points) >= 4:
                     area_sum = 0.0
@@ -384,21 +405,25 @@ class FlexibleTaxonomyProcessor:
                         area_sum += orig_points[i][0] * orig_points[j][1]
                         area_sum -= orig_points[j][0] * orig_points[i][1]
                     orig_area = abs(area_sum) / 2.0
-            
+
             # Now extract poly coordinates (which applies canonical ordering)
             poly_coords = CoordinateManager.extract_poly_coordinates(geometry)
             if poly_coords:
                 # Validate using original area (before canonical ordering)
                 if orig_area is not None and orig_area <= 0:
-                    context = f"image: {image_id}, object: {object_id}" if image_id else f"object: {object_id}"
+                    context = (
+                        f"image: {image_id}, object: {object_id}"
+                        if image_id
+                        else f"object: {object_id}"
+                    )
                     logger.warning(
                         f"Rejecting poly with zero area from original coordinates: {orig_area} "
                         f"({context}, original_coordinates: {orig_coords})"
                     )
                     return None
-                
+
                 return "poly", poly_coords
-            
+
             # If poly extraction failed (degenerate polygon), fall back to bbox_2d
             # but only if bbox is valid and has non-zero area
             if bbox and len(bbox) == 4:
@@ -409,7 +434,11 @@ class FlexibleTaxonomyProcessor:
                     )
                     return "bbox_2d", bbox
                 else:
-                    context = f"image: {image_id}, object: {object_id}" if image_id else f"object: {object_id}"
+                    context = (
+                        f"image: {image_id}, object: {object_id}"
+                        if image_id
+                        else f"object: {object_id}"
+                    )
                     orig_coords = geometry.get("coordinates", [])
                     logger.warning(
                         f"Rejecting object: degenerate polygon and zero-area bbox "
@@ -417,7 +446,11 @@ class FlexibleTaxonomyProcessor:
                     )
                     return None
             # If bbox is also invalid, reject the object
-            context = f"image: {image_id}, object: {object_id}" if image_id else f"object: {object_id}"
+            context = (
+                f"image: {image_id}, object: {object_id}"
+                if image_id
+                else f"object: {object_id}"
+            )
             orig_coords = geometry.get("coordinates", [])
             logger.warning(
                 f"Rejecting object: degenerate polygon and invalid bbox "
@@ -430,7 +463,11 @@ class FlexibleTaxonomyProcessor:
         if bbox and len(bbox) == 4:
             bbox_area = (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
             if bbox_area <= 0:
-                context = f"image: {image_id}, object: {object_id}" if image_id else f"object: {object_id}"
+                context = (
+                    f"image: {image_id}, object: {object_id}"
+                    if image_id
+                    else f"object: {object_id}"
+                )
                 orig_coords = geometry.get("coordinates", [])
                 logger.warning(
                     f"Rejecting bbox_2d with zero or negative area: {bbox_area} "
@@ -438,7 +475,7 @@ class FlexibleTaxonomyProcessor:
                 )
                 return None
             return "bbox_2d", bbox
-        
+
         # Invalid geometry
         logger.warning(f"Unknown or invalid geometry type: {geometry_type}")
         return None
@@ -505,6 +542,7 @@ class FlexibleTaxonomyProcessor:
                 return str(content_zh[content_mapping]).strip()
 
         return None
+
     def _create_hierarchical_description(
         self,
         object_type: str,
@@ -786,7 +824,9 @@ class FlexibleTaxonomyProcessor:
             split_values: List[str] = []
             for v in values:
                 if separator in v or "，" in v:
-                    parts = [p.strip() for p in v.replace("，", separator).split(separator)]
+                    parts = [
+                        p.strip() for p in v.replace("，", separator).split(separator)
+                    ]
                     split_values.extend([p for p in parts if p])
                 else:
                     split_values.append(v)
@@ -811,19 +851,23 @@ class FlexibleTaxonomyProcessor:
             "chinese_label", object_type
         )
 
-    def process_v2_file(self, file_path: str) -> List[AnnotationSample]:
-        """Process entire V2 JSON file."""
+    def process_grpo_summary_1024_attr_key_recall_file(
+        self, file_path: str
+    ) -> List[AnnotationSample]:
+        """Process entire grpo_summary_1024_attr_key_recall JSON file."""
         with open(file_path, "r", encoding="utf-8") as f:
             data = json.load(f)
 
         features = data.get("markResult", {}).get("features", [])
         samples = []
-        
+
         # Extract image ID from file path
         image_id = Path(file_path).stem
 
         for feature in features:
-            sample = self.process_v2_feature(feature, image_id=image_id)
+            sample = self.process_grpo_summary_1024_attr_key_recall_feature(
+                feature, image_id=image_id
+            )
             if sample:
                 samples.append(sample)
 
@@ -831,13 +875,15 @@ class FlexibleTaxonomyProcessor:
         return samples
 
     def batch_process(self, input_dir: str, output_file: str):
-        """Batch process V2 files and save training format."""
+        """Batch process grpo_summary_1024_attr_key_recall files and save training format."""
         input_path = Path(input_dir)
         all_samples = []
 
         # Process all JSON files
         for json_file in input_path.glob("*.json"):
-            samples = self.process_v2_file(str(json_file))
+            samples = self.process_grpo_summary_1024_attr_key_recall_file(
+                str(json_file)
+            )
             all_samples.extend(samples)
 
         # Convert to training format and save
@@ -884,7 +930,7 @@ class FlexibleTaxonomyProcessor:
 
 # Compatibility Layer - HierarchicalProcessor
 class HierarchicalProcessor:
-    """Clean processor for V2 data with native geometry output and object type filtering."""
+    """Clean processor for grpo_summary_1024_attr_key_recall data with native geometry output and object type filtering."""
 
     def __init__(
         self,
@@ -894,12 +940,16 @@ class HierarchicalProcessor:
         """Initialize processor for Chinese-only processing with object type filtering."""
         # object_types and label_hierarchy are retained for backward compatibility
         # but no longer used to drop objects.
-        self.object_types = set(object_types) if object_types is not None else {
-            "bbu",
-            "label",
-            "fiber",
-            "connect_point",
-        }
+        self.object_types = (
+            set(object_types)
+            if object_types is not None
+            else {
+                "bbu",
+                "label",
+                "fiber",
+                "connect_point",
+            }
+        )
         self.label_hierarchy = label_hierarchy or {}
 
         # Create flexible processor
@@ -917,7 +967,7 @@ class HierarchicalProcessor:
         Filters by specified object types for training subject separation.
 
         Args:
-            features: List of V2 feature dictionaries
+            features: List of grpo_summary_1024_attr_key_recall feature dictionaries
             image_id: Optional image identifier for logging
 
         Returns objects in format:
@@ -931,7 +981,9 @@ class HierarchicalProcessor:
 
         for feature in features:
             # Process with flexible processor (pass image_id for detailed logging)
-            sample = self.flexible_processor.process_v2_feature(feature, image_id=image_id)
+            sample = self.flexible_processor.process_grpo_summary_1024_attr_key_recall_feature(
+                feature, image_id=image_id
+            )
             if not sample:
                 continue
 
@@ -957,8 +1009,8 @@ if __name__ == "__main__":
     processor = FlexibleTaxonomyProcessor()
 
     # Test single file
-    test_file = "ds_v2/QC-20230216-0000244_377872.json"
-    samples = processor.process_v2_file(test_file)
+    test_file = "ds_grpo_summary_1024_attr_key_recall/QC-20230216-0000244_377872.json"
+    samples = processor.process_grpo_summary_1024_attr_key_recall_file(test_file)
 
     print(f"Processed {len(samples)} samples")
     for sample in samples[:3]:  # Show first 3

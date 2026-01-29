@@ -35,7 +35,7 @@
 #### 3. Reward Functions (`src/stage_b/rewards.py`)
 - **Label reward**: Binary match (通过/不通过 vs GT label)
 - **Format reward**: Two-line validation (verdict + 理由:)
-- **Consistency reward**: Placeholder for v2
+- **Consistency reward**: Placeholder for grpo_summary_1024_attr_key_recall
 - Unit tests in `src/stage_b/test_rewards.py`
 
 #### 4. GRPO Launcher (`scripts/run_grpo.py`)
@@ -52,7 +52,7 @@
 
 1. **Dynamic Generation**: Stage-B responses are generated on-the-fly during GRPO rollout, not pre-built
 2. **Text-Only Stage-B**: No images re-fed; purely reasoning over Stage-A text summaries
-3. **Minimal Rewards v1**: Label + format only; consistency deferred to v2
+3. **Minimal Rewards v1**: Label + format only; consistency deferred to grpo_summary_1024_attr_key_recall
 4. **Frozen Vision**: LLM-only LoRA since Stage-B has no image inputs
 5. **Mission-Based Organization**: One Stage-A JSONL per mission for clarity
 

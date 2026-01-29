@@ -62,11 +62,14 @@ All code changes in `src/` must comply with the Schema Constitution (`docs/refer
 ## Environment (minimal)
 - Use conda env `ms`; launch Python scripts with `conda run -n ms python ...`.
 
-## Serena MCP Usage (for efficiency)
-**Prioritize Serena MCP first** for semantic navigation and symbol-level edits (`get_symbols_overview`, `find_symbol`, `find_referencing_symbols`, `replace_symbol_body`). Only use standard tools for simple file reads, bulk searches, or shell commands when Serena MCP is not applicable.
-Prefer repo-relative paths in Serena MCP tool arguments; use absolute paths only for outside sources (e.g., `/root/miniconda3/envs/ms/lib/python3.12/site-packages/transformers`, `/data/ms-swift`).
-**DO NOT use Serena MCP's `execute_shell_command` and `read_file`tool.** 
+## Tools & Navigation
+- Serena MCP: best for code symbol discovery/edits; avoid for plain docs (use `rg`/`cat`).
+- For detailed Serena MCP workflows and common patterns, use the `serena-mcp-navigation` skill.
+- Prefer repo-relative paths in Serena MCP arguments; use absolute paths only for outside sources (e.g., `/data/ms-swift`, `/data/home/...`).
 
-
-## Codex Skill: python-lint-loop
-- Trigger this skill for any Python code editing tasks; run the lint loop (ruff auto-fix + pyright under conda env `ms`) until clean.
+## Codex Sub-Agents (Async Reviews)
+- Use sub-agents for narrow parallel audits (spec deltas, task lists, doc coverage) while the main agent runs Serena/shell verification.
+- Best-effort + text-only: results may be delayed/missing.
+- Prompt template: goal + explicit inputs (paths/snippets + assumptions) + requested output format (e.g., "findings by severity + concrete edits").
+- Always verify sub-agent suggestions against repo sources before acting.
+- Keep the main agent productive while awaiting sub-agent results by proceeding with implementation, testing, documentation, or related tasks that don't depend on the async audit outcomes.

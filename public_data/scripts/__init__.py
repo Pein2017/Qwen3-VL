@@ -1,2 +1,1 @@
 """LVIS dataset processing scripts."""
-

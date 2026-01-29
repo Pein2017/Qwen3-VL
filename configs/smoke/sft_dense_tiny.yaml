@@ -5,3 +5,4 @@ training:
 
 custom:
   use_summary: false
+  object_ordering_policy: center_tlbr

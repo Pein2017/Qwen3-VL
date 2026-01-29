@@ -1,5 +1,5 @@
 stage_a_paths:
-  - output_post/stage_a_grpo-1-4/RRU线缆_stage_a.jsonl
+  - output_post/1-18/grpo_summary_1024_attr_key_recall/RRU线缆_stage_a.jsonl
 
 ticket_filter:
   # Exclude GT=pass tickets whose useful-image count is too small after removing irrelevant ones
@@ -11,7 +11,7 @@ default_domain: rru
 jump_reflection: true
 
 model:
-  model_name_or_path: output/1-1/grpo-merged/checkpoint-500
+  model_name_or_path: output/1-18/grpo_summary_1024_attr_key_recall/ckpt_1300
   torch_dtype: bfloat16
   device_map: auto
   attn_implementation: flash_attention_2  # Enable Flash Attention 2 for faster inference (requires flash-attn package)
@@ -24,7 +24,7 @@ guidance:
 
 output:
   root: output_post/stage_b
-  run_name: 1-4-grpo-ckpt500
+  run_name: grpo_summary_1024_attr_key_recall-v2
 
 rule_search:
   proposer_prompt_path: configs/prompts/stage_b_rule_search_proposer_prompt.txt
@@ -91,7 +91,7 @@ reflection:
 runner:
   # rule_search iterations; early_stop will end earlier if no-gain.
   epochs: 20
-  per_rank_rollout_batch_size: 32
+  per_rank_rollout_batch_size: 16
   logging_steps: 64
 
 stage_b_distillation:
