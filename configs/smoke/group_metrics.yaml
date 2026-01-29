@@ -26,6 +26,7 @@ training:
 custom:
   # Keep tiny fusion mix and sample caps from debug base for fast turnaround
   fusion_config: configs/fusion/variants/bbu_rru_dense_1024.yaml
+  object_ordering_policy: center_tlbr
   train_sample_limit: 16
   val_sample_limit: 8
   token_type_metrics:

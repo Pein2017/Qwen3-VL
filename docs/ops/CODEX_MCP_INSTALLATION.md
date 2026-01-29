@@ -12,7 +12,7 @@ This guide provides step-by-step instructions for installing and configuring the
 
 Before installation, ensure you have:
 
-1. **Claude Code** (v2.0.56 or later)
+1. **Claude Code** (grpo_summary_1024_attr_key_recall.0.56 or later)
 2. **Codex CLI** (v0.61.0 or later)
 3. **UV tool** (Python package installer)
 

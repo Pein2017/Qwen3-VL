@@ -10,9 +10,9 @@ training:
 custom:
   train_sample_limit: 2
   val_sample_limit: 2
+  object_ordering_policy: center_tlbr
 
 rlhf:
   # Keep rollout sizes tiny for smoke validation.
   generation_batch_size: 4
   num_generations: 2
-

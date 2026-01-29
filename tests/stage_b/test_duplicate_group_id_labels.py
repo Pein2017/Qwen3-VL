@@ -40,4 +40,3 @@ def test_ingest_allows_duplicate_group_id_across_labels(tmp_path: Path) -> None:
 
     keys = {ticket.key for ticket in tickets}
     assert keys == {f"{group_id}::fail", f"{group_id}::pass"}
-

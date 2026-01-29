@@ -27,8 +27,7 @@ class GenerationBackend(Protocol):
         options: GenerationOptions,
         *,
         plugins: Sequence[object] | None = None,
-    ) -> list[GenerationResult]:
-        ...
+    ) -> list[GenerationResult]: ...
 
     def generate_vlm_batch(
         self,
@@ -36,8 +35,7 @@ class GenerationBackend(Protocol):
         options: GenerationOptions,
         *,
         plugins: Sequence[object] | None = None,
-    ) -> list[GenerationResult]:
-        ...
+    ) -> list[GenerationResult]: ...
 
 
 __all__ = ["GenerationBackend"]

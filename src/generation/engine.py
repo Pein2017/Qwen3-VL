@@ -116,7 +116,9 @@ def build_hf_engine(
 ) -> GenerationEngine:
     chat_template = chat_template or ChatTemplateOptions()
     preprocess = preprocess or VlmPreprocessOptions()
-    backend = load_hf_backend(config, chat_template=chat_template, preprocess=preprocess)
+    backend = load_hf_backend(
+        config, chat_template=chat_template, preprocess=preprocess
+    )
     return GenerationEngine(backend=backend)
 
 

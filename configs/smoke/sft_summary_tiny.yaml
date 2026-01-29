@@ -9,3 +9,4 @@ prompts:
 
 custom:
   use_summary: true
+  object_ordering_policy: center_tlbr

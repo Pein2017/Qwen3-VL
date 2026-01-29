@@ -781,7 +781,9 @@ class GKDTrainerWithMetrics(_MsSwiftGKDTrainer):
         return hasattr(self, "teacher_model") and self.teacher_model is not None
 
     @override
-    def log(self, logs: dict[str, float] | None, start_time: float | None = None) -> None:
+    def log(
+        self, logs: dict[str, float] | None, start_time: float | None = None
+    ) -> None:
         if logs is None:
             logs = {}
 

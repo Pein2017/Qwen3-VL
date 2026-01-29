@@ -1,5 +1,6 @@
 from collections import defaultdict
 from dataclasses import replace
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -107,11 +108,21 @@ def _build_minimal_training_config(
             "json_format": "standard",
             "visual_kd": visual_kd_section,
         },
-        "model": {},
+        # TrainingConfig requires a non-empty model path; for unit tests we can use a
+        # dummy value since we never instantiate the actual model here.
+        "model": {"model": "model_cache/dummy"},
         "quantization": {},
         "data": {},
         "tuner": {},
-        "training": {"output_dir": "./out"},
+        "training": {
+            "output_dir": "./out",
+            "logging_dir": "./tb",
+            "run_name": "test",
+            "num_train_epochs": 1.0,
+            "learning_rate": 0.0,
+            "vit_lr": 0.0,
+            "aligner_lr": 0.0,
+        },
         "rlhf": rlhf_section,
     }
     return TrainingConfig.from_mapping(payload, prompts)
@@ -224,7 +235,10 @@ class _StaticOutputModel(nn.Module):
 
 
 def test_stage3_config_references_real_assets():
-    cfg = ConfigLoader.load_yaml_with_extends("configs/stage_3_gkd.yaml")
+    config_path = Path("configs/stage_3_gkd.yaml")
+    if not config_path.exists():
+        pytest.skip("configs/stage_3_gkd.yaml is not present in this checkout")
+    cfg = ConfigLoader.load_yaml_with_extends(str(config_path))
 
     model_path = cfg["model"]["model"]
     teacher_path = cfg["rlhf"]["teacher_model"]
@@ -284,14 +298,8 @@ def test_gkd_monitor_logs_losses(monkeypatch):
     trainer.log({"eval/loss": 1.23})
 
     train_loss_avg = (0.5 + 0.7) / 2
-    assert (
-        pytest.approx(captured_logs["llm_kd_loss"], rel=1e-6)
-        == (0.1 + 0.2) / 2
-    )
-    assert (
-        pytest.approx(captured_logs["sft_loss"], rel=1e-6)
-        == (0.4 + 0.5) / 2
-    )
+    assert pytest.approx(captured_logs["llm_kd_loss"], rel=1e-6) == (0.1 + 0.2) / 2
+    assert pytest.approx(captured_logs["sft_loss"], rel=1e-6) == (0.4 + 0.5) / 2
     assert pytest.approx(captured_logs["loss"], rel=1e-6) == train_loss_avg
     assert pytest.approx(captured_logs["token_acc"], rel=1e-6) == 17.0 / 20.0
     assert pytest.approx(captured_logs["eval/loss"], rel=1e-6) == 1.23
@@ -400,7 +408,9 @@ def test_gkd_compute_loss_aligns_tokens():
     torch.testing.assert_close(captured["teacher"], expected_teacher)
     assert captured["beta"] == pytest.approx(0.25)
     assert trainer._metrics["train"]["llm_kd_loss"][0].item() == pytest.approx(0.5)
-    assert trainer._metrics["train"]["token_acc_correct"][0].item() == pytest.approx(1.0)
+    assert trainer._metrics["train"]["token_acc_correct"][0].item() == pytest.approx(
+        1.0
+    )
     assert trainer._metrics["train"]["token_acc_total"][0].item() == pytest.approx(1.0)
 
 

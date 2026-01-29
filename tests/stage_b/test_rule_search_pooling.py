@@ -15,9 +15,20 @@ def _ticket(i: int, *, label: str) -> GroupTicket:
 
 
 def test_resolve_train_pool_size_caps_to_total() -> None:
-    assert _resolve_train_pool_size(total=10, train_pool_size=512, train_pool_fraction=None) == 10
-    assert _resolve_train_pool_size(total=10, train_pool_size=5, train_pool_fraction=None) == 5
-    assert _resolve_train_pool_size(total=10, train_pool_size=5, train_pool_fraction=0.2) == 2
+    assert (
+        _resolve_train_pool_size(
+            total=10, train_pool_size=512, train_pool_fraction=None
+        )
+        == 10
+    )
+    assert (
+        _resolve_train_pool_size(total=10, train_pool_size=5, train_pool_fraction=None)
+        == 5
+    )
+    assert (
+        _resolve_train_pool_size(total=10, train_pool_size=5, train_pool_fraction=0.2)
+        == 2
+    )
 
 
 def test_sample_train_pool_tickets_with_replacement_caps() -> None:
@@ -29,4 +40,3 @@ def test_sample_train_pool_tickets_with_replacement_caps() -> None:
         seed=7,
     )
     assert len(sampled) == 5
-

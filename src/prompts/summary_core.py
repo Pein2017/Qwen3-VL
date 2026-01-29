@@ -1,6 +1,5 @@
 """Shared summary prompt primitives consumed by config + runtime helpers."""
 
-
 from typing_extensions import override
 
 from .domain_packs import get_domain_pack

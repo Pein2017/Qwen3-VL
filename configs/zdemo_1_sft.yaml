@@ -50,4 +50,5 @@ data:
 
 custom:
   emit_norm: norm1000
+  object_ordering_policy: center_tlbr
   dump_conversation_text: false

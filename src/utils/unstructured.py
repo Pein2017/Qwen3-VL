@@ -21,16 +21,16 @@ def require_mapping(value: object, *, context: str) -> UnstructuredMapping:
     return cast(UnstructuredMapping, value)
 
 
-def require_mutable_mapping(value: object, *, context: str) -> UnstructuredMutableMapping:
+def require_mutable_mapping(
+    value: object, *, context: str
+) -> UnstructuredMutableMapping:
     """Validate an intentionally unstructured mutable mapping at entry."""
     if not isinstance(value, MutableMapping):
         raise TypeError(f"{context} must be a mutable mapping")
     return cast(UnstructuredMutableMapping, value)
 
 
-def require_mapping_sequence(
-    value: object, *, context: str
-) -> UnstructuredSequence:
+def require_mapping_sequence(value: object, *, context: str) -> UnstructuredSequence:
     """Validate a sequence of intentionally unstructured mappings at entry."""
     if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
         raise TypeError(f"{context} must be a sequence of mappings")

@@ -53,7 +53,7 @@ flowchart LR
 
 Key entrypoints (orchestration wrappers):
 - Training (SFT/GRPO): `scripts/train.sh` → `src/sft.py` (SwiftSft or SwiftRLHF)
-- GRPO server-rollout (optional): `scripts/grpo_server_train.sh` → `swift rollout` + `src/sft.py`
+- GRPO server-rollout (server mode): `scripts/grpo_server_mode.sh` (unified; server background + learner foreground) → `swift rollout` + `src/sft.py`
 - Stage‑A: `scripts/stage_a.sh` → `src/stage_a/cli.py`
 - Stage‑B: `scripts/stage_b.sh` → `src/stage_b/runner.py`
 - Dataset fusion (optional): `scripts/fuse_datasets.py` → `src/datasets/unified_fusion_dataset.py`
@@ -318,12 +318,12 @@ Rank-aware logging is standardized via `src/utils/logger.py`:
 
 GRPO (Group Relative Policy Optimization) is the **second stage after SFT**. Unlike Stage‑B rule‑search (which is training-free), GRPO is a **weight-updating** post-training stage (typically adapter-based) that uses reward functions to stabilize and improve outputs while keeping the same chat template and dataset contracts.
 
-Implementation anchors: `src/rlhf/grpo/`, `src/config/grpo.py`, `configs/train/grpo/`, `scripts/grpo_server_train.sh`
+Implementation anchors: `src/rlhf/grpo/`, `src/rlhf/grpo/rollout_server_config.py`, `src/config/grpo.py`, `configs/train/grpo/`, `scripts/grpo_server_mode.sh`
 
 **Enable and run**
 - Enable GRPO by setting `rlhf.rlhf_type: grpo` in the training YAML (see `configs/train/grpo/`).
-- Config examples: `configs/train/grpo/summary_2048.yaml`, `configs/train/grpo/dense_2048.yaml` (and server-rollout variants like `configs/train/grpo/summary_server.yaml`).
-- Launch via `scripts/train.sh` (vLLM colocate rollouts) or `scripts/grpo_server_train.sh` (server vLLM rollout + training in one wrapper).
+- Config examples: `configs/train/grpo/summary_2048.yaml`, `configs/train/grpo/dense_2048.yaml`, and server-mode rollouts like `configs/train/grpo/summary_1024.yaml` (uses `custom.extra.rollout_server`).
+- Launch via `scripts/train.sh` (vLLM colocate rollouts) or the unified server-mode launcher: `scripts/grpo_server_mode.sh`.
 
 **Reward interface**
 - Rewards are selected by `rlhf.reward_funcs` using namespaced identifiers (e.g., `summary.format`, `dense.loc_mean_fbeta`); optional weights are provided via `rlhf.reward_weights`.
@@ -526,7 +526,7 @@ This section ties the stages together as an operational workflow.
 
 2. **Train / update the shared Qwen3‑VL checkpoint**
    - Stage 1 SFT is executed via `src/sft.py` (wrapped by `scripts/train.sh`).
-   - Stage 2 GRPO post-training is executed via the same entrypoint when `rlhf.rlhf_type=grpo` is set in the YAML (optionally with `scripts/grpo_server_train.sh` for server rollouts).
+   - Stage 2 GRPO post-training is executed via the same entrypoint when `rlhf.rlhf_type=grpo` is set in the YAML (server-mode rollouts use `scripts/grpo_server_mode.sh`).
    - Training may be direct JSONL or fusion-based; augmentation is applied only when configured and preserves geometry.
 
 3. **Stage‑A evidence generation**

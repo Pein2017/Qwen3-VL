@@ -20,4 +20,3 @@ def test_legacy_schema_rejected(tmp_path):
         assert "step" in msg or "experiences" in msg
     else:
         raise AssertionError("Legacy schema should be rejected")
-

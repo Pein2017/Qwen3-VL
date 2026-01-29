@@ -65,6 +65,65 @@ def _extract_summary_json_line(text: str) -> str | None:
     if not stripped:
         return None
 
+    def _extract_balanced_json_list(text: str, start: int) -> str | None:
+        """Extract a balanced JSON list substring starting at `[` or return None.
+
+        This is a minimal syntactic guardrail for cases like:
+          统计=[{...}, {...}]
+        which are not valid JSON objects but are unambiguous to repair as:
+          {"统计": [...]}
+        """
+
+        if start < 0 or start >= len(text) or text[start] != "[":
+            return None
+        depth = 0
+        in_str = False
+        escape = False
+        for idx in range(start, len(text)):
+            ch = text[idx]
+            if in_str:
+                if escape:
+                    escape = False
+                elif ch == "\\":
+                    escape = True
+                elif ch == '"':
+                    in_str = False
+                continue
+
+            if ch == '"':
+                in_str = True
+                continue
+            if ch == "[":
+                depth += 1
+                continue
+            if ch == "]":
+                depth -= 1
+                if depth == 0:
+                    return text[start : idx + 1]
+                continue
+        return None
+
+    def _maybe_parse_list_assignment(key: str) -> list[object] | None:
+        # Support both "=" and ":" to cover common model drift.
+        for sep in ("=", ":"):
+            marker = f"{key}{sep}"
+            pos = stripped.find(marker)
+            if pos == -1:
+                continue
+            bracket = stripped.find("[", pos + len(marker))
+            if bracket == -1:
+                continue
+            list_text = _extract_balanced_json_list(stripped, bracket)
+            if list_text is None:
+                continue
+            try:
+                parsed = json.loads(list_text)
+            except Exception:
+                continue
+            if isinstance(parsed, list):
+                return cast(list[object], parsed)
+        return None
+
     def _maybe_parse_obj(candidate: str) -> UnstructuredMapping | None:
         c = candidate.strip()
         if not (c.startswith("{") and c.endswith("}")):
@@ -98,6 +157,21 @@ def _extract_summary_json_line(text: str) -> str | None:
         if obj is not None and _is_summary(obj):
             return _format_summary_json(obj)
 
+    # Minimal syntactic recovery: accept list-assignment style outputs like:
+    #   <DOMAIN=BBU>, <TASK=DETECTION>
+    #   统计=[{...}]
+    # and convert to a valid summary JSON object.
+    stats_list = _maybe_parse_list_assignment("统计")
+    group_stats_list = _maybe_parse_list_assignment("分组统计")
+    if stats_list is not None or group_stats_list is not None:
+        repaired: dict[str, object] = {}
+        if stats_list is not None:
+            repaired["统计"] = stats_list
+        if group_stats_list is not None:
+            repaired["分组统计"] = group_stats_list
+        if "统计" in repaired:
+            return _format_summary_json(cast(UnstructuredMapping, repaired))
+
     return None
 
 
@@ -122,7 +196,7 @@ def sanitize_summary_by_dataset(text: str, dataset: str) -> str:
         except Exception:
             obj = None
         if isinstance(obj, dict) and "统计" in obj:
-            return _format_summary_json(obj)
+            return _format_summary_json(cast(UnstructuredMapping, obj))
     return summary_text
 
 
@@ -172,9 +246,10 @@ def postprocess_jsonl(input_path: Path, output_path: Path, dataset: str) -> None
         output_target = output_path
 
     try:
-        with input_path.open("r", encoding="utf-8") as f_in, output_target.open(
-            "w", encoding="utf-8"
-        ) as f_out:
+        with (
+            input_path.open("r", encoding="utf-8") as f_in,
+            output_target.open("w", encoding="utf-8") as f_out,
+        ):
             for line in f_in:
                 line = line.strip()
                 if not line:

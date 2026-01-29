@@ -35,4 +35,3 @@ def _evict_src_if_from_other_checkout(repo_root: Path) -> None:
 def pytest_sessionstart(session) -> None:  # noqa: ARG001
     repo_root = _ensure_repo_root_first()
     _evict_src_if_from_other_checkout(repo_root)
-

@@ -60,7 +60,9 @@ def _now() -> datetime:
 def _normalize_signature(text: str) -> str:
     simplified = to_simplified(text or "")
     simplified = normalize_spaces(simplified).lower()
-    simplified = simplified.replace("如果", "若").replace("当", "若").replace("就", "则")
+    simplified = (
+        simplified.replace("如果", "若").replace("当", "若").replace("就", "则")
+    )
     simplified = _PUNCT_RE.sub(" ", simplified)
     simplified = normalize_spaces(simplified)
     return simplified.strip()
@@ -146,7 +148,9 @@ class HypothesisRecord:
         if isinstance(ticket_keys_raw, Sequence) and not isinstance(
             ticket_keys_raw, (str, bytes)
         ):
-            ticket_keys = tuple(str(item) for item in ticket_keys_raw if str(item).strip())
+            ticket_keys = tuple(
+                str(item) for item in ticket_keys_raw if str(item).strip()
+            )
         else:
             ticket_keys = ()
 
@@ -385,7 +389,9 @@ class HypothesisPool:
         pool = dict(self.load())
         now = _now().isoformat()
         rejected: list[HypothesisRecord] = []
-        reason_text = reason.strip() if isinstance(reason, str) and reason.strip() else None
+        reason_text = (
+            reason.strip() if isinstance(reason, str) and reason.strip() else None
+        )
         for signature in signatures:
             record = pool.get(signature)
             if record is None:

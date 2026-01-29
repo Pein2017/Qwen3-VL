@@ -28,6 +28,7 @@ tuner:
 
 custom:
   # Disable augmentation at the experiment layer (keep defaults visible in `dense_2048.yaml`).
+  object_ordering_policy: center_tlbr
   augmentation:
     enabled: false
     bypass_prob: 1.0

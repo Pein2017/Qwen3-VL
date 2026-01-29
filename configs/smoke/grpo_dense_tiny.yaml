@@ -17,6 +17,7 @@ training:
 
 custom:
   fusion_config: configs/fusion/variants/bbu_rru_dense_grpo_2048_tiny.yaml
+  object_ordering_policy: center_tlbr
   # Tiny sample limits as an extra safety net.
   train_sample_limit: 2
   val_sample_limit: 2
@@ -29,4 +30,3 @@ rlhf:
   # Keep rollout sizes tiny for smoke validation.
   generation_batch_size: 4
   num_generations: 2
-

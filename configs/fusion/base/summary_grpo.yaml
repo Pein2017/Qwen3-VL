@@ -1,15 +1,15 @@
 targets:
   - name: bbu_summary
     dataset: bbu
-    train_jsonl: data_new_schema/bbu_full_1024/train.jsonl
-    val_jsonl: data_new_schema/bbu_full_1024/val.jsonl
+    train_jsonl: data_new_schema_center/bbu_full_1024/train.jsonl
+    val_jsonl: data_new_schema_center/bbu_full_1024/val.jsonl
     template: summary_bbu
     mode: summary
     ratio: 1.0
   - name: rru_summary
     dataset: rru
-    train_jsonl: data_new_schema/rru_full_1024_poly/train.jsonl
-    val_jsonl: data_new_schema/rru_full_1024_poly/val.jsonl
+    train_jsonl: data_new_schema_center/rru_full_1024/train.jsonl
+    val_jsonl: data_new_schema_center/rru_full_1024/val.jsonl
     template: summary_rru
     mode: summary
     ratio: 1.0

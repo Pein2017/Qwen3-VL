@@ -27,7 +27,7 @@
 - [x] Create `src/stage_b/rewards.py` module
 - [x] Implement `label_reward`: binary match for 通过/不通过
 - [x] Implement `format_reward`: two-line format validation (第一行: verdict, 第二行: 理由)
-- [x] Add `consistency_reward` placeholder for v2
+- [x] Add `consistency_reward` placeholder for grpo_summary_1024_attr_key_recall
 - [x] Create unit tests in `src/stage_b/test_rewards.py` with curated examples
 - [x] Document reward function signatures and expected inputs
 - [x] Add reward function registry and getter
@@ -56,7 +56,7 @@
 - [x] Document GRPO launcher usage and configuration
 - [x] Add troubleshooting section for common issues
 
-## 🔮 Future Extensions (v2+)
+## 🔮 Future Extensions (grpo_summary_1024_attr_key_recall+)
 
 ### 7) Enhanced Rewards (Backlog / not in v1 scope)
 - Implement consistency reward (evidence vs Stage-A summaries)

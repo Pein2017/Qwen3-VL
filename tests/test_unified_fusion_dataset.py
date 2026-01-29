@@ -11,7 +11,7 @@ from src.config.prompts import (
     SYSTEM_PROMPT_AUX,
     SYSTEM_PROMPT_JSON,
     USER_PROMPT_AUX,
-    USER_PROMPT_JSON,
+    build_dense_user_prompt,
     get_template_prompts,
 )
 from src.datasets.fusion import FusionConfig
@@ -137,7 +137,9 @@ def test_unified_fusion_prompt_priority(tmp_path: Path) -> None:
 
     target_sample = dataset[0]
     assert target_sample["messages"][0]["content"] == SYSTEM_PROMPT_JSON
-    assert target_sample["messages"][1]["content"][-1]["text"] == USER_PROMPT_JSON
+    assert target_sample["messages"][1]["content"][-1][
+        "text"
+    ] == build_dense_user_prompt("center_tlbr")
     assert dataset.last_sample_debug["prompt_source"] == "domain"
 
     source_sample = dataset[1]

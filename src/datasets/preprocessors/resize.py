@@ -241,7 +241,9 @@ class Resizer:
                 if isinstance(image_path, str):
                     raw_path = image_path
             if raw_path is None:
-                raise ValueError("resize expects image paths as strings or DatasetImage")
+                raise ValueError(
+                    "resize expects image paths as strings or DatasetImage"
+                )
             p = Path(raw_path)
             if not p.is_absolute():
                 if self.images_root_override:
