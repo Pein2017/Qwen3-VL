@@ -1,86 +1,50 @@
 ---
 name: code-review
-description: "Fail-fast Python code review: strict ruff (format + lint) + pyright-compatible type checking, Schema Constitution audit, and architecture review. Never silently ignores critical issues - fails fast on violations with explicit error codes. Use for pre-commit hooks, CI/CD gates, or ensuring code quality standards."
+description: "Fail-fast Python code review: ruff (format + lint) + pyright-compatible type checking, plus Schema Constitution + architecture audit checklist. Uses standard CLI tools (no helper scripts) for portability across machines."
 ---
 
 # Python Code Review (fail-fast static + schema + architecture)
 
-**Fail-fast principle**: This skill stops immediately on critical issues and never silently continues. Every scenario is explicitly handled with clear error codes and remediation paths.
+This skill is intentionally script-free: it relies on standard, portable CLI tools (`ruff`, `pyright`/`basedpyright`) plus a lightweight manual audit checklist for Schema Constitution and architecture.
 
-- **Static analysis**: `ruff` (format + lint) + `pyright`-compatible type checker with zero tolerance for errors
-- **Schema Constitution compliance**: strict audit against `docs/reference/SCHEMA_CONSTITUTION.md`
-- **Architecture & design**: validates coupling/cycles/leaky abstractions with concrete evidence
+- **Static analysis**: `ruff` (format + lint)
+- **Type checking**: `pyright` or `basedpyright`
+- **Schema Constitution compliance**: audit against `docs/reference/SCHEMA_CONSTITUTION.md`
+- **Architecture & design**: validate coupling/cycles/leaky abstractions with concrete evidence
 
 ## 0) Define review scope (mandatory for control)
 
-**Fail-fast requirement**: Scope must be explicitly defined to prevent uncontrolled execution.
+- **Explicit paths required**: target specific Python files/dirs only (e.g., `src/`, `tests/`)
+- **Prefer small scopes**: start with the files you touched; expand only if needed
 
-- **Explicit paths required**: Target specific Python files/dirs only (e.g., `src/core`, `tests/`)
-- **Git changeset**: Use `--git-diff HEAD~1` for targeted reviews
-- **No default scope**: Fails if no `--paths` or `--git-diff` specified
+## 1) Run ruff (format + lint)
 
-## 1) Execute automated collector (fail-fast on critical issues)
-
-**Exit codes**: 0 (clean), 1 (lint/format violations), 2 (type errors), 3 (constitution violations), 4 (architecture violations)
-
-Script behavior:
-- **Format enforcement**: Applies `ruff format` (fails on unformattable code)
-- **Safe auto-fixes**: Applies `ruff check --fix` (fails on unfixable violations)
-- **Strict mode**: `--mode strict` enables zero-tolerance for all issue types
-
-Artifacts (when `--write-artifacts` enabled):
-- Raw outputs: `ruff_check.json`, `ruff_format.json`, `pyright.json`
-- Normalized issues: `issues.json`
-- Summary report: `summary.json`
-
-**Primary command (strict mode)**:
+**Format check (no changes)**:
 ```bash
-conda run -n ms python .codex_config/else/skills/code-review/scripts/code_review.py --mode strict --paths src
+conda run -n ms ruff format --check --diff src tests
 ```
 
-**Multi-target review**:
+**Lint check (no changes)**:
 ```bash
-conda run -n ms python .codex_config/else/skills/code-review/scripts/code_review.py --mode strict --paths src tests
+conda run -n ms ruff check src tests
 ```
 
-**Tool requirements**: `pyright` or `basedpyright` must be installed in `ms` env. Fails immediately if neither available.
-
-**CI/CD usage** (fail-fast):
+**Auto-fix (optional)**:
 ```bash
-conda run -n ms python .codex_config/else/skills/code-review/scripts/code_review.py --mode strict --paths src --exit-on-any-issue
+conda run -n ms ruff check --fix src tests
+conda run -n ms ruff format src tests
 ```
 
-**Validation-only** (no fixes, fail on issues):
+## 2) Run a type checker (pyright-compatible)
+
+Use whichever is available in the `ms` env:
 ```bash
-conda run -n ms python .codex_config/else/skills/code-review/scripts/code_review.py --mode strict --no-fix --no-format --format-check --paths src
+conda run -n ms pyright src tests
 ```
 
-**With artifacts** (for debugging):
+Or:
 ```bash
-conda run -n ms python .codex_config/else/skills/code-review/scripts/code_review.py --mode strict --write-artifacts --output-dir tmp/review --paths src
-```
-
-**Issue limits**: `--max-issues 0` shows all issues (default: 200). Artifacts always contain full issue list.
-
-## 2) Normalize findings into a unified issue format
-
-When `--write-artifacts` is enabled, the script writes `issues.json` with records shaped like:
-```json
-{
-  "tool": "ruff | pyright | basedpyright | constitution | architecture",
-  "kind": "lint | format | type | constitution | architecture",
-  "severity": "error | warning | info",
-  "code": "F401 | reportGeneralTypeIssues | SCHEMA-NONTRIVIAL-MAPPING | IMPORT-CYCLE | null",
-  "message": "Human-readable explanation",
-  "path": "repo/relative/path.py",
-  "line": 123,
-  "column": 4,
-  "end_line": 123,
-  "end_column": 20,
-  "category": "Derived grouping label",
-  "clause": "For constitution findings: section title reference",
-  "remediation": "Minimal-diff fix guidance"
-}
+conda run -n ms basedpyright src tests
 ```
 
 ## 3) Constitution compliance audit (strict clause enforcement)
@@ -112,13 +76,12 @@ Validates against:
 - Boundary locations missing validation
 - File paths showing architectural violations
 
-## 5) Generate fail-fast report (structured enforcement)
+## 5) Generate a review report (concise + actionable)
 
-**Exit behavior**: Non-zero exit code on any critical findings. Never silently continues.
+Suggested structure:
 
-Report structure (concise, actionable):
 1) **Status**: Clean / Requires Fixes / Blocked (constitution/architecture violations)
-2) **Auto-Fixes**: Applied formatting/linting changes with success confirmation
+2) **Auto-Fixes**: Formatting/lint changes applied (if any)
 3) **Critical Issues**: Schema/architecture violations requiring immediate action
 4) **Static Issues**: Remaining ruff/pyright problems with remediation steps
 5) **Next Actions**: Ordered, minimal-diff fixes (no optional steps)
