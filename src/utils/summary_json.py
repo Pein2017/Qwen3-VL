@@ -115,6 +115,72 @@ def extract_summary_json_obj(text: str, *, context: str) -> UnstructuredMapping 
         if obj is not None and is_summary_json(obj):
             return obj
 
+    # Minimal syntactic recovery for list-assignment style outputs:
+    #   统计=[{...}]
+    #   分组统计=[{...}]
+    #
+    # This is not valid JSON, but it is unambiguous to repair into:
+    #   {"统计": [...], "分组统计": [...]}
+    def _extract_balanced_json_list(s: str, start_index: int) -> str | None:
+        if start_index < 0 or start_index >= len(s) or s[start_index] != "[":
+            return None
+        depth = 0
+        in_str = False
+        escape = False
+        for idx in range(start_index, len(s)):
+            ch = s[idx]
+            if in_str:
+                if escape:
+                    escape = False
+                elif ch == "\\":
+                    escape = True
+                elif ch == '"':
+                    in_str = False
+                continue
+
+            if ch == '"':
+                in_str = True
+                continue
+            if ch == "[":
+                depth += 1
+                continue
+            if ch == "]":
+                depth -= 1
+                if depth == 0:
+                    return s[start_index : idx + 1]
+        return None
+
+    def _maybe_parse_list_assignment(key: str) -> list[object] | None:
+        for sep in ("=", ":"):
+            marker = f"{key}{sep}"
+            pos = stripped.find(marker)
+            if pos == -1:
+                continue
+            bracket = stripped.find("[", pos + len(marker))
+            if bracket == -1:
+                continue
+            list_text = _extract_balanced_json_list(stripped, bracket)
+            if list_text is None:
+                continue
+            try:
+                parsed = json.loads(list_text)
+            except Exception:  # noqa: BLE001
+                continue
+            if isinstance(parsed, list):
+                return cast(list[object], parsed)
+        return None
+
+    stats_list = _maybe_parse_list_assignment("统计")
+    group_stats_list = _maybe_parse_list_assignment("分组统计")
+    if stats_list is not None or group_stats_list is not None:
+        repaired: dict[str, object] = {}
+        if stats_list is not None:
+            repaired["统计"] = stats_list
+        if group_stats_list is not None:
+            repaired["分组统计"] = group_stats_list
+        if "统计" in repaired:
+            return cast(UnstructuredMapping, repaired)
+
     return None
 
 

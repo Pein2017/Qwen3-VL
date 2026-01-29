@@ -9,7 +9,9 @@ from src.rlhf.grpo.rollout_server_config import extract_rollout_server_launch_co
 def test_rollout_server_config_smoke_extracts_from_summary_1024():
     cfg = cast(
         dict[str, Any],
-        ConfigLoader.load_yaml_with_extends("configs/train/grpo/summary_1024.yaml"),
+        ConfigLoader.load_yaml_with_extends(
+            "configs/train/grpo/summary_1024_server_mode.yaml"
+        ),
     )
 
     launch = extract_rollout_server_launch_config(cfg, visible_gpu_count=6)

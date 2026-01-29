@@ -147,7 +147,10 @@ def broadcast_object(obj: T | None, *, src: int = 0) -> T:
         payload = [obj]
     else:
         payload = [None]
-    dist.broadcast_object_list(payload, src=src, group=group)
+    if group is None:
+        dist.broadcast_object_list(payload, src=src)
+    else:
+        dist.broadcast_object_list(payload, src=src, group=group)
     result = payload[0]
     assert result is not None
     return result
@@ -166,10 +169,16 @@ def gather_object(obj: T, *, dst: int = 0) -> list[T] | None:
 
     if get_rank() == dst:
         gathered: list[T | None] = [None for _ in range(world_size)]
-        dist.gather_object(obj, gathered, dst=dst, group=group)
+        if group is None:
+            dist.gather_object(obj, gathered, dst=dst)
+        else:
+            dist.gather_object(obj, gathered, dst=dst, group=group)
         # dist.gather_object fills the list in rank order.
         return [item for item in gathered if item is not None]
-    dist.gather_object(obj, None, dst=dst, group=group)
+    if group is None:
+        dist.gather_object(obj, None, dst=dst)
+    else:
+        dist.gather_object(obj, None, dst=dst, group=group)
     return None
 
 
@@ -185,7 +194,10 @@ def all_gather_object(obj: T) -> list[T]:
     )
 
     gathered: list[T | None] = [None for _ in range(world_size)]
-    cast(Any, dist).all_gather_object(gathered, obj, group=group)
+    if group is None:
+        cast(Any, dist).all_gather_object(gathered, obj)
+    else:
+        cast(Any, dist).all_gather_object(gathered, obj, group=group)
     return [item for item in gathered if item is not None]
 
 
