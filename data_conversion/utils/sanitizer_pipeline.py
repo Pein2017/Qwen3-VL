@@ -60,4 +60,3 @@ class SanitizerPipeline:
                     raise SanitizerError(message) from exc
                 logger.warning("%s: %s", message, exc)
         return result
-

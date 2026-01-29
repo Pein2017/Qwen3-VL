@@ -97,7 +97,9 @@ def _convex_clip(subject: Sequence[float], clip: Sequence[float]) -> List[float]
     if orient == 0.0:
         return []
 
-    def is_inside(p: Tuple[float, float], a: Tuple[float, float], b: Tuple[float, float]) -> bool:
+    def is_inside(
+        p: Tuple[float, float], a: Tuple[float, float], b: Tuple[float, float]
+    ) -> bool:
         # cross > 0 when p is to the left of ab in standard coords; multiply by
         # orient so the sign matches the interior side regardless of winding.
         cross = (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0])
@@ -192,7 +194,9 @@ def _build_segments(points: Sequence[float]) -> List[Tuple[float, float, float, 
     return segments
 
 
-def _sample_polyline(points: Sequence[float], step: float = 2.0) -> List[Tuple[float, float]]:
+def _sample_polyline(
+    points: Sequence[float], step: float = 2.0
+) -> List[Tuple[float, float]]:
     """Sample points along a polyline at roughly fixed step in pixels."""
 
     pts = _pair_points(points)
@@ -599,7 +603,9 @@ def _build_iou_matrix(
     return matrix, gt_types, pred_types
 
 
-def _greedy_match_from_matrix(matrix: List[List[float]], threshold: float) -> List[Tuple[int, int]]:
+def _greedy_match_from_matrix(
+    matrix: List[List[float]], threshold: float
+) -> List[Tuple[int, int]]:
     """Greedy 1-1 matching using a precomputed IoU matrix."""
 
     pairs: List[Tuple[float, int, int]] = []
@@ -625,7 +631,18 @@ def match_geometries_multi(
     gt_objects: Sequence[GeometryObject],
     pred_objects: Sequence[GeometryObject],
     *,
-    iou_thresholds: Sequence[float] = (0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95),
+    iou_thresholds: Sequence[float] = (
+        0.5,
+        0.55,
+        0.6,
+        0.65,
+        0.7,
+        0.75,
+        0.8,
+        0.85,
+        0.9,
+        0.95,
+    ),
 ) -> Dict[float, MatchResult]:
     """Match geometries across multiple IoU thresholds (COCO-like sweep).
 

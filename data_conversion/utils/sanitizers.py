@@ -151,7 +151,9 @@ def remove_screw_completeness_attributes(desc: Optional[str]) -> Optional[str]:
 
     tokens = [tok.strip() for tok in attribute_segment.split(",")]
     filtered = [
-        tok for tok in tokens if tok and tok not in {"只显示部分", "显示完整", "部分", "完整"}
+        tok
+        for tok in tokens
+        if tok and tok not in {"只显示部分", "显示完整", "部分", "完整"}
     ]
     cleaned_segment = ",".join(filtered)
 

@@ -70,7 +70,9 @@ def _print_console_summary(summary: Dict[str, Any]) -> None:
     line_tol = float(line_tol_raw) if isinstance(line_tol_raw, (int, float)) else None
     line_tol_str = f"{line_tol:g}" if line_tol is not None else "?"
 
-    print(f"Primary IoU={primary_key}, line_tol={line_tol_str}, modes={','.join(mode_list)}")
+    print(
+        f"Primary IoU={primary_key}, line_tol={line_tol_str}, modes={','.join(mode_list)}"
+    )
 
     modes = cast(dict[str, Any], summary.get("modes") or {})
     for mode_key in mode_list:
@@ -104,8 +106,12 @@ def _print_console_summary(summary: Dict[str, Any]) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Evaluate a gt_vs_pred.jsonl dump (norm1000).")
-    parser.add_argument("paths", nargs="+", help="Single gt_vs_pred.jsonl file (norm1000)")
+    parser = argparse.ArgumentParser(
+        description="Evaluate a gt_vs_pred.jsonl dump (norm1000)."
+    )
+    parser.add_argument(
+        "paths", nargs="+", help="Single gt_vs_pred.jsonl file (norm1000)"
+    )
     parser.add_argument(
         "--primary-threshold",
         type=float,

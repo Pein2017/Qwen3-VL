@@ -20,6 +20,7 @@ except Exception:  # pragma: no cover
 try:  # pragma: no cover
     from tqdm import tqdm as _tqdm  # type: ignore
 except Exception:  # pragma: no cover
+
     def _tqdm(iterable=None, **kwargs):  # type: ignore
         return iterable if iterable is not None else []
 
@@ -72,8 +73,12 @@ def parse_args(argv: Iterable[str]) -> ResizeConfig:
         help="Number of worker threads for resizing and geometry scaling.",
     )
     parser.add_argument("--factor", type=int, default=DEFAULT_FACTOR)
-    parser.add_argument("--max_pixel_blocks", type=int, default=DEFAULT_MAX_PIXEL_BLOCKS)
-    parser.add_argument("--min_pixel_blocks", type=int, default=DEFAULT_MIN_PIXEL_BLOCKS)
+    parser.add_argument(
+        "--max_pixel_blocks", type=int, default=DEFAULT_MAX_PIXEL_BLOCKS
+    )
+    parser.add_argument(
+        "--min_pixel_blocks", type=int, default=DEFAULT_MIN_PIXEL_BLOCKS
+    )
     parser.add_argument("--jpeg_quality", type=int, default=95)
     parser.add_argument(
         "--fail_on_size_mismatch",
@@ -97,7 +102,9 @@ def parse_args(argv: Iterable[str]) -> ResizeConfig:
     if not input_dir.exists():
         raise ValueError(f"input_dir does not exist: {input_dir}")
     if input_dir == output_dir:
-        raise ValueError("output_dir must be different from input_dir to avoid overwriting")
+        raise ValueError(
+            "output_dir must be different from input_dir to avoid overwriting"
+        )
 
     output_dir.mkdir(parents=True, exist_ok=True)
 

@@ -25,6 +25,7 @@ def __getattr__(name: str) -> Any:
     globals()[name] = value  # cache
     return value
 
+
 __all__ = [
     "Compose",
     "ImageAugmenter",

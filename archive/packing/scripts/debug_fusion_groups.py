@@ -2,6 +2,7 @@
 Usage: python scripts/debug_fusion_groups.py configs/fused_data/debug.yaml
 This avoids model load by using a stub template.
 """
+
 import sys
 import types
 from collections import Counter
@@ -12,7 +13,9 @@ from src.datasets.fusion import FusionConfig
 from src.datasets.unified_fusion_dataset import FusionCaptionDataset
 from src.packing.grouped_packing import GroupedPackingDataset
 
-cfg_path = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("configs/fused_data/debug.yaml")
+cfg_path = (
+    Path(sys.argv[1]) if len(sys.argv) > 1 else Path("configs/fused_data/debug.yaml")
+)
 
 # Load YAML to resolve fusion_config path and sample limits
 cfg_raw = ConfigLoader.load_yaml_with_extends(str(cfg_path))
@@ -63,8 +66,13 @@ pack_ds = GroupedPackingDataset(
     train_ds,
     template=stub_tmpl,
     packing_length=stub_tmpl.max_length,
-    group_key_fn=lambda row: (row.get("metadata", {}) or {}).get("_fusion_source", "default"),
+    group_key_fn=lambda row: (row.get("metadata", {}) or {}).get(
+        "_fusion_source", "default"
+    ),
 )
 counts = Counter(pack_ds[i]["packed_group"] for i in range(len(pack_ds)))
 print("pack_count", counts)
-print("groups_first_30", [pack_ds[i]["packed_group"] for i in range(min(30, len(pack_ds)))])
+print(
+    "groups_first_30",
+    [pack_ds[i]["packed_group"] for i in range(min(30, len(pack_ds)))],
+)

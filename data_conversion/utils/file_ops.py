@@ -143,9 +143,7 @@ class FileOperations:
             logger.debug(f"Copied {src.name} to {dst}")
 
     @staticmethod
-    def write_jsonl(
-        samples: List[Dict[str, Any]], output_path: Path
-    ) -> None:
+    def write_jsonl(samples: List[Dict[str, Any]], output_path: Path) -> None:
         """Write samples to JSONL file."""
         output_path.parent.mkdir(parents=True, exist_ok=True)
 

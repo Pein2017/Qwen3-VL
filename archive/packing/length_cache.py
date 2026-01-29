@@ -49,7 +49,9 @@ class LengthCache:
                 except Exception as exc:
                     raise ValueError(f"invalid length entry {k!r}: {v!r}") from exc
         else:
-            raise ValueError("length cache 'lengths' must be a mapping of sample_id -> length")
+            raise ValueError(
+                "length cache 'lengths' must be a mapping of sample_id -> length"
+            )
         return cls(fingerprint=fp, lengths=lengths, meta=meta)
 
     def save(self, path: str) -> None:

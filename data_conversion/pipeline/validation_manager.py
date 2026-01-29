@@ -175,7 +175,6 @@ class ValidationManager:
 
         return report.is_valid, report
 
-
     def _validate_sample_structure(
         self, sample: Dict[str, Any], report: ValidationReport
     ) -> None:
@@ -749,7 +748,9 @@ class DataValidator:
 
         for i, coord in enumerate(poly):
             if not isinstance(coord, (int, float)):
-                raise ValueError(f"Poly coordinate {i} must be number, got {type(coord)}")
+                raise ValueError(
+                    f"Poly coordinate {i} must be number, got {type(coord)}"
+                )
 
         return True
 
@@ -762,7 +763,9 @@ class DataValidator:
 
         for i, coord in enumerate(line):
             if not isinstance(coord, (int, float)):
-                raise ValueError(f"Line coordinate {i} must be number, got {type(coord)}")
+                raise ValueError(
+                    f"Line coordinate {i} must be number, got {type(coord)}"
+                )
 
         return True
 

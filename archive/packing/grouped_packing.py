@@ -192,7 +192,11 @@ class GroupedPackingDataset(Dataset):
             try:
                 dataset_name, base_idx = self.dataset._schedule[idx]
                 record_pool = getattr(self.dataset, "_record_pools", {})
-                base_pool = record_pool.get(dataset_name) if isinstance(record_pool, Mapping) else None
+                base_pool = (
+                    record_pool.get(dataset_name)
+                    if isinstance(record_pool, Mapping)
+                    else None
+                )
                 record = (
                     base_pool[base_idx]
                     if base_pool is not None and 0 <= base_idx < len(base_pool)
@@ -232,7 +236,8 @@ class GroupedPackingDataset(Dataset):
                 base_records = getattr(self.dataset, "base_records", [])
                 record = (
                     base_records[base_idx]
-                    if isinstance(base_records, list) and 0 <= base_idx < len(base_records)
+                    if isinstance(base_records, list)
+                    and 0 <= base_idx < len(base_records)
                     else None
                 )
                 dataset_name = getattr(self.dataset, "dataset_name", "dataset")
