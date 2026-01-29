@@ -131,51 +131,61 @@ def main() -> None:
     batch = to_batch(sample, model_device)
 
     if "labels" not in batch:
-        raise RuntimeError("Encoded batch missing 'labels'; template likely mis-configured.")
+        raise RuntimeError(
+            "Encoded batch missing 'labels'; template likely mis-configured."
+        )
 
     # Verify model is in train mode and has trainable parameters
     sft.model.train()
     trainable_params = [p for p in sft.model.parameters() if p.requires_grad]
     if not trainable_params:
-        raise RuntimeError("No trainable parameters found! Model may not be properly configured for training.")
-    
+        raise RuntimeError(
+            "No trainable parameters found! Model may not be properly configured for training."
+        )
+
     print(f"[INFO] Found {len(trainable_params)} trainable parameter tensors")
     total_trainable = sum(p.numel() for p in trainable_params)
     print(f"[INFO] Total trainable parameters: {total_trainable:,}")
-    
+
     # Clear any existing gradients
     sft.model.zero_grad()
-    
+
     # Forward pass
     outputs = sft.model(**batch)
     loss = outputs.loss if hasattr(outputs, "loss") else outputs[0]
-    
+
     if not torch.isfinite(loss):
         raise RuntimeError(f"Loss is not finite: {loss.item()}")
-    
+
     print(f"[INFO] Forward pass completed. loss={loss.item():.4f}")
-    
+
     # Backward pass
     loss.backward()
-    
+
     # Verify gradients were computed
     params_with_grad = [p for p in trainable_params if p.grad is not None]
     if not params_with_grad:
         raise RuntimeError("No gradients computed! Backward pass may have failed.")
-    
+
     # Check for non-zero gradients
     non_zero_grads = [p for p in params_with_grad if p.grad.abs().max() > 0]
     if not non_zero_grads:
-        raise RuntimeError("All gradients are zero! This may indicate a problem with the backward pass.")
-    
-    print(f"[INFO] Gradients computed for {len(params_with_grad)}/{len(trainable_params)} trainable parameters")
+        raise RuntimeError(
+            "All gradients are zero! This may indicate a problem with the backward pass."
+        )
+
+    print(
+        f"[INFO] Gradients computed for {len(params_with_grad)}/{len(trainable_params)} trainable parameters"
+    )
     print(f"[INFO] Non-zero gradients in {len(non_zero_grads)} parameters")
-    
+
     # Compute gradient statistics
     grad_norms = [p.grad.norm().item() for p in params_with_grad if p.grad is not None]
     if grad_norms:
-        print(f"[INFO] Gradient norm stats: min={min(grad_norms):.6f}, max={max(grad_norms):.6f}, mean={sum(grad_norms)/len(grad_norms):.6f}")
-    
+        print(
+            f"[INFO] Gradient norm stats: min={min(grad_norms):.6f}, max={max(grad_norms):.6f}, mean={sum(grad_norms) / len(grad_norms):.6f}"
+        )
+
     print(f"[OK] Forward+backward succeeded. loss={loss.item():.4f}")
 
 

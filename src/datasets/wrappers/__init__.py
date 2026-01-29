@@ -7,6 +7,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Literal, cast
 
+from src.utils.parsing import coerce_bool, coerce_int
+
 from ..fusion_types import FALLBACK_OPTIONS, DatasetSpec
 
 # Default cap for source-domain datasets to keep sequences bounded unless explicitly disabled.
@@ -18,18 +20,7 @@ DatasetDomain = Literal["target", "source"]
 def _normalize_bool(value: Any, *, field_name: str, default: bool) -> bool:
     if value is None:
         return default
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        if value in {0, 1, 0.0, 1.0}:
-            return bool(value)
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in {"true", "1", "yes", "on"}:
-            return True
-        if normalized in {"false", "0", "no", "off"}:
-            return False
-    raise ValueError(f"{field_name} must be a boolean value")
+    return coerce_bool(value, field=field_name)
 
 
 def _as_mapping(value: Any, *, field_name: str) -> Mapping[str, Any]:
@@ -43,10 +34,7 @@ def _as_mapping(value: Any, *, field_name: str) -> Mapping[str, Any]:
 def _parse_poly_max_points(value: Any, *, field_name: str) -> int | None:
     if value is None:
         return None
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"{field_name} must be an integer") from exc
+    parsed = coerce_int(value, field=field_name)
     if parsed <= 0:
         raise ValueError(f"{field_name} must be a positive integer")
     return parsed
@@ -55,10 +43,7 @@ def _parse_poly_max_points(value: Any, *, field_name: str) -> int | None:
 def _parse_max_objects(value: Any, *, field_name: str) -> int | None:
     if value is None:
         return None
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"{field_name} must be an integer") from exc
+    parsed = coerce_int(value, field=field_name)
     if parsed <= 0:
         raise ValueError(f"{field_name} must be a positive integer")
     return parsed
@@ -67,10 +52,7 @@ def _parse_max_objects(value: Any, *, field_name: str) -> int | None:
 def _parse_seed(value: Any, *, field_name: str) -> int | None:
     if value is None:
         return None
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"{field_name} must be an integer") from exc
+    parsed = coerce_int(value, field=field_name)
     return parsed
 
 
@@ -86,17 +68,17 @@ def _parse_prompt(value: Any, *, field_name: str) -> str | None:
 def _parse_mode(value: Any, *, field_name: str) -> Literal["dense", "summary"] | None:
     if value is None:
         return None
-    if isinstance(value, bool):
-        return "summary" if value else "dense"
     if isinstance(value, str):
         normalized = value.strip().lower()
         if normalized in {"dense", "summary"}:
             return cast(Literal["dense", "summary"], normalized)
-        if normalized in {"true", "1", "yes", "on"}:
-            return "summary"
-        if normalized in {"false", "0", "no", "off"}:
-            return "dense"
-    raise ValueError(f"{field_name} must be one of {{dense, summary}} or a boolean")
+    try:
+        as_bool = coerce_bool(value, field=field_name)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"{field_name} must be one of {{dense, summary}} or a boolean"
+        ) from exc
+    return "summary" if as_bool else "dense"
 
 
 class DatasetWrapper(abc.ABC):

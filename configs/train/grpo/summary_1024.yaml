@@ -88,6 +88,13 @@ custom:
 
   val_sample_limit: 240
   grpo:
+    # Batch plan shorthand (keeps training.effective_batch_size and rlhf.generation_batch_size aligned).
+    # This preset keeps the legacy knobs in training/rlhf sections for readability; the loader validates they match.
+    batch_plan:
+      enabled: true
+      per_device_train_batch_size: 1
+      per_device_eval_batch_size: 2
+      unified_batch_size: 24
     chord:
       enabled: true
       sft_per_device_train_batch_size: 1

@@ -8,6 +8,8 @@ from collections.abc import Mapping, MutableMapping
 import math
 from typing import Any, Literal, cast
 
+from src.utils.parsing import coerce_bool
+
 AllowedNorm = Literal["none", "norm100", "norm1000"]
 AllowedVisualDistance = Literal["mse", "cosine"]
 AllowedJsonFormat = Literal["standard"]
@@ -504,7 +506,196 @@ class GrpoDumpConfig:
 
 
 @dataclass(frozen=True)
+class GrpoBatchPlanRolloutServerConfig:
+    """Optional rollout-server plan enforced by `custom.grpo.batch_plan`."""
+
+    force_vllm_tensor_parallel_size: int
+    force_vllm_data_parallel_size: int
+    max_num_seqs_per_gpu: int
+
+    @classmethod
+    def from_mapping(
+        cls, payload: Mapping[str, Any] | None
+    ) -> "GrpoBatchPlanRolloutServerConfig | None":
+        if payload is None:
+            return None
+        if not isinstance(payload, Mapping):
+            raise TypeError(
+                "custom.grpo.batch_plan.rollout_server must be a mapping when provided"
+            )
+
+        data = dict(payload)
+
+        def _parse_int(raw: object, field: str, *, min_value: int = 1) -> int:
+            if isinstance(raw, bool):
+                raise TypeError(f"{field} must be an integer, got boolean")
+            if isinstance(raw, (int, float)):
+                if isinstance(raw, float) and not raw.is_integer():
+                    raise ValueError(f"{field} must be an integer, got {raw!r}")
+                value = int(raw)
+            elif isinstance(raw, str):
+                stripped = raw.strip()
+                if not stripped:
+                    raise ValueError(f"{field} must be an integer, got {raw!r}")
+                try:
+                    value = int(stripped)
+                except ValueError as exc:
+                    raise ValueError(
+                        f"{field} must be an integer, got {raw!r}"
+                    ) from exc
+            else:
+                raise TypeError(f"{field} must be an integer, got {type(raw)!r}")
+
+            if value < min_value:
+                raise ValueError(f"{field} must be >= {min_value}, got {value}")
+            return value
+
+        def _require_int(name: str, *, min_value: int = 1) -> int:
+            field = f"custom.grpo.batch_plan.rollout_server.{name}"
+            raw = data.pop(name, None)
+            if raw is None:
+                raise ValueError(f"{field} must be provided when enabled")
+            return _parse_int(raw, field, min_value=min_value)
+
+        tp = _require_int("force_vllm_tensor_parallel_size", min_value=1)
+        dp = _require_int("force_vllm_data_parallel_size", min_value=1)
+        max_num_seqs = _require_int("max_num_seqs_per_gpu", min_value=1)
+
+        if data:
+            unknown = ", ".join(sorted(str(k) for k in data))
+            raise ValueError(
+                f"Unknown custom.grpo.batch_plan.rollout_server fields: {unknown}"
+            )
+
+        return cls(
+            force_vllm_tensor_parallel_size=tp,
+            force_vllm_data_parallel_size=dp,
+            max_num_seqs_per_gpu=max_num_seqs,
+        )
+
+
+@dataclass(frozen=True)
+class GrpoBatchPlanConfig:
+    """High-level GRPO batch plan shorthand (expanded by the YAML loader)."""
+
+    enabled: bool = False
+    per_device_train_batch_size: int | None = None
+    per_device_eval_batch_size: int | None = None
+    unified_batch_size: int | None = None
+    rollout_server: GrpoBatchPlanRolloutServerConfig | None = None
+
+    @classmethod
+    def disabled(cls) -> "GrpoBatchPlanConfig":
+        return cls(enabled=False)
+
+    @classmethod
+    def from_mapping(cls, payload: Mapping[str, Any] | None) -> "GrpoBatchPlanConfig":
+        if payload is None:
+            return cls.disabled()
+        if not isinstance(payload, Mapping):
+            raise TypeError("custom.grpo.batch_plan must be a mapping when provided")
+
+        data = dict(payload)
+
+        def _parse_bool(value: object, field_name: str) -> bool:
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, (int, float)):
+                if value in (0, 1, 0.0, 1.0):
+                    return bool(value)
+                raise ValueError(
+                    f"{field_name} must be boolean (0 or 1), got {value!r}."
+                )
+            if isinstance(value, str):
+                normalized = value.strip().lower()
+                if normalized in {"true", "1", "yes", "y", "on"}:
+                    return True
+                if normalized in {"false", "0", "no", "n", "off"}:
+                    return False
+                raise ValueError(
+                    f"{field_name} string value '{value}' is not a recognized boolean representation."
+                )
+            raise TypeError(
+                f"{field_name} must be a boolean value, got {type(value)!r}."
+            )
+
+        enabled = _parse_bool(
+            data.pop("enabled", False), "custom.grpo.batch_plan.enabled"
+        )
+        if not enabled:
+            if data:
+                raise ValueError(
+                    "custom.grpo.batch_plan is configured but disabled; set "
+                    "custom.grpo.batch_plan.enabled=true to activate it."
+                )
+            return cls.disabled()
+
+        def _parse_int(raw: object, field: str, *, min_value: int = 1) -> int:
+            if isinstance(raw, bool):
+                raise TypeError(f"{field} must be an integer, got boolean")
+            if isinstance(raw, (int, float)):
+                if isinstance(raw, float) and not raw.is_integer():
+                    raise ValueError(f"{field} must be an integer, got {raw!r}")
+                value = int(raw)
+            elif isinstance(raw, str):
+                stripped = raw.strip()
+                if not stripped:
+                    raise ValueError(f"{field} must be an integer, got {raw!r}")
+                try:
+                    value = int(stripped)
+                except ValueError as exc:
+                    raise ValueError(
+                        f"{field} must be an integer, got {raw!r}"
+                    ) from exc
+            else:
+                raise TypeError(f"{field} must be an integer, got {type(raw)!r}")
+
+            if value < min_value:
+                raise ValueError(f"{field} must be >= {min_value}, got {value}")
+            return value
+
+        def _require_int(name: str, *, min_value: int = 1) -> int:
+            field = f"custom.grpo.batch_plan.{name}"
+            raw = data.pop(name, None)
+            if raw is None:
+                raise ValueError(f"{field} must be provided when enabled")
+            return _parse_int(raw, field, min_value=min_value)
+
+        per_device_train_bs = _require_int("per_device_train_batch_size", min_value=1)
+
+        per_device_eval_raw = data.pop("per_device_eval_batch_size", None)
+        if per_device_eval_raw is None:
+            per_device_eval_bs = per_device_train_bs
+        else:
+            per_device_eval_bs = _parse_int(
+                per_device_eval_raw,
+                "custom.grpo.batch_plan.per_device_eval_batch_size",
+                min_value=1,
+            )
+
+        unified_bs = _require_int("unified_batch_size", min_value=1)
+        rollout_server = GrpoBatchPlanRolloutServerConfig.from_mapping(
+            data.pop("rollout_server", None)
+        )
+
+        if data:
+            unknown = ", ".join(sorted(str(k) for k in data))
+            raise ValueError(f"Unknown custom.grpo.batch_plan fields: {unknown}")
+
+        return cls(
+            enabled=True,
+            per_device_train_batch_size=per_device_train_bs,
+            per_device_eval_batch_size=per_device_eval_bs,
+            unified_batch_size=unified_bs,
+            rollout_server=rollout_server,
+        )
+
+
+@dataclass(frozen=True)
 class GrpoConfig:
+    batch_plan: GrpoBatchPlanConfig = field(
+        default_factory=GrpoBatchPlanConfig.disabled
+    )
     chord: GrpoChordConfig = field(default_factory=GrpoChordConfig.disabled)
     dump: GrpoDumpConfig = field(default_factory=GrpoDumpConfig.disabled)
     extra: Mapping[str, Any] = field(default_factory=_empty_str_any_dict)
@@ -516,9 +707,10 @@ class GrpoConfig:
         if not isinstance(payload, Mapping):
             raise TypeError("custom.grpo must be a mapping when provided")
         data = dict(payload)
+        batch_plan = GrpoBatchPlanConfig.from_mapping(data.pop("batch_plan", None))
         chord = GrpoChordConfig.from_mapping(data.pop("chord", None))
         dump = GrpoDumpConfig.from_mapping(data.pop("dump", None))
-        return cls(chord=chord, dump=dump, extra=dict(data))
+        return cls(batch_plan=batch_plan, chord=chord, dump=dump, extra=dict(data))
 
 
 @dataclass(frozen=True)
@@ -558,22 +750,7 @@ class CudaMemoryConfig:
 
     @staticmethod
     def _parse_bool(value: object, field_name: str) -> bool:
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, (int, float)):
-            if value in (0, 1, 0.0, 1.0):
-                return bool(value)
-            raise ValueError(f"{field_name} must be boolean (0 or 1), got {value!r}.")
-        if isinstance(value, str):
-            normalized = value.strip().lower()
-            if normalized in {"true", "1", "yes", "y", "on"}:
-                return True
-            if normalized in {"false", "0", "no", "n", "off"}:
-                return False
-            raise ValueError(
-                f"{field_name} string value '{value}' is not a recognized boolean representation."
-            )
-        raise TypeError(f"{field_name} must be a boolean value, got {type(value)!r}.")
+        return coerce_bool(value, field=field_name)
 
     @classmethod
     def from_mapping(cls, payload: Mapping[str, Any] | None) -> "CudaMemoryConfig":
@@ -736,33 +913,11 @@ class CustomConfig:
                 "custom.summary_ratio has been removed; use custom.use_summary instead."
             )
 
-        def _parse_bool(value: object, field_name: str) -> bool:
-            if isinstance(value, bool):
-                return value
-            if isinstance(value, (int, float)):
-                if value in (0, 1, 0.0, 1.0):
-                    return bool(value)
-                raise ValueError(
-                    f"{field_name} must be boolean (0 or 1), got {value!r}."
-                )
-            if isinstance(value, str):
-                normalized = value.strip().lower()
-                if normalized in {"true", "1", "yes", "y", "on"}:
-                    return True
-                if normalized in {"false", "0", "no", "n", "off"}:
-                    return False
-                raise ValueError(
-                    f"{field_name} string value '{value}' is not a recognized boolean representation."
-                )
-            raise TypeError(
-                f"{field_name} must be a boolean value, got {type(value)!r}."
-            )
-
         use_summary_raw = data.pop("use_summary", None)
         use_summary = (
             False
             if use_summary_raw is None
-            else _parse_bool(use_summary_raw, "custom.use_summary")
+            else coerce_bool(use_summary_raw, field="custom.use_summary")
         )
         if "summary_label_grouping" in data:
             raise ValueError(

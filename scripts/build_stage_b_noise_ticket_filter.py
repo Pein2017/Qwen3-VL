@@ -46,7 +46,9 @@ def _iter_jsonl(path: Path):
             try:
                 yield json.loads(stripped)
             except json.JSONDecodeError as exc:
-                raise RuntimeError(f"Invalid JSON at {path}:{line_number}: {exc}") from exc
+                raise RuntimeError(
+                    f"Invalid JSON at {path}:{line_number}: {exc}"
+                ) from exc
 
 
 def _load_stage_a_ticket_keys(stage_a_path: Path) -> set[str]:
@@ -58,7 +60,9 @@ def _load_stage_a_ticket_keys(stage_a_path: Path) -> set[str]:
             continue
         keys.add(f"{group_id}::{label}")
     if not keys:
-        raise RuntimeError(f"No valid ticket keys found in Stage-A JSONL: {stage_a_path}")
+        raise RuntimeError(
+            f"No valid ticket keys found in Stage-A JSONL: {stage_a_path}"
+        )
     return keys
 
 
@@ -72,7 +76,9 @@ def _iter_stage_a_ticket_rows(stage_a_path: Path):
             continue
         if not isinstance(per_image, dict) or not per_image:
             continue
-        total_images = len(images) if isinstance(images, list) and images else len(per_image)
+        total_images = (
+            len(images) if isinstance(images, list) and images else len(per_image)
+        )
         yield f"{group_id}::{label}", total_images, per_image
 
 
@@ -96,7 +102,9 @@ def _match_reason(payload: dict, patterns: list[re.Pattern[str]]) -> bool:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--stage-a", required=True, type=Path, help="Stage-A JSONL path")
+    parser.add_argument(
+        "--stage-a", required=True, type=Path, help="Stage-A JSONL path"
+    )
     parser.add_argument(
         "--hard-samples",
         default=None,
@@ -148,7 +156,9 @@ def main() -> None:
     stage_a_keys = _load_stage_a_ticket_keys(stage_a_path)
     matched: set[str] = set()  # matched from hard samples
     unmatched: set[str] = set()  # hard-samples keys missing from stage-a
-    pass_irrel: set[str] = set()  # derived from stage-a (pass with too few useful images)
+    pass_irrel: set[str] = (
+        set()
+    )  # derived from stage-a (pass with too few useful images)
     total = 0  # hard samples total rows
 
     if hard_samples_path is not None:
@@ -173,7 +183,9 @@ def main() -> None:
         if min_useful <= 0:
             raise ValueError("--exclude-pass-min-useful must be > 0")
 
-        for ticket_key, total_images, per_image in _iter_stage_a_ticket_rows(stage_a_path):
+        for ticket_key, total_images, per_image in _iter_stage_a_ticket_rows(
+            stage_a_path
+        ):
             if not ticket_key.endswith("::pass"):
                 continue
             irrelevant_count = _count_irrelevant(per_image, irrelevant_token)

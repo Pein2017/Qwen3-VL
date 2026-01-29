@@ -57,7 +57,6 @@ Canonicalization MUST be applied:
 - **WHEN** a record containing a `poly` object is augmented with crop or clipping, producing a valid polygon whose vertex list start index may drift
 - **THEN** the output polygon MUST be canonicalized to clockwise orientation
 - **AND** the first vertex MUST be the top-left vertex (min y, then min x)
-
 #### Scenario: Line direction is canonicalized after hflip
 - **WHEN** a record containing a multi-point `line` object is augmented with horizontal flip
 - **THEN** the output `line` MAY be reversed as a whole so that the canonical start endpoint is first

@@ -266,6 +266,10 @@ Keep configs under `configs/` in sync with the playbook when making behavioral c
     - `rlhf.num_generations` (must divide `rlhf.generation_batch_size`)
     - `rlhf.max_completion_length=2048`
     - `training.effective_batch_size` (backward global batch), `rlhf.generation_batch_size` (rollout global trajectories)
+    - Optional shorthand (recommended for fewer coupled knobs): `custom.grpo.batch_plan` can set a single `unified_batch_size`
+      used for **both** `training.effective_batch_size` and `rlhf.generation_batch_size`, and can optionally enforce rollout
+      server TP/DP/max_num_seqs under `custom.extra.rollout_server`. See `docs/training/GRPO_MS_SWIFT_PIPELINE.md`
+      (“Batch Plan Shorthand”) and inspect the resolved config via `scripts/config_tools/inspect_config.py inspect`.
     - `prompts.profile=summary_runtime`, `custom.assistant_prefix_format`, `custom.fusion_config`
     - Server-mode rollout separation (when `rlhf.vllm_mode=server`):
       - trainer connectivity: `rlhf.vllm_server_host`, `rlhf.vllm_server_port`, `rlhf.vllm_server_timeout`

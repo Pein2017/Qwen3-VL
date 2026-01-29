@@ -28,7 +28,10 @@ def _require(condition: bool, message: str) -> None:
 
 
 def _as_seq(value: Any, field: str) -> Sequence[Any]:
-    _require(isinstance(value, Sequence) and not isinstance(value, (str, bytes)), f"{field} must be a list")
+    _require(
+        isinstance(value, Sequence) and not isinstance(value, (str, bytes)),
+        f"{field} must be a list",
+    )
     return value  # type: ignore[return-value]
 
 
@@ -37,7 +40,9 @@ def _as_map(value: Any, field: str) -> Mapping[str, Any]:
     return value  # type: ignore[return-value]
 
 
-def _validate_geometry(obj: Mapping[str, Any], *, record_idx: int, obj_idx: int) -> None:
+def _validate_geometry(
+    obj: Mapping[str, Any], *, record_idx: int, obj_idx: int
+) -> None:
     geom_keys = [key for key in ("bbox_2d", "poly", "line") if key in obj]
     _require(
         len(geom_keys) == 1,
@@ -45,50 +50,91 @@ def _validate_geometry(obj: Mapping[str, Any], *, record_idx: int, obj_idx: int)
     )
     key = geom_keys[0]
     seq = _as_seq(obj.get(key), f"record[{record_idx}].objects[{obj_idx}].{key}")
-    _require(len(seq) > 0, f"record[{record_idx}].objects[{obj_idx}].{key} must be non-empty")
-    _require(all(_is_number(v) for v in seq), f"record[{record_idx}].objects[{obj_idx}].{key} must be numeric")
+    _require(
+        len(seq) > 0, f"record[{record_idx}].objects[{obj_idx}].{key} must be non-empty"
+    )
+    _require(
+        all(_is_number(v) for v in seq),
+        f"record[{record_idx}].objects[{obj_idx}].{key} must be numeric",
+    )
 
     if key == "bbox_2d":
-        _require(len(seq) == 4, f"record[{record_idx}].objects[{obj_idx}].bbox_2d must have 4 values")
+        _require(
+            len(seq) == 4,
+            f"record[{record_idx}].objects[{obj_idx}].bbox_2d must have 4 values",
+        )
     else:
-        _require(len(seq) % 2 == 0, f"record[{record_idx}].objects[{obj_idx}].{key} must have even length")
+        _require(
+            len(seq) % 2 == 0,
+            f"record[{record_idx}].objects[{obj_idx}].{key} must have even length",
+        )
         if key == "poly":
-            _require(len(seq) >= 6, f"record[{record_idx}].objects[{obj_idx}].poly must have >= 6 values")
+            _require(
+                len(seq) >= 6,
+                f"record[{record_idx}].objects[{obj_idx}].poly must have >= 6 values",
+            )
             poly_points = obj.get("poly_points")
             if poly_points is not None:
-                _require(int(poly_points) == len(seq) // 2, f"record[{record_idx}].objects[{obj_idx}].poly_points must equal len(poly)/2")
+                _require(
+                    int(poly_points) == len(seq) // 2,
+                    f"record[{record_idx}].objects[{obj_idx}].poly_points must equal len(poly)/2",
+                )
         if key == "line":
-            _require(len(seq) >= 4, f"record[{record_idx}].objects[{obj_idx}].line must have >= 4 values")
+            _require(
+                len(seq) >= 4,
+                f"record[{record_idx}].objects[{obj_idx}].line must have >= 4 values",
+            )
             line_points = obj.get("line_points")
             if line_points is not None:
-                _require(int(line_points) == len(seq) // 2, f"record[{record_idx}].objects[{obj_idx}].line_points must equal len(line)/2")
+                _require(
+                    int(line_points) == len(seq) // 2,
+                    f"record[{record_idx}].objects[{obj_idx}].line_points must equal len(line)/2",
+                )
 
     # Reject legacy / forbidden keys that cause subtle bugs.
-    _require("groups" not in obj, f"record[{record_idx}].objects[{obj_idx}] must not include legacy 'groups' key")
+    _require(
+        "groups" not in obj,
+        f"record[{record_idx}].objects[{obj_idx}] must not include legacy 'groups' key",
+    )
 
 
 def validate_record(record: Mapping[str, Any], *, record_idx: int) -> None:
     images = _as_seq(record.get("images"), f"record[{record_idx}].images")
     _require(len(images) > 0, f"record[{record_idx}].images must be non-empty")
     for img_idx, img in enumerate(images):
-        _require(isinstance(img, str) and img.strip(), f"record[{record_idx}].images[{img_idx}] must be a non-empty string")
+        _require(
+            isinstance(img, str) and img.strip(),
+            f"record[{record_idx}].images[{img_idx}] must be a non-empty string",
+        )
 
     objects = _as_seq(record.get("objects"), f"record[{record_idx}].objects")
     _require(len(objects) > 0, f"record[{record_idx}].objects must be non-empty")
     for obj_idx, obj in enumerate(objects):
         obj_map = _as_map(obj, f"record[{record_idx}].objects[{obj_idx}]")
         desc = obj_map.get("desc")
-        _require(isinstance(desc, str) and desc.strip(), f"record[{record_idx}].objects[{obj_idx}].desc must be a non-empty string")
+        _require(
+            isinstance(desc, str) and desc.strip(),
+            f"record[{record_idx}].objects[{obj_idx}].desc must be a non-empty string",
+        )
         _validate_geometry(obj_map, record_idx=record_idx, obj_idx=obj_idx)
 
     width = record.get("width")
     height = record.get("height")
-    _require(isinstance(width, int) and width > 0, f"record[{record_idx}].width must be a positive int")
-    _require(isinstance(height, int) and height > 0, f"record[{record_idx}].height must be a positive int")
+    _require(
+        isinstance(width, int) and width > 0,
+        f"record[{record_idx}].width must be a positive int",
+    )
+    _require(
+        isinstance(height, int) and height > 0,
+        f"record[{record_idx}].height must be a positive int",
+    )
 
     summary = record.get("summary")
     if summary is not None:
-        _require(isinstance(summary, str) and summary.strip(), f"record[{record_idx}].summary must be a non-empty string when present")
+        _require(
+            isinstance(summary, str) and summary.strip(),
+            f"record[{record_idx}].summary must be a non-empty string when present",
+        )
 
 
 def load_jsonl(path: Path, *, limit: int) -> Iterable[Mapping[str, Any]]:
@@ -105,9 +151,13 @@ def load_jsonl(path: Path, *, limit: int) -> Iterable[Mapping[str, Any]]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Validate dense-caption JSONL contract")
+    parser = argparse.ArgumentParser(
+        description="Validate dense-caption JSONL contract"
+    )
     parser.add_argument("--jsonl", type=Path, required=True, help="Path to JSONL file")
-    parser.add_argument("--limit", type=int, default=100, help="Max records to validate (0 = all)")
+    parser.add_argument(
+        "--limit", type=int, default=100, help="Max records to validate (0 = all)"
+    )
     args = parser.parse_args()
 
     if not args.jsonl.is_file():
@@ -124,4 +174,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

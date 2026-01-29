@@ -38,9 +38,9 @@ def _load_fail_reasons(excel_path: Path) -> dict[tuple[str, str], list[str]]:
     df = df.dropna(subset=["group_id", "mission", "reason_text"])
 
     mapping: dict[tuple[str, str], set[str]] = {}
-    for group_id, mission, reason in df[["group_id", "mission", "reason_text"]].itertuples(
-        index=False
-    ):
+    for group_id, mission, reason in df[
+        ["group_id", "mission", "reason_text"]
+    ].itertuples(index=False):
         gid = str(group_id).strip()
         mis = str(mission).strip()
         reason_text = str(reason).strip()
@@ -54,7 +54,11 @@ def _load_fail_reasons(excel_path: Path) -> dict[tuple[str, str], list[str]]:
 def _iter_hard_case_files(input_path: Path, recursive: bool) -> list[Path]:
     if input_path.is_file():
         return [input_path]
-    pattern = "**/rule_search_hard_cases.jsonl" if recursive else "*/rule_search_hard_cases.jsonl"
+    pattern = (
+        "**/rule_search_hard_cases.jsonl"
+        if recursive
+        else "*/rule_search_hard_cases.jsonl"
+    )
     return sorted(input_path.glob(pattern))
 
 
@@ -75,9 +79,10 @@ def _process_file(
     selected = 0
     missing_reason = 0
 
-    with input_file.open("r", encoding="utf-8") as fin, output_file.open(
-        "w", encoding="utf-8"
-    ) as fout:
+    with (
+        input_file.open("r", encoding="utf-8") as fin,
+        output_file.open("w", encoding="utf-8") as fout,
+    ):
         for line in fin:
             line = line.strip()
             if not line:
@@ -154,7 +159,9 @@ def main() -> int:
     reason_map = _load_fail_reasons(excel_path)
     hard_case_files = _iter_hard_case_files(input_path, args.recursive)
     if not hard_case_files:
-        raise FileNotFoundError(f"No rule_search_hard_cases.jsonl found under {input_path}")
+        raise FileNotFoundError(
+            f"No rule_search_hard_cases.jsonl found under {input_path}"
+        )
 
     output_root = Path(args.output) if args.output else None
     summary = []

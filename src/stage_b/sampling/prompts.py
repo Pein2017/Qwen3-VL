@@ -4,12 +4,17 @@
 
 from __future__ import annotations
 
-import json
+from collections.abc import Mapping
 import re
 
 from src.prompts.stage_b_verdict import build_stage_b_system_prompt
-from src.utils import require_mapping
 from src.utils.unstructured import UnstructuredMapping
+from src.utils.summary_json import (
+    entry_by_category,
+    extract_summary_json_obj,
+    strip_summary_headers,
+    summary_entries,
+)
 
 from ..types import GroupTicket, MissionGuidance
 from ..utils.chinese import normalize_spaces, to_simplified
@@ -19,115 +24,39 @@ _STATION_DISTANCE_RE = re.compile(r"站点距离[=/](\d+)")
 
 
 def _parse_summary_json(text: str) -> UnstructuredMapping | None:
-    if not text:
-        return None
-
-    stripped = text.strip()
-    if not stripped or stripped.startswith("无关图片"):
-        return None
-
-    lines = [line for line in stripped.splitlines() if line.strip()]
-    stripped = "\n".join(
-        [
-            line
-            for line in lines
-            if not (
-                line.strip().startswith("<DOMAIN=")
-                and "<TASK=" in line
-                and line.strip().endswith(">")
-            )
-        ]
-    ).strip()
-    if not stripped:
-        return None
-
-    def _maybe_parse_obj(candidate: str) -> UnstructuredMapping | None:
-        c = candidate.strip()
-        if not (c.startswith("{") and c.endswith("}")):
-            return None
-        try:
-            parsed = json.loads(c)
-        except Exception:
-            return None
-        try:
-            return require_mapping(parsed, context="stage_b.summary_json")
-        except TypeError:
-            return None
-
-    def _is_summary(obj: UnstructuredMapping) -> bool:
-        return "统计" in obj
-
-    # Fast path: whole string is the JSON object.
-    obj = _maybe_parse_obj(stripped)
-    if obj is not None and _is_summary(obj):
-        return obj
-
-    # Fallback: extract the first {...} block from the full text.
-    start = stripped.find("{")
-    end = stripped.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        obj = _maybe_parse_obj(stripped[start : end + 1])
-        if obj is not None and _is_summary(obj):
-            return obj
-
-    return None
+    return extract_summary_json_obj(text, context="stage_b.summary_json")
 
 
-def _format_summary_json(obj: UnstructuredMapping) -> str:
-    obj = require_mapping(obj, context="stage_b.summary")
-    preferred_order = ["统计", "备注", "分组统计"]
-    allowed = set(preferred_order)
-    ordered: dict[str, object] = {}
-    for key in preferred_order:
-        if key in obj:
-            ordered[key] = obj[key]
-    for key, value in obj.items():
-        if key == "format_version":
-            continue
-        if key not in ordered and key in allowed:
-            ordered[key] = value
-    return json.dumps(ordered, ensure_ascii=False, separators=(", ", ": "))
+def _category_name(entry: UnstructuredMapping) -> str | None:
+    """Extract a safe, hashable category name from a Stage-A summary entry.
 
-
-def _summary_entries(obj: UnstructuredMapping) -> list[UnstructuredMapping]:
-    entries = obj.get("统计")
-    if isinstance(entries, list):
-        return [e for e in entries if isinstance(e, dict)]
-    return []
-
-
-def _entry_category(entry: UnstructuredMapping) -> str | None:
-    """Extract a hashable category name from a Stage-A `统计` entry.
-
-    Stage-A is expected to emit `{"类别": "<name>", ...}` but we have seen rare
-    corrupted rows where `类别` becomes a mapping like `{"地线夹": 1}`.
+    Stage-A is expected to emit `{"类别": "<name>", ...}` but we have observed
+    rare corrupted rows where `类别` becomes mapping-shaped (e.g. `{"地线夹": 1}`).
     For Stage-B prompting we only need a stable category identifier; for such
-    mapping-shaped values we conservatively take the first string key when the
-    mapping has exactly one key, otherwise we drop it.
+    mapping-shaped values we conservatively take the single string key.
     """
-
     raw = entry.get("类别")
     if isinstance(raw, str):
         cat = raw.strip()
         return cat or None
-    if isinstance(raw, dict):
+    if isinstance(raw, Mapping):
         keys = [k for k in raw.keys() if isinstance(k, str) and k.strip()]
         if len(keys) == 1:
             return keys[0].strip()
     return None
 
 
-def _entry_by_category(
-    entries: list[UnstructuredMapping], category: str
-) -> UnstructuredMapping | None:
+def _category_set(entries: list[UnstructuredMapping]) -> set[str]:
+    categories: set[str] = set()
     for entry in entries:
-        if _entry_category(entry) == category:
-            return entry
-    return None
+        category = _category_name(entry)
+        if category is not None:
+            categories.add(category)
+    return categories
 
 
 def _summary_distances(obj: UnstructuredMapping) -> list[str]:
-    entry = _entry_by_category(_summary_entries(obj), "站点距离")
+    entry = entry_by_category(summary_entries(obj), "站点距离")
     if not entry:
         return []
     distances = entry.get("站点距离")
@@ -139,7 +68,7 @@ def _summary_distances(obj: UnstructuredMapping) -> list[str]:
 
 
 def _summary_has_label_text(obj: UnstructuredMapping) -> bool:
-    entry = _entry_by_category(_summary_entries(obj), "标签")
+    entry = entry_by_category(summary_entries(obj), "标签")
     if not entry:
         return False
     texts = entry.get("文本")
@@ -154,7 +83,7 @@ def _summary_has_label_text(obj: UnstructuredMapping) -> bool:
 def _estimate_object_count_from_summary(obj: UnstructuredMapping) -> int:
     """Best-effort object count estimate derived from `统计`."""
 
-    entries = _summary_entries(obj)
+    entries = summary_entries(obj)
 
     def _to_int(value: object) -> int | None:
         if isinstance(value, bool) or value is None:
@@ -215,24 +144,7 @@ def _estimate_object_count_from_summary(obj: UnstructuredMapping) -> int:
 
 def _sanitize_stage_a_summary_for_prompt(text: str) -> str:
     """Drop summary headers and return the payload unchanged for prompting."""
-
-    if not text:
-        return ""
-    stripped = text.strip()
-    if stripped.startswith("无关图片"):
-        return "无关图片"
-
-    lines = [line for line in stripped.splitlines() if line.strip()]
-    kept = [
-        line
-        for line in lines
-        if not (
-            line.strip().startswith("<DOMAIN=")
-            and "<TASK=" in line
-            and line.strip().endswith(">")
-        )
-    ]
-    return "\n".join(kept).strip()
+    return strip_summary_headers(text)
 
 
 def _sorted_summaries(per_image: dict[str, str]) -> list[tuple[str, str]]:
@@ -287,9 +199,8 @@ def _aggregate_rru_install_points(stage_a_summaries: dict[str, str]) -> str:
             distances = _summary_distances(summary_obj)
             if not distances:
                 continue
-            entries = _summary_entries(summary_obj)
-            categories = {_entry_category(entry) for entry in entries}
-            categories.discard(None)
+            entries = summary_entries(summary_obj)
+            categories = _category_set(entries)
             has_rru = "RRU设备" in categories
             has_fix = "紧固件" in categories or "固定件" in categories
             for dist in distances:
@@ -338,9 +249,8 @@ def _aggregate_rru_position_points(stage_a_summaries: dict[str, str]) -> str:
             distances = _summary_distances(summary_obj)
             if not distances:
                 continue
-            entries = _summary_entries(summary_obj)
-            categories = {_entry_category(entry) for entry in entries}
-            categories.discard(None)
+            entries = summary_entries(summary_obj)
+            categories = _category_set(entries)
             has_ground_terminal = "RRU接地端" in categories
             has_ground = "接地线" in categories
             has_label = _summary_has_label_text(summary_obj)
@@ -406,10 +316,10 @@ def _aggregate_rru_cable_points(stage_a_summaries: dict[str, str]) -> str:
             distances = _summary_distances(summary_obj)
             if not distances:
                 continue
-            entries = _summary_entries(summary_obj)
-            categories = {entry.get("类别") for entry in entries}
+            entries = summary_entries(summary_obj)
+            categories = _category_set(entries)
             has_tail = "尾纤" in categories
-            tail_entry = _entry_by_category(entries, "尾纤")
+            tail_entry = entry_by_category(entries, "尾纤")
             has_tube = False
             if tail_entry and isinstance(tail_entry.get("套管保护"), dict):
                 tube_map = tail_entry.get("套管保护")

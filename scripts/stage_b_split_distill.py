@@ -71,7 +71,9 @@ def split_distill_corpus(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Split distill_chatml.jsonl into train/val")
+    parser = argparse.ArgumentParser(
+        description="Split distill_chatml.jsonl into train/val"
+    )
     parser.add_argument("--input", required=True, help="Path to distill_chatml.jsonl")
     parser.add_argument(
         "--train-out",
@@ -83,14 +85,22 @@ def main() -> None:
         default=None,
         help="Output path for val split (default: alongside input, distill_chatml.val.jsonl)",
     )
-    parser.add_argument("--val-ratio", type=float, default=0.1, help="Validation split ratio")
+    parser.add_argument(
+        "--val-ratio", type=float, default=0.1, help="Validation split ratio"
+    )
     parser.add_argument("--seed", type=int, default=17, help="Shuffle seed")
 
     args = parser.parse_args()
     input_path = Path(args.input)
     base_dir = input_path.parent
-    train_out = Path(args.train_out) if args.train_out else base_dir / "distill_chatml.train.jsonl"
-    val_out = Path(args.val_out) if args.val_out else base_dir / "distill_chatml.val.jsonl"
+    train_out = (
+        Path(args.train_out)
+        if args.train_out
+        else base_dir / "distill_chatml.train.jsonl"
+    )
+    val_out = (
+        Path(args.val_out) if args.val_out else base_dir / "distill_chatml.val.jsonl"
+    )
 
     split_distill_corpus(
         input_path=input_path,

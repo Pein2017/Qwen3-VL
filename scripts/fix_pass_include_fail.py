@@ -8,7 +8,7 @@ from collections import OrderedDict, defaultdict
 
 def load_jsonl(path):
     entries = []
-    with io.open(path, 'r', encoding='utf-8') as f:
+    with io.open(path, "r", encoding="utf-8") as f:
         for ln, line in enumerate(f, 1):
             s = line.strip()
             if not s:
@@ -16,13 +16,15 @@ def load_jsonl(path):
             try:
                 obj = json.loads(s, object_pairs_hook=OrderedDict)
             except Exception as e:
-                raise RuntimeError(f"Failed to parse JSON on line {ln} of {path}: {e}\nLine: {s[:200]}...")
+                raise RuntimeError(
+                    f"Failed to parse JSON on line {ln} of {path}: {e}\nLine: {s[:200]}..."
+                )
             entries.append(obj)
     return entries
 
 
 def dump_jsonl(entries, path):
-    with io.open(path, 'w', encoding='utf-8') as f:
+    with io.open(path, "w", encoding="utf-8") as f:
         for e in entries:
             # enforce key order
             ordered = OrderedDict()
@@ -36,7 +38,9 @@ def dump_jsonl(entries, path):
             for k, v in e.items():
                 if k not in ordered:
                     ordered[k] = v
-            f.write(json.dumps(ordered, ensure_ascii=False, separators=(", ", ": ")) + "\n")
+            f.write(
+                json.dumps(ordered, ensure_ascii=False, separators=(", ", ": ")) + "\n"
+            )
 
 
 def build_group_maps(entries):
@@ -78,7 +82,9 @@ def ensure_pass_contains_fail(entries):
         # Update every pass entry in this group
         for pe in groups[gid]["pass"]:
             imgs = list(pe.get("images") or [])
-            per_img = OrderedDict((k, v) for k, v in (pe.get("per_image") or {}).items())
+            per_img = OrderedDict(
+                (k, v) for k, v in (pe.get("per_image") or {}).items()
+            )
 
             existing = set(imgs)
             to_add = [(img, desc) for img, desc in fmap.items() if img not in existing]
@@ -101,15 +107,22 @@ def ensure_pass_contains_fail(entries):
 
 def process(in_path, out_path):
     entries = load_jsonl(in_path)
-    groups_with_both, updated_count, added_images_total = ensure_pass_contains_fail(entries)
+    groups_with_both, updated_count, added_images_total = ensure_pass_contains_fail(
+        entries
+    )
     dump_jsonl(entries, out_path)
-    print(json.dumps({
-        "file": in_path,
-        "output": out_path,
-        "groups_with_both": len(groups_with_both),
-        "pass_entries_updated": updated_count,
-        "images_added": added_images_total
-    }, ensure_ascii=False))
+    print(
+        json.dumps(
+            {
+                "file": in_path,
+                "output": out_path,
+                "groups_with_both": len(groups_with_both),
+                "pass_entries_updated": updated_count,
+                "images_added": added_images_total,
+            },
+            ensure_ascii=False,
+        )
+    )
 
 
 if __name__ == "__main__":
@@ -117,4 +130,3 @@ if __name__ == "__main__":
         print("Usage: fix_pass_include_fail.py <input_jsonl> <output_jsonl>")
         sys.exit(2)
     process(sys.argv[1], sys.argv[2])
-

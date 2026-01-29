@@ -9,6 +9,8 @@ import os
 import sys
 import tempfile
 
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from public_data.converters.base import ConversionConfig
@@ -24,6 +26,8 @@ def test_annotation_loading():
     # Get the project root directory (two levels up from public_data/tests)
     base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     annotation_path = os.path.join(base_dir, "lvis/raw/annotations/lvis_v1_train.json")
+    if not os.path.exists(annotation_path):
+        pytest.skip(f"LVIS annotations not found at {annotation_path}")
 
     # Create minimal config (images don't need to exist for this test)
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -62,6 +66,8 @@ def test_bbox_conversion():
     base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     annotation_path = os.path.join(base_dir, "lvis/raw/annotations/lvis_v1_train.json")
     image_root = os.path.join(base_dir, "lvis/raw/images")
+    if not os.path.exists(annotation_path):
+        pytest.skip(f"LVIS annotations not found at {annotation_path}")
 
     with tempfile.TemporaryDirectory() as tmpdir:
         tmpdir_abs = os.path.abspath(tmpdir)
@@ -116,6 +122,8 @@ def test_polygon_conversion():
 
     base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     annotation_path = os.path.join(base_dir, "lvis/raw/annotations/lvis_v1_train.json")
+    if not os.path.exists(annotation_path):
+        pytest.skip(f"LVIS annotations not found at {annotation_path}")
 
     with tempfile.TemporaryDirectory() as tmpdir:
         tmpdir_abs = os.path.abspath(tmpdir)

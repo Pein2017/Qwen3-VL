@@ -39,7 +39,7 @@ from src.generation import (
 from src.generation.chat_template import render_chat_template
 
 from src.config.missions import STAGE_B_MISSION_FOCUS
-from src.utils import require_mapping
+from src.utils.summary_json import extract_summary_json_obj, strip_summary_headers
 from src.utils.unstructured import UnstructuredMapping
 
 from ..config import ReflectionConfig
@@ -870,64 +870,11 @@ class ReflectionEngine:
 
     @staticmethod
     def _parse_stage_a_summary_json(text: str) -> UnstructuredMapping | None:
-        stripped = (text or "").strip()
-        if not stripped or stripped.startswith("无关图片"):
-            return None
-
-        required = {"统计"}
-
-        def _maybe_parse_obj(candidate: str) -> UnstructuredMapping | None:
-            c = candidate.strip()
-            if not (c.startswith("{") and c.endswith("}")):
-                return None
-            try:
-                parsed = json.loads(c)
-            except Exception:
-                return None
-            try:
-                return require_mapping(parsed, context="stage_b.summary_json")
-            except TypeError:
-                return None
-
-        obj = _maybe_parse_obj(stripped)
-        if obj is not None and required.issubset(obj.keys()):
-            return obj
-
-        # Legacy Stage-A may contain a header line "<DOMAIN=...>, <TASK=...>".
-        lines = [line.strip() for line in stripped.splitlines() if line.strip()]
-        for line in reversed(lines):
-            obj = _maybe_parse_obj(line)
-            if obj is not None and required.issubset(obj.keys()):
-                return obj
-
-        start = stripped.find("{")
-        end = stripped.rfind("}")
-        if start != -1 and end != -1 and end > start:
-            obj = _maybe_parse_obj(stripped[start : end + 1])
-            if obj is not None and required.issubset(obj.keys()):
-                return obj
-
-        return None
+        return extract_summary_json_obj(text, context="stage_b.summary_json")
 
     @staticmethod
     def _sanitize_stage_a_summary_for_prompt(text: str) -> str:
-        stripped = (text or "").strip()
-        if not stripped:
-            return stripped
-        if stripped.startswith("无关图片"):
-            return "无关图片"
-
-        lines = [line for line in stripped.splitlines() if line.strip()]
-        kept = [
-            line
-            for line in lines
-            if not (
-                line.strip().startswith("<DOMAIN=")
-                and "<TASK=" in line
-                and line.strip().endswith(">")
-            )
-        ]
-        return "\n".join(kept).strip()
+        return strip_summary_headers(text)
 
     @staticmethod
     def _estimate_obj_count(text: str) -> int:

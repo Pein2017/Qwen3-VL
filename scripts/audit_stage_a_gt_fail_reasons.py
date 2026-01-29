@@ -49,7 +49,10 @@ DEFAULT_NEED_EXTRA_PATTERNS: tuple[str, ...] = (
 
 
 DEFAULT_CATEGORIES: tuple[tuple[str, str], ...] = (
-    ("need_extra", r"补拍|拍摄|请拍|未拍|建议.*补|拍全|拍完整|拍清晰|看不清|模糊|遮挡|反光|信息不足|角度"),
+    (
+        "need_extra",
+        r"补拍|拍摄|请拍|未拍|建议.*补|拍全|拍完整|拍清晰|看不清|模糊|遮挡|反光|信息不足|角度",
+    ),
     ("station_name", r"站名|站点名|写上站|写.*站点|写.*站名"),
     ("label", r"标签|挂牌|挂标签|两端标签|标签一致|标签统一|标签内容"),
     ("cable_protect", r"套管|尾纤|ODF|保护|光纤"),
@@ -200,12 +203,16 @@ def _format_markdown_samples(
         reasons_list = reasons if isinstance(reasons, list) else []
         joined = _join_reasons(obj)
 
-        per_image = obj.get("per_image") if isinstance(obj.get("per_image"), dict) else {}
+        per_image = (
+            obj.get("per_image") if isinstance(obj.get("per_image"), dict) else {}
+        )
         per_items = list(per_image.items())[: cfg.max_images_per_sample]
 
         lines.append(f"- ticket_key: `{_ticket_key(gid, label)}`")
         if reasons_list:
-            lines.append(f"  - gt_fail_reason_texts: `{_shorten(' | '.join(map(str, reasons_list)), 240)}`")
+            lines.append(
+                f"  - gt_fail_reason_texts: `{_shorten(' | '.join(map(str, reasons_list)), 240)}`"
+            )
         elif joined:
             lines.append(f"  - gt_fail_reason_text: `{_shorten(joined, 240)}`")
         else:
@@ -228,7 +235,9 @@ def _write_exclude_keys(
     with out_path.open("w", encoding="utf-8") as fh:
         fh.write("# Auto-generated Stage-B exclude_ticket_keys (ticket_key per line)\n")
         fh.write(f"# stage_a: {stage_a_path}\n")
-        fh.write("# rule: label=fail AND any(gt_fail_reason_text{,s} matches pattern)\n")
+        fh.write(
+            "# rule: label=fail AND any(gt_fail_reason_text{,s} matches pattern)\n"
+        )
         fh.write("# patterns:\n")
         for pat in patterns:
             fh.write(f"# - {pat}\n")
@@ -237,13 +246,40 @@ def _write_exclude_keys(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Audit Stage-A JSONL gt_fail_reason_texts and propose skips.")
-    parser.add_argument("--stage-a", action="append", required=True, type=Path, help="Path to *_stage_a.jsonl (repeatable)")
-    parser.add_argument("--out-md", required=True, type=Path, help="Output markdown path")
-    parser.add_argument("--seed", type=int, default=20251225, help="Sampling seed (default: 20251225)")
-    parser.add_argument("--samples-per-category", type=int, default=3, help="Samples per category (default: 3)")
-    parser.add_argument("--max-per-image-chars", type=int, default=220, help="Max chars per per_image entry (default: 220)")
-    parser.add_argument("--max-images-per-sample", type=int, default=3, help="Max images shown per sample (default: 3)")
+    parser = argparse.ArgumentParser(
+        description="Audit Stage-A JSONL gt_fail_reason_texts and propose skips."
+    )
+    parser.add_argument(
+        "--stage-a",
+        action="append",
+        required=True,
+        type=Path,
+        help="Path to *_stage_a.jsonl (repeatable)",
+    )
+    parser.add_argument(
+        "--out-md", required=True, type=Path, help="Output markdown path"
+    )
+    parser.add_argument(
+        "--seed", type=int, default=20251225, help="Sampling seed (default: 20251225)"
+    )
+    parser.add_argument(
+        "--samples-per-category",
+        type=int,
+        default=3,
+        help="Samples per category (default: 3)",
+    )
+    parser.add_argument(
+        "--max-per-image-chars",
+        type=int,
+        default=220,
+        help="Max chars per per_image entry (default: 220)",
+    )
+    parser.add_argument(
+        "--max-images-per-sample",
+        type=int,
+        default=3,
+        help="Max images shown per sample (default: 3)",
+    )
     parser.add_argument(
         "--write-need-extra-filters",
         action="store_true",
@@ -272,7 +308,11 @@ def main() -> int:
 
     categories = [(name, re.compile(rx)) for name, rx in DEFAULT_CATEGORIES]
     need_extra_patterns = [str(p) for p in args.need_extra_pattern if str(p).strip()]
-    need_extra_rx = re.compile("|".join(f"(?:{p})" for p in need_extra_patterns)) if need_extra_patterns else None
+    need_extra_rx = (
+        re.compile("|".join(f"(?:{p})" for p in need_extra_patterns))
+        if need_extra_patterns
+        else None
+    )
 
     report_lines: list[str] = []
     report_lines.append("# Stage-A gt_fail_reason_texts 审计报告")
@@ -301,7 +341,9 @@ def main() -> int:
         report_lines.append(f"- labels: `{dict(label_counts)}`")
         report_lines.append(f"- missing_required_records: `{missing_required}`")
         report_lines.append(f"- fail_total: `{fail_total}`")
-        report_lines.append(f"- fail_missing_gt_fail_reason: `{missing_reason_in_fail}`")
+        report_lines.append(
+            f"- fail_missing_gt_fail_reason: `{missing_reason_in_fail}`"
+        )
         report_lines.append("")
 
         report_lines.append("### fail reason top")
@@ -311,13 +353,26 @@ def main() -> int:
 
         report_lines.append("### category coverage (fail records)")
         for cat, c in category_record_counts.most_common():
-            report_lines.append(f"- `{cat}`: `{c}` ({(c / fail_total) if fail_total else 0:.1%})")
+            report_lines.append(
+                f"- `{cat}`: `{c}` ({(c / fail_total) if fail_total else 0:.1%})"
+            )
         report_lines.append("")
 
-        for cat in ["need_extra", "station_name", "label", "cable_protect", "ground", "other"]:
+        for cat in [
+            "need_extra",
+            "station_name",
+            "label",
+            "cable_protect",
+            "ground",
+            "other",
+        ]:
             if cat not in pools:
                 continue
-            report_lines.append(_format_markdown_samples(title=f"samples: {cat}", records=pools[cat], cfg=cfg))
+            report_lines.append(
+                _format_markdown_samples(
+                    title=f"samples: {cat}", records=pools[cat], cfg=cfg
+                )
+            )
 
         if args.write_need_extra_filters and need_extra_rx is not None:
             keys: list[str] = []
@@ -335,7 +390,9 @@ def main() -> int:
             keys = sorted(set(keys))
 
             out_name = stage_a_path.stem.replace("_stage_a", "")
-            out_path = args.filters_dir / f"{out_name}_need_extra_exclude_ticket_keys.txt"
+            out_path = (
+                args.filters_dir / f"{out_name}_need_extra_exclude_ticket_keys.txt"
+            )
             _write_exclude_keys(
                 out_path=out_path,
                 stage_a_path=stage_a_path,

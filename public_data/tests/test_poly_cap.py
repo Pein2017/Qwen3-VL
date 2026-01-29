@@ -377,7 +377,9 @@ def test_data_contract_compliance():
                 print(f"      • {err}")
             if len(errors) > 10:
                 print(f"      ... and {len(errors) - 10} more")
-            raise AssertionError(f"Data contract compliance failed with {len(errors)} errors")
+            raise AssertionError(
+                f"Data contract compliance failed with {len(errors)} errors"
+            )
         else:
             print("  ✓ All records comply with DATA_JSONL_CONTRACT.md")
 

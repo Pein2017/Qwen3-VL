@@ -21,7 +21,7 @@ Two-phase validation:
 - populate missing defaults (e.g., per_device_eval defaults to train).
 
 2) World-size-aware semantic validation
-- when `WORLD_SIZE` (or `_PATCH_WORLD_SIZE`) is present, validate divisibility:
+- when `WORLD_SIZE` is present, validate divisibility:
   - `unified_batch_size % (per_device_train_batch_size * world_size) == 0`
 - rationale: in non-distributed contexts, `world_size` may be unknown and default to 1.
 
@@ -36,11 +36,13 @@ For server-mode GRPO, the plan can also force rollout server settings:
 - TP=1, DP=2
 - per-worker `vllm_max_num_seqs` set from `max_num_seqs_per_gpu`
 
-This is implemented by populating/overriding `custom.extra.rollout_server` in the resolved config.
+This is implemented by populating `custom.extra.rollout_server` in the resolved config.
+- If rollout server fields are missing: populate them.
+- If rollout server fields are present and equal to the derived values: keep them.
+- If rollout server fields are present but conflicting: fail fast with a path-qualified error.
 
 ## Traceability
 - The inspection tool shows the final expanded config.
 - Training startup logs should include a single line summarizing:
   - per_device_train_batch_size, per_device_eval_batch_size, unified_batch_size
   - derived gradient_accumulation_steps and derived steps_per_generation (when world size known)
-

@@ -22,6 +22,11 @@ from data_conversion.utils.exif_utils import apply_exif_orientation
 
 from ..utils import get_logger, require_mapping
 from ..utils.unstructured import UnstructuredMapping
+from src.utils.summary_json import (
+    extract_summary_json_line,
+    format_summary_json,
+    is_summary_json,
+)
 from .prompts import SUMMARY_SYSTEM_PROMPT, build_system_prompt, build_user_prompt
 from .types import StageAGroupRecord
 from src.prompts.summary_profiles import DEFAULT_SUMMARY_PROFILE_RUNTIME
@@ -129,137 +134,6 @@ def _maybe_parse_json_object(text: str) -> UnstructuredMapping | None:
         return None
 
 
-def _is_summary_json(obj: UnstructuredMapping) -> bool:
-    """Heuristic: identify summary JSON schema."""
-    return "统计" in obj
-
-
-def _format_summary_json(obj: UnstructuredMapping) -> str:
-    """Normalize summary JSON objects to a single-line string.
-
-    - Keeps only the canonical top-level keys used by the summary contract.
-    - Uses the canonical separators (", ", ": ") to match prompt/contract.
-    """
-    obj = require_mapping(obj, context="stage_a.summary")
-    ordered: dict[str, object] = {}
-    for key in ("统计", "备注", "分组统计"):
-        if key in obj:
-            ordered[key] = obj[key]
-    for key, value in obj.items():
-        if key not in ordered:
-            ordered[key] = value
-    return json.dumps(ordered, ensure_ascii=False, separators=(", ", ": "))
-
-
-def _extract_summary_json_line(text: str) -> str | None:
-    """Extract summary-statistics JSON from model output text.
-
-    Stage-A summary-mode models may emit:
-    - Single-line JSON: {"统计": [...]}
-    - Two-line output: "<DOMAIN=...>, <TASK=...>" + JSON on the next line
-
-    This helper finds the JSON object and returns a normalized single-line JSON
-    string, or None when the input does not contain a valid summary JSON.
-    """
-    stripped = (text or "").strip()
-    if not stripped:
-        return None
-
-    def _extract_balanced_json_list(text: str, start: int) -> str | None:
-        """Extract a balanced JSON list substring starting at `[` or return None.
-
-        Minimal syntactic guardrail for non-JSON-but-unambiguous patterns like:
-          统计=[{...}]
-        Repairs to:
-          {"统计": [...]}
-        """
-
-        if start < 0 or start >= len(text) or text[start] != "[":
-            return None
-        depth = 0
-        in_str = False
-        escape = False
-        for idx in range(start, len(text)):
-            ch = text[idx]
-            if in_str:
-                if escape:
-                    escape = False
-                elif ch == "\\":
-                    escape = True
-                elif ch == '"':
-                    in_str = False
-                continue
-
-            if ch == '"':
-                in_str = True
-                continue
-            if ch == "[":
-                depth += 1
-                continue
-            if ch == "]":
-                depth -= 1
-                if depth == 0:
-                    return text[start : idx + 1]
-                continue
-        return None
-
-    def _maybe_parse_list_assignment(key: str) -> list[object] | None:
-        for sep in ("=", ":"):
-            marker = f"{key}{sep}"
-            pos = stripped.find(marker)
-            if pos == -1:
-                continue
-            bracket = stripped.find("[", pos + len(marker))
-            if bracket == -1:
-                continue
-            list_text = _extract_balanced_json_list(stripped, bracket)
-            if list_text is None:
-                continue
-            try:
-                parsed = json.loads(list_text)
-            except Exception:
-                continue
-            if isinstance(parsed, list):
-                return cast(list[object], parsed)
-        return None
-
-    obj = _maybe_parse_json_object(stripped)
-    if obj is not None and _is_summary_json(obj):
-        return _format_summary_json(obj)
-
-    # Multi-line outputs: search per-line (reverse to favor the JSON tail).
-    lines = [line.strip() for line in stripped.splitlines() if line.strip()]
-    for line in reversed(lines):
-        candidate = _maybe_parse_json_object(line)
-        if candidate is not None and _is_summary_json(candidate):
-            return _format_summary_json(candidate)
-
-    # Fallback: extract the first {...} block from the full text.
-    start = stripped.find("{")
-    end = stripped.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        candidate_text = stripped[start : end + 1].strip()
-        candidate = _maybe_parse_json_object(candidate_text)
-        if candidate is not None and _is_summary_json(candidate):
-            return _format_summary_json(candidate)
-
-    # Minimal syntactic recovery for list-assignment style outputs:
-    #   统计=[{...}]
-    #   分组统计=[{...}]
-    stats_list = _maybe_parse_list_assignment("统计")
-    group_stats_list = _maybe_parse_list_assignment("分组统计")
-    if stats_list is not None or group_stats_list is not None:
-        repaired: dict[str, object] = {}
-        if stats_list is not None:
-            repaired["统计"] = stats_list
-        if group_stats_list is not None:
-            repaired["分组统计"] = group_stats_list
-        if "统计" in repaired:
-            return _format_summary_json(cast(UnstructuredMapping, repaired))
-
-    return None
-
-
 def sanitize_single_image_summary(text: str) -> str:
     """Extract and sanitize the summary for a single image.
 
@@ -272,16 +146,14 @@ def sanitize_single_image_summary(text: str) -> str:
     if summary_text.startswith("无关图片"):
         return "无关图片"
 
-    extracted = _extract_summary_json_line(summary_text)
+    extracted = extract_summary_json_line(summary_text, context="stage_a.summary_json")
     if extracted is not None:
         return extracted
 
     obj = _maybe_parse_json_object(summary_text)
-    if obj is not None and _is_summary_json(obj):
-        return _format_summary_json(obj)
+    if obj is not None and is_summary_json(obj):
+        return format_summary_json(obj, context="stage_a.summary")
     if obj is not None:
-        if "统计" in obj:
-            return summary_text
         extracted: str | None = None
         for key in ("image_1", "图片_1"):
             val = obj.get(key)
@@ -1100,6 +972,8 @@ def _run_per_group(
     pbar: object | None,
     distributed: bool,
 ) -> tuple[int, int]:
+    from .types import validate_stage_a_group_record
+
     processed = 0
     errors = 0
 
@@ -1118,6 +992,9 @@ def _run_per_group(
                     batch_size=batch_size,
                     verify=verify_inputs,
                 )
+
+                # Boundary contract: validate before writing JSONL.
+                record = validate_stage_a_group_record(record, context="stage_a")
 
                 f_out.write(json.dumps(record, ensure_ascii=False) + "\n")
                 f_out.flush()
@@ -1370,6 +1247,8 @@ def _merge_per_image_outputs(
     Returns:
         (merged_groups, failed_groups)
     """
+    from .types import validate_stage_a_group_record
+
     final_output_path = output_dir / f"{mission}_stage_a.jsonl"
 
     # Prepare per-group buffers.
@@ -1489,6 +1368,12 @@ def _merge_per_image_outputs(
                     "images": [p.name for p in info.paths],
                     "per_image": per_image_map,
                 }
+                try:
+                    record = validate_stage_a_group_record(record, context="stage_a")
+                except Exception as exc:
+                    _mark_failed(group_seq, reason=f"invalid Stage-A record: {exc}")
+                    failed_groups += 1
+                    continue
                 f_out.write(json.dumps(record, ensure_ascii=False) + "\n")
                 merged_groups += 1
 
@@ -1604,15 +1489,27 @@ def _run_cross_group_batches(
             _safe_pbar_update(pbar, 1)
 
     def _flush_ready(f_out) -> None:
-        nonlocal next_flush_seq, processed
+        from .types import validate_stage_a_group_record
+
+        nonlocal next_flush_seq, processed, errors
         while next_flush_seq in completed:
             record = completed.pop(next_flush_seq)
             if record is not None:
-                f_out.write(json.dumps(record, ensure_ascii=False) + "\n")
-                f_out.flush()
-                processed += 1
-                if (is_main_process() or not distributed) and processed % 10 == 0:
-                    logger.info(f"Processed {processed}/{len(groups)} groups")
+                try:
+                    validate_stage_a_group_record(record, context="stage_a")
+                except Exception as exc:
+                    logger.error(
+                        "Invalid Stage-A record at flush seq=%d: %s",
+                        next_flush_seq,
+                        exc,
+                    )
+                    errors += 1
+                else:
+                    f_out.write(json.dumps(record, ensure_ascii=False) + "\n")
+                    f_out.flush()
+                    processed += 1
+                    if (is_main_process() or not distributed) and processed % 10 == 0:
+                        logger.info(f"Processed {processed}/{len(groups)} groups")
             next_flush_seq += 1
 
     with output_path.open("w", encoding="utf-8") as f_out:

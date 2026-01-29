@@ -225,9 +225,9 @@ def _audit_output_parser() -> Tuple[str, str]:
     if not ok or verdict != "pass" or not reason:
         raise AssertionError("Two-line parser failed on a valid response")
 
-    # Reason is treated as free text; the parser only enforces:
-    # - strict two-line protocol (Verdict + Reason), and
-    # - binary verdict normalization (pass/fail).
+    # NOTE: The rollout parser is *format*-strict (2 lines, binary verdict),
+    # but it does not enforce business-language constraints inside Reason.
+    # Reason is treated as free text.
     ok2, verdict2, reason2 = _parse_two_line_response(
         "Verdict: 通过\nReason: 通过但待定（示例：仍然给出二分类 verdict）"
     )

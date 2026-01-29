@@ -6,13 +6,13 @@ extends:
 # but Stage-A sometimes emits the category while omitting the attribute key.
 
 model:
-  model: output/1-21/grpo_summary_1024_attr_key_recall-v2-merged/ckpt_1600
+  model: output/1-21/grpo_summary_1024_attr_key_recall-v3-merged/ckpt_500
 
 training:
   # Avoid clobbering prior runs; edit per-run as needed.
   output_dir: ./output/1-21/grpo_summary_1024_attr_key_recall
   logging_dir: ./tb/1-21/grpo_summary_1024_attr_key_recall
-  run_name: epoch_4-attr_key_recall-retry_v3-server
+  run_name: epoch_4-attr_key_recall-retry_v3-server-continued
   num_train_epochs: 4
   logging_steps: 10
   eval_steps: 100
@@ -27,7 +27,7 @@ training:
   effective_batch_size: 48
 
 rlhf:
-  # Keep global token budget unchanged (global_max_length=12000 comes from summary_1024.yaml),
+  # Keep global token budget unchanged (global_max_length=12000 comes from summary_1024_server_mode.yaml),
   # but allow longer per-rollout completions for this run.
   max_completion_length: 4096
   # How many completions we ask the rollout server to generate per rollout-generation cycle.
@@ -107,10 +107,23 @@ custom:
       # Server-side concurrency cap *per rollout worker* (per DP replica).
       # We intentionally keep this low (<< rlhf.generation_batch_size) to reduce KV-cache pressure
       # and avoid rollout-server OOM/disconnects; vLLM will decode requests in multiple waves.
-      vllm_max_num_seqs: 4
-      vllm_gpu_memory_utilization: 0.85
+      vllm_max_num_seqs: 2
+      vllm_gpu_memory_utilization: 0.80
       # Keep aligned with global_max_length (total input+output budget).
       vllm_max_model_len: 12000
       # For multimodal DoRA stability, vLLM LoRA is forbidden in this workflow.
       vllm_enable_lora: false
       vllm_enable_prefix_caching: true
+
+  grpo:
+    # Batch plan shorthand (keeps training.effective_batch_size and rlhf.generation_batch_size aligned).
+    # This preset keeps the legacy knobs above for readability; the loader validates they match.
+    batch_plan:
+      enabled: true
+      per_device_train_batch_size: 8
+      per_device_eval_batch_size: 8
+      unified_batch_size: 48
+      rollout_server:
+        force_vllm_tensor_parallel_size: 1
+        force_vllm_data_parallel_size: 2
+        max_num_seqs_per_gpu: 2

@@ -39,7 +39,9 @@ def _iter_jsonl(path: Path):
             try:
                 yield json.loads(stripped)
             except json.JSONDecodeError as exc:
-                raise RuntimeError(f"Invalid JSON at {path}:{line_number}: {exc}") from exc
+                raise RuntimeError(
+                    f"Invalid JSON at {path}:{line_number}: {exc}"
+                ) from exc
 
 
 def _load_ticket_keys_txt(path: Path) -> set[str]:
@@ -123,4 +125,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
