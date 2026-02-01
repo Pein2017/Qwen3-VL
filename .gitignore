@@ -79,6 +79,8 @@
 !**/.codex/
 !**/.codex/skills/
 !**/.codex/skills/**
+/.codex/skills/code-check/
+/.codex/skills/coordexp-codebase/
 **/*.swp
 **/*.swo
 **/*~
