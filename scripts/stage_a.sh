@@ -9,9 +9,9 @@ set -euo pipefail
 
 # Fixed configuration
 # CHECKPOINT="output/11-30/summary_merged/epoch_10-lr_2e-4-bs_32-res_1024"
-CHECKPOINT="output/1-21/grpo_summary_1024_attr_key_recall-v2-merged/ckpt_1600"
+CHECKPOINT="output/1-21/grpo_summary_1024_attr_key_recall-v4-merged/ckpt_900"
 BASE_INPUT_DIR="group_data/scene_2.0_order"
-BASE_OUTPUT_DIR="output_post/1-21/grpo_summary_1024_attr_key_recall-v2"
+BASE_OUTPUT_DIR="output_post/1-21/grpo_summary_1024_attr_key_recall-v4"
 
 # Environment variable overrides (lowercase)
 # BBU接地线检查
@@ -49,8 +49,8 @@ PROMPT_PROFILE="${prompt_profile:-summary_runtime}"
 CUDA_VISIBLE_DEVICES="${gpus:-0}"
 verify_flag="${verify_inputs:-true}"
 DEBUG_FLAG="${debug:-false}"
-PASS_GROUP_NUMBER="${pass_group_number:-200}"
-FAIL_GROUP_NUMBER="${fail_group_number:-50}"
+PASS_GROUP_NUMBER="${pass_group_number:-1000}"
+FAIL_GROUP_NUMBER="${fail_group_number:-200}"
 SAMPLE_SEED="${sample_seed:-42}"
 
 # Derive number of GPUs (ignore empty/whitespace tokens)

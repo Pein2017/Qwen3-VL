@@ -1,5 +1,5 @@
 stage_a_paths:
-  - output_post/1-18/grpo_summary_1024_attr_key_recall/RRU位置检查_stage_a.jsonl
+  - output_post/1-21/grpo_summary_1024_attr_key_recall-v4/RRU位置检查_stage_a.jsonl
 
 ticket_filter:
   # Exclude fail-labeled tickets whose GT fail reasons are not observable in Stage-A summaries
@@ -11,7 +11,7 @@ default_domain: rru
 jump_reflection: true
 
 model:
-  model_name_or_path: output/1-18/grpo_summary_1024_attr_key_recall/ckpt_1300
+  model_name_or_path: output/1-21/grpo_summary_1024_attr_key_recall-v4-merged/ckpt_900
   torch_dtype: bfloat16
   device_map: auto
   attn_implementation: flash_attention_2  # Enable Flash Attention 2 for faster inference (requires flash-attn package)
@@ -24,7 +24,7 @@ guidance:
 
 output:
   root: output_post/stage_b
-  run_name: grpo_summary_1024_attr_key_recall-v2
+  run_name: grpo_summary_1024_attr_key_recall-v4
 
 rule_search:
   proposer_prompt_path: configs/prompts/stage_b_rule_search_proposer_prompt.txt

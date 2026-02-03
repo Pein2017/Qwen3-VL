@@ -62,10 +62,11 @@ All code changes in `src/` must comply with the Schema Constitution (`docs/refer
 ## Environment (minimal)
 - Use conda env `ms`; launch Python scripts with `conda run -n ms python ...`.
 
-## Tools & Navigation
-- Serena MCP: best for code symbol discovery/edits; avoid for plain docs (use `rg`/`cat`).
-- For detailed Serena MCP workflows and common patterns, use the `serena-mcp-navigation` skill.
-- Prefer repo-relative paths in Serena MCP arguments; use absolute paths only for outside sources (e.g., `/data/ms-swift`, `/data/home/...`).
+## Navigation (Progressive)
+- Source of truth: `docs/` (do not duplicate docs into global instructions).
+- For any file matching `*.py`, **Serena MCP is mandatory** for exploration and editing (symbol-aware navigation and edits). Serena MCP is the authoritative and precise method for all Python code operations.
+- Do **not** use Serena MCP for non-Python files (e.g., `*.md`, `*.sh`, `*.json`, `*.txt`). Use standard tools such as `rg`, `cat`, or appropriate editors for those.
+- Use Serena MCP’s `activate_project` when exploring Python code in external libraries or repositories outside the current working directory.
 
 ## Codex Sub-Agents (Async Reviews)
 - Use sub-agents for narrow parallel audits (spec deltas, task lists, doc coverage) while the main agent runs Serena/shell verification.
